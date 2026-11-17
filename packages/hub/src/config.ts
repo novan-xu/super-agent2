@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
@@ -54,6 +55,7 @@ const Environment = z.object({
     }),
   HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
+  HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
 });
 
 export interface Config {
@@ -67,7 +69,10 @@ export interface Config {
   readonly projectFolders: readonly string[];
   readonly credentialPaths: readonly string[];
   readonly brainTokenFile: string;
+  readonly pageDir?: string;
 }
+
+export const defaultPageDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
 
@@ -90,6 +95,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       projectFolders: value.HUB_PROJECT_FOLDERS,
       credentialPaths: value.HUB_CREDENTIAL_PATHS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
+      pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
       ...(value.NAS_SSH_DESTINATION === undefined
         ? {}
         : {

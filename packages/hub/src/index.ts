@@ -11,6 +11,7 @@ export * from "./irreversible.js";
 export * from "./keys.js";
 export * from "./lock.js";
 export * from "./migrations.js";
+export * from "./page.js";
 export * from "./server.js";
 export * from "./start.js";
 export * from "./targets.js";

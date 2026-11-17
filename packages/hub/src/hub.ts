@@ -10,6 +10,7 @@ import { type HubDatabase, openDatabase } from "./database.js";
 import { lockSettings } from "./irreversible.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
+import { pageFiles } from "./page.js";
 import { createHubServer, type HubServer } from "./server.js";
 import { type Environment, localTarget, sshTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
@@ -82,6 +83,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tools: createToolServer({ commands, conversations, targets: () => targets.map((target) => target.name) }),
       brainToken,
       ...(lock === undefined ? {} : { lock }),
+      ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
   } catch (error) {
     database.close();
