@@ -10,6 +10,7 @@ import {
   ConversationDetail as DetailShape,
   ConversationList,
   conversationHeader,
+  MemoryList,
   type Provider,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -565,5 +566,63 @@ describe("the brain's session", () => {
     expect(list.conversations.map((conversation) => conversation.id)).toEqual([first.id, second.id]);
     const read = DetailShape.parse(await (await owner(`/api/conversations/${first.id}`)).json());
     expect(read.entries.map((entry) => entry.kind)).toEqual(["owner", "text", "owner", "text"]);
+  });
+
+  it("carries what it remembered into a new conversation after a restart and to another provider, and tells a running session what the owner changed", async () => {
+    await startHub();
+    startBrain();
+    const first = await newConversation();
+    await say(first.id, "记住：以后回答先说结论。");
+    const opening = await programs.gpt.next();
+    expect(opening.text).toBe("记住：以后回答先说结论。");
+    opening.handle.emit({ type: "session", session: "gpt-one" });
+    expect(await callTool(opening.handle.options, "remember", { text: { en: "The owner wants the conclusion first.", zh: "你希望先说结论。" } })).toContain("Remembered #1");
+    opening.handle.finish("记住了。");
+    await turnEnded(first.id, 1);
+
+    await say(first.id, "好。");
+    const same = await programs.gpt.next();
+    expect(same.text).toBe("好。");
+    same.handle.finish("嗯。");
+    await turnEnded(first.id, 2);
+
+    await stopBrain();
+    startBrain();
+    const second = await newConversation();
+    await say(second.id, "CI 怎么样？");
+    const fresh = await programs.gpt.next();
+    expect(fresh.handle.options.session).toBeNull();
+    expect(fresh.text).toContain("[hub] Your memory");
+    expect(fresh.text).toContain("- #1 The owner wants the conclusion first.");
+    expect(fresh.text.endsWith("CI 怎么样？")).toBe(true);
+    fresh.handle.emit({ type: "session", session: "gpt-two" });
+    fresh.handle.finish("结论：绿的。");
+    await turnEnded(second.id, 1);
+
+    const read = MemoryList.parse(await (await owner("/api/memories")).json());
+    const edited = await owner("/api/memories/1", { method: "PUT", body: JSON.stringify({ text: "你希望先说结论，再列细节。", revision: read.memories[0]?.revision }) });
+    expect(edited.status).toBe(200);
+    await say(second.id, "部署呢？");
+    const told = await programs.gpt.next();
+    expect(told.handle).toBe(fresh.handle);
+    expect(told.text).toContain("The owner edited #1; it now reads, in Chinese: 你希望先说结论，再列细节。");
+    expect(told.text).toContain("- #1 (the owner's own words, in Chinese) 你希望先说结论，再列细节。");
+    told.handle.emit({ type: "unavailable", reason: "usage limit", until: null });
+    const claude = await programs.claude.next();
+    expect(claude.text).toContain("[hub] Your memory: ");
+    expect(claude.text).toContain("你希望先说结论，再列细节。");
+    claude.handle.emit({ type: "session", session: "claude-two" });
+    claude.handle.finish("结论：部署好了。");
+    await turnEnded(second.id, 2);
+
+    const now = MemoryList.parse(await (await owner("/api/memories")).json());
+    expect((await owner("/api/memories/1", { method: "DELETE", body: JSON.stringify({ revision: now.memories[0]?.revision }) })).status).toBe(200);
+    await say(first.id, "还记得什么？");
+    const back = await programs.gpt.next();
+    expect(back.handle.options.session).toBe("gpt-one");
+    expect(back.text).toContain("The owner deleted #1");
+    expect(back.text).toContain("(empty)");
+    back.handle.finish("没有了。");
+    await turnEnded(first.id, 3);
   });
 });

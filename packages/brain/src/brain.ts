@@ -329,7 +329,7 @@ export function createBrain(options: BrainOptions): Brain {
       state.used = uses;
       live.attempt = attempt;
       turn.started = true;
-      live.handle.start(mode === "fresh" ? turnPrompt(prepared.history, turn.inputs) : continuationPrompt(prepared.history));
+      live.handle.start(mode === "fresh" ? turnPrompt(prepared.history, turn.inputs, prepared.memory) : continuationPrompt(prepared.history, prepared.memory));
     } catch (error) {
       providers.markUnavailable(provider, messageOf(error), null);
       switchProvider(state, attempt, messageOf(error));

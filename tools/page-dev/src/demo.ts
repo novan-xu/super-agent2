@@ -102,6 +102,13 @@ function loopPlan(hub: string, turn: number): Step[] | undefined {
 }
 
 function plan(message: string, turn: number): Step[] {
+  const remembered = /^记住[:：]?\s*(.+)$/su.exec(message)?.[1]?.trim();
+  if (remembered !== undefined && remembered !== "") {
+    return [
+      { kind: "hub", call: `remember-${turn}`, name: "remember", args: { text: { en: `Demo brain: the owner asked to remember "${remembered}".`, zh: remembered } } },
+      { kind: "text", block: `remembered-${turn}`, text: `记住了：${remembered}` },
+    ];
+  }
   if (message.includes("长")) {
     const paragraphs = Array.from({ length: 40 }, (_, index) => `第 ${index + 1} 段：这是一段用来检查长对话滚动的文字，内容会一直写下去，直到写满整整四十段为止。`);
     return [{ kind: "text", block: `long-${turn}`, text: paragraphs.join("\n\n") }];

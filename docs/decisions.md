@@ -2283,3 +2283,84 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   hue and wording are the prototype's, so a row can be told apart at a glance.
 - **Other options:** Listing joined tickets with their own reason; hiding them by matching the reason's text; a filter
   to show them; keeping the list in the address (`?q=`), which would put the words of a search into the browser's history.
+
+## 2026-11-17 — Where memories are kept, and how they reach each program
+
+- **Chosen:** The hub keeps memories in SQLite (migration 16: `memories`, and `memory_changes`, a log of every change
+  with its author, its conversation and its text, numbered by a revision). They reach the brain inside the turn's own
+  prompt, not through a file: when the brain asks the hub to `prepare` a turn, the answer carries a `memory` brief that
+  the brain puts before everything else in the message it gives the program. A session the hub has no record of (a new
+  conversation, a provider taking over for the first time, a lost session replaced by a new one) gets the whole memory.
+  A session that has seen it gets nothing, unless the memory changed since: then it gets what changed (the owner's
+  edits and deletions spelled out; changes the brain made in that same conversation left out, since the session made
+  them) and the whole memory again. `program_sessions` records per conversation and provider the revision offered at
+  `prepare` and, when that provider's turn ends, the revision seen; a new session starts from none. Checked live
+  through the real adapters with `LIVE_STEPS=remembered node tools/brain-live/dist/cli.js <claude|gpt|deepseek>`: a
+  memory holding a random code word was stored in the hub, a new conversation asked for it, then the memory was edited
+  as the owner and the same session asked again. Claude Code (`claude-opus-5-5`), Codex (`gpt-6-astra`) and `dsh`
+  (`deepseek-flash`) each answered the first code word with no tool call, and the new one after the edit; each then
+  wrote the English for the owner's Chinese with `remember`. On Windows the check needs `LIVE_CODEX_PROGRAM` and
+  `LIVE_DSH_PROGRAM` set to the programs' `.js` entry points, because `spawn` does not run the `.cmd` shims.
+- **Why:** The three programs read standing instructions three different ways, and each reads them when a session
+  starts; a file would have to be proved per program, would not reach a long-lived session when the owner changes
+  something, and is shared by every conversation in the workspace. The prompt is the one input all three take the same
+  way, the hub already decides per session what that session has missed, and a takeover already goes through
+  `prepare`. The cost is that a program compacting a very long session may summarise the memory away; the brain can
+  read it again with `recall`, and any change sends it whole again.
+- **Other options:** Writing the memory into the workspace's `AGENTS.md` and `CLAUDE.md` (read only when a session
+  starts, and the earlier file Claude Code never read shows the risk); a system prompt option per program, which would
+  change the adapters the workers share; sending the whole memory with every turn, which costs its length in every
+  message.
+
+## 2026-11-17 — How much the memory holds, and what it refuses
+
+- **Chosen:** At most 30 memories. Each is one line (white space is folded to single spaces), at most 300 characters in
+  English and 200 in Chinese, and the Chinese copy must hold Chinese. Adding a 31st is refused with the count and the
+  instruction to forget one or merge two (rewrite one with `remember` and its id, forget the other) and add again;
+  rewriting is always allowed. A memory saying the same as another, in either language, is refused. A text that looks
+  like a credential is refused, from the brain and from the owner alike: the shapes of GitHub, OpenAI and Anthropic,
+  Slack, AWS and Google keys, JSON web tokens, private key blocks, `Bearer` tokens and passwords in URLs; a name of the
+  kind the hub keeps credentials under (`…TOKEN`, `…SECRET`, `…PASSWORD`, `…API_KEY`, `…PRIVATE_KEY`, `…CLIENT_ID`)
+  followed by `=` or `:` and a value; `password:` and `密码是…` and the like; and any value of eight characters or more
+  that the hub holds in its environment under a credential's name, its own brain token or its VAPID private key. A
+  credential's name alone ("GITHUB_TOKEN_NOVAN_XU is used for novan-xu's repositories") is allowed. The rules are plain
+  functions in `packages/protocol/src/memory.ts` and `packages/hub/src/credentials.ts`, with tests.
+- **Why:** The memory rides in the first message of every conversation; 30 lines of at most 300 characters stay under
+  about 2,500 tokens, small beside the guidance, and are enough for preferences and standing facts when the brain merges
+  rather than piles up. A limit the brain is told about makes it curate instead of failing silently.
+- **Other options:** A total character budget instead of a count, which is harder for the brain to reason about;
+  dropping the oldest memory when full, which would lose something without anyone deciding to.
+
+## 2026-11-17 — The owner's edits, and the English that would go stale
+
+- **Chosen:** The owner edits the Chinese copy, which is what the page shows. The English is kept but marked stale, the
+  memory is marked as last written by the owner, and from then on the brain is given the owner's Chinese words, marked
+  as such, instead of the stale English. The change notice tells the brain to follow it and to write a matching English
+  with `remember` and the memory's id, keeping the owner's Chinese exactly. When the brain does that with the Chinese
+  unchanged, the memory stays the owner's and is no longer stale; when the brain changes the Chinese, it becomes the
+  brain's. An edit that is the same text after folding white space is no edit. Each edit and deletion names the
+  revision the page showed, and is refused when the memory changed since, so an owner's change never silently
+  overwrites one the brain made meanwhile. Deleting cannot be undone and is guarded the way stopping a ticket is: the ×
+  arms the row, which turns red and offers 删除 and 取消; only 删除 sends it. Both go through `PUT` and `DELETE` on
+  `/api/memories/<id>` with the owner's usual checks: the front door's owner, the page's own origin, JSON. The brain is
+  told of a deletion with the deleted text and asked not to remember it again unless the owner asks.
+- **Why:** The brain never acting on English the owner has already corrected is what makes the page the authority; the
+  owner's Chinese is readable to every model. Letting the brain restore the pair keeps GitHub and other models on
+  English, as the language rules ask, without the owner writing English.
+- **Other options:** Translating the owner's edit in the hub, which has no model; letting the owner edit both languages;
+  regenerating the English silently; the prototype's confirmation dialog for deletion, which no other irreversible
+  action on this page uses.
+
+## 2026-11-17 — 记忆 on the page
+
+- **Chosen:** One list of the prototype's rows: the Chinese text, a chip saying who last wrote it (大脑 or 你), when it
+  was written or last changed, and two icon buttons, 改写 and 删除这条记忆 (names for screen readers and the pointer's
+  hover). Newest change first. 改写 opens the prototype's editor in the row with the text in place and only 保存 and
+  取消; Enter saves on a keyboard and Escape closes; a text without Chinese or the same as another memory says so under
+  the box, and an unchanged or empty one cannot be saved. The list arrives whole on `/ws` after `hello` and again
+  whenever the memory changes, so a memory the brain writes appears while 记忆 is open. With none, 还没有记忆. The
+  prototype's tabs, pending memories, 摘要, groups and 新记忆 are left out: they belong to parts of the first system this
+  design does not have, and the issue gives the owner edit and delete only. The demo brain of `tools/page-dev`
+  remembers a message that starts with 记住.
+- **Why:** The owner's preference: the layout explains itself, without secondary labels.
+- **Other options:** Showing the English as well; an owner's 新记忆 button; showing the count against the limit.

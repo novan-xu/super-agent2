@@ -30,6 +30,8 @@ import { short, type DeploymentService } from "./deployments.js";
 import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop.js";
 import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
+import type { MemoryService } from "./memories.js";
+import { memoryCall, memoryDefinitions } from "./memory-tools.js";
 import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
@@ -204,6 +206,7 @@ export interface ToolServerOptions {
   readonly machines?: () => string;
   readonly tickets?: TicketTools;
   readonly deployments?: DeploymentService;
+  readonly memories?: MemoryService;
 }
 
 export interface TicketTools {
@@ -778,6 +781,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
       ...(options.deployments === undefined ? [] : deploymentDefinitions()),
+      ...(options.memories === undefined ? [] : memoryDefinitions()),
     ];
   };
 
@@ -1165,6 +1169,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         break;
       default: {
         const ticketResult =
+          (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
           (await deploymentCall(parsed.data.name, parsed.data.arguments ?? {}, conversation)) ?? (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
         if (ticketResult === undefined) {
           return { status: 200, body: errorBody(id, -32602, `Unknown tool: ${parsed.data.name}`) };

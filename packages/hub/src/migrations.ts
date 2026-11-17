@@ -401,4 +401,30 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX tickets_by_end ON tickets (ended_at, id);
     `,
   },
+  {
+    version: 16,
+    sql: `
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text_en TEXT NOT NULL,
+        text_zh TEXT NOT NULL,
+        author TEXT NOT NULL,
+        stale INTEGER NOT NULL,
+        revision INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        changed_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE memory_changes (
+        revision INTEGER PRIMARY KEY AUTOINCREMENT,
+        memory_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        author TEXT NOT NULL,
+        conversation_id TEXT,
+        text TEXT NOT NULL,
+        at INTEGER NOT NULL
+      ) STRICT;
+      ALTER TABLE program_sessions ADD COLUMN memory_offered INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE program_sessions ADD COLUMN memory_seen INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

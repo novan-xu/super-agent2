@@ -141,6 +141,9 @@ describe("the brain's ticket tools", () => {
       "describe_stuck",
       "deploy_repository",
       "read_deployment",
+      "remember",
+      "recall",
+      "forget",
     ]);
   });
 

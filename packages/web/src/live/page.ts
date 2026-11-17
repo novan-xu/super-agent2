@@ -3,6 +3,7 @@ import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
 import { mergeConversations, upsertConversation } from "./list.js";
+import { initialMemory, type MemoryState, receiveMemories } from "./memory.js";
 import { type DetailState, openDetail, receiveDetail as receiveTicketDetail, receiveDetailWork, receiveMissing, receiveTicketChange } from "./detail.js";
 import { initialTickets, receiveTicket, receiveTickets, type TicketsState } from "./tickets.js";
 import { initialWaiting, type WaitingAction, type WaitingState, waitingReducer } from "./waiting.js";
@@ -17,6 +18,7 @@ export interface PageState {
   readonly tickets: TicketsState;
   readonly detail: DetailState | null;
   readonly history: HistoryState;
+  readonly memory: MemoryState;
 }
 
 export type PageAction =
@@ -40,7 +42,7 @@ export type PageAction =
   | { readonly type: "history.more.started" }
   | { readonly type: "history.more.failed"; readonly applied: string };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory };
+export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -122,6 +124,9 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         const history = receiveEnded(state.history, message.ticket);
         const next = tickets === state.tickets && history === state.history ? state : { ...state, tickets, history };
         return withDetail(next, state.detail === null ? null : receiveTicketChange(state.detail, message.ticket));
+      }
+      if (message.type === "memories") {
+        return { ...state, memory: receiveMemories(message.memories) };
       }
       if (message.type === "brain") {
         return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };

@@ -43,6 +43,8 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     pushKey: () => answer("pushKey", { publicKey: null }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
+    editMemory: (id, text, revision) => answer(`editMemory ${id} ${text} ${revision}`, { memories: [], limit: 30 }),
+    deleteMemory: (id, revision) => answer(`deleteMemory ${id} ${revision}`, { memories: [], limit: 30 }),
     ...overrides,
   };
 }
@@ -537,5 +539,15 @@ describe("PageController and the history", () => {
     await page.openHistory();
     await page.refresh();
     expect(ids(page)).toEqual([2, 1]);
+  });
+
+  it("edits and deletes a memory at the version the owner saw, and reports a refusal", async () => {
+    const hub = api({ editMemory: () => Promise.resolve({ ok: false, error: "conflict" }) });
+    const failures: Failure[] = [];
+    const page = controller(hub, failures);
+    expect(await page.deleteMemory(3, 7)).toBe(true);
+    expect(hub.calls).toEqual(["deleteMemory 3 7"]);
+    expect(await page.editMemory(3, "先说结论", 7)).toBe(false);
+    expect(failures).toEqual(["conflict"]);
   });
 });

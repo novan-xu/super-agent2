@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -252,6 +253,50 @@ if (only.has("held")) {
     await turnsDone(conversation, 2);
     const told = replyAfter(conversation, entriesOf(conversation).find((entry) => entry.kind === "notice")?.seq ?? 0);
     note("the brain is told the outcome later", told !== "", `reply: ${told.slice(0, 300)}`);
+  }
+}
+
+if (only.has("remembered")) {
+  const word = () => `${["KIWI", "LYCHEE", "QUINCE", "DAMSON", "YUZU"][randomInt(5)]}-${randomInt(100, 1000)}`;
+  const before = word();
+  const stored = hub.memories.remember({ text: { en: `The code word for the memory check is ${before}.`, zh: `记忆检查的暗号是 ${before}。` }, conversation: null });
+  if (!stored.ok) {
+    throw new Error(stored.reason);
+  }
+  const conversation = hub.conversations.create().id;
+  const first = await ask(conversation, "记忆检查的暗号是什么？只回答暗号本身。", 1);
+  const firstTools = entriesOf(conversation).filter((entry) => entry.kind === "tool").length;
+  note("a new conversation has the memory", first.includes(before), `code word ${before}; tool calls: ${firstTools}; reply: ${first.slice(0, 200)}`);
+  let after = word();
+  while (after === before) {
+    after = word();
+  }
+  const edited = hub.memories.edit(stored.memory.id, `记忆检查的暗号是 ${after}。`, stored.memory.revision);
+  if (!edited.ok) {
+    throw new Error(edited.error);
+  }
+  const second = await ask(conversation, "现在记忆检查的暗号是什么？只回答暗号本身。", 2);
+  note("the same session learns of the owner's edit", second.includes(after) && !second.includes(before), `code word now ${after}; reply: ${second.slice(0, 200)}`);
+  const memory = hub.memories.list().find((candidate) => candidate.id === stored.memory.id);
+  process.stdout.write(`\n<memory after the turn> ${JSON.stringify(memory)}\n`);
+  if (memory !== undefined) {
+    hub.memories.remove(memory.id, memory.revision);
+  }
+}
+
+if (only.has("preference")) {
+  const conversation = hub.conversations.create().id;
+  const told = await ask(conversation, "以后不管在哪段对话里，你回答我的最后一行都单独写「—— 完」。记住这一点。", 1);
+  const remembered = hub.memories.list();
+  note("a preference stated in Chinese is remembered", remembered.length > 0, `memories: ${JSON.stringify(remembered.map((memory) => memory.text))}; reply: ${told.slice(0, 200)}`);
+  await stopBrain();
+  startBrain();
+  const later = hub.conversations.create().id;
+  const reply = await ask(later, "1 加 1 等于几？", 1);
+  const lines = reply.trim().split("\n");
+  note("it is applied in a new conversation after a restart", (lines.at(-1) ?? "").includes("完"), `reply: ${reply.slice(-200)}`);
+  for (const memory of hub.memories.list()) {
+    hub.memories.remove(memory.id, memory.revision);
   }
 }
 

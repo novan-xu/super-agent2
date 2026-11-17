@@ -147,6 +147,24 @@ export class PageController {
     }
   }
 
+  async editMemory(id: number, text: string, revision: number): Promise<boolean> {
+    const answer = await this.options.api.editMemory(id, text, revision);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    return true;
+  }
+
+  async deleteMemory(id: number, revision: number): Promise<boolean> {
+    const answer = await this.options.api.deleteMemory(id, revision);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    return true;
+  }
+
   async messageTicket(ticket: number, text: string): Promise<boolean> {
     const sent = await this.options.api.messageWorker(ticket, text);
     if (!sent.ok) {

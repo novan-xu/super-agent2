@@ -15,6 +15,12 @@ const shapes = {
     </>
   ),
   memory: <path d="M6.5 3.5h11v17L12 16.5l-5.5 4z" />,
+  compose: (
+    <>
+      <path d="M4 20h4L19 9l-4-4L4 16z" />
+      <path d="M13.5 6.5l4 4" />
+    </>
+  ),
   gear: (
     <>
       <circle cx="12" cy="12" r="3" />

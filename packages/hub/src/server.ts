@@ -43,6 +43,10 @@ import {
   historyLargestPage,
   historyPageSize,
   historyQueryLength,
+  MemoryEdit,
+  type MemoryList,
+  memoryLimit,
+  MemoryRemoval,
   positionOfCursor,
   protocolVersion,
   releaseVersionHeader,
@@ -67,6 +71,7 @@ import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
+import type { MemoryService, OwnerMemoryError } from "./memories.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
@@ -90,6 +95,17 @@ export const chainStartPath = "/api/chains/start";
 export const chainChoicePath = "/api/chains/choice";
 export const engineTablePath = "/api/engine-table";
 export const allowancePath = "/api/allowance";
+export const memoriesPath = "/api/memories";
+
+const memoryRoute = /^\/api\/memories\/([1-9][0-9]{0,15})$/;
+
+const memoryStatus: Readonly<Record<OwnerMemoryError, number>> = {
+  not_found: 404,
+  conflict: 409,
+  bad_request: 400,
+  credential: 422,
+  duplicate: 409,
+};
 
 const reassignRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/reassign$/;
 
@@ -150,6 +166,7 @@ export interface HubServerOptions {
   readonly heartbeatMilliseconds?: number;
   readonly version?: string;
   readonly release?: ReleaseSource;
+  readonly memories?: MemoryService;
 }
 
 export interface HubServer {
@@ -189,7 +206,8 @@ type Body =
   | WorkEventList
   | WorkerMessageResponse
   | EngineTableBody
-  | AllowanceList;
+  | AllowanceList
+  | MemoryList;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -490,6 +508,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(ticketsPath) && (await serveTicketWork(request, response, path, method))) {
       return;
     }
+    if (path.startsWith(memoriesPath) && options.memories !== undefined && (await serveMemories(request, response, path, method, options.memories))) {
+      return;
+    }
     if (path === chainStartPath && method === "POST") {
       await startChains(request, response);
       return;
@@ -674,6 +695,44 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const table = defaults.setTable(given.table);
     options.waiting?.refresh();
     sendJson(response, 200, { table });
+    return true;
+  };
+
+  const serveMemories = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, memories: MemoryService): Promise<boolean> => {
+    if (path === memoriesPath) {
+      if (method !== "GET") {
+        return false;
+      }
+      sendJson(response, 200, { memories: memories.list(), limit: memoryLimit });
+      return true;
+    }
+    const id = memoryRoute.exec(path)?.[1];
+    if (id === undefined || (method !== "PUT" && method !== "DELETE")) {
+      return false;
+    }
+    if (!ownerAction(request, response)) {
+      return true;
+    }
+    const body = await readBody(request);
+    const outcome =
+      method === "PUT"
+        ? (() => {
+            const given = parseJson(body, MemoryEdit.strict());
+            return given === undefined ? undefined : memories.edit(Number(id), given.text, given.revision);
+          })()
+        : (() => {
+            const given = parseJson(body, MemoryRemoval.strict());
+            return given === undefined ? undefined : memories.remove(Number(id), given.revision);
+          })();
+    if (outcome === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return true;
+    }
+    if (!outcome.ok) {
+      sendJson(response, memoryStatus[outcome.error], { error: outcome.error });
+      return true;
+    }
+    sendJson(response, 200, { memories: outcome.memories, limit: memoryLimit });
     return true;
   };
 
@@ -1093,6 +1152,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const unsubscribeWaiting =
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
     const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
+    const unsubscribeMemories = options.memories?.subscribe((memories) => send({ type: "memories", memories: [...memories] })) ?? (() => undefined);
     const unsubscribeWork =
       options.work?.subscribe((event) => {
         if (watchedTickets.has(event.ticket)) {
@@ -1105,6 +1165,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       unsubscribeConversations();
       unsubscribeWaiting();
       unsubscribeTickets();
+      unsubscribeMemories();
     });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
@@ -1151,6 +1212,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (options.tickets !== undefined) {
       send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit }) });
+    }
+    if (options.memories !== undefined) {
+      send({ type: "memories", memories: options.memories.list() });
     }
   };
 
