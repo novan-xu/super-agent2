@@ -1,0 +1,110 @@
+name: superagent2
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  hub:
+    image: superagent2-hub:current
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: hub
+    container_name: superagent2-hub
+    hostname: superagent2-hub
+    restart: unless-stopped
+    init: true
+    env_file:
+      - /share/Container/superagent2/secrets/hub.env
+    environment:
+      HUB_DATA_DIR: /var/lib/superagent2/hub
+      HUB_PORT: "8080"
+      HUB_HOST: 0.0.0.0
+      HUB_BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
+      HUB_PROJECT_FOLDERS: /share/Container/superagent2/projects
+      HUB_CREDENTIAL_PATHS: /share/Container/superagent2/secrets,/share/Container/superagent2/secrets/**,/share/Container/superagent/secrets,/share/Container/superagent/secrets/**,/var/lib/superagent2/link/**,/run/superagent2/ssh/**
+      NAS_SSH_DESTINATION: novanxu@host.docker.internal
+      NAS_SSH_IDENTITY: /run/superagent2/ssh/nas_ed25519
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - 127.0.0.1:18180:8080
+    volumes:
+      - hub-data:/var/lib/superagent2/hub
+      - brain-link:/var/lib/superagent2/link
+      - hub-home:/home/node
+      - /share/Container/superagent2/secrets/ssh:/run/superagent2/ssh:ro
+      - /share/Container/superagent2/projects:/share/Container/superagent2/projects
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 4
+      start_period: 30s
+      start_interval: 2s
+    logging: *logging
+
+  brain:
+    image: superagent2-brain:current
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: brain
+    container_name: superagent2-brain
+    hostname: superagent2-brain
+    restart: unless-stopped
+    init: true
+    depends_on:
+      hub:
+        condition: service_healthy
+    env_file:
+      - /share/Container/superagent2/secrets/brain.env
+    environment:
+      BRAIN_HUB_URL: http://hub:8080
+      BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
+      BRAIN_WORKSPACE: /home/node/workspace
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+    volumes:
+      - brain-link:/var/lib/superagent2/link:ro
+      - brain-codex:/home/node/.codex
+      - brain-claude:/home/node/.claude
+      - brain-dsh:/home/node/.dsh
+      - brain-workspace:/home/node/workspace
+    logging: *logging
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.4
+    container_name: superagent2-tunnel
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    depends_on:
+      hub:
+        condition: service_healthy
+    env_file:
+      - /share/Container/superagent2/secrets/tunnel.env
+    logging: *logging
+
+volumes:
+  hub-data:
+    name: superagent2-hub-data
+  hub-home:
+    name: superagent2-hub-home
+  brain-link:
+    name: superagent2-brain-link
+  brain-codex:
+    name: superagent2-brain-codex
+  brain-claude:
+    name: superagent2-brain-claude
+  brain-dsh:
+    name: superagent2-brain-dsh
+  brain-workspace:
+    name: superagent2-brain-workspace
+
+networks:
+  default:
+    name: superagent2_default
