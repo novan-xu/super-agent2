@@ -221,4 +221,24 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 9,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN difficulty_reason_en TEXT;
+      ALTER TABLE tickets ADD COLUMN difficulty_reason_zh TEXT;
+      ALTER TABLE tickets ADD COLUMN brain_engine TEXT;
+      ALTER TABLE tickets ADD COLUMN owner_machine TEXT;
+      ALTER TABLE tickets ADD COLUMN owner_engine TEXT;
+      ALTER TABLE tickets ADD COLUMN owner_model TEXT;
+      ALTER TABLE tickets ADD COLUMN owner_effort TEXT;
+      ALTER TABLE tickets ADD COLUMN chosen_by TEXT;
+      ALTER TABLE tickets ADD COLUMN chosen_at INTEGER;
+      ALTER TABLE tickets ADD COLUMN ran TEXT;
+      CREATE TABLE hub_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];

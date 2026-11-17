@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { cardParameter, type PageRoute, type PageView, pagePath } from "@super-agent2/protocol";
+import { cardParameter, type ChoiceChange, type PageRoute, type PageView, pagePath } from "@super-agent2/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type Failure, hubApi } from "./hub/api.js";
 import { PageController } from "./hub/controller.js";
@@ -141,6 +141,7 @@ export function App() {
       disarm: (key: string) => controller.disarm(key),
       answer: (key: string, verdict: Verdict) => void controller.answer(key, verdict),
       start: (keys: readonly string[]) => void controller.startChains(keys),
+      choose: (key: string, change: ChoiceChange) => void controller.chooseChain(key, change),
     }),
     [controller],
   );

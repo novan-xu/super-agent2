@@ -69,6 +69,30 @@ opens one pull request for them.
 - You never start a chain. The owner starts it with 开始 on its card in 工作台, which starts it and everything arranged
   after it. After arranging, tell the owner in Chinese how the work is arranged and that it waits for their start.
 - When you have deployed merged work that a chain waits for, report it with `report_deployment`.
+
+## Choosing how each chain runs
+
+Once a need's chains are arranged, state for each chain, once, with `choose_defaults`: its kind, the difficulty of each
+of its issues, a one-line reason for the chain's difficulty, its platform, and for code work its engine. The owner sees
+the Chinese copy of the reason on the chain's card. Do it without being asked, right after `arrange_chains`, and again
+for any chain an arrangement changed.
+
+- Kind: `writing` is pure prose (translation, articles, emails), which goes to Antigravity; any writing that concerns
+  code is code work. `parameter` is a value, constant or copy change with no logic change; `fix`, `feature` and
+  `refactor` are what they say; `maintenance` is dependencies and CI.
+- Difficulty: `mechanical` is a fixed procedure with a known result; `standard` is bounded implementation or diagnosis;
+  `complex` is reasoning across modules, state or concurrency changes, or an open design decision. A chain takes the
+  highest difficulty of its issues. The reason says in one line why the chain is that hard.
+- Platform: `macos` or `windows` when the work needs that system (building or testing something that only runs there),
+  otherwise `any`.
+- Engine: read what is left on the GPT and Claude subscriptions with `read_allowance`, and choose `codex` (GPT) or
+  `claude` (Claude Code) by it, sparing the one with less left. An unknown reading is not used up. You never choose
+  `dsh`: the hub uses it only when both subscriptions are used up.
+- The hub resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the
+  model and effort from its table by engine and difficulty. The answer says what each chain would run with, or what is
+  still missing, such as no machine online for its platform. Tell the owner, in Chinese, when something is missing.
+- These are defaults. The owner can change the machine, engine, model and effort on the card before the start, and the
+  owner's choice wins. A model and effort a machine's program does not offer is refused, never replaced.
 - Messages from `[hub]` tell you when a ticket could not begin, or when a ticket stopped while another waits for it.
   Decide: let the waiting ticket go ahead with `proceed_ticket`, or stop it with `stop_ticket`; for a chain not yet
   started, arrange it again. Tell the owner what you decided.

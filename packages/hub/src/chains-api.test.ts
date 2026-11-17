@@ -1,13 +1,24 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, PushPayload, ServerMessage, type StartCard, TicketList, type WaitingCard, WaitingList } from "@super-agent2/protocol";
+import {
+  type AllowanceReading,
+  brainToolsPath,
+  type MachineReport,
+  protocolVersion,
+  PushPayload,
+  ServerMessage,
+  type StartCard,
+  TicketList,
+  type WaitingCard,
+  WaitingList,
+} from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import { createPushDevice, receivePush } from "./push-device.js";
 import { generateVapidKeys, type VapidKeys } from "./push.js";
-import { chainStartPath } from "./server.js";
+import { allowancePath, chainChoicePath, chainStartPath, engineTablePath } from "./server.js";
 import { assertion, keySet, personClaims, serviceClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { testCredentials } from "./testing/commands.js";
 import { type FakeGitHub, fakeGitHub } from "./testing/github.js";
@@ -47,16 +58,92 @@ afterEach(async () => {
 });
 
 const begun: number[] = [];
+const reassigned: string[] = [];
 
 const work: TicketWork = {
   begin: (ticket) => {
     begun.push(ticket.id);
   },
   stop: () => undefined,
+  reassign: (ticket) => {
+    reassigned.push(`${ticket.id} ${ticket.machine ?? ""} ${ticket.engine ?? ""} ${ticket.model ?? ""} ${ticket.effort ?? ""}`);
+  },
 };
+
+function machineReport(platform: MachineReport["platform"], allowances: readonly AllowanceReading[] = []): MachineReport {
+  return {
+    hostname: "test-machine",
+    platform,
+    release: "1",
+    arch: "x64",
+    user: "owner",
+    slots: { total: 2, free: 2 },
+    programs: [
+      {
+        id: "codex",
+        installed: true,
+        path: "codex",
+        version: "1",
+        models: [
+          { id: "gpt-6.1-sol", efforts: ["medium", "high"] },
+          { id: "gpt-6.1-terra", efforts: ["high"] },
+          { id: "gpt-6-luna", efforts: ["medium"] },
+        ],
+        source: "program",
+        problem: null,
+      },
+      {
+        id: "claude",
+        installed: true,
+        path: "claude",
+        version: "1",
+        models: [
+          { id: "claude-opus-5-5", efforts: ["high", "max"] },
+          { id: "claude-sonnet-5-5", efforts: ["high"] },
+        ],
+        source: "program",
+        problem: null,
+      },
+      { id: "dsh", installed: true, path: "dsh", version: "1", models: [{ id: "deepseek-flash", efforts: ["low", "high", "max"] }], source: "configuration", problem: null },
+    ],
+    allowances: [...allowances],
+  };
+}
+
+const sent: unknown[] = [];
+
+function connect(running: Hub, name: string, report: MachineReport): void {
+  if (running.machines.get(name) === undefined) {
+    running.machines.add({ name, accessClientId: `${name}.access` });
+  }
+  const machine = running.machines.get(name);
+  if (machine === undefined) {
+    throw new Error("machine missing");
+  }
+  running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined }).receive({ type: "hello", protocol: protocolVersion, machine: report });
+}
+
+async function stateDefaults(running: Hub, engine: "codex" | "claude" = "codex"): Promise<void> {
+  const pending = running.tickets.list({ open: true }).filter((ticket) => ticket.state === "pending" && ticket.difficultyReason === null);
+  if (pending.length === 0) {
+    return;
+  }
+  const stated = await callTool(running, "choose_defaults", {
+    chains: pending.map((ticket) => ({
+      ticket: ticket.id,
+      kind: ticket.kind,
+      issues: ticket.issues.map((issue) => ({ number: issue.number, difficulty: "standard" })),
+      reason: { en: "Bounded work in one module", zh: "限定在一个模块里的工作" },
+      platform: "windows",
+      engine,
+    })),
+  });
+  expect(stated.isError, stated.text).toBe(false);
+}
 
 async function start(): Promise<Hub> {
   begun.splice(0);
+  reassigned.splice(0);
   hub = await startTestHub({
     config: { ...testConfig(dataDir), vapid },
     keySource: staticKeySource(keySet(key)),
@@ -69,6 +156,7 @@ async function start(): Promise<Hub> {
       return Promise.resolve(new Response(null, { status: 201 }));
     },
   });
+  connect(hub, "pc", machineReport("win32"));
   return hub;
 }
 
@@ -129,6 +217,7 @@ async function startCards(running: Hub): Promise<StartCard[]> {
 }
 
 async function startBody(running: Hub, ...tickets: number[]): Promise<string> {
+  await stateDefaults(running);
   const cards = await startCards(running);
   return JSON.stringify({
     chains: tickets.map((ticket) => ({ ticket, fingerprint: cards.find((card) => card.ticket.id === ticket)?.fingerprint ?? "" })),
@@ -408,5 +497,216 @@ describe("only the owner starts a chain", () => {
     expect((await startCall(running, { body })).status).toBe(409);
     await running.chains.idle();
     expect(begun).toEqual([1]);
+  });
+});
+
+async function ownerSend(running: Hub, path: string, body: unknown, options: { readonly method?: string; readonly headers?: Record<string, string>; readonly token?: string | null } = {}): Promise<Response> {
+  const headers = new Headers({ origin: base(running), "content-type": "application/json", ...options.headers });
+  const proof = options.token === undefined ? await assertion({ key, clock }) : options.token;
+  if (proof !== null) {
+    headers.set("Cf-Access-Jwt-Assertion", proof);
+  }
+  return fetch(`${base(running)}${path}`, { method: options.method ?? "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
+}
+
+async function cardOf(running: Hub, ticket: number): Promise<StartCard> {
+  const found = (await startCards(running)).find((card) => card.ticket.id === ticket);
+  if (found === undefined) {
+    throw new Error(`no card for ticket ${ticket}`);
+  }
+  return found;
+}
+
+async function stateOne(running: Hub, platform: "windows" | "macos" | "any", engine: "codex" | "claude", difficulty = "complex"): Promise<void> {
+  const stated = await callTool(running, "choose_defaults", {
+    chains: [
+      {
+        ticket: 1,
+        kind: "feature",
+        issues: [{ number: 1, difficulty }],
+        reason: { en: "It changes state across the hub and the page", zh: "改动跨越 hub 和页面的状态" },
+        platform,
+        engine,
+      },
+    ],
+  });
+  expect(stated.isError, stated.text).toBe(false);
+}
+
+function reading(program: "codex" | "claude", state: "available" | "exhausted", readAt: number): AllowanceReading {
+  return {
+    program,
+    readAt,
+    state,
+    remainingPercent: state === "exhausted" ? 0 : 50,
+    resetsAt: readAt + 3_600_000,
+    windows: [{ name: "primary", usedPercent: state === "exhausted" ? 100 : 50, resetsAt: readAt + 3_600_000 }],
+    problem: null,
+  };
+}
+
+describe("start defaults", () => {
+  it("offers a complex Windows chain on the runner with the complex row, its reason in Chinese, and starts what the card showed", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    const before = await cardOf(running, 1);
+    expect(before.choice.missing).toEqual(["defaults"]);
+    await stateOne(running, "windows", "claude");
+    const card = await cardOf(running, 1);
+    expect(card.ticket).toMatchObject({ difficulty: "complex", platform: "windows", brainEngine: "claude" });
+    expect(card.ticket.difficultyReason?.zh).toBe("改动跨越 hub 和页面的状态");
+    expect(card.choice).toEqual({
+      machine: "pc",
+      engine: "claude",
+      model: "claude-opus-5-5",
+      effort: "high",
+      by: { machine: "default", engine: "default", model: "default", effort: "default" },
+      missing: [],
+    });
+    expect(card.machines.map((machine) => machine.name)).toEqual(["pc"]);
+    const changed = await ownerSend(running, chainChoicePath, { ticket: 1, model: "claude-opus-5-5", effort: "max" });
+    expect(changed.status).toBe(202);
+    const after = await cardOf(running, 1);
+    expect(after.choice).toMatchObject({ model: "claude-opus-5-5", effort: "max", by: { model: "owner", effort: "owner", engine: "default" } });
+    expect(after.fingerprint).not.toBe(card.fingerprint);
+    expect((await startCall(running, { body: JSON.stringify({ chains: [{ ticket: 1, fingerprint: card.fingerprint }] }) })).status).toBe(409);
+    expect((await startCall(running, { body: JSON.stringify({ chains: [{ ticket: 1, fingerprint: after.fingerprint }] }) })).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({
+      state: "working",
+      machine: "pc",
+      engine: "claude",
+      model: "claude-opus-5-5",
+      effort: "max",
+      chosenBy: { machine: "default", engine: "default", model: "owner", effort: "owner" },
+      ran: null,
+    });
+    const read = await callTool(running, "read_ticket", { ticket: 1 });
+    expect(read.text).toContain("chosen by: machine default, engine default, model owner, effort owner");
+  });
+
+  it("refuses a model and effort the machine does not offer, and a chain that is not complete, before the start", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "codex");
+    const unsupported = await ownerSend(running, chainChoicePath, { ticket: 1, model: "gpt-6.1-sol", effort: "max" });
+    expect(unsupported.status).toBe(422);
+    expect(await unsupported.json()).toEqual({ error: "unsupported" });
+    expect(running.tickets.get(1)?.ownerChoice).toEqual({ machine: null, engine: null, model: null, effort: null });
+    expect((await ownerSend(running, chainChoicePath, { ticket: 1, machine: "elsewhere" })).status).toBe(422);
+    await stateOne(running, "macos", "codex");
+    const card = await cardOf(running, 1);
+    expect(card.choice.missing).toEqual(["machine"]);
+    const refused = await startCall(running, { body: JSON.stringify({ chains: [{ ticket: 1, fingerprint: card.fingerprint }] }) });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "incomplete" });
+    expect(running.tickets.get(1)?.state).toBe("pending");
+    connect(running, "mini", machineReport("darwin"));
+    expect((await cardOf(running, 1)).choice).toMatchObject({ machine: "mini", engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: [] });
+  });
+
+  it("chooses dsh only when both subscriptions are used up by a current reading", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "codex", "standard");
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "codex", model: "gpt-6.1-terra", effort: "high" });
+    connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now()), reading("claude", "exhausted", clock.now())]));
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "dsh", model: "deepseek-flash", effort: "high", missing: [] });
+    const allowance = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    expect(((await allowance.json()) as { subscriptions: { state: string }[] }).subscriptions.map((entry) => entry.state)).toEqual(["exhausted", "exhausted"]);
+    const told = await callTool(running, "read_allowance", {});
+    expect(told.text).toContain("GPT subscription (codex): used up");
+    connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now()), reading("claude", "available", clock.now())]));
+    expect((await cardOf(running, 1)).choice.engine).toBe("claude");
+    connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now() - 31 * 60_000), reading("claude", "exhausted", clock.now())]));
+    expect((await cardOf(running, 1)).choice.engine).toBe("codex");
+    connect(running, "pc", machineReport("win32"));
+    expect((await cardOf(running, 1)).choice.engine).toBe("codex");
+  });
+
+  it("keeps the table of models in the hub, read by the owner and changed only from the owner's page", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "codex");
+    const read = await fetch(`${base(running)}${engineTablePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    const { table } = (await read.json()) as { table: { codex: { complex: { model: string; effort: string } } } };
+    expect(table.codex.complex).toEqual({ model: "gpt-6.1-sol", effort: "high" });
+    const next = { ...table, codex: { ...table.codex, complex: { model: "gpt-6.1-sol", effort: "medium" } } };
+    expect((await ownerSend(running, engineTablePath, { table: next }, { method: "PUT", headers: { origin: "https://elsewhere.example" } })).status).toBe(403);
+    expect((await ownerSend(running, engineTablePath, { table: next }, { method: "PUT", headers: { "content-type": "text/plain" } })).status).toBe(415);
+    expect((await ownerSend(running, engineTablePath, { table: { codex: {} } }, { method: "PUT" })).status).toBe(400);
+    expect((await cardOf(running, 1)).choice.effort).toBe("high");
+    expect((await ownerSend(running, engineTablePath, { table: next }, { method: "PUT" })).status).toBe(200);
+    expect((await cardOf(running, 1)).choice).toMatchObject({ model: "gpt-6.1-sol", effort: "medium", by: { effort: "default" } });
+  });
+
+  it("guards a change of the card as it guards the start", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "codex");
+    const change = { ticket: 1, engine: "claude" };
+    expect((await ownerSend(running, chainChoicePath, change, { headers: { origin: "https://elsewhere.example" } })).status).toBe(403);
+    expect((await ownerSend(running, chainChoicePath, change, { headers: { "content-type": "text/plain" } })).status).toBe(415);
+    expect((await ownerSend(running, chainChoicePath, change, { token: null, headers: { authorization: `Bearer ${brainToken()}` } })).status).toBe(403);
+    expect((await ownerSend(running, chainChoicePath, change, { token: await assertion({ key, clock, claims: serviceClaims() }) })).status).toBe(403);
+    expect((await ownerSend(running, chainChoicePath, { ...change, extra: 1 })).status).toBe(400);
+    expect((await ownerSend(running, chainChoicePath, { ticket: 9, engine: "claude" })).status).toBe(404);
+    expect(running.tickets.get(1)?.ownerChoice.engine).toBeNull();
+    expect((await ownerSend(running, chainChoicePath, change)).status).toBe(202);
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "claude", model: "claude-opus-5-5", by: { engine: "owner", model: "default" } });
+  });
+
+  it("chooses again for a started ticket through 改派's route, and holds the choice otherwise", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "claude");
+    expect((await ownerSend(running, "/api/tickets/1/reassign", { engine: "codex" })).status).toBe(409);
+    expect((await startCall(running, { body: JSON.stringify({ chains: [{ ticket: 1, fingerprint: (await cardOf(running, 1)).fingerprint }] }) })).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({ engine: "claude", model: "claude-opus-5-5" });
+    expect((await ownerSend(running, "/api/tickets/1/reassign", { engine: "codex", model: "gpt-6.1-sol", effort: "max" })).status).toBe(422);
+    expect((await ownerSend(running, "/api/tickets/1/reassign", { engine: "codex" }, { headers: { origin: "https://elsewhere.example" } })).status).toBe(403);
+    expect((await ownerSend(running, "/api/tickets/1/reassign", { engine: "codex" })).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({
+      state: "working",
+      machine: "pc",
+      engine: "codex",
+      model: "gpt-6.1-sol",
+      effort: "high",
+      chosenBy: { machine: "default", engine: "owner", model: "default", effort: "default" },
+    });
+    expect(reassigned).toEqual(["1 pc codex gpt-6.1-sol high"]);
+  });
+
+  it("refuses defaults that do not name every issue, or a code chain without its engine", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    const wrong = await callTool(running, "choose_defaults", {
+      chains: [{ ticket: 1, kind: "feature", issues: [{ number: 2, difficulty: "complex" }], reason: { en: "x", zh: "某事" }, platform: "any", engine: "codex" }],
+    });
+    expect(wrong).toMatchObject({ isError: true });
+    expect(wrong.text).toContain("give the difficulty of each of them");
+    const noEngine = await callTool(running, "choose_defaults", {
+      chains: [{ ticket: 1, kind: "feature", issues: [{ number: 1, difficulty: "complex" }], reason: { en: "x", zh: "某事" }, platform: "any" }],
+    });
+    expect(noEngine.text).toContain("choose its engine");
+    const twoLines = await callTool(running, "choose_defaults", {
+      chains: [{ ticket: 1, kind: "feature", issues: [{ number: 1, difficulty: "complex" }], reason: { en: "a\nb", zh: "某事" }, platform: "any", engine: "codex" }],
+    });
+    expect(twoLines.text).toContain("one line");
+    expect(running.tickets.get(1)?.difficultyReason).toBeNull();
+  });
+
+  it("forgets what was stated when an arrangement changes a chain's issues", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await fileIssue(running, "Show the state", "显示状态");
+    await stateDefaults(running);
+    expect(running.tickets.get(1)?.difficultyReason).not.toBeNull();
+    await callTool(running, "arrange_chains", { chains: [{ name: "one", repository: sandbox, issues: [1] }] });
+    expect(running.tickets.get(1)?.difficultyReason).not.toBeNull();
+    await callTool(running, "arrange_chains", {
+      chains: [{ name: "both", repository: sandbox, issues: [1, 2], title: { en: "Both", zh: "两件" }, summary: { en: "Both.", zh: "两件。" } }],
+    });
+    expect(running.tickets.get(1)).toMatchObject({ difficultyReason: null, brainEngine: null });
+    expect((await cardOf(running, 1)).choice.missing).toEqual(["defaults"]);
   });
 });

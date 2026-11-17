@@ -1,14 +1,23 @@
 import { createHash } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
+  applyChange,
   arrangedAfter,
   canStartAlone,
   cardKey,
+  chainDifficulty,
   type ChainNode,
   type ChainStartItem,
+  type ChoiceChange,
   type Difficulty,
-  difficulties,
   findCycle,
+  isComplete,
+  type MachineChoice,
+  noOwnerChoice,
+  type OwnerChoice,
+  ownerGivesUnoffered,
+  type ProgramId,
+  type StartChoice,
   GeneratedText,
   inWorkingOrder,
   indexOf,
@@ -27,7 +36,7 @@ import { z } from "zod";
 import type { AccessVerifier } from "./access.js";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
-import { TicketError, type TicketService, type TicketWork, type WaitToSet } from "./tickets.js";
+import { type ChosenRun, type DefaultsStatement, TicketError, type TicketService, type TicketWork, type WaitToSet } from "./tickets.js";
 
 export interface ChainSpec {
   readonly name: string;
@@ -40,6 +49,29 @@ export interface ChainSpec {
   readonly kind?: TicketKind | undefined;
   readonly difficulty?: Difficulty | undefined;
   readonly platform?: Platform | undefined;
+}
+
+export interface IssueDifficulty {
+  readonly number: number;
+  readonly difficulty: Difficulty;
+}
+
+export interface DefaultsSpec {
+  readonly ticket: number;
+  readonly kind: TicketKind;
+  readonly issues?: readonly IssueDifficulty[] | undefined;
+  readonly difficulty?: Difficulty | undefined;
+  readonly reason: GeneratedText;
+  readonly platform: Platform;
+  readonly engine?: ProgramId | undefined;
+}
+
+export type StateOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
+
+export interface ChainDefaults {
+  resolve(ticket: Ticket, owner?: OwnerChoice): StartChoice;
+  machinesFor(ticket: Ticket): MachineChoice[];
+  machines(): MachineChoice[];
 }
 
 export interface ArrangedChain {
@@ -55,6 +87,7 @@ export type TicketOutcome = { readonly ok: true; readonly ticket: Ticket; readon
 
 export interface ChainArranger {
   arrange(chains: readonly ChainSpec[]): ArrangeOutcome;
+  state(defaults: readonly DefaultsSpec[]): StateOutcome;
   deployed(ticket: number): TicketOutcome;
   proceed(ticket: number): TicketOutcome;
 }
@@ -64,12 +97,22 @@ export interface OwnerStart {
   readonly chains: readonly ChainStartItem[];
 }
 
-export type StartError = "forbidden" | "conflict";
+export type StartError = "forbidden" | "conflict" | "incomplete" | "unsupported" | "not_found";
 
 export type StartOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly error: StartError };
 
+export interface OwnerChange {
+  readonly assertion: string | undefined;
+  readonly ticket: number;
+  readonly change: ChoiceChange;
+}
+
+export const reassignableStates: readonly string[] = ["waiting", "working", "verifying"];
+
 export interface ChainStarter {
   start(given: OwnerStart): Promise<StartOutcome>;
+  choose(given: OwnerChange): Promise<StartOutcome>;
+  reassign(given: OwnerChange): Promise<StartOutcome>;
 }
 
 export type Tell = (conversation: string | null, notice: string, prompt: string) => void;
@@ -91,12 +134,18 @@ export interface ChainsOptions {
   readonly ownerEmail: string;
   readonly work?: TicketWork;
   readonly tell?: Tell;
+  readonly defaults: ChainDefaults;
 }
 
 const everyTicket = 100_000;
 
-export function chainFingerprint(tickets: readonly Ticket[]): string {
-  const shape = tickets.map((ticket) => [
+export interface ShownChain {
+  readonly ticket: Ticket;
+  readonly choice: StartChoice;
+}
+
+export function chainFingerprint(shown: readonly ShownChain[]): string {
+  const shape = shown.map(({ ticket, choice }) => [
     ticket.id,
     ticket.state,
     ticket.repository,
@@ -107,6 +156,8 @@ export function chainFingerprint(tickets: readonly Ticket[]): string {
     ticket.title.zh,
     ticket.issues.map((issue) => [issue.repository, issue.number, issue.title.en, issue.title.zh]),
     ticket.waits.map((wait) => [wait.ticket, wait.deployment, wait.waived]),
+    ticket.difficultyReason === null ? null : [ticket.difficultyReason.en, ticket.difficultyReason.zh],
+    [choice.machine, choice.engine, choice.model, choice.effort, choice.by.machine, choice.by.engine, choice.by.model, choice.by.effort, choice.missing],
   ]);
   return createHash("sha256").update(JSON.stringify(shape)).digest("hex");
 }
@@ -115,14 +166,11 @@ function issueKey(repository: string, number: number): string {
   return `${repository.toLowerCase()}#${number}`;
 }
 
-function highest(values: readonly (Difficulty | null)[]): Difficulty | null {
-  let best: Difficulty | null = null;
-  for (const value of values) {
-    if (value !== null && (best === null || difficulties.indexOf(value) > difficulties.indexOf(best))) {
-      best = value;
-    }
+export function chosenRun(choice: StartChoice | undefined): ChosenRun | undefined {
+  if (choice === undefined || !isComplete(choice) || choice.machine === null || choice.engine === null || choice.model === null || choice.effort === null) {
+    return undefined;
   }
-  return best;
+  return { machine: choice.machine, engine: choice.engine, model: choice.model, effort: choice.effort, by: choice.by };
 }
 
 const BeginRow = z.object({ ticket_id: z.number().int() });
@@ -141,6 +189,7 @@ export function createChains(options: ChainsOptions): Chains {
   const owner = options.ownerEmail.toLowerCase();
   const tell: Tell = options.tell ?? (() => undefined);
   const work = options.work;
+  const { defaults } = options;
   const running = new Set<Promise<void>>();
   const toldStopped = new Set<number>();
   let advancing = false;
@@ -179,10 +228,12 @@ export function createChains(options: ChainsOptions): Chains {
     if (closure.length === 0) {
       return undefined;
     }
-    return chainFingerprint(closure.flatMap((id) => {
-      const ticket = index.get(id);
-      return ticket === undefined ? [] : [ticket];
-    }));
+    return chainFingerprint(
+      closure.flatMap((id) => {
+        const ticket = index.get(id);
+        return ticket === undefined ? [] : [{ ticket, choice: defaults.resolve(ticket) }];
+      }),
+    );
   };
 
   const begin = (ids: readonly number[]) => {
@@ -318,6 +369,15 @@ export function createChains(options: ChainsOptions): Chains {
       return { ok: false, error: "conflict" };
     }
     const order = inWorkingOrder([...chosen], index);
+    const choices = new Map<number, StartChoice>();
+    for (const id of order) {
+      const ticket = index.get(id);
+      const choice = ticket === undefined ? undefined : defaults.resolve(ticket);
+      if (choice === undefined || !isComplete(choice)) {
+        return { ok: false, error: "incomplete" };
+      }
+      choices.set(id, choice);
+    }
     let began: number[];
     try {
       began = tickets.change((writes) => {
@@ -327,6 +387,11 @@ export function createChains(options: ChainsOptions): Chains {
           if (ticket?.state !== "pending") {
             throw new TicketError(`Ticket ${id} is no longer pending`);
           }
+          const run = chosenRun(choices.get(id));
+          if (run === undefined) {
+            throw new TicketError(`Ticket ${id} has no complete choice`);
+          }
+          writes.choose(id, run);
           const lookup = new Map<number, ChainNode>();
           for (const wait of ticket.waits) {
             const before = writes.get(wait.ticket);
@@ -354,6 +419,163 @@ export function createChains(options: ChainsOptions): Chains {
     return {
       ok: true,
       tickets: order.flatMap((id) => {
+        const ticket = tickets.get(id);
+        return ticket === undefined ? [] : [ticket];
+      }),
+    };
+  };
+
+  const choose = async (given: OwnerChange): Promise<StartOutcome> => {
+    if (!(await isOwner(given.assertion))) {
+      return { ok: false, error: "forbidden" };
+    }
+    const ticket = tickets.get(given.ticket);
+    if (ticket === undefined) {
+      return { ok: false, error: "not_found" };
+    }
+    if (closed || ticket.state !== "pending") {
+      return { ok: false, error: "conflict" };
+    }
+    const owner = applyChange(ticket.ownerChoice, given.change);
+    const choice = defaults.resolve(ticket, owner);
+    if (ownerGivesUnoffered(owner, choice, defaults.machines())) {
+      return { ok: false, error: "unsupported" };
+    }
+    try {
+      tickets.change((writes) => {
+        if (writes.get(ticket.id)?.state !== "pending") {
+          throw new TicketError(`Ticket ${ticket.id} is no longer pending`);
+        }
+        writes.ownerChoice(ticket.id, owner);
+      });
+    } catch (error) {
+      if (error instanceof TicketError) {
+        return { ok: false, error: "conflict" };
+      }
+      throw error;
+    }
+    const now = tickets.get(ticket.id);
+    return { ok: true, tickets: now === undefined ? [] : [now] };
+  };
+
+  const reassign = async (given: OwnerChange): Promise<StartOutcome> => {
+    if (!(await isOwner(given.assertion))) {
+      return { ok: false, error: "forbidden" };
+    }
+    const ticket = tickets.get(given.ticket);
+    if (ticket === undefined) {
+      return { ok: false, error: "not_found" };
+    }
+    if (closed || !reassignableStates.includes(ticket.state)) {
+      return { ok: false, error: "conflict" };
+    }
+    const owner = applyChange(noOwnerChoice, given.change);
+    const choice = defaults.resolve(ticket, owner);
+    if (ownerGivesUnoffered(owner, choice, defaults.machines())) {
+      return { ok: false, error: "unsupported" };
+    }
+    const run = chosenRun(choice);
+    if (run === undefined) {
+      return { ok: false, error: "incomplete" };
+    }
+    try {
+      tickets.change((writes) => {
+        if (writes.get(ticket.id)?.state !== ticket.state) {
+          throw new TicketError(`Ticket ${ticket.id} changed meanwhile`);
+        }
+        writes.ownerChoice(ticket.id, owner);
+        writes.choose(ticket.id, run);
+      });
+    } catch (error) {
+      if (error instanceof TicketError) {
+        return { ok: false, error: "conflict" };
+      }
+      throw error;
+    }
+    const now = tickets.get(ticket.id);
+    if (now !== undefined) {
+      try {
+        await work?.reassign?.(now);
+      } catch (error) {
+        tell(
+          now.conversation,
+          text("notice.ticketBeginFailed", { ticket: now.id }),
+          `[hub] The owner reassigned ${described(now)} to ${run.machine} with ${run.engine} ${run.model} ${run.effort}, but its work could not restart there: ${reasonOf(error)}. Decide what happens to it and tell the owner.`,
+        );
+      }
+    }
+    return { ok: true, tickets: now === undefined ? [] : [now] };
+  };
+
+  const state = (specs: readonly DefaultsSpec[]): StateOutcome => {
+    const refuse = (reason: string): StateOutcome => ({ ok: false, reason: `Nothing was changed: ${reason}` });
+    if (specs.length === 0) {
+      return refuse("no chain was named");
+    }
+    const statements = new Map<number, DefaultsStatement>();
+    for (const spec of specs) {
+      if (statements.has(spec.ticket)) {
+        return refuse(`ticket ${spec.ticket} is named twice`);
+      }
+      const ticket = tickets.get(spec.ticket);
+      if (ticket === undefined) {
+        return refuse(`there is no ticket ${spec.ticket}`);
+      }
+      if (ticket.state !== "pending") {
+        return refuse(`ticket ${spec.ticket} is ${ticket.state}; defaults are stated for chains that have not started`);
+      }
+      if ((spec.kind === "writing") !== (ticket.kind === "writing")) {
+        return refuse(`ticket ${spec.ticket} is ${ticket.kind === "writing" ? "writing" : "code work"} and cannot be stated as ${spec.kind}`);
+      }
+      if (!GeneratedText.safeParse(spec.reason).success || /[\r\n]/.test(spec.reason.en) || /[\r\n]/.test(spec.reason.zh)) {
+        return refuse(`the reason for ticket ${spec.ticket} must be one line in English with a one-line Chinese copy`);
+      }
+      let difficulty: Difficulty | null;
+      if (ticket.issues.length > 0) {
+        const given = spec.issues ?? [];
+        const named = new Set(given.map((entry) => entry.number));
+        const own = new Set(ticket.issues.map((issue) => issue.number));
+        if (given.length !== named.size || named.size !== own.size || [...own].some((number) => !named.has(number))) {
+          return refuse(
+            `ticket ${spec.ticket} holds issues ${[...own].map((number) => `#${number}`).join(", ")}; give the difficulty of each of them, and only them, in issues`,
+          );
+        }
+        difficulty = chainDifficulty(given.map((entry) => entry.difficulty));
+      } else {
+        difficulty = spec.difficulty ?? null;
+      }
+      if (difficulty === null) {
+        return refuse(`ticket ${spec.ticket} needs a difficulty`);
+      }
+      if (spec.kind !== "writing" && spec.engine !== "codex" && spec.engine !== "claude") {
+        return refuse(`ticket ${spec.ticket} is code work: choose its engine, codex or claude, from what is left on each subscription`);
+      }
+      statements.set(spec.ticket, {
+        kind: spec.kind,
+        difficulty,
+        difficultyReason: { en: spec.reason.en.trim(), zh: spec.reason.zh.trim() },
+        platform: spec.platform,
+        brainEngine: spec.kind === "writing" ? "antigravity" : (spec.engine ?? null),
+      });
+    }
+    try {
+      tickets.change((writes) => {
+        for (const [id, statement] of statements) {
+          if (writes.get(id)?.state !== "pending") {
+            throw new TicketError(`Ticket ${id} is no longer pending`);
+          }
+          writes.state(id, statement);
+        }
+      });
+    } catch (error) {
+      if (error instanceof TicketError) {
+        return refuse(error.message);
+      }
+      throw error;
+    }
+    return {
+      ok: true,
+      tickets: [...statements.keys()].flatMap((id) => {
         const ticket = tickets.get(id);
         return ticket === undefined ? [] : [ticket];
       }),
@@ -480,7 +702,7 @@ export function createChains(options: ChainsOptions): Chains {
         title,
         summary,
         kind: spec.kind ?? head.kind,
-        difficulty: spec.difficulty ?? highest(from.map((ticket) => ticket.difficulty)),
+        difficulty: spec.difficulty ?? chainDifficulty(from.map((ticket) => ticket.difficulty)),
         platform: spec.platform ?? platforms[0] ?? (from.some((ticket) => ticket.platform === "any") ? "any" : null),
         conversation: head.conversation,
       });
@@ -596,7 +818,16 @@ export function createChains(options: ChainsOptions): Chains {
               conversation: plan.conversation ?? undefined,
             });
           if (existing !== undefined) {
+            const before = writes.get(id);
+            const sameIssues =
+              before !== undefined &&
+              before.issues.length === issues.length &&
+              before.issues.every((issue, position) => issue.number === issues[position]?.number && issue.repository === issues[position]?.repository);
+            const sameShape = before !== undefined && before.kind === plan.kind && before.difficulty === plan.difficulty && before.platform === plan.platform;
             writes.setIssues(id, issues);
+            if (!sameIssues || !sameShape) {
+              writes.forgetDefaults(id);
+            }
           }
           writes.describe(id, plan);
           real.set(spec.name, id);
@@ -707,14 +938,16 @@ export function createChains(options: ChainsOptions): Chains {
               return before === undefined ? [] : [{ id: before.id, title: before.title, repository: before.repository, state: before.state }];
             }),
             startable: canStartAlone(ticket, listIndex),
+            choice: defaults.resolve(ticket),
+            machines: defaults.machinesFor(ticket),
           },
         ];
       });
   };
 
   return {
-    arranger: { arrange, deployed, proceed },
-    starter: { start },
+    arranger: { arrange, state, deployed, proceed },
+    starter: { start, choose, reassign },
     cards,
     resume: () => {
       begin(selectDue.all().map((row) => BeginRow.parse(row).ticket_id));

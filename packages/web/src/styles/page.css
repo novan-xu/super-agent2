@@ -97,3 +97,6 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .chain-issue::before { content: counter(chain); flex: none; min-width: 1.25em; color: var(--muted); font-family: var(--font-mono); font-size: var(--text-xs); text-align: right; }
 .chain-issue .check-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .chain-issue .check-meta { flex: none; }
+.chain-reason { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.6; overflow-wrap: anywhere; }
+.chain-missing { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--warn); font-size: var(--text-sm); }
+.field--owner, select.field--owner { border-color: var(--accent); }

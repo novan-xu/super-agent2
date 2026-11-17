@@ -1,4 +1,6 @@
 import {
+  CodeEngineChoice,
+  codeEngineChoices,
   type CommandRecord,
   CommandRequest,
   Difficulty,
@@ -14,11 +16,12 @@ import {
   ticketKinds,
 } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { ArrangeOutcome, ChainArranger, TicketOutcome } from "./chains.js";
+import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
+import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
-import { clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
+import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 
 export const supportedMcpVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -102,6 +105,18 @@ const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1).max(10
 
 const TicketArgument = z.object({ ticket: z.number().int().positive() });
 
+const DefaultsArgument = z.object({
+  ticket: z.number().int().positive(),
+  kind: TicketKind,
+  issues: z.array(z.object({ number: z.number().int().positive(), difficulty: Difficulty })).max(100).optional(),
+  difficulty: Difficulty.optional(),
+  reason: GeneratedText,
+  platform: Platform,
+  engine: CodeEngineChoice.optional(),
+});
+
+const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1).max(100) });
+
 const generatedSchema = (what: string) => ({
   type: "object",
   properties: {
@@ -147,6 +162,75 @@ export interface TicketTools {
   readonly tickets: TicketService;
   readonly filer: IssueFiler;
   readonly chains?: ChainArranger;
+  readonly defaults?: StartDefaults;
+}
+
+function defaultsDefinitions() {
+  return [
+    {
+      name: "read_allowance",
+      title: "Read what is left on the subscriptions",
+      description:
+        "Read what is left on the GPT subscription (Codex) and the Claude subscription (Claude Code), as the runners last read it from the programs themselves, and the work machines online with their system, programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "choose_defaults",
+      title: "State each chain's kind, difficulty, platform and engine",
+      description: [
+        "For each chain you arranged (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the chain's card; its platform (macos, windows or any); and, for code work, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
+        "Difficulty: mechanical is a fixed procedure with a known result; standard is bounded implementation or diagnosis; complex is reasoning across modules, state or concurrency changes, or an open design decision.",
+        "The hub then resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty. dsh is used only when both subscriptions are used up; writing goes to Antigravity.",
+        "These are defaults: the owner can change the machine, engine, model and effort on the card, and the owner's choice wins. Rearranging a chain's issues clears what was stated for it; state it again.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          chains: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: {
+                ticket: { type: "integer", minimum: 1, description: "The chain's ticket number" },
+                kind: { type: "string", enum: [...ticketKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI; writing: pure prose" },
+                issues: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      number: { type: "integer", minimum: 1 },
+                      difficulty: { type: "string", enum: [...difficulties] },
+                    },
+                    required: ["number", "difficulty"],
+                    additionalProperties: false,
+                  },
+                  description: "Every issue of the chain with its difficulty",
+                },
+                difficulty: { type: "string", enum: [...difficulties], description: "Only for a chain without issues (writing)" },
+                reason: generatedSchema("one-line reason for the chain's difficulty"),
+                platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
+                engine: { type: "string", enum: [...codeEngineChoices], description: "For code work: codex (GPT) or claude (Claude Code), by what is left on each subscription" },
+              },
+              required: ["ticket", "kind", "reason", "platform"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["chains"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function statedText(outcome: StateOutcome, defaults: StartDefaults): ToolResult {
+  if (!outcome.ok) {
+    return { text: outcome.reason, isError: true };
+  }
+  const lines = outcome.tickets.map((ticket) => `Ticket ${ticket.id}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${choiceText(defaults.resolve(ticket))}`);
+  lines.push("The owner sees these on the cards in 工作台 and can change them before the start.");
+  return { text: lines.join("\n") };
 }
 
 function chainDefinitions() {
@@ -450,6 +534,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
+      ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
     ];
   };
 
@@ -593,6 +678,22 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
           : { text: `Ticket ${parsed.data.ticket} is ${result.ticket?.state ?? "finished"} and cannot be stopped.`, isError: true };
+      }
+      case "read_allowance": {
+        if (tools.defaults === undefined) {
+          return undefined;
+        }
+        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines()) };
+      }
+      case "choose_defaults": {
+        if (tools.defaults === undefined || tools.chains === undefined) {
+          return undefined;
+        }
+        const parsed = DefaultsArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return statedText(tools.chains.state(parsed.data.chains), tools.defaults);
       }
       default:
         return chainCall(tools.chains, name, raw);

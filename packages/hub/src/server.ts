@@ -2,9 +2,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import {
+  type AllowanceList,
   BrainMessage,
   brainLinkPath,
+  ChainChoice,
   ChainStart,
+  ChoiceChange,
+  EngineTableBody,
   brainToolsPath,
   ClientMessage,
   conversationHeader,
@@ -41,7 +45,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { z } from "zod";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
 import type { BrainTokenCheck } from "./brain-token.js";
-import type { ChainStarter } from "./chains.js";
+import type { ChainStarter, StartError, StartOutcome } from "./chains.js";
+import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
@@ -66,6 +71,19 @@ export const pushSubscriptionPath = "/api/push/subscription";
 export const machinesPath = "/api/machines";
 export const ticketsPath = "/api/tickets";
 export const chainStartPath = "/api/chains/start";
+export const chainChoicePath = "/api/chains/choice";
+export const engineTablePath = "/api/engine-table";
+export const allowancePath = "/api/allowance";
+
+const reassignRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/reassign$/;
+
+const startStatus: Readonly<Record<StartError, number>> = {
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
+  incomplete: 409,
+  unsupported: 422,
+};
 
 const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
@@ -95,6 +113,7 @@ export interface HubServerOptions {
   readonly runners?: Runners;
   readonly tickets?: TicketService;
   readonly chains?: ChainStarter;
+  readonly defaults?: StartDefaults;
   readonly heartbeatMilliseconds?: number;
 }
 
@@ -130,7 +149,9 @@ type Body =
   | PushState
   | MachineList
   | TicketList
-  | TicketDetail;
+  | TicketDetail
+  | EngineTableBody
+  | AllowanceList;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -404,6 +425,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
       await startChains(request, response);
       return;
     }
+    if (path === chainChoicePath && method === "POST") {
+      await changeChoice(request, response, "choose");
+      return;
+    }
+    const reassigned = reassignRoute.exec(path)?.[1];
+    if (reassigned !== undefined && method === "POST") {
+      await changeChoice(request, response, "reassign", Number(reassigned));
+      return;
+    }
+    if ((path === engineTablePath || path === allowancePath) && options.defaults !== undefined && (await serveDefaults(request, response, path, method, options.defaults))) {
+      return;
+    }
     if ((method === "GET" || method === "HEAD") && (await servePage(response, path, method === "HEAD"))) {
       return;
     }
@@ -491,6 +524,88 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     options.waiting?.refresh();
     sendJson(response, 202, { tickets: [...outcome.tickets] });
+  };
+
+  const ownerAction = (request: IncomingMessage, response: ServerResponse): boolean => {
+    if (!isSameOrigin(request)) {
+      request.resume();
+      sendJson(response, 403, { error: "forbidden" });
+      return false;
+    }
+    if (!isJson(request)) {
+      request.resume();
+      sendJson(response, 415, { error: "unsupported_media_type" });
+      return false;
+    }
+    return true;
+  };
+
+  const sendOutcome = (response: ServerResponse, outcome: StartOutcome): void => {
+    if (outcome.ok) {
+      options.waiting?.refresh();
+      sendJson(response, 202, { tickets: [...outcome.tickets] });
+      return;
+    }
+    sendJson(response, startStatus[outcome.error], { error: outcome.error });
+  };
+
+  const changeChoice = async (request: IncomingMessage, response: ServerResponse, action: "choose" | "reassign", ticket?: number): Promise<void> => {
+    const chains = options.chains;
+    if (chains === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!ownerAction(request, response)) {
+      return;
+    }
+    const body = await readBody(request);
+    if (action === "choose") {
+      const given = parseJson(body, ChainChoice.strict());
+      if (given === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return;
+      }
+      const { ticket: id, ...change } = given;
+      sendOutcome(response, await chains.choose({ assertion: headerValue(request), ticket: id, change }));
+      return;
+    }
+    const change = parseJson(body, ChoiceChange.strict());
+    if (change === undefined || ticket === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    sendOutcome(response, await chains.reassign({ assertion: headerValue(request), ticket, change }));
+  };
+
+  const serveDefaults = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, defaults: StartDefaults): Promise<boolean> => {
+    if (path === allowancePath) {
+      if (method !== "GET") {
+        return false;
+      }
+      const subscriptions = defaults.subscriptions();
+      sendJson(response, 200, { subscriptions: [subscriptions.codex, subscriptions.claude] });
+      return true;
+    }
+    if (method === "GET") {
+      sendJson(response, 200, { table: defaults.table() });
+      return true;
+    }
+    if (method !== "PUT") {
+      return false;
+    }
+    if (!ownerAction(request, response)) {
+      return true;
+    }
+    const given = parseJson(await readBody(request), EngineTableBody.strict());
+    if (given === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return true;
+    }
+    const table = defaults.setTable(given.table);
+    options.waiting?.refresh();
+    sendJson(response, 200, { table });
+    return true;
   };
 
   const servePush = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {

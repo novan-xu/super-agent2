@@ -73,6 +73,43 @@ export const TicketWait = z.object({
 });
 export type TicketWait = z.infer<typeof TicketWait>;
 
+export const choosers = ["default", "owner"] as const;
+export const Chooser = z.enum(choosers);
+export type Chooser = z.infer<typeof Chooser>;
+
+export const choiceFields = ["machine", "engine", "model", "effort"] as const;
+export type ChoiceField = (typeof choiceFields)[number];
+
+export const ModelName = z.string().trim().min(1).max(200).regex(/^[^\s]+$/);
+export const EffortName = z.string().trim().min(1).max(50).regex(/^[^\s]+$/);
+
+export const OwnerChoice = z.object({
+  machine: z.string().min(1).max(63).nullable(),
+  engine: ProgramId.nullable(),
+  model: ModelName.nullable(),
+  effort: EffortName.nullable(),
+});
+export type OwnerChoice = z.infer<typeof OwnerChoice>;
+
+export const noOwnerChoice: OwnerChoice = { machine: null, engine: null, model: null, effort: null };
+
+export const ChosenBy = z.object({
+  machine: Chooser,
+  engine: Chooser,
+  model: Chooser,
+  effort: Chooser,
+});
+export type ChosenBy = z.infer<typeof ChosenBy>;
+
+export const TicketRun = z.object({
+  machine: z.string().min(1),
+  engine: ProgramId,
+  model: z.string().min(1),
+  effort: z.string().min(1),
+  at: z.number().int(),
+});
+export type TicketRun = z.infer<typeof TicketRun>;
+
 export const Ticket = z.object({
   id: TicketId,
   repository: RepositoryName.nullable(),
@@ -81,12 +118,18 @@ export const Ticket = z.object({
   summary: GeneratedText,
   kind: TicketKind,
   difficulty: Difficulty.nullable(),
+  difficultyReason: GeneratedText.nullable(),
   platform: Platform.nullable(),
+  brainEngine: ProgramId.nullable(),
+  ownerChoice: OwnerChoice,
   state: TicketState,
   machine: z.string().nullable(),
   engine: ProgramId.nullable(),
   model: z.string().nullable(),
   effort: z.string().nullable(),
+  chosenBy: ChosenBy.nullable(),
+  chosenAt: z.number().int().nullable(),
+  ran: TicketRun.nullable(),
   branch: z.string().nullable(),
   pullRequest: IssueNumber.nullable(),
   round: z.number().int().nonnegative(),

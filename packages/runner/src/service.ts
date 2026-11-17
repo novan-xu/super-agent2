@@ -1,4 +1,5 @@
-import type { ProgramReport } from "@super-agent2/protocol";
+import type { AllowanceReading, ProgramReport } from "@super-agent2/protocol";
+import { readAllowances } from "./allowance.js";
 import { loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
@@ -14,11 +15,14 @@ export interface RunnerServiceOptions {
   readonly connect?: Connect;
   readonly retryDelay?: (attempt: number) => number;
   readonly reprobeMilliseconds?: number;
+  readonly allowanceMilliseconds?: number;
+  readonly now?: () => number;
 }
 
 export interface RunnerService {
   readonly link: RunnerLink;
   readonly probed: Promise<void>;
+  readonly allowanceRead: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -65,9 +69,10 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     log(`Stopped ${leftovers.length} process tree(s) left running by an earlier runner: ${leftovers.join(", ")}`);
   }
   let programs: ProgramReport[] = [];
+  let allowances: AllowanceReading[] = [];
   const link = createRunnerLink({
     config,
-    report: () => machineReport(config.slots, programs),
+    report: () => machineReport(config.slots, programs, process.platform, allowances),
     execute: (job, sink) => runShell(job, sink, { environment: options.environment }),
     ledger,
     ...(options.connect === undefined ? {} : { connect: options.connect }),
@@ -91,11 +96,37 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     void probe().catch(() => undefined);
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
+  const now = options.now ?? Date.now;
+  let reading = false;
+  const readAllowance = async () => {
+    if (reading) {
+      return;
+    }
+    reading = true;
+    try {
+      allowances = await readAllowances(prober, programs, now);
+      log(
+        `Allowance: ${allowances
+          .map((entry) => (entry.state === "unknown" ? `${entry.program} unknown` : `${entry.program} ${entry.state} with ${entry.remainingPercent ?? "?"}% left`))
+          .join(", ")}`,
+      );
+      link.update();
+    } finally {
+      reading = false;
+    }
+  };
+  const allowanceRead = probed.then(readAllowance).catch((error: unknown) => log(`Could not read the allowance: ${error instanceof Error ? error.message : String(error)}`));
+  const allowanceTimer = setInterval(() => {
+    void readAllowance().catch(() => undefined);
+  }, options.allowanceMilliseconds ?? 10 * 60 * 1000);
+  allowanceTimer.unref();
   return {
     link,
     probed,
+    allowanceRead,
     close: async () => {
       clearInterval(timer);
+      clearInterval(allowanceTimer);
       await link.close();
     },
   };

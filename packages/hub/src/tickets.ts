@@ -1,5 +1,6 @@
 import {
   canMoveTicket,
+  ChosenBy,
   type Difficulty,
   GeneratedText,
   openTicketStates,
@@ -10,7 +11,10 @@ import {
   TicketIssue,
   type TicketKind,
   TicketMove,
+  TicketRun,
   type TicketState,
+  type OwnerChoice,
+  type ProgramId,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
@@ -36,6 +40,22 @@ export interface TicketDescription {
   readonly platform: Platform | null;
 }
 
+export interface DefaultsStatement {
+  readonly kind: TicketKind;
+  readonly difficulty: Difficulty | null;
+  readonly difficultyReason: GeneratedText;
+  readonly platform: Platform;
+  readonly brainEngine: ProgramId | null;
+}
+
+export interface ChosenRun {
+  readonly machine: string;
+  readonly engine: ProgramId;
+  readonly model: string;
+  readonly effort: string;
+  readonly by: ChosenBy;
+}
+
 export interface WaitToSet {
   readonly ticket: number;
   readonly deployment: boolean;
@@ -55,6 +75,7 @@ export type TicketListener = (ticket: Ticket) => void;
 export interface TicketWork {
   begin(ticket: Ticket): void | Promise<void>;
   stop(ticket: Ticket): void;
+  reassign?(ticket: Ticket): void | Promise<void>;
 }
 
 export const noTicketWork: TicketWork = { begin: () => undefined, stop: () => undefined };
@@ -70,6 +91,11 @@ export interface TicketWrites {
   deployed(id: number): void;
   move(id: number, to: TicketState, reason?: GeneratedText): Ticket;
   touched(id: number): void;
+  state(id: number, statement: DefaultsStatement): void;
+  forgetDefaults(id: number): void;
+  ownerChoice(id: number, choice: OwnerChoice): void;
+  choose(id: number, chosen: ChosenRun): void;
+  ran(id: number, run: TicketRun): void;
 }
 
 export interface TicketService {
@@ -103,7 +129,17 @@ const TicketRow = z.object({
   summary_en: z.string(),
   summary_zh: z.string(),
   difficulty: z.string().nullable(),
+  difficulty_reason_en: z.string().nullable(),
+  difficulty_reason_zh: z.string().nullable(),
   platform: z.string().nullable(),
+  brain_engine: z.string().nullable(),
+  owner_machine: z.string().nullable(),
+  owner_engine: z.string().nullable(),
+  owner_model: z.string().nullable(),
+  owner_effort: z.string().nullable(),
+  chosen_by: z.string().nullable(),
+  chosen_at: z.number().int().nullable(),
+  ran: z.string().nullable(),
   state: z.string(),
   machine: z.string().nullable(),
   engine: z.string().nullable(),
@@ -150,6 +186,17 @@ const SeqRow = z.object({ seq: z.number().int().nullable() });
 
 function pair(en: string | null, zh: string | null): GeneratedText | null {
   return en === null || zh === null ? null : { en, zh };
+}
+
+function parsedJson(text: string | null): unknown {
+  if (text === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 const defaultLimit = 200;
@@ -201,6 +248,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   );
   const updateState = connection.prepare("UPDATE tickets SET state = ?, updated_at = ? WHERE id = ? AND state = ?");
   const updateStopReason = connection.prepare("UPDATE tickets SET stop_reason_en = ?, stop_reason_zh = ? WHERE id = ?");
+  const updateStatement = connection.prepare(
+    "UPDATE tickets SET kind = ?, difficulty = ?, difficulty_reason_en = ?, difficulty_reason_zh = ?, platform = ?, brain_engine = ? WHERE id = ?",
+  );
+  const clearDefaults = connection.prepare(
+    "UPDATE tickets SET difficulty_reason_en = NULL, difficulty_reason_zh = NULL, brain_engine = NULL, owner_machine = NULL, owner_engine = NULL, owner_model = NULL, owner_effort = NULL WHERE id = ?",
+  );
+  const updateOwnerChoice = connection.prepare("UPDATE tickets SET owner_machine = ?, owner_engine = ?, owner_model = ?, owner_effort = ? WHERE id = ?");
+  const updateChosen = connection.prepare("UPDATE tickets SET machine = ?, engine = ?, model = ?, effort = ?, chosen_by = ?, chosen_at = ? WHERE id = ?");
+  const updateRan = connection.prepare("UPDATE tickets SET ran = ? WHERE id = ?");
 
   const toTicket = (row: unknown): Ticket => {
     const value = TicketRow.parse(row);
@@ -227,12 +283,18 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       summary: { en: value.summary_en, zh: value.summary_zh },
       kind: value.kind,
       difficulty: value.difficulty,
+      difficultyReason: pair(value.difficulty_reason_en, value.difficulty_reason_zh),
       platform: value.platform,
+      brainEngine: value.brain_engine,
+      ownerChoice: { machine: value.owner_machine, engine: value.owner_engine, model: value.owner_model, effort: value.owner_effort },
       state: value.state,
       machine: value.machine,
       engine: value.engine,
       model: value.model,
       effort: value.effort,
+      chosenBy: ChosenBy.nullable().catch(null).parse(parsedJson(value.chosen_by)),
+      chosenAt: value.chosen_at,
+      ran: TicketRun.nullable().catch(null).parse(parsedJson(value.ran)),
       branch: value.branch,
       pullRequest: value.pull_request,
       round: value.round,
@@ -432,6 +494,35 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         return existing(id);
       },
       touched: (id) => touch(id),
+      state: (id, statement) => {
+        const current = existing(id);
+        const reason = GeneratedText.parse(statement.difficultyReason);
+        if ((statement.kind === "writing") !== (current.kind === "writing")) {
+          throw new TicketError(`Ticket ${id} is ${current.kind === "writing" ? "writing" : "code work"} and cannot become ${statement.kind}`);
+        }
+        updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, statement.brainEngine, id);
+        touch(id);
+      },
+      forgetDefaults: (id) => {
+        existing(id);
+        clearDefaults.run(id);
+        touch(id);
+      },
+      ownerChoice: (id, choice) => {
+        existing(id);
+        updateOwnerChoice.run(choice.machine, choice.engine, choice.model, choice.effort, id);
+        touch(id);
+      },
+      choose: (id, chosen) => {
+        existing(id);
+        updateChosen.run(chosen.machine, chosen.engine, chosen.model, chosen.effort, JSON.stringify(ChosenBy.parse(chosen.by)), clock.now(), id);
+        touch(id);
+      },
+      ran: (id, run) => {
+        existing(id);
+        updateRan.run(JSON.stringify(TicketRun.parse(run)), id);
+        touch(id);
+      },
     };
     inside = true;
     let result: T;

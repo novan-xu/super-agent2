@@ -30,6 +30,7 @@ export interface Runners extends TargetDirectory {
   statuses(): MachineStatus[];
   describe(): string;
   sweep(): void;
+  subscribe(listener: () => void): () => void;
   close(): void;
 }
 
@@ -56,6 +57,16 @@ const systemNames: Readonly<Record<string, string>> = { win32: "Windows", darwin
 export function createRunners(options: RunnersOptions): Runners {
   const { machines } = options;
   const links = new Map<string, Link>();
+  const listeners = new Set<() => void>();
+  const announce = () => {
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        continue;
+      }
+    }
+  };
 
   const end = (link: Link, reason: string) => {
     const pending = [...link.pending.values()];
@@ -71,6 +82,7 @@ export function createRunners(options: RunnersOptions): Runners {
     }
     end(link, lost);
     link.connection.close(code, reason);
+    announce();
   };
 
   const sweep = () => {
@@ -164,6 +176,7 @@ export function createRunners(options: RunnersOptions): Runners {
             if (first) {
               connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name });
             }
+            announce();
             return;
           }
           const pending = link.pending.get(message.id);
@@ -187,6 +200,7 @@ export function createRunners(options: RunnersOptions): Runners {
             machines.seen(machine.name);
           }
           end(link, text("command.reason.machineLost", { target: machine.name }));
+          announce();
         },
       };
     },
@@ -204,8 +218,15 @@ export function createRunners(options: RunnersOptions): Runners {
         })
         .join("; "),
     sweep,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     close: () => {
       clearInterval(timer);
+      listeners.clear();
       for (const link of [...links.values()]) {
         drop(link, runnerCloseCodes.closing, "hub closing", interruptedReason);
       }

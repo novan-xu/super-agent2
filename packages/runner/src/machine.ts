@@ -1,5 +1,5 @@
 import { arch, hostname, release, userInfo } from "node:os";
-import { type MachinePlatform, type MachineReport, type ProgramReport } from "@super-agent2/protocol";
+import { type AllowanceReading, type MachinePlatform, type MachineReport, type ProgramReport } from "@super-agent2/protocol";
 
 export function platformOf(platform: NodeJS.Platform): MachinePlatform {
   if (platform === "win32" || platform === "darwin") {
@@ -8,7 +8,12 @@ export function platformOf(platform: NodeJS.Platform): MachinePlatform {
   return "linux";
 }
 
-export function machineReport(slots: number, programs: readonly ProgramReport[], platform: NodeJS.Platform = process.platform): MachineReport {
+export function machineReport(
+  slots: number,
+  programs: readonly ProgramReport[],
+  platform: NodeJS.Platform = process.platform,
+  allowances: readonly AllowanceReading[] = [],
+): MachineReport {
   return {
     hostname: hostname(),
     platform: platformOf(platform),
@@ -17,5 +22,6 @@ export function machineReport(slots: number, programs: readonly ProgramReport[],
     user: userInfo().username,
     slots: { total: slots, free: slots },
     programs: [...programs],
+    allowances: [...allowances],
   };
 }

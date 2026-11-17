@@ -13,12 +13,18 @@ function ticket(id: number): Ticket {
     summary: title,
     kind: "feature",
     difficulty: null,
+    difficultyReason: null,
     platform: null,
+    brainEngine: null,
+    ownerChoice: { machine: null, engine: null, model: null, effort: null },
     state: "pending",
     machine: null,
     engine: null,
     model: null,
     effort: null,
+    chosenBy: null,
+    chosenAt: null,
+    ran: null,
     branch: null,
     pullRequest: null,
     round: 0,
@@ -42,6 +48,8 @@ function start(id: number, ready: boolean): StartCard {
     fingerprint: "a".repeat(64),
     before: ready ? [] : [{ id: 99, title: { en: "Before", zh: "之前" }, repository: null, state: "working" }],
     startable: true,
+    choice: { machine: null, engine: null, model: null, effort: null, by: { machine: "default", engine: "default", model: "default", effort: "default" }, missing: ["defaults"] },
+    machines: [],
   };
 }
 

@@ -34,6 +34,7 @@ const report: MachineReport = {
   user: "owner",
   slots: { total: 2, free: 2 },
   programs: [],
+  allowances: [],
 };
 
 beforeEach(async () => {

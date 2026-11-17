@@ -1,9 +1,37 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createPushDevice, type Hub, type PushDevice, receivePush, type Target } from "@super-agent2/hub";
-import { TicketState } from "@super-agent2/protocol";
+import { createPushDevice, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
+import { AllowanceProgram, AllowanceState, allowancePrograms, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
+
+export interface AllowanceForcing {
+  readonly adjust: SubscriptionAdjustment;
+  force(program: AllowanceProgram, state: AllowanceState | null): void;
+  forced(): Partial<Record<AllowanceProgram, AllowanceState>>;
+}
+
+export function createAllowanceForcing(): AllowanceForcing {
+  const forced = new Map<AllowanceProgram, AllowanceState>();
+  return {
+    adjust: (subscriptions: Subscriptions): Subscriptions => {
+      const codex = forced.get("codex");
+      const claude = forced.get("claude");
+      return {
+        codex: codex === undefined ? subscriptions.codex : { ...subscriptions.codex, state: codex, remainingPercent: codex === "exhausted" ? 0 : subscriptions.codex.remainingPercent },
+        claude: claude === undefined ? subscriptions.claude : { ...subscriptions.claude, state: claude, remainingPercent: claude === "exhausted" ? 0 : subscriptions.claude.remainingPercent },
+      };
+    },
+    force: (program, state) => {
+      if (state === null) {
+        forced.delete(program);
+      } else {
+        forced.set(program, state);
+      }
+    },
+    forced: () => Object.fromEntries(forced),
+  };
+}
 
 export function demoTarget(): Target {
   return {
@@ -52,6 +80,7 @@ export interface HarnessOptions {
   readonly publicUrl: string;
   readonly hubUrl: string;
   readonly assertion: () => Promise<string>;
+  readonly allowance: AllowanceForcing;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -97,6 +126,24 @@ export function createHarness(options: HarnessOptions): Harness {
     json(response, result.ok ? 200 : 409, result.ok ? { id, state: result.ticket.state } : { id, error: result.error, state: result.ticket?.state ?? null });
   };
 
+  const forceAllowance = (url: URL, response: ServerResponse): void => {
+    for (const program of allowancePrograms) {
+      const given = url.searchParams.get(program);
+      if (given === null) {
+        continue;
+      }
+      const state = AllowanceState.safeParse(given);
+      if (given !== "read" && !state.success) {
+        json(response, 400, { error: "give codex= and claude= as available, exhausted, unknown, or read to use the real reading" });
+        return;
+      }
+      options.allowance.force(program, state.success ? state.data : null);
+    }
+    options.hub.waiting.refresh();
+    const subscriptions = options.hub.defaults.subscriptions();
+    json(response, 200, { forced: options.allowance.forced(), subscriptions: [subscriptions.codex, subscriptions.claude] });
+  };
+
   const newDevice = async (response: ServerResponse): Promise<void> => {
     const publicKey = options.hub.push?.publicKey;
     if (publicKey === undefined) {
@@ -125,6 +172,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/ticket") {
         moveTicket(url, response);
+        return true;
+      }
+      if (path === "/__harness/allowance") {
+        forceAllowance(url, response);
         return true;
       }
       if (path === "/__harness/device/new") {
