@@ -358,3 +358,158 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   URLs out.
 - **Other options:** Flagging every string literal in the page's files; flagging only text between tags; a list of
   attributes to skip instead of a list to read; also flagging digits.
+
+## 2026-11-17 — The brain as a package of its own
+
+- **Chosen:** A seventh workspace package, `packages/brain` (`@super-agent2/brain`), run as `node dist/main.js` in its
+  own container. It reads `BRAIN_HUB_URL`, `BRAIN_TOKEN_FILE` and `BRAIN_WORKSPACE` (all required), `BRAIN_PROVIDERS`
+  (the order of `gpt` and `claude`, default `gpt,claude`; DeepSeek is always last and cannot be listed), the model,
+  effort and program of each provider (`BRAIN_GPT_MODEL`, `BRAIN_GPT_EFFORT`, `BRAIN_CODEX_PROGRAM`, and the same for
+  `CLAUDE` and for `DEEPSEEK` with `BRAIN_DSH_PROGRAM`, defaulting to the design's starting models and to `codex`,
+  `claude` and `dsh` on the path) and `BRAIN_MAX_OPEN` (programs kept running at once, default 4; the least recently
+  used idle one is stopped first, and its session is resumed when needed). A program given as a `.js` or `.mjs` file is
+  run with Node. The three programs sit behind one interface, `ProgramAdapter`, whose handle starts a turn, steers it,
+  interrupts it and closes; the conversation logic in `brain.ts` is written once and tested with a fake program against
+  a real hub. Hand-run checks against the real programs are in `tools/brain-live`
+  (`node tools/brain-live/dist/cli.js <gpt|claude|deepseek|failover>`), outside `pnpm check`.
+- **Why:** The brain runs the vendors' programs, which the hub's container does not need, and it must restart on its own
+  without the hub. One interface keeps provider choice and handover in one place.
+- **Other options:** Running the programs inside the hub; the vendors' SDK libraries, which wrap the same programs but
+  add a dependency per vendor.
+
+## 2026-11-17 — How each program is driven
+
+- **Chosen:** Codex through `codex app-server` (JSON-RPC lines on stdio): `thread/start` or `thread/resume` with
+  `approvalPolicy: never`, `sandbox: danger-full-access`, the model, and `config` carrying `model_reasoning_effort` and
+  the hub's MCP server, passed again on every resume because Codex does not keep per-thread configuration; then
+  `turn/start`, `turn/steer` and `turn/interrupt`. Claude Code through `claude -p --input-format stream-json
+  --output-format stream-json --verbose --include-partial-messages --model … --effort … --dangerously-skip-permissions
+  --setting-sources project --mcp-config <json> --strict-mcp-config`, with `--session-id <uuid>` for a new conversation
+  and `--resume <uuid>` after it; a message is a `user` line on standard input and an interrupt is a `control_request`
+  of subtype `interrupt`. The environment given to Claude Code drops every `CLAUDE*`, `ANTHROPIC*` and `MCP_*` variable
+  except `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`, maps `BRAIN_CLAUDE_OAUTH_TOKEN` to
+  `CLAUDE_CODE_OAUTH_TOKEN`, and sets `IS_SANDBOX=1` when running as root on Linux, where Claude Code otherwise refuses
+  full access. `dsh` through `dsh --profile sdk --patch <file>` (JSON-RPC 2.0 lines): `initialize` with the
+  `deepseek-account` route, model and effort, `session/resume` for an existing session, `session/prompt`, and
+  `DSH_PERMISSION_MODE=danger-full-access`. The patch file adds the hub's MCP server and turns off the upload of
+  session logs to DeepSeek. The hub's token reaches each program through the environment variable
+  `SUPER_AGENT_HUB_TOKEN`, never a command line or a file. Everything was taken from the programs' help, generated
+  schemas and experiments on this PC with codex-cli 0.163.0, Claude Code 2.1.326 and dsh 0.2.1-rc.2.
+- **Why:** Each is the program's own long-lived headless interface with structured events, sessions by id and a way to
+  stop. The `acp` profile of dsh can cancel, but reports why a turn failed only as an error message, while the `sdk`
+  profile gives an error code (`ACCOUNT_QUOTA`, `RATE_LIMIT` and so on), which provider choice needs. A small dsh plugin
+  could add steering and cancelling to the `sdk` profile, but it would use internal interfaces of dsh.
+- **Other options:** `codex exec --json` and `exec resume`, one process per turn with no text deltas, no steering and
+  no interrupt; `dsh --profile acp`; a dsh control plugin.
+
+## 2026-11-17 — What the programs cannot do, and the nearest honest behaviour
+
+- **Chosen:** A message sent during a turn goes into that turn with Codex (`turn/steer`) and Claude Code (a second
+  `user` line, which Claude Code folds into the running turn at its next model request). When Claude Code answers such a
+  message as a turn of its own because the first was already finishing, the brain keeps its turn open until every
+  message given to it has been answered, so the owner sees one turn. dsh cannot take a message into a running turn: the
+  brain queues it and starts the next turn with it as soon as the current one ends. dsh has no interrupt either: the
+  brain stops the program, records the turn as interrupted, and resumes the session (which dsh repairs) in a new process
+  for the next turn. A Codex interrupt does not stop a shell command Codex itself started; its late output is ignored.
+  A Claude Code interrupt also cancels messages queued in that turn. dsh sends whole messages rather than text as it is
+  written, so its text arrives a step at a time. A message that reaches the brain in the moment between choosing a
+  provider and starting the program is given to the program as soon as the turn starts.
+- **Why:** The issue asks for the nearest honest behaviour where a program cannot do something, not an imitation.
+- **Other options:** Interrupting a dsh turn to send it the new message; letting Claude Code's queued messages run
+  after an interrupt.
+
+## 2026-11-17 — The link between brain and hub
+
+- **Chosen:** The brain connects to the hub directly, not through the front door: a WebSocket at `/brain/link` and MCP
+  over HTTP at `/brain/mcp`, both requiring `Authorization: Bearer <token>`. Paths under `/brain/` accept only that
+  token and never the owner's Access assertion; every other path accepts only the assertion and never the token. The
+  token is 32 random bytes in base64url, made by the hub at its first start in `HUB_BRAIN_TOKEN_FILE` (default
+  `<HUB_DATA_DIR>/brain.token`, mode 0600) and read by the brain from `BRAIN_TOKEN_FILE`; it is compared by SHA-256
+  digest in constant time and never printed. The link's messages are in `packages/protocol/src/brain.ts`: the hub sends
+  `input` (an owner message or a hub notice), `interrupt` and `prepared`; the brain sends `hello` (with the turns it is
+  running), `turn.started`, `input.taken`, `provider.changed`, `text`, `tool.started`, `tool.output`, `tool.finished`,
+  `turn.finished`, `session` and `prepare`. While the link is down the brain keeps its messages and sends them in order
+  after its next `hello`, and asks again any `prepare` not answered; it reconnects after one second. One brain is linked
+  at a time; a new link replaces the old.
+- **Why:** The two containers share the NAS's internal network, so the brain needs no Cloudflare service token, and a
+  token file made by the hub needs no step at deployment. Keeping the brain's token off the owner's paths means it
+  cannot release or refuse a hold; that is tested.
+- **Other options:** A Cloudflare Access service token for the brain; the token in an environment variable set by the
+  deployment; HTTP polling instead of a WebSocket.
+
+## 2026-11-17 — The hub keeps the record of every conversation
+
+- **Chosen:** Migration 4 adds `conversations`, `turns`, `conversation_entries`, `program_sessions` and
+  `brain_commands`. An entry is an owner message, a notice, the brain's text or a tool call with its output; text and
+  output grow in place as the brain streams them. An owner message and a notice meant for the brain carry a `taken`
+  flag and are delivered again after every `hello` until a turn takes them, so a message sent while the brain is away
+  or restarting is answered when it is back. `program_sessions` holds each provider's program session per conversation
+  and `through`, the last entry that session has seen, advanced when one of that provider's turns ends. When a turn
+  starts, the brain asks the hub (`prepare`) for that provider's session and the entries after its `through`: none when
+  it answered last, the part it missed when another provider answered in between, everything for a new session. The
+  brain gives those as text before the owner's message, or, when it switches provider in the middle of a turn, asks the
+  new one to continue. A turn the hub records as running that the brain does not report in its `hello` is recorded as
+  interrupted with a reason from the catalog; a turn the brain still runs that the hub has already ended is
+  interrupted. A session the program reports as gone is replaced by a new one given the whole conversation.
+- **Why:** The hub is the one place that survives every restart and sees every provider, so it can hand over exactly
+  what a provider missed.
+- **Other options:** The brain keeping its own state on a volume; giving every provider the whole conversation each
+  time; summarising the conversation for a handover.
+
+## 2026-11-17 — Choosing a provider
+
+- **Chosen:** Each turn starts with the first provider in the configured order that is not known to be out until a
+  later time. A provider that reports an exhausted allowance or a rate limit (Codex `usageLimitExceeded`,
+  `rateLimitExceeded` or HTTP 429; Claude Code's `rate_limit` or `billing_error` errors or a `rejected`
+  `rate_limit_event`; dsh `ACCOUNT_QUOTA`, `QUOTA` or `RATE_LIMIT`) is skipped until the reset time it reported, when
+  it reported one. A provider that fails in any other way (sign-in, overload, a crash, an unknown model) is skipped for
+  the rest of that turn and tried again at the next. The turn continues with the next provider, which is told what
+  happened so far; DeepSeek is last and so answers only while the others are unavailable. When none is left, the turn
+  fails with each provider's reason. Nothing is decided from how long anything takes.
+- **Why:** The issue says the next one answers when the current one is out of allowance or failing, from what the
+  program reports. Trying a failed provider again at the next turn lets the preferred one return without a timer.
+- **Other options:** Asking each program for its remaining allowance before every turn; a fixed back-off; staying with
+  the provider that answered last.
+
+## 2026-11-17 — The hub's tools for the brain
+
+- **Chosen:** The hub serves MCP itself at `/brain/mcp`: stateless Streamable HTTP with JSON responses, written by hand
+  (`initialize`, `ping`, `tools/list`, `tools/call`; a notification gets 202 and `GET` gets 405), for protocol versions
+  `2025-11-25` back to `2024-11-05`. The tools are `run_command` (target, command, account, folder), which starts the
+  command through the command service and waits until it ends or is held; `read_command` (state and output after a
+  chunk number); and `stop_command`. Output given to the model is clipped to 40,000 characters, keeping the start and
+  the end; the full output stays readable. A held command answers at once that it is held and why, that the brain cannot
+  confirm it, and that it will be told the outcome. When the command later ends (released and run, refused, or
+  withdrawn) the hub adds a notice to the conversation and gives the brain a `[hub]` message with the outcome and its
+  output. A tool call the program cancels stops the command it waited for, unless the command is held. The conversation
+  is named in the `x-super-agent-conversation` header, set per conversation. There is no allow-list and no check beyond
+  the command service's. The programs are told to wait up to a day for a tool.
+- **Why:** Three small methods do not justify the official SDK's dependencies, and a stateless server survives restarts
+  of either side. Waiting for the end is how a command reads to the model; the lock already decides what waits.
+- **Other options:** `@modelcontextprotocol/sdk`; a stdio MCP server in the brain that forwards to the hub; answering
+  at once with an id and polling.
+
+## 2026-11-17 — Conversations for the page
+
+- **Chosen:** Behind the front door: `GET /api/conversations?limit=` (newest first, with whether the brain is linked),
+  `POST /api/conversations` (a new conversation, 201), `GET /api/conversations/<id>` (the conversation, its turns and
+  entries), `POST /api/conversations/<id>/messages` with `{"text": …}` (202 with the entry) and
+  `POST /api/conversations/<id>/interrupt` (202). Each POST needs `Content-Type: application/json`. On `/ws` every page
+  receives `conversation`, `turn` and `brain` messages; a page sends `watch` with a conversation and an optional `after`
+  and receives that conversation's entries after `after` together with every entry of a turn still running, then each
+  new or changed `entry` and each `delta` of text or output as it is written, until `unwatch`. A conversation's title is
+  the first line of its first message, up to 80 characters. Interrupting while the brain is away ends the turn at once.
+  The labels for conversation and turn states, the hub's reasons and its notices are in the catalog.
+- **Why:** The same shape as the command routes of #3, so the page of #6 follows both the same way.
+- **Other options:** Server-sent events per conversation; sending the whole entry on every delta.
+
+## 2026-11-17 — The brain's guidance
+
+- **Chosen:** `packages/brain/guidance/AGENTS.md`, copied into the brain's workspace as `AGENTS.md` at start. Codex and
+  dsh read it from the working folder, and Claude Code reads it when the folder has no `CLAUDE.md`. Claude Code runs
+  with `--setting-sources project`, so a workspace outside the home folder does not pick up a user's own `CLAUDE.md`.
+  It says to converse in Chinese, to act through the hub's tools, and how held commands and `[hub]` messages work.
+  Nothing relies on it.
+- **Why:** The design keeps guidance in `AGENTS.md`, and one file read by all three programs cannot drift.
+- **Other options:** Developer instructions for Codex, `--append-system-prompt-file` for Claude Code and a persona
+  patch for dsh, one per program.

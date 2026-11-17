@@ -1,0 +1,28 @@
+{
+  "name": "@super-agent2/brain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@super-agent2/protocol": "workspace:*",
+    "ws": "8.23.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@super-agent2/hub": "workspace:*",
+    "@types/node": "^24.19.2",
+    "@types/ws": "8.18.2"
+  }
+}

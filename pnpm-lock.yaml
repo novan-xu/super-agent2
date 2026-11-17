@@ -182,6 +182,28 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1))
 
+  packages/brain:
+    dependencies:
+      '@super-agent2/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      ws:
+        specifier: 8.23.0
+        version: 8.23.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@super-agent2/hub':
+        specifier: workspace:*
+        version: link:../hub
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
+
   packages/catalog:
     devDependencies:
       '@types/node':
@@ -260,6 +282,25 @@ importers:
       vite:
         specifier: 8.3.8
         version: 8.3.8(@types/node@24.19.2)(yaml@2.9.1)
+
+  tools/brain-live:
+    dependencies:
+      '@super-agent2/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
+      '@super-agent2/hub':
+        specifier: workspace:*
+        version: link:../../packages/hub
+      '@super-agent2/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      jose:
+        specifier: 6.2.17
+        version: 6.2.17
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
 
   tools/markup-text:
     dependencies:

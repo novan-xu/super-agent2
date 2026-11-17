@@ -104,7 +104,3 @@ export const UnfollowCommand = z.object({
 });
 
 export type UnfollowCommand = z.infer<typeof UnfollowCommand>;
-
-export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand]);
-
-export type ClientMessage = z.infer<typeof ClientMessage>;

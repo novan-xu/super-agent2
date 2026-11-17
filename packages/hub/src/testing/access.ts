@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { AccessKeySet } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, type CryptoKey, SignJWT, type JWTPayload } from "jose";
 import type { Clock } from "../clock.js";
@@ -97,5 +98,6 @@ export function testConfig(dataDir: string): Config {
     host: "127.0.0.1",
     projectFolders: [],
     credentialPaths: [],
+    brainTokenFile: join(dataDir, "brain.token"),
   };
 }

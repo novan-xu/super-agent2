@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { CommandOutput, CommandUpdate } from "./commands.js";
+import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./commands.js";
+import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, TurnUpdate, UnwatchConversation, WatchConversation } from "./conversations.js";
 import { ProtocolVersion } from "./version.js";
 
 export const PersonIdentity = z.object({
@@ -48,6 +49,18 @@ export const Hello = z.object({
 
 export type Hello = z.infer<typeof Hello>;
 
-export const ServerMessage = z.discriminatedUnion("type", [Hello, CommandUpdate, CommandOutput]);
+export const ServerMessage = z.discriminatedUnion("type", [
+  Hello,
+  CommandUpdate,
+  CommandOutput,
+  ConversationUpdate,
+  TurnUpdate,
+  EntryUpdate,
+  EntryDelta,
+  BrainUpdate,
+]);
 
 export type ServerMessage = z.infer<typeof ServerMessage>;
+
+export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand, WatchConversation, UnwatchConversation]);
+export type ClientMessage = z.infer<typeof ClientMessage>;
