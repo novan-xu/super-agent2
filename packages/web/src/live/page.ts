@@ -2,6 +2,7 @@ import type { Conversation, ConversationDetail, ConversationEntry, ConversationL
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { mergeConversations, upsertConversation } from "./list.js";
+import { initialTickets, receiveTicket, receiveTickets, type TicketsState } from "./tickets.js";
 import { initialWaiting, type WaitingAction, type WaitingState, waitingReducer } from "./waiting.js";
 
 export interface PageState {
@@ -11,6 +12,7 @@ export interface PageState {
   readonly list: readonly Conversation[];
   readonly current: ConversationState | null;
   readonly waiting: WaitingState;
+  readonly tickets: TicketsState;
 }
 
 export type PageAction =
@@ -23,7 +25,7 @@ export type PageAction =
   | { readonly type: "own"; readonly entry: ConversationEntry }
   | { readonly type: "waiting"; readonly action: WaitingAction };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting };
+export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets };
 
 function withCurrent(state: PageState, current: ConversationState | null): PageState {
   return current === state.current ? state : { ...state, current };
@@ -58,6 +60,13 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       if (message.type === "waiting") {
         const waiting = waitingReducer(state.waiting, { type: "snapshot", cards: message.cards });
         return waiting === state.waiting ? state : { ...state, waiting };
+      }
+      if (message.type === "tickets") {
+        return { ...state, tickets: receiveTickets(message.tickets) };
+      }
+      if (message.type === "ticket") {
+        const tickets = receiveTicket(state.tickets, message.ticket);
+        return tickets === state.tickets ? state : { ...state, tickets };
       }
       if (message.type === "brain") {
         return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };

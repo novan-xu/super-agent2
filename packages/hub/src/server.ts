@@ -29,6 +29,8 @@ import {
   type Session,
   type WaitingList,
   type MachineList,
+  type TicketDetail,
+  type TicketList,
   protocolVersion,
   runnerLinkPath,
   RunnerToHub,
@@ -46,6 +48,7 @@ import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
 import type { Runners } from "./runners.js";
+import type { TicketService } from "./tickets.js";
 import type { ToolServer } from "./tools.js";
 import type { Waiting } from "./waiting.js";
 
@@ -59,6 +62,9 @@ export const waitingPath = "/api/waiting";
 export const pushPath = "/api/push";
 export const pushSubscriptionPath = "/api/push/subscription";
 export const machinesPath = "/api/machines";
+export const ticketsPath = "/api/tickets";
+
+const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
@@ -84,6 +90,7 @@ export interface HubServerOptions {
   readonly waiting?: Waiting;
   readonly push?: PushService;
   readonly runners?: Runners;
+  readonly tickets?: TicketService;
   readonly heartbeatMilliseconds?: number;
 }
 
@@ -117,7 +124,9 @@ type Body =
   | WaitingList
   | PushKey
   | PushState
-  | MachineList;
+  | MachineList
+  | TicketList
+  | TicketDetail;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -384,6 +393,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(conversationsPath) && (await serveConversations(request, response, path, method))) {
       return;
     }
+    if (path.startsWith(ticketsPath) && serveTickets(request, response, path, method)) {
+      return;
+    }
     if ((method === "GET" || method === "HEAD") && (await servePage(response, path, method === "HEAD"))) {
       return;
     }
@@ -611,6 +623,30 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return false;
   };
 
+  const serveTickets = (request: IncomingMessage, response: ServerResponse, path: string, method: string): boolean => {
+    const tickets = options.tickets;
+    if (tickets === undefined || method !== "GET") {
+      return false;
+    }
+    const url = new URL(request.url ?? "/", "http://hub");
+    if (path === ticketsPath) {
+      const limit = integerParameter(url, "limit", maximumListLimit, maximumListLimit);
+      const scope = url.searchParams.get("scope") ?? "open";
+      if (limit === undefined || (scope !== "open" && scope !== "all")) {
+        return false;
+      }
+      sendJson(response, 200, { tickets: tickets.list({ open: scope === "open", limit }) });
+      return true;
+    }
+    const id = ticketRoute.exec(path)?.[1];
+    const detail = id === undefined ? undefined : tickets.detail(Number(id));
+    if (detail === undefined) {
+      return false;
+    }
+    sendJson(response, 200, detail);
+    return true;
+  };
+
   const serveBrain = (client: WebSocket): void => {
     const conversations = options.conversations;
     if (conversations === undefined) {
@@ -710,10 +746,12 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }) ?? (() => undefined);
     const unsubscribeWaiting =
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
+    const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
     client.on("close", () => {
       unsubscribe();
       unsubscribeConversations();
       unsubscribeWaiting();
+      unsubscribeTickets();
     });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
@@ -746,6 +784,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     send({ type: "hello", protocol: protocolVersion, identity });
     if (options.waiting !== undefined) {
       send({ type: "waiting", cards: options.waiting.cards() });
+    }
+    if (options.tickets !== undefined) {
+      send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit }) });
     }
   };
 

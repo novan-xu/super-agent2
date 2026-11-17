@@ -8,6 +8,8 @@ import {
   type PushSubscriptionRequest,
   PushState,
   Refusal,
+  TicketDetail,
+  TicketList,
 } from "@super-agent2/protocol";
 import type { z } from "zod";
 
@@ -53,6 +55,8 @@ export const hubApi = {
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
+  tickets: (scope: "open" | "all" = "open") => call(`/api/tickets?scope=${scope}`, TicketList),
+  ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
   pushKey: () => call("/api/push", PushKey),
   subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
   unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),

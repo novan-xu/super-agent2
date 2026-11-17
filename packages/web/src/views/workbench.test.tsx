@@ -1,6 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { holdCard } from "../live/fixtures.js";
+import { holdCard, ticket } from "../live/fixtures.js";
+import { initialTickets, receiveTickets, type TicketsState } from "../live/tickets.js";
 import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiting.js";
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
@@ -11,8 +12,10 @@ function state(...cards: ReturnType<typeof holdCard>[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
 }
 
-function render(waiting: WaitingState, push: PushPhase = "hidden", focus: string | null = null): string {
-  return renderToString(<WorkbenchView waiting={waiting} actions={actions} focus={focus} focused={() => undefined} push={push} togglePush={() => undefined} />);
+function render(waiting: WaitingState, push: PushPhase = "hidden", focus: string | null = null, tickets: TicketsState = initialTickets): string {
+  return renderToString(
+    <WorkbenchView waiting={waiting} actions={actions} focus={focus} focused={() => undefined} push={push} togglePush={() => undefined} tickets={tickets} />,
+  );
 }
 
 function text(html: string): string {
@@ -130,5 +133,43 @@ describe("the notification switch", () => {
     const html = render(state(), "install");
     expect(html).toContain("先把本页添加到主屏幕，才能收到通知");
     expect(html).not.toContain('role="switch"');
+  });
+});
+
+describe("the open tickets in 工作台", () => {
+  it("shows no count and no rows before the hub has sent them", () => {
+    const html = render(state(), "hidden", null, initialTickets);
+    expect(html).toContain("工单");
+    expect(html).not.toContain("没有进行中的工单");
+    expect(html).not.toContain("lrow");
+  });
+
+  it("says so when there are none", () => {
+    expect(render(state(), "hidden", null, receiveTickets([]))).toContain("没有进行中的工单");
+  });
+
+  it("shows each ticket's Chinese title, repository, kind and state, and no English", () => {
+    const html = render(
+      state(),
+      "hidden",
+      null,
+      receiveTickets([ticket(1, { title: { en: "Print a greeting", zh: "启动时打印问候" } }), ticket(2, { state: "working", kind: "fix" })]),
+    );
+    expect(html.match(/class="lrow"/g)).toHaveLength(2);
+    expect(html).toContain("启动时打印问候");
+    expect(html).not.toContain("Print a greeting");
+    expect(html).toContain("novan-xu/super-agent-sandbox");
+    expect(text(html)).toContain("|待开始|");
+    expect(text(html)).toContain("|功能|");
+    expect(text(html)).toContain("|进行中|");
+    expect(text(html)).toContain("|修复|");
+    expect(html).toContain("dot dot--ok dot--live");
+    expect(html.indexOf("工作 2")).toBeLessThan(html.indexOf("启动时打印问候"));
+  });
+
+  it("comes below the 等你 row", () => {
+    const html = render(state(holdCard("a1")), "hidden", null, receiveTickets([ticket(1)]));
+    expect(html.indexOf("等你")).toBeLessThan(html.indexOf("工单"));
+    expect(html.indexOf("gh repo delete")).toBeLessThan(html.indexOf("工作 1"));
   });
 });

@@ -1,4 +1,4 @@
-import type { CommandRecord } from "@super-agent2/protocol";
+import type { CommandRecord, Ticket, TicketMove } from "@super-agent2/protocol";
 
 export const reportLimit = 40_000;
 
@@ -32,5 +32,47 @@ export function commandReport(command: CommandRecord, output: string): string {
     lines.push(`Reason: ${command.reason}`);
   }
   lines.push(output === "" ? "Output: (none)" : `Output:\n${clip(output)}`);
+  return lines.join("\n");
+}
+
+function chosen(value: string | number | null): string {
+  return value === null ? "not set" : String(value);
+}
+
+export function ticketLine(ticket: Ticket): string {
+  const where = ticket.repository === null ? "no repository" : ticket.repository;
+  const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
+  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind} in ${where}${issues === "" ? "" : ` (issues ${issues})`}: ${ticket.title.en}`;
+}
+
+export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []): string {
+  const lines = [
+    ticketLine(ticket),
+    `Chinese title: ${ticket.title.zh}`,
+    `Summary: ${ticket.summary.en}`,
+    `Chinese summary: ${ticket.summary.zh}`,
+  ];
+  if (ticket.issues.length > 0) {
+    lines.push("Issues in working order:");
+    for (const issue of ticket.issues) {
+      lines.push(`  ${issue.repository}#${issue.number} ${issue.title.en} (${issue.url})`);
+    }
+  }
+  lines.push(
+    `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}`,
+    `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}`,
+    `Branch: ${chosen(ticket.branch)}; pull request: ${ticket.pullRequest === null ? "none" : `#${ticket.pullRequest}`}; guided round: ${ticket.round}`,
+    `Waits for: ${ticket.waitsFor.length === 0 ? "nothing" : ticket.waitsFor.map((id) => `ticket ${id}`).join(", ")}`,
+  );
+  if (ticket.stopReason !== null) {
+    lines.push(`Stopped because: ${ticket.stopReason.en}`);
+  }
+  if (ticket.conversation !== null) {
+    lines.push(`Filed in conversation ${ticket.conversation}`);
+  }
+  for (const move of moves) {
+    const reason = move.reason === null ? "" : `: ${move.reason.en}`;
+    lines.push(`  ${new Date(move.at).toISOString()} ${move.from ?? "filed"} -> ${move.to}${reason}`);
+  }
   return lines.join("\n");
 }

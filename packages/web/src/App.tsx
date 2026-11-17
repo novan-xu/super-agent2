@@ -191,6 +191,7 @@ export function App() {
           focused={clearFocus}
           push={pushPhase(pushFacts)}
           togglePush={togglePush}
+          tickets={page.tickets}
         />
       ) : (
         <div className="page" />

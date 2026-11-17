@@ -139,4 +139,70 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE tickets (
+        id INTEGER PRIMARY KEY,
+        repository TEXT,
+        kind TEXT NOT NULL,
+        title_en TEXT NOT NULL,
+        title_zh TEXT NOT NULL,
+        summary_en TEXT NOT NULL,
+        summary_zh TEXT NOT NULL,
+        difficulty TEXT,
+        platform TEXT,
+        state TEXT NOT NULL,
+        machine TEXT,
+        engine TEXT,
+        model TEXT,
+        effort TEXT,
+        branch TEXT,
+        pull_request INTEGER,
+        round INTEGER NOT NULL DEFAULT 0,
+        stop_reason_en TEXT,
+        stop_reason_zh TEXT,
+        conversation_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX tickets_by_state ON tickets (state, created_at);
+      CREATE TABLE ticket_issues (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        position INTEGER NOT NULL,
+        repository TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        title_en TEXT NOT NULL,
+        title_zh TEXT NOT NULL,
+        summary_en TEXT NOT NULL,
+        summary_zh TEXT NOT NULL,
+        PRIMARY KEY (ticket_id, position)
+      ) STRICT;
+      CREATE INDEX ticket_issues_by_issue ON ticket_issues (repository, number);
+      CREATE TABLE ticket_waits (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        waits_for INTEGER NOT NULL REFERENCES tickets (id),
+        PRIMARY KEY (ticket_id, waits_for)
+      ) STRICT;
+      CREATE TABLE ticket_moves (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        seq INTEGER NOT NULL,
+        from_state TEXT,
+        to_state TEXT NOT NULL,
+        reason_en TEXT,
+        reason_zh TEXT,
+        at INTEGER NOT NULL,
+        PRIMARY KEY (ticket_id, seq)
+      ) STRICT;
+      CREATE TABLE issue_filings (
+        key TEXT PRIMARY KEY,
+        repository TEXT NOT NULL,
+        number INTEGER,
+        url TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
