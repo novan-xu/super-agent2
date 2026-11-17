@@ -1,18 +1,35 @@
 when:
   - event: pull_request
+  - event: push
+    branch: main
+  - event: manual
 
 labels:
   target: macos
 
+clone:
+  - name: clone
+    image: woodpeckerci/plugin-git
+    settings:
+      lfs: false
+
 steps:
-  - name: probe
+  - name: check
     image: bash
     commands:
-      - pwd
-      - echo "HOME=$${HOME} TMPDIR=$${TMPDIR:-} SHELL=$${SHELL:-}"
-      - echo "PATH=$${PATH}"
-      - ls -la ..
-      - command -v node npm pnpm corepack curl shasum tar git || true
-      - node -v || true
-      - uname -a
-      - env | cut -d= -f1 | sort | tr '\n' ' '
+      - V="$$(tr -d '[:space:]' < .node-version)"
+      - T="$$(cd .. && pwd)/tools"
+      - N="node-v$$V-darwin-$$(uname -m | sed 's/x86_64/x64/')"
+      - mkdir -p "$$T"
+      - curl -fsSL --retry 3 -o "$$T/$$N.tar.gz" "https://nodejs.org/dist/v$$V/$$N.tar.gz"
+      - curl -fsSL --retry 3 -o "$$T/SHASUMS256.txt" "https://nodejs.org/dist/v$$V/SHASUMS256.txt"
+      - (cd "$$T" && grep " $$N.tar.gz" SHASUMS256.txt | shasum -a 256 -c -)
+      - tar -xzf "$$T/$$N.tar.gz" -C "$$T"
+      - export PATH="$$T/$$N/bin:$$PATH"
+      - P="$$(node -p "require('./package.json').packageManager.split('@')[1]")"
+      - npm install --global --no-fund --no-audit --prefix "$$T/pnpm" "pnpm@$$P"
+      - export PATH="$$T/pnpm/bin:$$PATH"
+      - node --version
+      - pnpm --version
+      - pnpm install --frozen-lockfile
+      - pnpm check
