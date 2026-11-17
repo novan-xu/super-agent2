@@ -2424,3 +2424,14 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Chosen:** In the development harness (`--announce` at this branch's commit, `--credentials environment` for the release, a fake Cloudflare, the demo brain now answering as GPT, Claude and DeepSeek), on this PC, at a desktop and a phone width, in light and dark: 添加机器 on the page gave the Windows line; run in PowerShell with a scratch runner home and `SUPERAGENT2_RUNNER_FOREGROUND=1`, it fetched the hub's release, built it, saved the settings and connected, and the machine appeared online in 机器 without a reload. A first run under the scratch folder failed in `pnpm` with a path too long for Windows, so the scratch home was moved to a short folder; owners install into `~/.superagent2`, which is short. The same code sent again, and a code left for more than ten minutes, were refused with 403. 撤销 armed the card, revoking closed the runner's connection (4003) and its next connection was refused with 403; with the fake Cloudflare refusing deletions the page said the token was kept. Moving Claude ahead of GPT made the next message's turn run on Claude (the one before ran on GPT). Changing Codex 复杂 to `gpt-6.1-sol · xhigh` changed the start card of an arranged complex Codex ticket, and `choose_defaults` reported it; a table naming `gpt-99` was refused with 422 and the table did not change. The theme and accent changed at once, a second open tab followed, a reload kept them with `/theme.js` loaded before the page's module, and 跟随系统 followed the browser's switch between light and dark. Nothing was installed to start at login, and the scratch runner, its folder and the harness were removed afterwards. Cloudflare's real API, the Bypass rule and macOS were not exercised.
 - **Why:** These are the issue's "Done when" items and the points the brief asked to see.
 - **Other options:** None.
+
+## 2026-11-17 — The build is complete, and what is left for the owner
+
+- **Chosen:** With #21 merged, every issue is built except #8, which stays open until the owner has signed in to the
+  page and talked to the brain. The live system was moved to the last commit by hand, with the first release under the
+  scheme of #18; from here the brain can deploy Super-agent2 with `deploy_repository`. Nothing was changed in
+  Cloudflare: adding a machine from the page needs an Access application for the path `runner/enroll` with a Bypass
+  policy, and runners need a Service Auth policy on the host's application. Both are the owner's to add.
+- **Why:** Those two rules open paths through the owner's front door, and no issue asked for them to be made without
+  the owner. Until they exist, no machine is connected to the live hub, so a started ticket waits for a machine.
+- **Other options:** Create the rules through Cloudflare's API with the hub's token.
