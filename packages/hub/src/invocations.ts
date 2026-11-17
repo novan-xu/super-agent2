@@ -1,5 +1,6 @@
 import { type Location, locate } from "./paths.js";
 import { type Dialect, dialects, parsePosix, parseScript, type Redirect, type SimpleCommand, unknownMark, variableMark, type Word } from "./shell.js";
+import { cmdSpacesAsSpaces, foldLookAlikes, powershellDash } from "./unicode.js";
 
 export interface Invocation {
   readonly program: string;
@@ -156,6 +157,10 @@ function walk(text: string, dialect: Dialect, cwd: Location | undefined, context
     return;
   }
   context.out.texts.push(text);
+  const folded = foldLookAlikes(text, dialect);
+  if (folded !== text) {
+    walk(folded, dialect, cwd, { out: context.out, depth: context.depth + 1, temporaries: new Set(context.temporaries) });
+  }
   let current = cwd;
   for (const command of parseScript(text, dialect)) {
     const inner: Context = { ...context, depth: context.depth + 1 };
@@ -297,8 +302,9 @@ function powershellScript(args: readonly Word[], cwd: Location | undefined, cont
     if (word === undefined) {
       break;
     }
-    const name = word.text.toLowerCase().split(":")[0] ?? "";
-    if (!word.text.startsWith("-") && !word.text.startsWith("/")) {
+    const text = powershellDash.has(word.text[0]) ? `-${word.text.slice(1)}` : word.text;
+    const name = text.toLowerCase().split(":")[0] ?? "";
+    if (!text.startsWith("-") && !text.startsWith("/")) {
       walk(texts(args.slice(index)), "powershell", dir, { ...context, depth: context.depth + 1 });
       return { cwd: dir };
     }
@@ -507,7 +513,7 @@ function visit(
     const index = args.findIndex((word) => /^\/[ck]/i.test(word.text));
     if (index !== -1) {
       const head = args[index]?.text.slice(2) ?? "";
-      walk([head, texts(args.slice(index + 1))].join(" ").trim(), "posix", dir, inner);
+      walk(cmdSpacesAsSpaces([head, texts(args.slice(index + 1))].join(" ")).trim(), "posix", dir, inner);
     }
   } else if (program === "ssh") {
     const remote = sshCommand(args);

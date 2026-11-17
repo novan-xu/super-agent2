@@ -212,6 +212,72 @@ const held: readonly Example[] = [
   ["[System.IO.Directory]::Delete(\"D:\\data\", $true)", "file-deletion", windowsProject],
   ["cmd /c \"rd /s /q D:\\data\"", "file-deletion", windowsProject],
   ["Remove-Item -Recurse -Force (Join-Path $root 'x')", "file-deletion", windowsProject],
+  ["gh\u00a0repo\u00a0delete novan-xu/x --yes", "repository-deletion"],
+  ["gh repo\u3000edit --visibility\u2002public", "repository-publication"],
+  ["gh\u2003repo create novan-xu/new\u2009--public", "repository-publication"],
+  ["git\u2003push\u202f--force origin main", "default-branch-rewrite"],
+  ["git push\u0085-f\u0085origin main", "default-branch-rewrite"],
+  ["docker\u202fvolume\u202frm superagent-data", "data-deletion"],
+  ["docker compose down\u2028-v", "data-deletion"],
+  ["gh secret\u205fdelete TOKEN", "credential-change"],
+  ["gh\u1680auth\u1680logout", "credential-change"],
+  ["Remove-Item\u00a0-Recurse\u00a0-Force\u00a0C:\\data", "file-deletion", windowsProject],
+  ["rm\u2029-rf\u000b/data", "file-deletion"],
+  ["gh repo edit \u2013\u2013visibility public", "repository-publication"],
+  ["gh repo create novan-xu/new \u2014\u2014public", "repository-publication"],
+  ["git push \u2013f origin main", "default-branch-rewrite"],
+  ["git push origin main \u2015\u2015force", "default-branch-rewrite"],
+  ["docker compose down \u2013v", "data-deletion"],
+  ["docker rm \u2014v db", "data-deletion"],
+  ["docker system prune \u2013\u2013volumes -f", "data-deletion"],
+  ["pg_restore \u2013c -d app dump.sql", "data-deletion"],
+  ["gpg \u2013\u2013delete-secret-keys ABC", "credential-change"],
+  ["pwsh \u2013NoProfile \u2013Command \"gh repo delete novan-xu/x --yes\"", "repository-deletion"],
+  ["Remove-Item \u2013Recurse \u2014Force C:\\data", "file-deletion", windowsProject],
+  ["& \u201cgh\u201d repo delete novan-xu/x --yes", "repository-deletion"],
+  ["gh \u2018repo\u2019 \u2018delete\u2019 novan-xu/x", "repository-deletion"],
+  ["gh repo edit --visibility \u2018public\u2019", "repository-publication"],
+  ["gh repo edit --visibility \u201epublic\u201c", "repository-publication"],
+  ["git push origin \u201c+main\u201d", "default-branch-rewrite"],
+  ["git \u201apush\u2019 \u2018--force\u2019", "default-branch-rewrite"],
+  ["docker \u201cvolume\u201d \u201crm\u201d x", "data-deletion"],
+  ["gh secret \u2019delete\u2019 TOKEN", "credential-change"],
+  ["Set-Content -Path \u2018D:\\app\\.env\u2019 -Value \u2018TOKEN=x\u2019", "credential-change", windowsProject],
+  ["Remove-Item -Recurse \u201eC:\\data\u201c", "file-deletion", windowsProject],
+  ["Remove-Item -Recurse -Path @\u2018\nC:\\data\n\u2019@", "file-deletion", windowsProject],
+  ["cmd /c \"rd\u00a0/s\u00a0/q\u00a0D:\\data\"", "file-deletion", windowsProject],
+  ["cmd /c \"del\u180e/s /q D:\\data\\*\"", "file-deletion", windowsProject],
+  ["gh repo delete\u200b novan-xu/x --yes", "repository-deletion"],
+  ["gh\u200d repo delete novan-xu/x", "repository-deletion"],
+  ["\ufeffgh repo delete novan-xu/x", "repository-deletion"],
+  ["gh repo \u200b delete novan-xu/x", "repository-deletion"],
+  ["gh repo \u202edelete\u202c novan-xu/x", "repository-deletion"],
+  ["\u2066gh\u2069 repo delete novan-xu/x", "repository-deletion"],
+  ["git push \u200b--force origin main", "default-branch-rewrite"],
+  ["git push origin m\u200cain --force", "default-branch-rewrite"],
+  ["docker volume r\u2060m x", "data-deletion"],
+  ["r\u200bm -rf /data", "file-deletion"],
+  ["gh repo del\u00adete novan-xu/x", "repository-deletion"],
+  ["bash -c 'gh repo delete\u200b novan-xu/x'", "repository-deletion"],
+  ["bash -c 'gh \u2067repo\u2069 delete novan-xu/x'", "repository-deletion"],
+  ["pwsh -Command \"gh repo \u202edelete\u202c novan-xu/x\"", "repository-deletion"],
+  ["powershell -Command \"docker\u200b volume rm x\"", "data-deletion"],
+  ["gh repo d\u0435lete novan-xu/x --yes", "repository-deletion"],
+  ["g\u04bb repo delete novan-xu/x", "repository-deletion"],
+  ["\uff47\uff48 repo delete novan-xu/x", "repository-deletion"],
+  ["gh r\u0435p\u043e delete novan-xu/x", "repository-deletion"],
+  ["\u0261it push --force origin main", "default-branch-rewrite"],
+  ["git push origin \uff0bmain", "default-branch-rewrite"],
+  ["d\u043ecker volume rm x", "data-deletion"],
+  ["docker v\u03bflume rm x", "data-deletion"],
+  ["gh s\u0435cret delete TOKEN", "credential-change"],
+  ["bash -c 'gh r\u0435po delete novan-xu/x'", "repository-deletion"],
+  ["rm -rf \u2215data", "file-deletion"],
+  ["docker compose down \u2010v", "data-deletion"],
+  ["git push origin main \u2212\u2212force", "default-branch-rewrite"],
+  ["echo ok\uff1bgh repo delete novan-xu/x", "repository-deletion"],
+  ["echo ok \uff06\uff06 docker volume rm x", "data-deletion"],
+  ["echo ok \uff5c xargs rm -rf", "file-deletion"],
 ];
 
 const ordinary: readonly (readonly [command: string, cwd?: string | null])[] = [
@@ -327,6 +393,32 @@ const ordinary: readonly (readonly [command: string, cwd?: string | null])[] = [
   ["node scripts/build.mjs"],
   ["python3 - <<'EOF'\nimport shutil\nprint('rm -rf / is only text here')\nEOF"],
   ["git log --oneline -5 | cat"],
+  ["git commit -m \"修复锁的读取：支持全角标点（测试）\""],
+  ["git commit -m '锁：读取命令时的 Unicode 字符，见 #33'"],
+  ["git commit -m \"步骤：rm -rf 不再直接运行；改为确认\""],
+  ["git commit -m \"引用：“gh repo delete” 现在会被拦下\""],
+  ["git commit -m \"日本語のコミット「テスト」です\""],
+  ["git commit -m \"Исправить чтение команды\""],
+  ["git commit -m \"Ünïcödé façade, naïve café\""],
+  ["git commit -m \"release 🚀 ✅️ done 👍🏽\""],
+  ["git commit -m \"Lock \u2013 Unicode characters\""],
+  ["git commit -m \"fix: spaces \u2014 see #33\""],
+  ["gh issue create --title \"锁：Unicode 字符\" --body \"详见 docs/decisions.md（第 33 号）\""],
+  ["gh issue create --title 'Lock \u2013 read “quoted” words' --body 'it\u2019s done'"],
+  ["gh pr create --title \"工作台：按仓库分组\" --body \"✅ 已验证\""],
+  ["echo \"a\u00a0b\""],
+  ["echo 'non\u00a0breaking space'"],
+  ["echo “quoted” and ‘single’ words"],
+  ["printf '%s\\n' \"完成；下一步｜再下一步＆结束\""],
+  ["echo 'a \u2013 b' > notes.txt"],
+  ["mkdir -p ./文档/草稿 && cp 说明.md ./文档/草稿/"],
+  ["rm -rf ./构建 ./输出"],
+  ["rm -rf ./сборка"],
+  ["rm -rf /tmp/日志"],
+  ["cat ~/code/app/说明.md"],
+  ["Remove-Item -Recurse -Force C:\\work\\app\\输出", windowsProject],
+  ["Write-Output “完成” ‘下一步’", windowsProject],
+  ["git commit -m \"🔒 lock: \u200bzero width in a message\""],
 ];
 
 describe("the list", () => {
@@ -352,6 +444,25 @@ describe("commands that cannot be undone", () => {
 describe("ordinary commands", () => {
   it.each(ordinary.map(([command, cwd]) => ({ command, cwd })))("lets $command run", ({ command, cwd }) => {
     expect(findIrreversible({ command, cwd: at(cwd) }, settings)).toBeUndefined();
+  });
+});
+
+describe("any text", () => {
+  it("is read without throwing", () => {
+    const alphabet = [..."ab -/\\'\"`$(){};|&<>#@%,=*\n\r\t:~+.0", "rm", "gh", "git", "repo", "delete", "push", "--force", "Remove-Item", "-Recurse", "C:\\", "/data", "@'\n", "\n'@", "\u00a0", "\u2013", "\u2014", "\u2018", "\u2019", "\u201c", "\u201d", "\u201e", "\u200b", "\u202e", "\u2066", "\ufeff", "\u0435", "\uff47", "\uff1b", "\u3000", "\u0085", "\u180e", "\ud800", "\udfff", "😀", "\ufe0f", "中文"];
+    let seed = 33;
+    const next = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed;
+    };
+    for (let round = 0; round < 1500; round += 1) {
+      const length = next() % 24;
+      let command = "";
+      for (let index = 0; index < length; index += 1) {
+        command += alphabet[next() % alphabet.length] ?? "";
+      }
+      expect(() => findIrreversible({ command, cwd: round % 2 === 0 ? project : null }, settings)).not.toThrow();
+    }
   });
 });
 

@@ -38,6 +38,10 @@ describe("reading POSIX shell text", () => {
     expect(words(parsePosix("rm -r C:\\data\\x # rm -rf /"))).toEqual([["rm", "-r", "C:\\data\\x"]]);
   });
 
+  it("does not split on Unicode spaces or read curly quotes as quotes", () => {
+    expect(words(parsePosix("gh repo ‘delete’ ––yes"))).toEqual([["gh repo", "‘delete’", "––yes"]]);
+  });
+
   it("reads a subshell as a script of its own", () => {
     const [command, next] = parsePosix("(cd /x && rm -rf y); ls");
     expect(command?.nested).toEqual(["cd /x && rm -rf y"]);
@@ -60,6 +64,23 @@ describe("reading PowerShell text", () => {
     const commands = parsePowershell("ForEach-Object { Remove-Item $_ }; Write-Output \"$(whoami)\"");
     expect(commands[0]?.nested).toEqual([" Remove-Item $_ "]);
     expect(commands[1]?.nested).toEqual(["whoami"]);
+  });
+
+  it("splits on the white space PowerShell accepts and nowhere else", () => {
+    expect(words(parsePowershell("a b　c d\u0085e\u000bf​g᠎h"))).toEqual([["a", "b", "c", "d", "e", "f​g᠎h"]]);
+  });
+
+  it("reads PowerShell's dashes as the start of a parameter only at the start of a word", () => {
+    expect(words(parsePowershell("Remove-Item –Recurse —Force ―–x a–b '–c' ‐d"))).toEqual([
+      ["Remove-Item", "-Recurse", "-Force", "--x", "a–b", "–c", "‐d"],
+    ]);
+  });
+
+  it("reads PowerShell's curly quotes as quotes", () => {
+    expect(words(parsePowershell("echo ‘it’’s’ “a””b” „x“ 'y’ “z\" ＂w＂"))).toEqual([
+      ["echo", "it’s", "a”b", "x", "y", "z", "＂w＂"],
+    ]);
+    expect(words(parsePowershell("echo @‘\nbody\n’@; next"))).toEqual([["echo", "body"], ["next"]]);
   });
 
   it("reads quotes, escapes and the stop-parsing token", () => {
