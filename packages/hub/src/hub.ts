@@ -7,9 +7,10 @@ import { createDeployments, type DeploymentService } from "./deployments.js";
 import { allowEverything, type CommandGate, type CommandService, createCommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import { type ConversationService, createConversationService } from "./conversations.js";
-import { type CredentialSource, environmentCredentials } from "./credentials.js";
+import { type CredentialSource, environmentCredentials, secretValues } from "./credentials.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { lockSettings } from "./irreversible.js";
+import { createMemoryService, type MemoryService } from "./memories.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
 import { pageFiles } from "./page.js";
@@ -76,6 +77,7 @@ export interface Hub {
   readonly verification: VerificationService;
   readonly loop: FailureLoop;
   readonly deployments: DeploymentService;
+  readonly memories: MemoryService;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -97,6 +99,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
   let deployments: DeploymentService;
+  let memories: MemoryService;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -120,7 +123,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const credentials = options.credentials ?? environmentCredentials(environment);
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
-    const brainToken = brainTokenCheck(ensureBrainToken(config.brainTokenFile));
+    const brainSecret = ensureBrainToken(config.brainTokenFile);
+    const brainToken = brainTokenCheck(brainSecret);
+    const vapidKey = config.vapid?.privateKey;
+    memories = createMemoryService({ database, clock, secrets: () => secretValues(environment, vapidKey === undefined ? [brainSecret] : [brainSecret, vapidKey]) });
     lock =
       options.gate === undefined
         ? createConfirmationLock({
@@ -138,7 +144,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    conversations = createConversationService({ database, clock, commands });
+    conversations = createConversationService({ database, clock, commands, memory: memories });
     const told = conversations;
     if (options.ticketWork === undefined) {
       work = createWorkService({
@@ -241,6 +247,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         targets: () => targets.names(),
         machines: () => runners.describe(),
         deployments,
+        memories,
         tickets: {
           tickets,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
@@ -253,6 +260,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       }),
       tickets,
       files,
+      memories,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       loop: failures,
@@ -307,6 +315,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       verification,
       loop: failures,
       deployments,
+      memories,
       address,
       close: async () => {
         try {

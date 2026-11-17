@@ -19,6 +19,8 @@ export * from "./lock.js";
 export * from "./machine-commands.js";
 export * from "./machines.js";
 export * from "./manifest.js";
+export * from "./memories.js";
+export * from "./memory-tools.js";
 export * from "./migrations.js";
 export * from "./notifier.js";
 export * from "./page.js";

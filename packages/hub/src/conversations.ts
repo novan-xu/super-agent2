@@ -17,6 +17,7 @@ import {
   finishedStates,
   type HistoryItem,
   type HubToBrain,
+  type MemoryBrief,
   type OwnerEntry,
   Provider,
   protocolVersion,
@@ -73,6 +74,12 @@ export interface ConversationServiceOptions {
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly commands: CommandService;
+  readonly memory?: MemoryBriefing;
+}
+
+export interface MemoryBriefing {
+  brief(conversation: string, seen: number | null): MemoryBrief | null;
+  revision(): number;
 }
 
 export const providerNames: Readonly<Record<Provider, string>> = { gpt: "GPT", claude: "Claude", deepseek: "DeepSeek" };
@@ -127,7 +134,7 @@ const Body = z.looseObject({
   state: z.string().optional(),
 });
 
-const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int() });
+const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int(), memory_seen: z.number().int() });
 
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
@@ -243,12 +250,15 @@ export function createConversationService(options: ConversationServiceOptions): 
   const markTaken = connection.prepare(
     "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE id = ? AND conversation_id = ? AND taken = 0",
   );
-  const selectSession = connection.prepare("SELECT session, through FROM program_sessions WHERE conversation_id = ? AND provider = ?");
+  const selectSession = connection.prepare("SELECT session, through, memory_seen FROM program_sessions WHERE conversation_id = ? AND provider = ?");
   const upsertSession = connection.prepare(
-    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET session = excluded.session, through = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.through ELSE 0 END, updated_at = excluded.updated_at",
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET session = excluded.session, through = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.through ELSE 0 END, memory_seen = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.memory_seen ELSE 0 END, updated_at = excluded.updated_at",
   );
   const advanceSession = connection.prepare(
-    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET through = excluded.through, updated_at = excluded.updated_at",
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET through = excluded.through, memory_seen = program_sessions.memory_offered, updated_at = excluded.updated_at",
+  );
+  const offerMemory = connection.prepare(
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, memory_offered, updated_at) VALUES (?, ?, NULL, 0, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET memory_offered = excluded.memory_offered",
   );
   const insertBrainCommand = connection.prepare(
     "INSERT INTO brain_commands (command_id, conversation_id) VALUES (?, ?) ON CONFLICT (command_id) DO NOTHING",
@@ -566,11 +576,20 @@ export function createConversationService(options: ConversationServiceOptions): 
       case "prepare": {
         const found = message.fresh ? undefined : selectSession.get(message.conversation, message.provider);
         const session = found === undefined ? undefined : SessionRow.parse(found);
+        const given = session?.session ?? null;
+        const memory = options.memory;
+        let brief: MemoryBrief | null = null;
+        if (memory !== undefined && get(message.conversation) !== undefined) {
+          const revision = memory.revision();
+          brief = memory.brief(message.conversation, given === null || session === undefined ? null : session.memory_seen);
+          offerMemory.run(message.conversation, message.provider, revision, clock.now());
+        }
         sendToBrain({
           type: "prepared",
           request: message.request,
-          session: session?.session ?? null,
+          session: given,
           history: history(message.conversation, session?.through ?? 0, new Set(message.exclude)),
+          memory: brief,
         });
         return;
       }

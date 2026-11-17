@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ConversationId, Provider } from "./conversations.js";
+import { MemoryBrief } from "./memory.js";
 import { ProtocolVersion } from "./version.js";
 
 export const InputSource = z.enum(["owner", "hub"]);
@@ -169,6 +170,7 @@ export const Prepared = z.object({
   request: z.string().min(1),
   session: z.string().min(1).nullable(),
   history: z.array(HistoryItem),
+  memory: MemoryBrief.nullable().default(null),
 });
 export type Prepared = z.infer<typeof Prepared>;
 

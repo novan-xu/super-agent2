@@ -281,6 +281,21 @@ export const messages = {
   "stuck.resume": "继续",
   "stuck.giveUp": "放弃",
   "stuck.words": "给大脑的话",
+  "refusal.credential": "记忆里不能放令牌、密钥或密码",
+  "refusal.duplicate": "已经有一条一模一样的记忆",
+  "memory.list": "大脑的记忆",
+  "memory.empty": "还没有记忆",
+  "memory.by.brain": "大脑",
+  "memory.by.owner": "你",
+  "memory.edit": "改写",
+  "memory.text": "这条记忆",
+  "memory.save": "保存",
+  "memory.cancel": "取消",
+  "memory.delete": "删除这条记忆",
+  "memory.confirmDelete": "删除",
+  "memory.problem.long": "最多 {count} 个字",
+  "memory.problem.chinese": "请用中文写",
+  "memory.problem.duplicate": "已经有一条一模一样的记忆",
 } as const;
 
 export type Messages = typeof messages;

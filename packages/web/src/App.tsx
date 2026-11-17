@@ -16,6 +16,7 @@ import { followLink, Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
 import { HistoryView } from "./views/HistoryView.js";
+import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
 import { WorkbenchView } from "./views/WorkbenchView.js";
 
@@ -199,6 +200,13 @@ export function App() {
     }),
     [controller],
   );
+  const memoryActions = useMemo<MemoryActions>(
+    () => ({
+      edit: (id, words, revision) => controller.editMemory(id, words, revision),
+      remove: (id, revision) => controller.deleteMemory(id, revision),
+    }),
+    [controller],
+  );
   const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
   const inConversation = route.view === "conversations" || route.view === "home";
@@ -265,6 +273,8 @@ export function App() {
           scrolled={historyScrolled}
           now={now}
         />
+      ) : route.view === "memory" ? (
+        <MemoryView memory={page.memory} actions={memoryActions} now={now} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} now={now} />
       ) : (

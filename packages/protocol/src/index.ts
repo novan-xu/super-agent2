@@ -9,6 +9,7 @@ export * from "./deployments.js";
 export * from "./generated.js";
 export * from "./holds.js";
 export * from "./history.js";
+export * from "./memory.js";
 export * from "./hub.js";
 export * from "./page.js";
 export * from "./rounds.js";

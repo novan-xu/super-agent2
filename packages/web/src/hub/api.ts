@@ -7,6 +7,7 @@ import {
   ConversationResponse,
   EntryResponse,
   MachineList,
+  MemoryList,
   PushKey,
   type PushSubscriptionRequest,
   PushState,
@@ -25,7 +26,7 @@ export type Failure = Refusal["error"] | "network";
 
 export type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: Failure };
 
-async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "DELETE" = "POST"): Promise<Answer<T>> {
+async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST"): Promise<Answer<T>> {
   let response: Response;
   try {
     response = await fetch(
@@ -90,6 +91,8 @@ export const hubApi = {
   startChains: (chains: readonly ChainStartItem[]) => call("/api/chains/start", TicketList, { chains }),
   chooseChain: (ticket: number, change: ChoiceChange) => call("/api/chains/choice", TicketList, { ticket, ...change }),
   reassign: (ticket: number, change: ChoiceChange) => call(`/api/tickets/${ticket}/reassign`, TicketList, change),
+  editMemory: (id: number, text: string, revision: number) => call(`/api/memories/${id}`, MemoryList, { text, revision }, "PUT"),
+  deleteMemory: (id: number, revision: number) => call(`/api/memories/${id}`, MemoryList, { revision }, "DELETE"),
   pushKey: () => call("/api/push", PushKey),
   subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
   unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),
