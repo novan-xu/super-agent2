@@ -470,6 +470,7 @@ release() {
     finish "$dir" unchanged "The hub's database could not be backed up, so nothing was switched; the running version was started again."
     return 0
   fi
+  [ ! -f "$dir/hub.sqlite" ] || chmod 0600 "$dir/hub.sqlite"
   record_set "$dir" backup_level "$level"
   say "backed up the hub's database at migration $level to $dir/hub.sqlite"
   record_set "$dir" step switch

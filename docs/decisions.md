@@ -2097,3 +2097,96 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   which commit it goes back to. Keeping the old form for an empty environment keeps every hold already waiting valid.
 - **Other options:** Dropping every hold stored before the change; letting credential names through and hiding them on
   the card; substituting the variables into the text the lock reads.
+
+## 2026-11-17 — Super-agent2 is deployed by a script that outlives the hub
+
+- **Chosen:** The deploy script on the NAS releases a commit by itself. `deploy.sh begin <deployment> <commit>` records
+  the release in `releases/d<deployment>-<commit>/` and starts it with `setsid` in a session of its own, so it survives
+  the hub's process, the SSH session that started it and the brain; it returns once the release has recorded its process.
+  The release fetches the commit's tarball from GitHub with the token in `secrets/hub.env` (or unpacks an uploaded
+  `incoming/<commit>.tar`), builds both images tagged with the commit while the old version runs, stops hub and brain,
+  backs up the hub's database with SQLite's `VACUUM INTO` from a one-off container of the running image, switches images
+  (`current` becomes `previous`), source (`src` becomes `src.previous`) and its own `deploy.sh` and `compose.yaml` (the
+  old ones kept in `deploy.previous/`), starts the hub and waits for `/health` to name the new commit, then starts the
+  brain and waits for it to link. On failure it stops both, restores the backup when the database is at a higher
+  migration than at the backup (keeping the replaced files in the release's `replaced/`), puts back images, source and
+  deploy files, and checks the previous version the same way. `outcome` reads the record, and `settle` waits for the end
+  and acknowledges it. `release <commit>` runs the same release by hand in the foreground; `rollback` goes back by hand
+  with the backup of the release that switched the running version in. The newest five releases (with their backups) and
+  only the images of the running and the previous commit are kept.
+- **Why:** The hub that runs the deployment is the thing being replaced, so the health check and the way back have to
+  happen outside it. A backup taken after the hub stopped is consistent; restoring it only across a migration keeps what
+  the new hub wrote whenever the old hub can still open the database. Building first keeps the downtime to the switch.
+  Starting the hub and then the brain with bounded waits avoids Compose waiting without end on a hub that keeps
+  restarting. The NAS has no `nohup`, and its `/share/Container` is a symbolic link, so the script keeps the path it was
+  called by.
+- **Other options:** A one-off container that runs the release (it would need the Docker socket); restoring the database
+  on every rollback, which loses what the new hub wrote; letting the hub's own rollback command run the way back, which
+  the hub's restart would cut off; uploading the source from a PC as before.
+
+## 2026-11-17 — Super-agent2's deployment file, and why its shape did not change
+
+- **Chosen:** `.superagent2/deployment.json` names the `hub` target and three commands that sign in to the NAS with the
+  hub's key and run `deploy.sh begin|outcome|settle "$SUPERAGENT2_DEPLOYMENT" "$SUPERAGENT2_COMMIT"` of the hub's own
+  instance, `/share/Container/${SUPERAGENT2_INSTANCE}`, which the Compose file sets in the hub's environment (a command
+  on the `hub` target inherits it). The health check runs every 10 seconds for up to an hour. The file's shape from #17
+  is unchanged; instead any command of a deployment may print a line
+  `superagent2-deployment-outcome {"result", "reason", "previous"?}`, and the hub then ends the deployment with that
+  result, whatever the exit code, without running the rollback command; `previous` fills in the version gone back to
+  when the hub had none on record. A new result, `unchanged`, says the deployment failed before it replaced anything. A
+  deploy command the hub's restart cut off is followed by one health check, and only an outcome line printed by it
+  decides; without one the deployment stays `interrupted` as before. The rollback command `settle` remains for a hub that
+  never read an outcome; it acknowledges a release that went back, so even a hub from before this change ends with
+  `rolled-back` once its period is over.
+- **Why:** The hub that starts the first deployment under this scheme is the previous version, which parses the file
+  strictly; any new key would make it refuse the very deployment that brings the change. The outcome line is read by
+  the new hub after the restart, which is the hub that has to finish the record. Taking the instance from the hub's own
+  environment means the same file at the same commit deploys the live system from the live hub and a rehearsal from a
+  rehearsal hub, and a hub that names no instance fails rather than reaching the live folder.
+- **Other options:** An `outcome` key in the file, refused by every hub before #18; the `nas` target, whose commands
+  carry nothing that tells instances apart; letting the health check pass on the previous version, which would record a
+  rolled-back deployment as succeeded.
+
+## 2026-11-17 — One deploy script and Compose file for every instance
+
+- **Chosen:** The instance is the name of the folder the script lives in: `superagent2` (live) or `superagent2-<name>`.
+  The script exports `SUPERAGENT2_PROJECT`, `SUPERAGENT2_ROOT`, `SUPERAGENT2_HUB_PORT`, `SUPERAGENT2_SOURCE`,
+  `SUPERAGENT2_TAG` and `SUPERAGENT2_REVISION`, and `compose.yaml`, now kept next to the script, takes every name, path
+  and port from them and refuses to run without them. A folder other than the live one must state `HUB_PORT` in
+  `instance.env`. The tunnel's env file is optional, so an instance without a tunnel token starts. `takeover` and
+  `giveback` run only for the live folder. A source whose Compose file is from before this change is built with the
+  installed one, and its deploy files are not installed. The old `source` and `build` steps are gone; `release` does both.
+- **Why:** The rehearsal runs the same files as the live system, so what was rehearsed is what runs.
+- **Other options:** A copy of the files per instance; a command-line option for the instance.
+
+## 2026-11-17 — The hub knows its version, and hands it to runners
+
+- **Chosen:** Both images carry `SUPERAGENT2_REVISION`, a build argument the release sets to the commit. The hub reads it
+  (a full commit id, or nothing), answers it in `/health`, sends it in its welcome to runners, and with
+  `HUB_SOURCE_REPOSITORY` (`novan-xu/super-agent2` in the Compose file) serves `GET /runner/release`: GitHub's tarball
+  of that commit, fetched with the repository owner's token and streamed with `x-superagent2-version`, only to a runner
+  the front door and its runner token admit. A runner reports its own version in its machine report, and the brain's
+  target list says when a runner is not yet at the hub's version. The development harness takes `--announce <commit>`.
+- **Why:** The runner needs nothing new to reach the hub's release (no GitHub login on the machine), and gets exactly
+  the commit the hub runs.
+- **Other options:** `git fetch` on each machine with its own credentials; a package registry.
+
+## 2026-11-17 — How a runner moves to the hub's version
+
+- **Chosen:** A runner whose version differs from the one the hub announces fetches the release into
+  `~/.superagent2/versions/<first 12 characters of the commit>`, runs `pnpm install --frozen-lockfile` and
+  `pnpm --filter-prod "@super-agent2/runner..." run build` there, checks that `main.js version` reports the commit, and
+  marks the folder ready, all while it keeps working. It switches once no worker and no command runs on it: it writes
+  `~/.superagent2/version.json` (the version to start, the one before it, and a count of starts not yet confirmed) and
+  exits with 75. `install` and `launch` now start `~/.superagent2/start.mjs`, a small generated file that starts the
+  version named there; the Windows supervisor restarts the runner at once on 75 and the macOS launch agent restarts it as
+  always. The new runner's first welcome from the hub confirms it, refreshes `start.mjs`, and removes every version
+  folder but the current and the previous one. `start.mjs` goes back to the previous version after three starts that
+  never reached the hub, and that version is not tried again. Any failed step removes what it made, leaves the running
+  runner as it is, and is retried after an hour. Only a runner started by its supervisor or launch agent updates itself.
+- **Why:** Waiting until nothing runs is the only way to lose no ticket, since a runner's workers are its children; the
+  hub already resumes a worker after a runner restart, so a start that races the switch is resumed too. Building in the
+  folder it runs from is needed on Windows, where pnpm links the workspace with absolute junctions, so a renamed folder
+  cannot start; the short name keeps the paths under Windows' length limit (a 40-character folder failed there).
+- **Other options:** Stopping new work on a runner with an update pending; updating the checkout the runner was
+  installed from; a Windows scheduled task to restart it.
