@@ -1,0 +1,18 @@
+when:
+  - event: pull_request
+
+labels:
+  target: macos
+
+steps:
+  - name: probe
+    image: bash
+    commands:
+      - pwd
+      - echo "HOME=$${HOME} TMPDIR=$${TMPDIR:-} SHELL=$${SHELL:-}"
+      - echo "PATH=$${PATH}"
+      - ls -la ..
+      - command -v node npm pnpm corepack curl shasum tar git || true
+      - node -v || true
+      - uname -a
+      - env | cut -d= -f1 | sort | tr '\n' ' '

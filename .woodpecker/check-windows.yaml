@@ -1,0 +1,17 @@
+when:
+  - event: pull_request
+
+labels:
+  target: windows
+
+steps:
+  - name: probe
+    image: powershell
+    commands:
+      - Get-Location
+      - Write-Host "HOME=$$env:HOME USERPROFILE=$$env:USERPROFILE TEMP=$$env:TEMP"
+      - Write-Host "PATH=$$env:Path"
+      - Get-ChildItem .. | Format-Table -AutoSize | Out-String -Width 200
+      - Get-Command node, npm, pnpm, corepack, git, curl.exe, tar.exe -ErrorAction SilentlyContinue | Format-Table Name, Source -AutoSize | Out-String -Width 200
+      - Write-Host $$PSVersionTable.PSVersion
+      - (Get-ChildItem env:).Name -join ' '
