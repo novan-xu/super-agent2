@@ -18,6 +18,8 @@ export interface FakeRepository {
   readonly pulls: Map<number, FakePull>;
   readonly issues: Map<number, "open" | "closed">;
   readonly trees: Map<string, string[]>;
+  readonly texts: Map<string, string>;
+  readonly mainline: string[];
   readonly branches: Set<string>;
   squash: boolean;
 }
@@ -68,6 +70,7 @@ export interface FakeForge {
   repository(name: string): FakeRepository;
   pull(name: string, number: number, head: string, files: readonly string[], ref?: string): FakePull;
   tree(name: string, commit: string, paths: readonly string[]): void;
+  file(name: string, commit: string, path: string, text: string): void;
   calledWith(pattern: RegExp): string[];
 }
 
@@ -102,7 +105,7 @@ export function fakeForge(): FakeForge {
     if (found !== undefined) {
       return found;
     }
-    const created: FakeRepository = { pulls: new Map(), issues: new Map(), trees: new Map(), branches: new Set(), squash: true };
+    const created: FakeRepository = { pulls: new Map(), issues: new Map(), trees: new Map(), texts: new Map(), mainline: [], branches: new Set(), squash: true };
     github.set(name, created);
     return created;
   };
@@ -128,6 +131,15 @@ export function fakeForge(): FakeForge {
     },
     tree: (name, commit, paths) => {
       repositoryOf(name).trees.set(commit, [...paths]);
+    },
+    file: (name, commit, path, text) => {
+      const repository = repositoryOf(name);
+      const tree = repository.trees.get(commit) ?? [];
+      if (!tree.includes(path)) {
+        tree.push(path);
+      }
+      repository.trees.set(commit, tree);
+      repository.texts.set(`${commit}:${path}`, text);
     },
     calledWith: (pattern) => calls.filter((call) => pattern.test(call)),
     fetch: async (input, init) => {
@@ -204,7 +216,14 @@ export function fakeForge(): FakeForge {
       pull.open = false;
       pull.mergeCommit = `merge-of-${pull.head}`;
       merges.push({ repository: name, number: pull.number, sha: body.sha, method: body.merge_method ?? "merge" });
-      repository.trees.set(pull.mergeCommit, repository.trees.get(pull.head) ?? []);
+      repository.trees.set(pull.mergeCommit, [...(repository.trees.get(pull.head) ?? [])]);
+      for (const [key, text] of [...repository.texts]) {
+        const at = key.indexOf(":");
+        if (key.slice(0, at) === pull.head) {
+          repository.texts.set(`${pull.mergeCommit}:${key.slice(at + 1)}`, text);
+        }
+      }
+      repository.mainline.push(pull.mergeCommit);
       if (forge.loseMergeAnswer) {
         forge.loseMergeAnswer = false;
         throw new TypeError("fetch failed: the connection was reset after the request was sent");
@@ -214,7 +233,21 @@ export function fakeForge(): FakeForge {
     const compareMatch = /^compare\/(.+)\.\.\.(.+)$/.exec(rest);
     if (compareMatch !== null) {
       const pull = [...repository.pulls.values()].find((entry) => entry.head === compareMatch[1] && entry.base === compareMatch[2]);
-      return pull === undefined ? json(404, { message: "Not Found" }) : json(200, { files: pull.baseFiles.map((filename) => ({ filename })) });
+      if (pull !== undefined) {
+        return json(200, { files: pull.baseFiles.map((filename) => ({ filename })) });
+      }
+      const base = repository.mainline.indexOf(compareMatch[1] ?? "");
+      const head = repository.mainline.indexOf(compareMatch[2] ?? "");
+      if (base < 0 || head < 0) {
+        return json(404, { message: "Not Found" });
+      }
+      return json(200, { status: head > base ? "ahead" : head < base ? "behind" : "identical", files: [] });
+    }
+    const commitMatch = /^commits\/(.+)$/.exec(rest);
+    if (commitMatch !== null) {
+      const ref = commitMatch[1] ?? "";
+      const sha = repository.trees.has(ref) ? ref : ref === "main" ? repository.mainline.at(-1) : undefined;
+      return sha === undefined ? json(422, { message: `No commit found for SHA: ${ref}` }) : json(200, { sha });
     }
     const issueMatch = /^issues\/(\d+)$/.exec(rest);
     if (issueMatch !== null) {
@@ -243,7 +276,8 @@ export function fakeForge(): FakeForge {
       const wanted = (contentsMatch[1] ?? "").replace(/\/+$/, "");
       const tree = repository.trees.get(url.searchParams.get("ref") ?? "") ?? [];
       if (tree.includes(wanted)) {
-        return json(200, { type: "file", name: wanted.split("/").at(-1), path: wanted });
+        const text = repository.texts.get(`${url.searchParams.get("ref") ?? ""}:${wanted}`) ?? "";
+        return json(200, { type: "file", name: wanted.split("/").at(-1), path: wanted, encoding: "base64", content: Buffer.from(text).toString("base64") });
       }
       const inside = tree.filter((entry) => entry.startsWith(`${wanted}/`));
       if (inside.length === 0) {

@@ -2,7 +2,8 @@ import type { AddressInfo } from "node:net";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
-import { type Clock, systemClock } from "./clock.js";
+import { type Clock, type Sleep, systemClock } from "./clock.js";
+import { createDeployments, type DeploymentService } from "./deployments.js";
 import { allowEverything, type CommandGate, type CommandService, createCommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import { type ConversationService, createConversationService } from "./conversations.js";
@@ -47,6 +48,7 @@ export interface HubOptions {
   readonly gitHubBase?: string;
   readonly verificationTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
+  readonly deploymentSleep?: Sleep;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -72,6 +74,7 @@ export interface Hub {
   readonly work: WorkService | undefined;
   readonly verification: VerificationService;
   readonly loop: FailureLoop;
+  readonly deployments: DeploymentService;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -92,6 +95,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let chains: Chains;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
+  let deployments: DeploymentService;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -199,6 +203,21 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ownerEmail: config.ownerEmail,
     });
     loop = failures;
+    const arranger = chains.arranger;
+    deployments = createDeployments({
+      database,
+      clock,
+      commands,
+      credentials,
+      targets: () => targets.names(),
+      fetch: options.forgeFetch ?? fetch,
+      ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
+      ...(options.deploymentSleep === undefined ? {} : { sleep: options.deploymentSleep }),
+      tell: (conversation, notice, prompt) => {
+        told.tell(conversation, notice, prompt);
+      },
+      deployed: (ticket) => arranger.deployed(ticket),
+    });
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards(), stuck: () => failures.cards() });
     const refreshed = waiting;
     runners.subscribe(() => refreshed.refresh());
@@ -219,6 +238,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         conversations,
         targets: () => targets.names(),
         machines: () => runners.describe(),
+        deployments,
         tickets: {
           tickets,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
@@ -256,6 +276,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const address = await server.listen(config.port, config.host);
     chains.resume();
     verification.resume();
+    deployments.resume();
     return {
       database,
       commands,
@@ -271,12 +292,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       work,
       verification,
       loop: failures,
+      deployments,
       address,
       close: async () => {
         try {
           runners.close();
           await server.close();
         } finally {
+          deployments.close();
+          await deployments.idle();
           failures.close();
           verification.close();
           await verification.idle();
@@ -293,6 +317,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
+    deployments.close();
+    await deployments.idle();
     verification.close();
     await verification.idle();
     work?.close();

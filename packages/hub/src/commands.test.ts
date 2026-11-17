@@ -124,6 +124,16 @@ describe("running a command", () => {
     expect(nasTarget.jobs[0]?.credentials["GH_TOKEN"]).toBe(testTokens["nuofan-island"]);
   });
 
+  it("gives the command the environment it was started with, which never replaces a credential", async () => {
+    const { service: running, nasTarget } = create();
+    const command = nodeScript(workDir, `console.log(JSON.stringify({ commit: process.env.SUPERAGENT2_COMMIT ?? null, gh: process.env.GH_TOKEN ?? null }));`);
+    const record = await finished(running, running.start({ target: "hub", command, environment: { SUPERAGENT2_COMMIT: "abc1234", GH_TOKEN: "not-a-token" } }).id);
+    expect(JSON.parse(textOf(running.output(record.id)))).toEqual({ commit: "abc1234", gh: testTokens["novan-xu"] });
+    await finished(running, running.start({ target: "nas", command: "true", environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
+    expect(nasTarget.jobs[0]?.credentials["SUPERAGENT2_COMMIT"]).toBe("abc1234");
+    expect(() => running.start({ target: "hub", command, environment: { "NOT A NAME": "x" } })).toThrow();
+  });
+
   it("streams output in order while the command is still running", async () => {
     const { service: running } = create();
     const first = join(workDir, "first");

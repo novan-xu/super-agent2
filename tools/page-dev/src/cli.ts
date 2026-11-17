@@ -203,7 +203,8 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
 }
 
 const running: Hub = hub;
-const scripted = createScriptedRunners(hub, forge === undefined ? undefined : forgeHandBack(forge, () => running));
+const deployments = new Map<string, string>();
+const scripted = createScriptedRunners(hub, forge === undefined ? undefined : forgeHandBack(forge, () => running, deployments));
 
 const harness = createHarness({
   scripted,
@@ -213,6 +214,7 @@ const harness = createHarness({
   assertion: ownerAssertion,
   allowance,
   brainToken: () => readFileSync(join(hubDir, "brain.token"), "utf8").trim(),
+  ...(forge === undefined ? {} : { deployments }),
 });
 
 const proxy = createServer((incoming, outgoing) => {
@@ -311,6 +313,7 @@ process.stdout.write(
     `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a writing ticket through the brain's tools and states its defaults, to be started from its card on the page`,
     `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two writing tickets on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
     `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round) or worker (fails once), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
+    `Deploy:   POST a deployment file to http://127.0.0.1:${port}/__harness/deployment?repository=<owner/name> (with --forge fake) and every scripted pull request of that repository carries it from then on, so its merge needs deploying; /__harness/loop?case=green&repository=<owner/name> starts such a ticket, which merges green; the demo brain deploys what a merge says needs deploying with deploy_repository, and reports the result`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

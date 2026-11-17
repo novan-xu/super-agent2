@@ -31,6 +31,31 @@ function lastHubMessage(prompt: string): string | undefined {
   return at < 0 ? undefined : prompt.slice(at);
 }
 
+function deployPlan(hub: string, turn: number): Step[] | undefined {
+  const merged = /^\[hub\] Ticket (\d+) .* in (\S+) was merged/.exec(hub);
+  const mergeCommit = /Deploy it with deploy_repository at (\S+) unless/.exec(hub)?.[1];
+  if (merged !== null && mergeCommit !== undefined) {
+    const repository = merged[2] ?? "";
+    return [
+      { kind: "hub", call: `deploy-${turn}`, name: "deploy_repository", args: { repository, commit: mergeCommit } },
+      { kind: "text", block: `deploy-${turn}`, text: `工单 ${merged[1] ?? ""} 已合并，这次改动需要部署。我已经开始部署 ${repository} 的 ${mergeCommit.slice(0, 7)}，结果出来后告诉你。` },
+    ];
+  }
+  const result = /^\[hub\] Deployment (\d+) of (\S+) at commit (\S+) on target \S+ (succeeded|failed and was rolled back to (\S+?);|[^\n]*)/.exec(hub);
+  if (result === null) {
+    return undefined;
+  }
+  const repository = result[2] ?? "";
+  const commit = (result[3] ?? "").slice(0, 7);
+  const said =
+    result[4] === "succeeded"
+      ? `部署 ${result[1] ?? ""} 完成：${repository} 已经在跑 ${commit}，健康检查通过。`
+      : result[5] !== undefined
+        ? `部署 ${result[1] ?? ""} 没有成功：${repository} 的 ${commit} 没通过健康检查，hub 已经回滚到 ${result[5].slice(0, 7)}，旧版本又能正常访问了。我会先查清原因再部署。`
+        : `部署 ${result[1] ?? ""} 没有成功（${repository} 的 ${commit}），我先去确认服务现在的状态。`;
+  return [{ kind: "text", block: `deployed-${turn}`, text: said }];
+}
+
 function loopPlan(hub: string, turn: number): Step[] | undefined {
   const ticket = Number(/ticket (\d+) \(/.exec(hub)?.[1] ?? Number.NaN);
   if (!Number.isInteger(ticket)) {
@@ -116,7 +141,7 @@ class DemoHandle implements ProgramHandle {
     this.turns += 1;
     this.running = true;
     const hub = lastHubMessage(prompt);
-    this.queue = (hub === undefined ? undefined : loopPlan(hub, this.turns)) ?? plan(lastParagraph(prompt), this.turns);
+    this.queue = (hub === undefined ? undefined : (deployPlan(hub, this.turns) ?? loopPlan(hub, this.turns))) ?? plan(lastParagraph(prompt), this.turns);
     this.next();
   }
 
@@ -126,7 +151,7 @@ class DemoHandle implements ProgramHandle {
     }
     this.steers += 1;
     const hub = lastHubMessage(text);
-    const loop = hub === undefined ? undefined : loopPlan(hub, this.turns * 1000 + this.steers);
+    const loop = hub === undefined ? undefined : (deployPlan(hub, this.turns * 1000 + this.steers) ?? loopPlan(hub, this.turns * 1000 + this.steers));
     this.queue.push(...(loop ?? [{ kind: "text", block: `steer-${this.turns}-${this.steers}`, text: `收到你刚补充的：「${text.trim()}」，已经算进这一轮里。` }]));
     return Promise.resolve("steered");
   }

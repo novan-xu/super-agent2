@@ -355,4 +355,36 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE commands ADD COLUMN environment TEXT;
+      CREATE TABLE deployments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repository TEXT NOT NULL,
+        commit_sha TEXT NOT NULL,
+        previous TEXT,
+        target TEXT NOT NULL,
+        file TEXT NOT NULL,
+        conversation_id TEXT,
+        phase TEXT NOT NULL,
+        result TEXT,
+        reason TEXT,
+        notes TEXT NOT NULL DEFAULT '[]',
+        health_from INTEGER,
+        deployed_tickets TEXT NOT NULL DEFAULT '[]',
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        told_at INTEGER
+      ) STRICT;
+      CREATE INDEX deployments_by_repository ON deployments (repository COLLATE NOCASE, id);
+      CREATE TABLE deployment_steps (
+        deployment_id INTEGER NOT NULL REFERENCES deployments (id),
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        command_id TEXT NOT NULL REFERENCES commands (id),
+        PRIMARY KEY (deployment_id, seq)
+      ) STRICT;
+    `,
+  },
 ];

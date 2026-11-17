@@ -1,0 +1,536 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type CommandRecord, deploymentFile, type Deployment, readDeploymentFile, resolveStart, startingEngineTable, type Ticket } from "@super-agent2/protocol";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createAccessVerifier } from "./access.js";
+import { type ChainDefaults, type Chains, createChains } from "./chains.js";
+import { type CommandService, createCommandService } from "./commands.js";
+import { type HubDatabase, openDatabase } from "./database.js";
+import { createDeployments, type DeploymentService } from "./deployments.js";
+import { lockSettings } from "./irreversible.js";
+import { createKeyCache } from "./keys.js";
+import { type ConfirmationLock, createConfirmationLock, fingerprintOf } from "./lock.js";
+import type { ExecutionEnd, Job, Target } from "./targets.js";
+import { assertion, audience, keySet, ownerEmail, signingKey, type SigningKey, staticKeySource, team, TestClock } from "./testing/access.js";
+import { testCredentials, waitForState } from "./testing/commands.js";
+import { type FakeForge, fakeForge, fakeGitHubBase } from "./testing/forge.js";
+import { ManualTimer, settledTurn } from "./testing/timer.js";
+import { createTicketService, type TicketService } from "./tickets.js";
+
+const repository = "novan-xu/toy-service";
+const first = "1111111111111111111111111111111111111111";
+const second = "2222222222222222222222222222222222222222";
+const third = "3333333333333333333333333333333333333333";
+
+interface Toy {
+  version: string | null;
+  broken: Set<string>;
+  healthyAfter: Map<string, number>;
+  checks: number;
+  deployExit: number;
+  rollbackExit: number;
+  hang: Set<string>;
+  jobs: Job[];
+  readonly hanging: Map<string, (end: ExecutionEnd) => void>;
+}
+
+interface Told {
+  readonly conversation: string | null;
+  readonly notice: string;
+  readonly prompt: string;
+}
+
+let dataDir: string;
+let clock: TestClock;
+let timer: ManualTimer;
+let key: SigningKey;
+let forge: FakeForge;
+let toy: Toy;
+let told: Told[];
+let database: HubDatabase;
+let commands: CommandService;
+let lock: ConfirmationLock;
+let tickets: TicketService;
+let chains: Chains;
+let deployments: DeploymentService;
+let begun: number[];
+let open: boolean;
+
+function toyTarget(): Target {
+  return {
+    name: "box",
+    run: (job, sink) => {
+      toy.jobs.push(job);
+      const said = (line: string) => sink("stdout", Buffer.from(`${line}\n`));
+      if (toy.hang.has(job.command)) {
+        said(`${job.command} started`);
+        const ended = new Promise<ExecutionEnd>((resolve) => toy.hanging.set(job.command, resolve));
+        return { ended, stop: async () => toy.hanging.get(job.command)?.({ exitCode: null, signal: "SIGKILL" }) };
+      }
+      let exitCode = 0;
+      if (job.command === "deploy" || job.command.startsWith("git push")) {
+        exitCode = toy.deployExit;
+        if (exitCode === 0) {
+          toy.version = job.credentials["SUPERAGENT2_COMMIT"] ?? null;
+        }
+        said(`deployed ${toy.version ?? "nothing"}`);
+      } else if (job.command === "check") {
+        toy.checks += 1;
+        const version = toy.version;
+        const healthy = version !== null && !toy.broken.has(version) && toy.checks > (toy.healthyAfter.get(version) ?? 0);
+        exitCode = healthy ? 0 : 1;
+        said(healthy ? `ok ${version}` : `no answer from ${version ?? "nothing"}`);
+      } else if (job.command === "rollback") {
+        exitCode = toy.rollbackExit;
+        if (exitCode === 0) {
+          toy.version = job.credentials["SUPERAGENT2_PREVIOUS_COMMIT"] ?? null;
+        }
+        said(`rolled back to ${toy.version ?? "nothing"}`);
+      }
+      return { ended: Promise.resolve({ exitCode, signal: null }), stop: () => Promise.resolve() };
+    },
+  };
+}
+
+const defaults: ChainDefaults = {
+  resolve: (ticket: Ticket, owner = ticket.ownerChoice) =>
+    resolveStart(
+      { kind: ticket.kind, difficulty: ticket.difficulty ?? "standard", platform: ticket.platform ?? "any", brainEngine: ticket.brainEngine ?? "codex", stated: true, owner },
+      startingEngineTable,
+      [{ name: "pc", platform: "win32", free: 2, engines: [{ engine: "codex", models: [{ id: "gpt-6.1-terra", efforts: ["high"] }] }] }],
+      { codex: "available", claude: "available" },
+    ),
+  machines: () => [],
+  machinesFor: () => [],
+};
+
+function start(): void {
+  database = openDatabase({ dataDir, clock });
+  const keys = createKeyCache({ source: staticKeySource(keySet(key)), clock });
+  const verify = createAccessVerifier({ team, audience, keys, clock });
+  lock = createConfirmationLock({ database, clock, verify, ownerEmail, settings: lockSettings({ projectFolders: [], credentialPaths: [] }) });
+  commands = createCommandService({ database, clock, targets: [toyTarget()], credentials: testCredentials, gate: lock.gate });
+  tickets = createTicketService({ database, clock });
+  chains = createChains({
+    database,
+    clock,
+    tickets,
+    verify: async (given) => (given === "owner" ? { ok: true, identity: { kind: "person", email: ownerEmail, subject: "owner" } } : { ok: false, reason: "no" }),
+    ownerEmail,
+    defaults,
+    work: { begin: (ticket) => void begun.push(ticket.id), stop: () => undefined },
+  });
+  deployments = createDeployments({
+    database,
+    clock,
+    commands,
+    credentials: testCredentials,
+    targets: () => ["box"],
+    fetch: forge.fetch,
+    gitHubBase: fakeGitHubBase,
+    sleep: timer.sleep,
+    tell: (conversation, notice, prompt) => void told.push({ conversation, notice, prompt }),
+    deployed: (ticket) => chains.arranger.deployed(ticket),
+  });
+  open = true;
+}
+
+async function stop(): Promise<void> {
+  if (!open) {
+    return;
+  }
+  open = false;
+  deployments.close();
+  await deployments.idle();
+  chains.close();
+  await chains.idle();
+  await commands.close();
+  database.close();
+}
+
+async function restart(): Promise<void> {
+  await stop();
+  start();
+  deployments.resume();
+}
+
+function fileText(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({ target: "box", deploy: "deploy", health: { command: "check", everySeconds: 5, withinSeconds: 30 }, rollback: "rollback", ...overrides });
+}
+
+function commit(sha: string, text: string = fileText()): void {
+  forge.file(repository, sha, deploymentFile, text);
+  forge.repository(repository).mainline.push(sha);
+}
+
+beforeEach(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), "hub-deployments-"));
+  clock = new TestClock();
+  timer = new ManualTimer(clock);
+  key = await signingKey("key-1");
+  forge = fakeForge();
+  toy = { version: null, broken: new Set(), healthyAfter: new Map(), checks: 0, deployExit: 0, rollbackExit: 0, hang: new Set(), jobs: [], hanging: new Map() };
+  told = [];
+  begun = [];
+  commit(first);
+  commit(second);
+  start();
+});
+
+afterEach(async () => {
+  for (const resolve of toy.hanging.values()) {
+    resolve({ exitCode: null, signal: "SIGKILL" });
+  }
+  await stop();
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
+function deployment(id: number): Deployment {
+  const found = deployments.get(id);
+  if (found === undefined) {
+    throw new Error(`deployment ${id} missing`);
+  }
+  return found;
+}
+
+async function begin(sha: string, previous?: string): Promise<Deployment> {
+  const started = await deployments.start({ repository, commit: sha, conversation: "c-1", ...(previous === undefined ? {} : { previous }) });
+  if (!started.ok) {
+    throw new Error(started.reason);
+  }
+  return started.deployment;
+}
+
+async function finished(id: number): Promise<Deployment> {
+  for (;;) {
+    await settledTurn();
+    const current = deployment(id);
+    if (current.phase === "done") {
+      await deployments.idle();
+      return deployment(id);
+    }
+    if (timer.sleeping > 0) {
+      await timer.next();
+    }
+  }
+}
+
+async function deployedOnce(sha: string): Promise<Deployment> {
+  return finished((await begin(sha)).id);
+}
+
+function commandsOf(found: Deployment): CommandRecord[] {
+  return found.steps.map((step) => {
+    const record = commands.get(step.command);
+    if (record === undefined) {
+      throw new Error(`command ${step.command} missing`);
+    }
+    return record;
+  });
+}
+
+function mergedTicket(number: number, mergeCommit: string, conversation = "c-1"): Ticket {
+  const title = { en: `Issue ${number}`, zh: `问题 ${number}` };
+  const opened = tickets.open({
+    repository,
+    issues: [{ repository, number, url: `https://github.com/${repository}/issues/${number}`, title, summary: title }],
+    title,
+    summary: title,
+    kind: "feature",
+    conversation,
+  });
+  tickets.change((writes) => {
+    writes.move(opened.id, "working");
+    writes.move(opened.id, "verifying");
+    writes.move(opened.id, "merged");
+  });
+  database.connection.prepare("INSERT INTO ticket_verifications (ticket_id, state, merge_commit) VALUES (?, 'merged', ?)").run(opened.id, mergeCommit);
+  return opened;
+}
+
+describe("the deployment file", () => {
+  it("is small, takes defaults for the health check's period, and refuses what it does not know", () => {
+    const read = readDeploymentFile(JSON.stringify({ target: "nas", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health" }, rollback: "./rollback.sh" }));
+    expect(read).toEqual({
+      ok: true,
+      file: { target: "nas", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health", everySeconds: 5, withinSeconds: 120 }, rollback: "./rollback.sh" },
+    });
+    expect(readDeploymentFile("{ not json")).toMatchObject({ ok: false, reason: expect.stringContaining("it is not JSON") });
+    const unknown = readDeploymentFile(JSON.stringify({ target: "nas", deploy: "a", health: { command: "b" }, rollback: "c", token: "secret" }));
+    expect(unknown).toMatchObject({ ok: false, reason: expect.stringContaining("token") });
+    expect(readDeploymentFile(JSON.stringify({ target: "nas", deploy: "a", rollback: "c" }))).toMatchObject({ ok: false, reason: expect.stringContaining("health") });
+  });
+});
+
+describe("a deployment", () => {
+  it("runs the deploy command on the file's target with the repository and commits in its environment, and succeeds when the service answers", async () => {
+    const done = await deployedOnce(first);
+    expect(done).toMatchObject({ repository, commit: first, previous: null, target: "box", phase: "done", result: "succeeded" });
+    expect(toy.version).toBe(first);
+    const [deploy, check] = toy.jobs;
+    expect(deploy?.command).toBe("deploy");
+    expect(deploy?.credentials).toMatchObject({ SUPERAGENT2_REPOSITORY: repository, SUPERAGENT2_COMMIT: first, SUPERAGENT2_DEPLOYMENT: String(done.id), GH_TOKEN: "test-token-for-novan-xu" });
+    expect(deploy?.credentials).not.toHaveProperty("SUPERAGENT2_PREVIOUS_COMMIT");
+    expect(check?.command).toBe("check");
+    expect(done.steps.map((step) => step.kind)).toEqual(["deploy", "health"]);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ conversation: "c-1", notice: `${repository} 已部署到 1111111，健康检查通过` });
+    expect(told[0]?.prompt).toContain(`[hub] Deployment ${done.id} of ${repository} at commit ${first} on target box succeeded`);
+    expect(told[0]?.prompt).toContain("deployed 1111111111111111111111111111111111111111");
+
+    const next = await deployedOnce(second);
+    expect(next).toMatchObject({ previous: first, result: "succeeded" });
+    expect(toy.jobs.at(-2)?.credentials).toMatchObject({ SUPERAGENT2_COMMIT: second, SUPERAGENT2_PREVIOUS_COMMIT: first });
+  });
+
+  it("succeeds when the service becomes healthy late within the period, checking at the file's interval", async () => {
+    toy.healthyAfter.set(first, 4);
+    const startedAt = clock.now();
+    const done = await deployedOnce(first);
+    expect(done.result).toBe("succeeded");
+    expect(done.steps.filter((step) => step.kind === "health")).toHaveLength(5);
+    expect(clock.now() - startedAt).toBe(20_000);
+  });
+
+  it("rolls back to the previously deployed commit when the service never answers, and checks that the previous version answers again", async () => {
+    await deployedOnce(first);
+    told.length = 0;
+    toy.broken.add(second);
+    const startedAt = clock.now();
+    const done = await deployedOnce(second);
+    expect(done).toMatchObject({ result: "rolled-back", previous: first, phase: "done" });
+    expect(clock.now() - startedAt).toBe(30_000);
+    expect(toy.version).toBe(first);
+    const kinds = done.steps.map((step) => step.kind);
+    expect(kinds.filter((kind) => kind === "health")).toHaveLength(7);
+    expect(kinds.slice(-2)).toEqual(["rollback", "recheck"]);
+    const rollback = toy.jobs.find((job) => job.command === "rollback");
+    expect(rollback?.credentials).toMatchObject({ SUPERAGENT2_COMMIT: second, SUPERAGENT2_PREVIOUS_COMMIT: first });
+    expect(done.notes).toContain("The service did not pass its health check within 30 seconds.");
+    expect(told).toHaveLength(1);
+    expect(told[0]?.notice).toBe(`${repository} 部署 2222222 没有成功，已回滚到 1111111，旧版本恢复正常`);
+    expect(told[0]?.prompt).toContain("failed and was rolled back to 1111111111111111111111111111111111111111");
+    expect(told[0]?.prompt).toContain("Rollback command:");
+    expect(deployments.latest(repository)?.id).toBe(done.id);
+    const after = await deployedOnce(first);
+    expect(after.previous).toBe(first);
+  });
+
+  it("rolls back when the deploy command fails", async () => {
+    await deployedOnce(first);
+    toy.deployExit = 3;
+    const done = await deployedOnce(second);
+    expect(done.result).toBe("rolled-back");
+    expect(done.notes[0]).toBe("The deploy command exited with code 3.");
+    expect(done.steps.map((step) => step.kind)).toEqual(["deploy", "rollback", "recheck"]);
+  });
+
+  it("reports a failing rollback as unrecovered", async () => {
+    await deployedOnce(first);
+    told.length = 0;
+    toy.broken.add(second);
+    toy.rollbackExit = 1;
+    const done = await deployedOnce(second);
+    expect(done).toMatchObject({ result: "unrecovered", reason: "The rollback command exited with code 1." });
+    expect(done.steps.map((step) => step.kind).at(-1)).toBe("rollback");
+    expect(told[0]?.notice).toBe(`${repository} 部署 2222222 没有成功，回滚后服务仍不正常，大脑会决定怎么处理`);
+    expect(told[0]?.prompt).toContain("check the service yourself");
+  });
+
+  it("reports a rollback after which the service still does not answer as unrecovered", async () => {
+    await deployedOnce(first);
+    toy.broken.add(second);
+    toy.broken.add(first);
+    const done = await deployedOnce(second);
+    expect(done).toMatchObject({ result: "unrecovered", reason: "The rollback command finished, but the service still did not pass its health check within 30 seconds." });
+  });
+
+  it("does not roll back a first deployment, which has no previous version, unless the brain names the commit running now", async () => {
+    toy.broken.add(first);
+    const done = await deployedOnce(first);
+    expect(done.result).toBe("failed");
+    expect(done.reason).toContain("there is no previous version to roll back to, and nothing was rolled back");
+    expect(toy.jobs.some((job) => job.command === "rollback")).toBe(false);
+    expect(told[0]?.notice).toBe(`${repository} 部署 1111111 没有成功，没有可以回滚的上一个版本，大脑会决定怎么处理`);
+
+    toy.broken.clear();
+    toy.version = third;
+    toy.broken.add(second);
+    const given = await finished((await begin(second, third)).id);
+    expect(given).toMatchObject({ previous: third, result: "rolled-back" });
+    expect(toy.version).toBe(third);
+  });
+
+  it("stops a health check that does not end by the end of the period, and counts it as not healthy", async () => {
+    toy.hang.add("check");
+    const startedAt = clock.now();
+    const done = await deployedOnce(first);
+    expect(done.result).toBe("failed");
+    expect(clock.now() - startedAt).toBe(30_000);
+    expect(done.steps.filter((step) => step.kind === "health")).toHaveLength(1);
+    expect(commandsOf(done).find((record) => record.command === "check")?.state).toBe("stopped");
+  });
+});
+
+describe("what a deployment marks deployed", () => {
+  it("marks the merged tickets whose merge commit it contains, so the tickets waiting for their deployment begin", async () => {
+    const merged = mergedTicket(1, first);
+    const later = mergedTicket(2, third);
+    const title = { en: "After", zh: "之后" };
+    const waiting = tickets.open({ repository, issues: [{ repository, number: 3, url: `https://github.com/${repository}/issues/3`, title, summary: title }], title, summary: title, kind: "feature", conversation: "c-1" });
+    tickets.change((writes) => {
+      writes.setWaits(waiting.id, [{ ticket: merged.id, deployment: true }]);
+      writes.move(waiting.id, "waiting");
+    });
+    forge.repository(repository).mainline.push(third);
+    const done = await deployedOnce(second);
+    expect(done.deployedTickets).toEqual([merged.id]);
+    expect(tickets.get(merged.id)?.deployedAt).not.toBeNull();
+    expect(tickets.get(later.id)?.deployedAt).toBeNull();
+    expect(tickets.get(waiting.id)?.state).toBe("working");
+    expect(told[0]?.prompt).toContain(`Marked deployed: ticket ${merged.id}`);
+  });
+
+  it("marks nothing when the deployment fails", async () => {
+    await deployedOnce(first);
+    const merged = mergedTicket(1, second);
+    toy.broken.add(second);
+    const done = await deployedOnce(second);
+    expect(done.result).toBe("rolled-back");
+    expect(tickets.get(merged.id)?.deployedAt).toBeNull();
+  });
+});
+
+describe("what a deployment refuses", () => {
+  it("refuses a commit with no deployment file, a file that does not parse, an unknown target and an unknown commit, running nothing", async () => {
+    forge.tree(repository, third, ["src/index.ts"]);
+    expect(await deployments.start({ repository, commit: third })).toEqual({
+      ok: false,
+      reason: `${repository} has no ${deploymentFile} at 3333333, so it declares no deployment; nothing was deployed. A repository that should be deployed needs that file first, added as ordinary work through a ticket.`,
+    });
+    forge.file(repository, third, deploymentFile, "{ \"target\": \"box\" ");
+    expect(await deployments.start({ repository, commit: third })).toMatchObject({ ok: false, reason: expect.stringContaining("is not a valid deployment file: it is not JSON") });
+    forge.file(repository, third, deploymentFile, JSON.stringify({ target: "box", deploy: "deploy", rollback: "rollback" }));
+    expect(await deployments.start({ repository, commit: third })).toMatchObject({ ok: false, reason: expect.stringContaining("is not a valid deployment file: health:") });
+    forge.file(repository, third, deploymentFile, fileText({ target: "elsewhere" }));
+    expect(await deployments.start({ repository, commit: third })).toMatchObject({ ok: false, reason: expect.stringContaining("names the target elsewhere, which the hub does not know (targets now: box)") });
+    expect(await deployments.start({ repository, commit: "4444444" })).toEqual({ ok: false, reason: `There is no commit 4444444 in ${repository}; nothing was deployed.` });
+    expect(toy.jobs).toEqual([]);
+    expect(commands.list()).toEqual([]);
+    expect(deployments.list()).toEqual([]);
+  });
+
+  it("refuses a second deployment of the same repository while one runs, saying what runs", async () => {
+    toy.hang.add("deploy");
+    const running = await begin(first);
+    await waitForState(commands, running.steps[0]?.command ?? "", "running");
+    const second_ = await deployments.start({ repository, commit: second });
+    expect(second_).toEqual({
+      ok: false,
+      reason: `Deployment ${running.id} of ${repository} at 1111111 is still running (running the deploy command); one deployment per repository at a time. Read it with read_deployment; nothing new was started.`,
+    });
+    const both = await Promise.all([deployments.start({ repository, commit: second }), deployments.start({ repository: "novan-xu/TOY-SERVICE", commit: second })]);
+    expect(both.every((outcome) => !outcome.ok)).toBe(true);
+    toy.version = first;
+    toy.hanging.get("deploy")?.({ exitCode: 0, signal: null });
+    const done = await finished(running.id);
+    expect(done.result).toBe("succeeded");
+    expect(toy.jobs.filter((job) => job.command === "deploy")).toHaveLength(1);
+  });
+});
+
+describe("a held command inside a deployment", () => {
+  async function owner(): Promise<string> {
+    return assertion({ key, clock });
+  }
+
+  it("waits for the owner's confirmation like any held command, and goes on once it is confirmed", async () => {
+    commit(third, fileText({ deploy: "git push --force origin main" }));
+    const started = await begin(third);
+    const id = started.steps[0]?.command ?? "";
+    const held = await waitForState(commands, id, "held");
+    expect(toy.jobs).toEqual([]);
+    expect(deployment(started.id).phase).toBe("deploy");
+    expect(deployments.report(deployment(started.id))).toContain("It is held until the owner confirms it on the web page; the deployment waits for it.");
+    const outcome = await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf(held) });
+    expect(outcome.ok).toBe(true);
+    const done = await finished(started.id);
+    expect(done.result).toBe("succeeded");
+    expect(toy.version).toBe(third);
+  });
+
+  it("ends without changing anything when the owner refuses it", async () => {
+    commit(third, fileText({ deploy: "git push --force origin main" }));
+    const started = await begin(third);
+    const id = started.steps[0]?.command ?? "";
+    const held = await waitForState(commands, id, "held");
+    await lock.refuse(id, { assertion: await owner(), fingerprint: fingerprintOf(held) });
+    const done = await finished(started.id);
+    expect(done.result).toBe("not-run");
+    expect(done.reason).toContain("The deploy command did not run: it ended as dropped");
+    expect(told[0]?.notice).toBe(`${repository} 部署 3333333 的命令没有运行，什么都没有改变`);
+    expect(toy.jobs).toEqual([]);
+  });
+
+  it("still waits after a restart of the hub, and goes on once confirmed", async () => {
+    commit(third, fileText({ deploy: "git push --force origin main" }));
+    const started = await begin(third);
+    const id = started.steps[0]?.command ?? "";
+    await waitForState(commands, id, "held");
+    await restart();
+    const held = await waitForState(commands, id, "held");
+    expect(deployment(started.id).phase).toBe("deploy");
+    await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf(held) });
+    const done = await finished(started.id);
+    expect(done.result).toBe("succeeded");
+    expect(toy.jobs.filter((job) => job.command.startsWith("git push"))).toHaveLength(1);
+  });
+});
+
+describe("a restart of the hub in the middle of a deployment", () => {
+  it("records a deploy command it interrupted as not known, runs it no second time and rolls nothing back", async () => {
+    await deployedOnce(first);
+    told.length = 0;
+    toy.hang.add("deploy");
+    const started = await begin(second);
+    await waitForState(commands, started.steps[0]?.command ?? "", "running");
+    await restart();
+    await deployments.idle();
+    const done = deployment(started.id);
+    expect(done).toMatchObject({ phase: "done", result: "interrupted" });
+    expect(done.reason).toContain("whether it finished is not known, and nothing was rolled back");
+    expect(toy.jobs.filter((job) => job.command === "deploy")).toHaveLength(2);
+    expect(toy.jobs.filter((job) => job.command === "rollback")).toHaveLength(0);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.notice).toBe(`${repository} 部署 2222222 中途被打断，结果不确定，大脑会去确认`);
+    await restart();
+    await deployments.idle();
+    expect(told).toHaveLength(1);
+  });
+
+  it("checks health again with a full period after a restart during the health check, and finishes truthfully", async () => {
+    await deployedOnce(first);
+    toy.broken.add(second);
+    const started = await begin(second);
+    await timer.next();
+    expect(deployment(started.id).phase).toBe("health");
+    await restart();
+    toy.broken.delete(second);
+    const done = await finished(started.id);
+    expect(done.result).toBe("succeeded");
+    expect(done.notes).toContain("The hub restarted during the health check; the check started again with a full period.");
+    expect(toy.jobs.filter((job) => job.command === "deploy")).toHaveLength(2);
+  });
+
+  it("tells a result the hub recorded but had not told yet once it starts again", async () => {
+    const started = await begin(first);
+    await deployments.idle();
+    expect(told).toHaveLength(1);
+    database.connection.prepare("UPDATE deployments SET told_at = NULL WHERE id = ?").run(started.id);
+    told.length = 0;
+    await restart();
+    expect(told).toHaveLength(1);
+    expect(told[0]?.notice).toBe(`${repository} 已部署到 1111111，健康检查通过`);
+  });
+});

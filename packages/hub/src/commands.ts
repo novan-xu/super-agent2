@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { text } from "@super-agent2/catalog";
 import {
+  CommandEnvironment,
   CommandRecord,
   CommandRequest,
   type CommandOutput,
@@ -71,6 +72,8 @@ const CommandRow = z.object({
   ended_at: z.number().int().nullable(),
 });
 
+const EnvironmentRow = z.object({ environment: z.string().nullable() });
+
 const OutputRow = z.object({
   seq: z.number().int(),
   stream: z.string(),
@@ -127,8 +130,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     .run(interruptedReason, clock.now(), ...interruptedStates);
 
   const insertCommand = connection.prepare(
-    `INSERT INTO commands (id, target, command, account, cwd, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    `INSERT INTO commands (id, target, command, account, cwd, environment, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
   );
+  const selectEnvironment = connection.prepare("SELECT environment FROM commands WHERE id = ?");
   const selectCommand = connection.prepare("SELECT * FROM commands WHERE id = ?");
   const selectCommands = connection.prepare("SELECT * FROM commands ORDER BY rowid DESC LIMIT ?");
   const selectHeld = connection.prepare("SELECT * FROM commands WHERE state = 'held' ORDER BY rowid");
@@ -173,6 +177,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const isFinished = (id: string) => {
     const record = get(id);
     return record === undefined || finishedStates.includes(record.state);
+  };
+
+  const environmentOf = (id: string): Record<string, string> => {
+    const row = EnvironmentRow.parse(selectEnvironment.get(id) ?? { environment: null });
+    return row.environment === null ? {} : CommandEnvironment.parse(JSON.parse(row.environment));
   };
 
   const record = (entry: Active, stream: OutputStream, data: string) => {
@@ -222,7 +231,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     let end: ExecutionEnd;
     try {
       const execution = target.run(
-        { command: initial.command, cwd: initial.cwd ?? undefined, credentials: credentials.credentials },
+        { command: initial.command, cwd: initial.cwd ?? undefined, credentials: { ...environmentOf(entry.id), ...credentials.credentials } },
         (stream, data) => record(entry, stream, entry.decoders[stream].write(data)),
       );
       entry.execution = execution;
@@ -297,7 +306,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
       }
       const parsed = CommandRequest.parse(request);
       const id = randomUUID();
-      insertCommand.run(id, parsed.target, parsed.command, parsed.account, parsed.cwd ?? null, clock.now());
+      insertCommand.run(id, parsed.target, parsed.command, parsed.account, parsed.cwd ?? null, parsed.environment === undefined ? null : JSON.stringify(parsed.environment), clock.now());
       const initial = get(id);
       if (initial === undefined) {
         throw new Error(`Command ${id} was not stored`);

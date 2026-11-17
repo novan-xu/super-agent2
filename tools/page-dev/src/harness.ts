@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createPushDevice, type FakeForge, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
 import type { Behaviour, HandBack, ScriptedRunners } from "./scripted.js";
-import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
+import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, deploymentFile, ProgramId, readDeploymentFile, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
 
@@ -34,7 +34,7 @@ export function createAllowanceForcing(): AllowanceForcing {
   };
 }
 
-export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined): (given: HandBack) => void {
+export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined, deployments: ReadonlyMap<string, string> = new Map()): (given: HandBack) => void {
   let pipelines = 0;
   return (given) => {
     const head = createHash("sha1").update(`${given.ticket}:${given.attempt}:${Date.now()}`).digest("hex");
@@ -51,6 +51,10 @@ export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined): (gi
       pull.head = head;
     }
     forge.tree(given.repository, head, ["src/parser.ts", ".woodpecker/check.yaml"]);
+    const declared = deployments.get(given.repository);
+    if (declared !== undefined) {
+      forge.file(given.repository, head, deploymentFile, declared);
+    }
     const woodpecker = forge.woodpecker.get(given.repository) ?? { id: 100 + forge.woodpecker.size, active: true, configFile: "", pipelines: [] };
     forge.woodpecker.set(given.repository, woodpecker);
     const red = given.behaviour === "red-always" || (given.behaviour === "red-once" && given.attempt === 1);
@@ -179,6 +183,7 @@ export interface HarnessOptions {
   readonly allowance: AllowanceForcing;
   readonly brainToken: () => string;
   readonly scripted: ScriptedRunners;
+  readonly deployments?: Map<string, string>;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -362,13 +367,13 @@ export function createHarness(options: HarnessOptions): Harness {
 
   let nextIssue = 1000 + Math.floor(Math.random() * 8000);
 
-  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail" };
+  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail", green: "finish" };
 
   const loopCase = async (url: URL, response: ServerResponse): Promise<void> => {
     const name = url.searchParams.get("case") ?? "";
     const behaviour = loopCases[name];
     if (behaviour === undefined) {
-      json(response, 400, { error: "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round) or worker (the worker fails once)", cases: Object.keys(loopCases) });
+      json(response, 400, { error: "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round), worker (the worker fails once) or green (green at once), and optionally repository=<owner/name>", cases: Object.keys(loopCases) });
       return;
     }
     nextIssue += 1;
@@ -376,7 +381,7 @@ export function createHarness(options: HarnessOptions): Harness {
       [
         {
           name,
-          repository: "novan-xu/garden-notes",
+          repository: url.searchParams.get("repository") ?? "novan-xu/garden-notes",
           title: [`Failure loop: ${name}`, `失败循环：${name}`],
           titles: [[`Parse relative dates (${name})`, `解析相对日期（${name}）`]],
           behaviour,
@@ -389,6 +394,27 @@ export function createHarness(options: HarnessOptions): Harness {
   };
 
   const scenario = (response: ServerResponse): Promise<void> => startPlans(scenarioPlan, response);
+
+  const declareDeployment = async (request: IncomingMessage, url: URL, response: ServerResponse): Promise<void> => {
+    const repository = url.searchParams.get("repository");
+    if (options.deployments === undefined || repository === null) {
+      json(response, 400, { error: "needs --forge fake, repository=<owner/name> and the deployment file as the request's body (POST), or remove=1" });
+      return;
+    }
+    if (url.searchParams.get("remove") === "1") {
+      options.deployments.delete(repository);
+      json(response, 200, { repository, declared: false });
+      return;
+    }
+    const body = (await readBody(request)).toString("utf8");
+    const reading = readDeploymentFile(body);
+    if (!reading.ok) {
+      json(response, 400, { error: reading.reason });
+      return;
+    }
+    options.deployments.set(repository, body);
+    json(response, 200, { repository, declared: true, file: reading.file });
+  };
 
   const startPlans = async (plans: readonly Planned[], response: ServerResponse): Promise<void> => {
     options.scripted.connect();
@@ -531,6 +557,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/loop") {
         await loopCase(url, response);
+        return true;
+      }
+      if (path === "/__harness/deployment") {
+        await declareDeployment(request, url, response);
         return true;
       }
       if (path === "/__harness/scenario") {

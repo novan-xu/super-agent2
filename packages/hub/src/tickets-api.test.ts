@@ -139,6 +139,8 @@ describe("the brain's ticket tools", () => {
       "merge_ticket",
       "guide_ticket",
       "describe_stuck",
+      "deploy_repository",
+      "read_deployment",
     ]);
   });
 
