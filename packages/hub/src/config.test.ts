@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { defaultPageDir, loadConfig } from "./config.js";
 
 const valid = {
   ACCESS_TEAM: "example-team",
@@ -31,8 +31,15 @@ describe("loadConfig", () => {
         projectFolders: [],
         credentialPaths: [],
         brainTokenFile: join("/data", "brain.token"),
+        pageDir: defaultPageDir,
       },
     });
+  });
+
+  it("serves the page built next to the hub unless told otherwise", () => {
+    expect(defaultPageDir.replaceAll("\\", "/")).toMatch(/\/packages\/web\/dist\/?$/);
+    const result = loadConfig({ ...valid, HUB_PAGE_DIR: "/srv/page" });
+    expect(result.ok && result.config.pageDir).toBe("/srv/page");
   });
 
   it("keeps the brain's token in the data folder unless told otherwise", () => {

@@ -32,6 +32,7 @@ import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
+import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { ToolServer } from "./tools.js";
 
 export const healthPath = "/health";
@@ -61,6 +62,7 @@ export interface HubServerOptions {
   readonly conversations?: ConversationService;
   readonly tools?: ToolServer;
   readonly brainToken?: BrainTokenCheck;
+  readonly page?: PageFiles;
 }
 
 export interface HubServer {
@@ -306,7 +308,25 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(conversationsPath) && (await serveConversations(request, response, path, method))) {
       return;
     }
+    if ((method === "GET" || method === "HEAD") && (await servePage(response, path, method === "HEAD"))) {
+      return;
+    }
     sendJson(response, 404, { error: "not_found" });
+  };
+
+  const servePage = async (response: ServerResponse, path: string, headOnly: boolean): Promise<boolean> => {
+    const file = await options.page?.(path);
+    if (file === undefined) {
+      return false;
+    }
+    response.writeHead(200, {
+      ...pageSecurityHeaders,
+      "content-type": file.type,
+      "content-length": file.body.length,
+      "cache-control": file.immutable ? "public, max-age=31536000, immutable" : "no-cache",
+    });
+    response.end(headOnly ? undefined : file.body);
+    return true;
   };
 
   const answer = async (request: IncomingMessage, response: ServerResponse, id: string, verdict: "release" | "refuse"): Promise<void> => {

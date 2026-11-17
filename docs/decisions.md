@@ -513,3 +513,80 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The design keeps guidance in `AGENTS.md`, and one file read by all three programs cannot drift.
 - **Other options:** Developer instructions for Codex, `--append-system-prompt-file` for Claude Code and a persona
   patch for dsh, one per program.
+
+## 2026-11-17 — How the hub serves the page
+
+- **Chosen:** The hub serves the built page from `HUB_PAGE_DIR`, by default `packages/web/dist` found next to the hub's
+  own files, behind the front door like everything but `/health`. The page's routes are defined once in
+  `packages/protocol/src/page.ts`: `/`, `/workbench`, `/conversations`, `/conversations/<id>`, `/history`, `/memory` and
+  `/settings`; each answers `GET` and `HEAD` with `index.html` and `Cache-Control: no-cache`. `/assets/<name>` answers a
+  file of the build's `assets` folder by name only (no folders, no leading dot, a known extension) with
+  `Cache-Control: immutable`, since Vite puts a content hash in every name. Every page answer carries a Content Security
+  Policy that allows only the page's own origin (`script-src 'self'`, `style-src 'self'`, `connect-src 'self'`,
+  `frame-ancestors 'none'`), plus `nosniff`, `no-referrer` and `X-Frame-Options: DENY`. Anything else stays a JSON 404,
+  and with no build present the page's routes answer 404 too. Files are read on each request.
+- **Why:** Listing the routes in one shared place lets the hub answer exactly the paths the page understands, so an API
+  typo still gets a JSON 404 rather than the page. Reading per request lets a rebuilt page show without restarting the
+  hub.
+- **Other options:** Answering `index.html` for every unknown path; loading the files into memory at start; serving
+  the page from a separate static server.
+
+## 2026-11-17 — The page's live state
+
+- **Chosen:** One WebSocket per page. Entries reach the page only through `watch` on that socket, whole or as deltas,
+  never from the HTTP reading of a conversation; HTTP gives the conversation and its turns, which are merged so an older
+  reading never undoes a newer change (a conversation by `updatedAt`, a turn never going back from finished to
+  running). A whole entry replaces the page's copy; a delta appends; an entry the page has never seen ignores deltas; the
+  owner's own message from the `POST` answer is added only if the socket has not already brought it. After a
+  reconnection the page watches again from just before its oldest entry that may still change (an owner message not
+  yet taken, a command still running, anything of a turn not known to be finished), and reads the list and the open
+  conversation again. It reconnects after 0.5, 1, 2, 4, then every 8 seconds, at once when the browser reports it is
+  back online, and when a hidden tab becomes visible without a connection. These rules are plain functions in
+  `packages/web/src/live/` with their own tests.
+- **Why:** One ordered channel for entries is what makes deltas and whole entries interleave without loss or
+  repetition; the hub already resends every entry of a running turn on `watch`.
+- **Other options:** Reading the whole conversation again after every reconnection and replacing the page's copy;
+  sequence numbers on deltas, which would need a protocol change; a heartbeat message, which the protocol does not
+  have.
+
+## 2026-11-17 — The look of the page and of 对话
+
+- **Chosen:** The prototype's stylesheet is copied unchanged into `packages/web/src/styles/prototype.css`; what the
+  prototype does not have (folded commands, Markdown inside a message, the conversation picker) is added in
+  `packages/web/src/styles/page.css` with the prototype's tokens. Light or dark follows the system setting until 设置
+  (#21) offers the choice; the accent is the prototype's. The sidebar's status card shows hub and 大脑, without the
+  prototype's machine line (runners come with #9), and says `hub` as the catalog already does rather than the
+  prototype's 中枢. Earlier conversations are listed in the right-hand rail on wide screens and in a bottom sheet opened
+  from the conversation's title on narrower ones. 新对话 opens an empty conversation that is created on the hub only
+  when its first message is sent, so no empty conversations pile up; 对话 in the navigation returns to the last
+  conversation opened, and `/` opens the most recent one. A command or tool call is one folded line (state dot, tool
+  name, the command it runs) that opens to its input and output exactly as they are; a command still marked running in
+  a turn that has ended shows a hollow dot. The owner's messages show as typed; the brain's text is Markdown through
+  `react-markdown` with GitHub's extensions, raw HTML is shown as text, script links are dropped, links open apart from
+  the page and images are shown as links, not loaded. Enter sends on a keyboard with a mouse and adds a line on a touch
+  screen, and never while an input method is composing. Navigation uses real links so the routes work as addresses.
+- **Why:** The issue asks to reuse the stylesheet rather than rewrite the look; the additions only fill what the
+  prototype never showed. Folding keeps a long session readable on a phone.
+- **Other options:** Importing the stylesheet from `docs/ui/prototype/`, which would tie the build to a reference
+  copy; a theme switch now; creating a conversation on the hub when 新对话 is pressed; showing commands unfolded.
+
+## 2026-11-17 — Seeing the page on this PC
+
+- **Chosen:** A workspace tool, `tools/page-dev`, run by hand (`pnpm check` only type-checks and builds it) and outside
+  every production path. It generates
+  its own RSA key, starts the hub in its own process with that key as the Access key set, starts the brain in the same
+  process, and listens on `http://127.0.0.1:5180`, forwarding every request and WebSocket to the hub with a fresh signed
+  assertion for `owner@example.com`. The default brain is a scripted program (`--brain demo`) that streams a reply,
+  runs a pretend command with output arriving line by line, takes a message sent during the turn into that turn, stops
+  when interrupted, and writes forty paragraphs when the message contains 长; `--brain claude` uses the real `claude`
+  program with the design's model (`--model` to change it), and `--brain none` starts no brain. State is kept in
+  `.state/page-dev` (`--data` to change it, `--fresh` to start empty). `/__harness/offline` drops every connection and
+  refuses new ones until `/__harness/online`, to try losing the network. To use it: `pnpm install`, `pnpm build`, then
+  `node tools/page-dev/dist/cli.js`, and open `http://127.0.0.1:5180/` (after changing the page, `pnpm --filter
+  @super-agent2/web build` again and reload).
+- **Why:** The hub admits only a signed Access assertion and must not gain a bypass; a proxy that signs with a key the
+  hub was started with exercises the real front door unchanged. A scripted brain makes streaming, steering and
+  interrupting repeatable without spending a subscription.
+- **Other options:** A development flag in the hub that skips the check; Vite's development server with a proxy, which
+  would serve the page from a different origin than the hub; the fake programs of the brain's tests, which answer at
+  once and so cannot show a turn in progress.

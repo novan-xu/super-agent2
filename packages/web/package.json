@@ -9,8 +9,12 @@
   },
   "dependencies": {
     "@super-agent2/catalog": "workspace:*",
+    "@super-agent2/protocol": "workspace:*",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

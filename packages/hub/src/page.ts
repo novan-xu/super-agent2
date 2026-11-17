@@ -1,0 +1,63 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pageAssetsPath, pageRoute } from "@super-agent2/protocol";
+
+export interface PageFile {
+  readonly body: Buffer;
+  readonly type: string;
+  readonly immutable: boolean;
+}
+
+export type PageFiles = (path: string) => Promise<PageFile | undefined>;
+
+const assetName = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+const types: Readonly<Record<string, string>> = {
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  mjs: "text/javascript; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  svg: "image/svg+xml",
+  png: "image/png",
+  ico: "image/x-icon",
+  webp: "image/webp",
+  woff2: "font/woff2",
+  txt: "text/plain; charset=utf-8",
+  map: "application/json; charset=utf-8",
+};
+
+export const pageSecurityHeaders: Readonly<Record<string, string>> = {
+  "content-security-policy":
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+};
+
+async function readOrNothing(path: string): Promise<Buffer | undefined> {
+  try {
+    return await readFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
+export function pageFiles(directory: string): PageFiles {
+  return async (path) => {
+    if (pageRoute(path) !== undefined) {
+      const body = await readOrNothing(join(directory, "index.html"));
+      return body === undefined ? undefined : { body, type: "text/html; charset=utf-8", immutable: false };
+    }
+    if (!path.startsWith(pageAssetsPath)) {
+      return undefined;
+    }
+    const name = path.slice(pageAssetsPath.length);
+    const extension = name.split(".").pop() ?? "";
+    const type = types[extension];
+    if (!assetName.test(name) || type === undefined) {
+      return undefined;
+    }
+    const body = await readOrNothing(join(directory, "assets", name));
+    return body === undefined ? undefined : { body, type, immutable: true };
+  };
+}
