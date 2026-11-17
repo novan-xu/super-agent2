@@ -1605,3 +1605,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   Windows machine whose temporary folder has a short name.
 - **Other options:** Loosening the filer's check to accept `~`; setting `TMP` and `TEMP` in the workflow, which would
   hide the fault instead of fixing it.
+
+## 2026-11-17 — Pull requests wait for Woodpecker from here on
+
+- **Chosen:** From #15 on, a pull request for this repository is merged only when both Woodpecker workflows on its head
+  commit are green, in addition to the review by the orchestrating session.
+- **Why:** #14 put the repository under CI on macOS and Windows, and its first run found three faults that the check on
+  this PC alone had never shown. The earlier entry "How the issues are built" said the local check was the only one
+  until then.
+- **Other options:** Keep merging on the local check alone.
