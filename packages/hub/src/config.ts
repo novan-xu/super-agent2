@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SshDestination } from "./targets.js";
 
 function present(message: string) {
   return { error: (issue: { readonly input?: unknown }) => (issue.input === undefined ? "is required" : message) };
@@ -23,6 +24,17 @@ const Environment = z.object({
     .pipe(z.number().int().max(65535, { error: "must be between 0 and 65535" }))
     .default(8080),
   HUB_HOST: z.string().min(1, { error: "must not be empty" }).default("0.0.0.0"),
+  NAS_SSH_DESTINATION: z
+    .string()
+    .regex(/^[^\s-][^\s]*$/, { error: "must be an SSH destination such as user@host, without spaces or a leading dash" })
+    .optional(),
+  NAS_SSH_PORT: z
+    .string()
+    .regex(/^\d+$/, { error: "must be a port number" })
+    .transform(Number)
+    .pipe(z.number().int().min(1, { error: "must be between 1 and 65535" }).max(65535, { error: "must be between 1 and 65535" }))
+    .optional(),
+  NAS_SSH_IDENTITY: z.string().min(1, { error: "must not be empty" }).optional(),
 });
 
 export interface Config {
@@ -32,6 +44,7 @@ export interface Config {
   readonly dataDir: string;
   readonly port: number;
   readonly host: string;
+  readonly nas?: SshDestination;
 }
 
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
@@ -52,6 +65,15 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,
       host: value.HUB_HOST,
+      ...(value.NAS_SSH_DESTINATION === undefined
+        ? {}
+        : {
+            nas: {
+              destination: value.NAS_SSH_DESTINATION,
+              ...(value.NAS_SSH_PORT === undefined ? {} : { port: value.NAS_SSH_PORT }),
+              ...(value.NAS_SSH_IDENTITY === undefined ? {} : { identityFile: value.NAS_SSH_IDENTITY }),
+            },
+          }),
     },
   };
 }

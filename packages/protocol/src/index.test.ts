@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { AccessKeySet, Hello, Identity, ProtocolVersion, protocolVersion } from "./index.js";
+import {
+  AccessKeySet,
+  ClientMessage,
+  CommandRequest,
+  Hello,
+  Identity,
+  ProtocolVersion,
+  ServerMessage,
+  protocolVersion,
+} from "./index.js";
 
 describe("ProtocolVersion", () => {
   it("accepts the current version", () => {
@@ -36,5 +45,33 @@ describe("Hello", () => {
     const hello = { type: "hello", protocol: protocolVersion, identity: { kind: "service", clientId: "c" } };
     expect(Hello.parse(hello)).toEqual(hello);
     expect(Hello.safeParse({ ...hello, protocol: protocolVersion + 1 }).success).toBe(false);
+  });
+});
+
+describe("CommandRequest", () => {
+  it("takes any command and defaults to the novan-xu account", () => {
+    expect(CommandRequest.parse({ target: "hub", command: "some-program --flag" })).toEqual({
+      target: "hub",
+      command: "some-program --flag",
+      account: "novan-xu",
+    });
+  });
+
+  it("accepts only the two accounts and a plain target name", () => {
+    expect(CommandRequest.safeParse({ target: "hub", command: "x", account: "nuofan-island" }).success).toBe(true);
+    expect(CommandRequest.safeParse({ target: "hub", command: "x", account: "someone" }).success).toBe(false);
+    expect(CommandRequest.safeParse({ target: "../hub", command: "x" }).success).toBe(false);
+  });
+});
+
+describe("socket messages", () => {
+  it("follows from the start unless told otherwise", () => {
+    expect(ClientMessage.parse({ type: "follow", command: "c1" })).toEqual({ type: "follow", command: "c1", after: 0 });
+    expect(ClientMessage.safeParse({ type: "run", command: "c1" }).success).toBe(false);
+  });
+
+  it("carries output chunks from the hub", () => {
+    const chunk = { command: "c1", seq: 1, stream: "stdout", data: "hi", at: 1 };
+    expect(ServerMessage.parse({ type: "output", chunk })).toEqual({ type: "output", chunk });
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CommandOutput, CommandUpdate } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
 
 export const PersonIdentity = z.object({
@@ -27,7 +28,7 @@ export const Health = z.object({
 export type Health = z.infer<typeof Health>;
 
 export const Refusal = z.object({
-  error: z.enum(["forbidden", "not_found"]),
+  error: z.enum(["forbidden", "not_found", "unsupported_media_type"]),
 });
 
 export type Refusal = z.infer<typeof Refusal>;
@@ -46,3 +47,7 @@ export const Hello = z.object({
 });
 
 export type Hello = z.infer<typeof Hello>;
+
+export const ServerMessage = z.discriminatedUnion("type", [Hello, CommandUpdate, CommandOutput]);
+
+export type ServerMessage = z.infer<typeof ServerMessage>;
