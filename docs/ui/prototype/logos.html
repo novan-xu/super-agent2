@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Super-agent · Logo 方案</title>
+  <style>
+    :root {
+      --dark-bg: #161514; --dark-surface: #1e1d1b; --dark-side: #111110; --dark-fg: #f3f1ed; --dark-muted: #9c978f; --dark-border: #292724;
+      --light-bg: #f6f5f3; --light-surface: #ffffff; --light-side: #ecebe8; --light-fg: #1b1a18; --light-muted: #6b665f; --light-border: #e3e0dc;
+      --accent: #f2b705; --accent-on: #1a1917;
+      --font: "Segoe UI Variable Text", "Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      --font-display: "Segoe UI Variable Display", "Segoe UI", "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { background: var(--dark-side); color: var(--dark-fg); font: 15px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
+    h1, h2, p { margin: 0; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 40px 32px 64px; }
+    .head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 32px; margin-bottom: 32px; }
+    .head h1 { font: 700 22px/1.2 var(--font-display); letter-spacing: -0.01em; }
+    .head p { color: var(--dark-muted); font-size: 14px; margin-top: 4px; }
+    .head .fill { flex: 1; }
+    .swatches { display: flex; gap: 8px; align-items: center; }
+    .sw { width: 32px; height: 32px; padding: 0; border: 2px solid transparent; border-radius: 50%; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+    .sw i { display: block; width: 22px; height: 22px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+    .sw[aria-pressed="true"] { border-color: var(--dark-fg); }
+    .sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .card { border: 1px solid var(--dark-border); border-radius: 16px; overflow: hidden; background: var(--dark-surface); }
+    .card-head { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--dark-border); }
+    .no { font: 700 13px/1 "JetBrains Mono", "Cascadia Mono", Consolas, monospace; color: var(--dark-muted); }
+    .card-head h2 { font: 700 16px/1.3 var(--font-display); }
+    .card-head p { color: var(--dark-muted); font-size: 13px; flex: 1; text-align: right; }
+    .halves { display: grid; grid-template-columns: 1fr 1fr; }
+    .half { display: grid; gap: 20px; padding: 24px 20px; }
+    .half--dark { background: var(--dark-bg); color: var(--dark-fg); }
+    .half--light { background: var(--light-bg); color: var(--light-fg); }
+    .big { display: flex; align-items: center; gap: 20px; }
+    .sizes { display: flex; align-items: center; gap: 16px; }
+    .side { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font: 700 15px/1 var(--font-display); }
+    .half--dark .side { background: var(--dark-side); }
+    .half--light .side { background: var(--light-side); }
+    svg { display: block; flex: none; }
+    .badge-bg { fill: var(--accent); }
+    .badge-mark { color: var(--accent-on); }
+
+    @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 520px) {
+      .wrap { padding: 24px 16px 48px; }
+      .halves { grid-template-columns: 1fr; }
+      .card-head { flex-wrap: wrap; }
+      .card-head p { flex-basis: 100%; text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <div>
+        <h1>Super-agent · Logo 方案</h1>
+        <p>选一个编号告诉我</p>
+      </div>
+      <span class="fill"></span>
+      <div class="swatches" role="group" aria-label="重点色" data-slot="swatches"></div>
+    </header>
+    <div class="grid" data-slot="grid"></div>
+  </main>
+
+  <script>
+    (() => {
+      const MARKS = [
+        { no: '01', name: '中枢', note: '一个中枢，一条轨道，一颗卫星',
+          svg: '<circle cx="12" cy="12" r="3.3" fill="currentColor"/><path d="M19.24 10.06A7.5 7.5 0 1 1 13.94 4.76" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17.4" cy="6.6" r="2.1" fill="currentColor"/>' },
+        { no: '02', name: '分派', note: '一个大点把活分给三台机器',
+          svg: '<path d="M6.5 17.5L10.6 6.8M6.5 17.5L16 11.2M6.5 17.5H18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="6.5" cy="17.5" r="3.4" fill="currentColor"/><circle cx="10.6" cy="6.8" r="2.1" fill="currentColor"/><circle cx="16" cy="11.2" r="2.1" fill="currentColor"/><circle cx="18.4" cy="17.5" r="2.1" fill="currentColor"/>' },
+        { no: '03', name: 'S 路径', note: '中枢通往机器的路，也是 S',
+          svg: '<path d="M16.8 6.2C12.5 4.6 6.6 5.8 7.4 9.4C8.1 12.6 16.4 11.2 16.6 14.8C16.9 18.4 11.2 19.4 7.2 17.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="17" cy="6.2" r="2.5" fill="currentColor"/><circle cx="7" cy="17.8" r="2.5" fill="currentColor"/>' },
+        { no: '04', name: '注意力', note: '只在需要你的时候出声',
+          svg: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="14.6" cy="9.4" r="3" fill="currentColor"/>' },
+        { no: '05', name: '命令行', note: '指挥台上的提示符',
+          svg: '<path d="M5.5 6.5L11.5 12L5.5 17.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="16.6" r="2.6" fill="currentColor"/>' },
+        { no: '06', name: '接力', note: '一条请求经过中枢传到机器',
+          svg: '<path d="M5.5 18.5L18.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="5.5" cy="18.5" r="2.2" fill="currentColor"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/><circle cx="18.5" cy="5.5" r="2.2" fill="currentColor"/>' },
+        { no: '07', name: '门', note: '各个入口汇进同一个中枢',
+          svg: '<path d="M6 20V11.5a6 6 0 0 1 12 0V20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="14.5" r="2.7" fill="currentColor"/>' },
+        { no: '08', name: '轨道', note: '一直在转的中枢',
+          svg: '<ellipse cx="12" cy="12" rx="9.4" ry="4" transform="rotate(-30 12 12)" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3.4" fill="currentColor"/>' },
+      ]
+      const ACCENTS = [['#f2b705', '琥珀'], ['#3fb68b', '青绿'], ['#5b8def', '蓝'], ['#a07cf0', '紫'], ['#e46f8f', '玫红'], ['#d6d0c4', '石墨']]
+
+      const badge = (m, s) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true"><rect class="badge-bg" width="24" height="24" rx="6"/><g class="badge-mark" transform="translate(3.6 3.6) scale(.7)">${m.svg}</g></svg>`
+      const mono = (m, s) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true">${m.svg}</svg>`
+      const half = (m, theme) => `<div class="half half--${theme}">
+        <div class="big">${badge(m, 64)}${mono(m, 64)}</div>
+        <div class="sizes">${badge(m, 32)}${badge(m, 22)}${badge(m, 16)}${mono(m, 22)}${mono(m, 16)}</div>
+        <div class="side">${badge(m, 22)}<span>Super-agent</span></div>
+      </div>`
+
+      document.querySelector('[data-slot="grid"]').innerHTML = MARKS.map(m => `<article class="card" aria-label="方案 ${m.no} ${m.name}">
+        <div class="card-head"><span class="no">${m.no}</span><h2>${m.name}</h2><p>${m.note}</p></div>
+        <div class="halves">${half(m, 'dark')}${half(m, 'light')}</div>
+      </article>`).join('')
+
+      const lum = hex => { const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] }
+      const setAccent = hex => {
+        const root = document.documentElement.style
+        root.setProperty('--accent', hex)
+        const L = lum(hex)
+        root.setProperty('--accent-on', (L + 0.05) / (0.0098 + 0.05) >= 1.05 / (L + 0.05) ? '#1a1917' : '#ffffff')
+        sw.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.c === hex)))
+      }
+      const sw = document.querySelector('[data-slot="swatches"]')
+      sw.innerHTML = ACCENTS.map(([c, n]) => `<button class="sw" type="button" data-c="${c}" aria-label="${n}" title="${n}" style="--c:${c}"><i></i></button>`).join('')
+      sw.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setAccent(b.dataset.c) })
+      setAccent(ACCENTS[0][0])
+    })()
+  </script>
+</body>
+</html>

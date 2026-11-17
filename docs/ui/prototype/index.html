@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Super-agent</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="app">
+    <div class="app">
+      <nav class="side" aria-label="主导航">
+        <div class="brand" data-slot="brand"></div>
+        <ul class="nav" data-slot="nav"></ul>
+        <div class="side-foot">
+          <div class="hub-card" data-slot="hub"></div>
+          <ul class="nav" data-slot="nav-foot"></ul>
+        </div>
+      </nav>
+      <div class="body">
+        <header class="top">
+          <div class="top-title" data-slot="title"></div>
+          <div class="od-row" data-slot="top-actions"></div>
+        </header>
+        <main class="main" id="main" data-slot="main" tabindex="-1"></main>
+      </div>
+      <nav class="tabbar" aria-label="主导航" data-slot="tabbar"></nav>
+    </div>
+  </div>
+
+  <dialog class="dlg" id="dlg-confirm" aria-labelledby="confirm-title"></dialog>
+  <dialog class="dlg" id="dlg-reassign" aria-labelledby="reassign-title"></dialog>
+  <div class="toasts" data-slot="toasts" aria-live="polite"></div>
+</body>
+</html>
