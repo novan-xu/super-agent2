@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultPageDir, loadConfig } from "./config.js";
+import { generateVapidKeys } from "./push.js";
 
 const valid = {
   ACCESS_TEAM: "example-team",
@@ -112,5 +113,37 @@ describe("loadConfig", () => {
   it("reports every wrong value at once", () => {
     const problems = problemsFor({ ACCESS_TEAM: "Bad Team", OWNER_EMAIL: "x" });
     expect(problems.map((problem) => problem.split(" ")[0])).toEqual(["ACCESS_TEAM", "ACCESS_AUD", "OWNER_EMAIL", "HUB_DATA_DIR"]);
+  });
+
+  describe("push keys", () => {
+    const keys = generateVapidKeys();
+    const given = { VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey };
+
+    it("reads the keys and the contact", () => {
+      const result = loadConfig({ ...valid, ...given, VAPID_SUBJECT: "mailto:ops@example.com" });
+      expect(result.ok && result.config.vapid).toEqual({ ...keys, subject: "mailto:ops@example.com" });
+    });
+
+    it("starts without keys, and treats empty values as absent", () => {
+      expect(loadConfig(valid)).toMatchObject({ ok: true });
+      expect(loadConfig({ ...valid, VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "", VAPID_SUBJECT: "" })).toMatchObject({ ok: true });
+      const result = loadConfig(valid);
+      expect(result.ok && result.config.vapid).toBeUndefined();
+    });
+
+    it("refuses one key without the other, naming the missing one", () => {
+      expect(problemsFor({ ...valid, VAPID_PUBLIC_KEY: keys.publicKey })).toEqual(["VAPID_PRIVATE_KEY is required when VAPID_PUBLIC_KEY is set"]);
+      expect(problemsFor({ ...valid, VAPID_PRIVATE_KEY: keys.privateKey })).toEqual(["VAPID_PUBLIC_KEY is required when VAPID_PRIVATE_KEY is set"]);
+    });
+
+    it("refuses keys that do not belong together without repeating them", () => {
+      const problems = problemsFor({ ...valid, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: generateVapidKeys().privateKey });
+      expect(problems).toEqual(["VAPID_PRIVATE_KEY does not belong to VAPID_PUBLIC_KEY"]);
+      expect(problemsFor({ ...valid, VAPID_PUBLIC_KEY: "not base64!", VAPID_PRIVATE_KEY: keys.privateKey })).toEqual(["VAPID_PUBLIC_KEY must be URL-safe base64"]);
+    });
+
+    it("refuses a contact that is neither an address nor an https URL", () => {
+      expect(problemsFor({ ...valid, ...given, VAPID_SUBJECT: "http://example.com" })).toEqual(["VAPID_SUBJECT must be a mailto: address or an https URL"]);
+    });
   });
 });

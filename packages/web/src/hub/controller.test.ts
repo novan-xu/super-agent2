@@ -1,10 +1,17 @@
-import type { Conversation, OwnerEntry } from "@super-agent2/protocol";
+import type { CommandRecord, Conversation, OwnerEntry } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
+import { holdCard } from "../live/fixtures.js";
+import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
 
 const conversation: Conversation = { id: "c9", title: "", state: "idle", provider: null, createdAt: 1, updatedAt: 1 };
 const entry: OwnerEntry = { id: "o1", conversation: "c9", seq: 1, at: 2, kind: "owner", text: "你好", taken: false };
+
+function record(id: string): CommandRecord {
+  const { command } = holdCard(id) as { command: CommandRecord };
+  return { ...command, state: "running" };
+}
 
 function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string[] } {
   const calls: string[] = [];
@@ -19,6 +26,11 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     create: () => answer("create", { conversation }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
     interrupt: (id) => answer(`interrupt ${id}`, { conversation }),
+    release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),
+    refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
+    pushKey: () => answer("pushKey", { publicKey: null }),
+    subscribePush: () => answer("subscribePush", { subscribed: true }),
+    unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
     ...overrides,
   };
 }
@@ -60,5 +72,88 @@ describe("PageController", () => {
     page.open("c9");
     await page.interrupt();
     expect(hub.calls.filter((call) => call.startsWith("interrupt"))).toEqual(["interrupt c9"]);
+  });
+
+  describe("answering a held command", () => {
+    const first = holdCard("a1");
+
+    function shown(hub: HubApi, failures: Failure[] = []): PageController {
+      const page = controller(hub, failures);
+      page.store.dispatch({ type: "waiting", action: { type: "snapshot", cards: [first, holdCard("b2", { at: 2000 })] } });
+      return page;
+    }
+
+    it("releases with the fingerprint the owner saw, only after the card was armed, and removes the card", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.answer("hold:a1", "release")).toBe(false);
+      expect(hub.calls).toEqual([]);
+      page.arm("hold:a1");
+      expect(await page.answer("hold:a1", "release")).toBe(true);
+      expect(hub.calls).toEqual([`release a1 ${first.kind === "hold" ? first.hold.fingerprint : ""}`]);
+      expect(page.store.getState().waiting.cards.map((card) => card.key)).toEqual(["hold:b2"]);
+    });
+
+    it("refuses with one press", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.answer("hold:b2", "refuse")).toBe(true);
+      expect(hub.calls).toHaveLength(1);
+      expect(hub.calls[0]).toMatch(/^refuse b2 /);
+      expect(page.store.getState().waiting.cards.map((card) => card.key)).toEqual(["hold:a1"]);
+    });
+
+    it("sends only one request however many times the button is pressed", async () => {
+      let release: (value: Answer<{ command: CommandRecord }>) => void = () => undefined;
+      let requests = 0;
+      const hub = api({
+        release: () =>
+          new Promise((resolve) => {
+            requests += 1;
+            release = resolve;
+          }),
+      });
+      const page = shown(hub);
+      page.arm("hold:a1");
+      const presses = [page.answer("hold:a1", "release"), page.answer("hold:a1", "release"), page.answer("hold:a1", "refuse")];
+      expect(useOf(page.store.getState().waiting, "hold:a1").step).toBe("sending");
+      release({ ok: true, value: { command: record("a1") } });
+      expect(await Promise.all(presses)).toEqual([true, false, false]);
+      expect(requests).toBe(1);
+      expect(hub.calls).toEqual([]);
+    });
+
+    it("keeps the card and says why when the hub refuses, so the owner can try again", async () => {
+      const failures: Failure[] = [];
+      let refuse = true;
+      const hub = api({
+        release: (id) => (refuse ? Promise.resolve({ ok: false, error: "conflict" }) : Promise.resolve({ ok: true, value: { command: record(id) } })),
+      });
+      const page = shown(hub, failures);
+      page.arm("hold:a1");
+      expect(await page.answer("hold:a1", "release")).toBe(false);
+      expect(useOf(page.store.getState().waiting, "hold:a1")).toEqual({ step: "idle", verdict: null, failure: "conflict" });
+      expect(page.store.getState().waiting.cards).toHaveLength(2);
+      refuse = false;
+      page.arm("hold:a1");
+      expect(await page.answer("hold:a1", "release")).toBe(true);
+    });
+
+    it("does nothing for a card that is not there", async () => {
+      const hub = api();
+      const page = shown(hub);
+      page.arm("hold:zz");
+      expect(await page.answer("hold:zz", "refuse")).toBe(false);
+      expect(hub.calls).toEqual([]);
+    });
+
+    it("shows the cards the hub lists over the socket", () => {
+      const page = controller(api());
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards: [first] } });
+      expect(page.store.getState().waiting.cards).toHaveLength(1);
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards: [] } });
+      expect(page.store.getState().waiting.cards).toEqual([]);
+      expect(page.store.getState().waiting.known).toBe(true);
+    });
   });
 });

@@ -11,7 +11,9 @@ import { lockSettings } from "./irreversible.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
 import { pageFiles } from "./page.js";
+import { createPushService, type PushService } from "./push-service.js";
 import { createHubServer, type HubServer } from "./server.js";
+import { createWaiting, type Waiting } from "./waiting.js";
 import { type Environment, localTarget, sshTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
 
@@ -23,6 +25,7 @@ export interface HubOptions {
   readonly targets?: readonly Target[];
   readonly credentials?: CredentialSource;
   readonly gate?: CommandGate;
+  readonly pushFetch?: typeof fetch;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -38,6 +41,8 @@ export interface Hub {
   readonly commands: CommandService;
   readonly conversations: ConversationService;
   readonly lock: ConfirmationLock | undefined;
+  readonly waiting: Waiting;
+  readonly push: PushService | undefined;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -52,6 +57,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
+  let waiting: Waiting;
+  let push: PushService | undefined;
   let server: HubServer;
   const targets = options.targets ?? defaultTargets(config, environment);
   try {
@@ -74,14 +81,21 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
     conversations = createConversationService({ database, clock, commands });
+    waiting = createWaiting({ commands, lock });
+    push =
+      config.vapid === undefined
+        ? undefined
+        : createPushService({ database, clock, settings: config.vapid, fetch: options.pushFetch ?? fetch, waiting });
     server = createHubServer({
       database,
       commands,
       verify,
       admit: ownerOnly(config.ownerEmail),
       conversations,
+      waiting,
       tools: createToolServer({ commands, conversations, targets: () => targets.map((target) => target.name) }),
       brainToken,
+      ...(push === undefined ? {} : { push }),
       ...(lock === undefined ? {} : { lock }),
       ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
@@ -96,11 +110,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       commands,
       conversations,
       lock,
+      waiting,
+      push,
       address,
       close: async () => {
         try {
           await server.close();
         } finally {
+          waiting.close();
+          await push?.close();
           conversations.close();
           await commands.close();
           database.close();
@@ -108,6 +126,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    waiting.close();
+    await push?.close();
     conversations.close();
     await commands.close();
     database.close();

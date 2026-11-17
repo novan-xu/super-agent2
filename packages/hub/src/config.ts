@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
+import { vapidProblem } from "./push.js";
 import type { SshDestination } from "./targets.js";
 
 function list(text: string | undefined): string[] {
@@ -14,6 +15,10 @@ function list(text: string | undefined): string[] {
 
 function present(message: string) {
   return { error: (issue: { readonly input?: unknown }) => (issue.input === undefined ? "is required" : message) };
+}
+
+function unlessEmpty<Schema extends z.ZodType>(schema: Schema) {
+  return z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 }
 
 const Environment = z.object({
@@ -56,6 +61,9 @@ const Environment = z.object({
   HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
+  VAPID_PUBLIC_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
+  VAPID_PRIVATE_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
+  VAPID_SUBJECT: unlessEmpty(z.string().regex(/^(?:mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/, { error: "must be a mailto: address or an https URL" })),
 });
 
 export interface Config {
@@ -70,6 +78,30 @@ export interface Config {
   readonly credentialPaths: readonly string[];
   readonly brainTokenFile: string;
   readonly pageDir?: string;
+  readonly vapid?: VapidSettings;
+}
+
+export interface VapidSettings {
+  readonly publicKey: string;
+  readonly privateKey: string;
+  readonly subject?: string;
+}
+
+function vapidSettings(value: { VAPID_PUBLIC_KEY?: string | undefined; VAPID_PRIVATE_KEY?: string | undefined; VAPID_SUBJECT?: string | undefined }): { readonly settings?: VapidSettings; readonly problems: string[] } {
+  const publicKey = value.VAPID_PUBLIC_KEY;
+  const privateKey = value.VAPID_PRIVATE_KEY;
+  if (publicKey === undefined && privateKey === undefined) {
+    return value.VAPID_SUBJECT === undefined ? { problems: [] } : { problems: ["VAPID_SUBJECT is set without VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY"] };
+  }
+  if (publicKey === undefined || privateKey === undefined) {
+    return { problems: [publicKey === undefined ? "VAPID_PUBLIC_KEY is required when VAPID_PRIVATE_KEY is set" : "VAPID_PRIVATE_KEY is required when VAPID_PUBLIC_KEY is set"] };
+  }
+  const keys = { publicKey: Buffer.from(publicKey, "base64url").toString("base64url"), privateKey: Buffer.from(privateKey, "base64url").toString("base64url") };
+  const problem = vapidProblem(keys);
+  if (problem !== undefined) {
+    return { problems: [problem] };
+  }
+  return { settings: { ...keys, ...(value.VAPID_SUBJECT === undefined ? {} : { subject: value.VAPID_SUBJECT }) }, problems: [] };
 }
 
 export const defaultPageDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));
@@ -83,6 +115,10 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     return { ok: false, problems };
   }
   const value = parsed.data;
+  const vapid = vapidSettings(value);
+  if (vapid.problems.length > 0) {
+    return { ok: false, problems: vapid.problems };
+  }
   return {
     ok: true,
     config: {
@@ -96,6 +132,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       credentialPaths: value.HUB_CREDENTIAL_PATHS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
+      ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.NAS_SSH_DESTINATION === undefined
         ? {}
         : {

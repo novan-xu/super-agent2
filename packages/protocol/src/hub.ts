@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./commands.js";
 import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, TurnUpdate, UnwatchConversation, WatchConversation } from "./conversations.js";
 import { ProtocolVersion } from "./version.js";
+import { WaitingUpdate } from "./waiting.js";
 
 export const PersonIdentity = z.object({
   kind: z.literal("person"),
@@ -58,6 +59,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   EntryUpdate,
   EntryDelta,
   BrainUpdate,
+  WaitingUpdate,
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessage>;

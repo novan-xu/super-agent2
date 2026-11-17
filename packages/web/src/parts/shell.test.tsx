@@ -16,6 +16,7 @@ function render(overrides: Partial<ShellProps> = {}): string {
     model: "claude-opus-5-5",
     fill: true,
     toast: null,
+    waiting: 0,
     ...overrides,
   };
   return renderToString(<Shell {...props} />);
@@ -44,5 +45,19 @@ describe("Shell", () => {
 
   it("announces a failure", () => {
     expect(render({ toast: "没连上 hub，请再试一次" })).toContain('role="status"');
+  });
+
+  it("shows how many things wait on 工作台, in the sidebar and in the tab bar, and nowhere else", () => {
+    const html = render({ waiting: 3 });
+    expect(html).toContain('<span class="count count--hot">3</span>');
+    expect(html).toContain('<span class="tab-badge">3</span>');
+    expect(html.match(/count count--hot/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="工作台 3"');
+  });
+
+  it("shows no count when nothing waits", () => {
+    const html = render({ waiting: 0 });
+    expect(html).not.toContain("count--hot");
+    expect(html).not.toContain("tab-badge");
   });
 });

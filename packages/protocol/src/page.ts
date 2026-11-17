@@ -10,6 +10,18 @@ export type PageRoute =
 
 export const pageAssetsPath = "/assets/";
 
+export const pageIconsPath = "/icons/";
+
+export const serviceWorkerPath = "/sw.js";
+
+export const manifestPath = "/manifest.webmanifest";
+
+export const cardParameter = "card";
+
+export function cardAddress(key: string): string {
+  return `/workbench?${cardParameter}=${encodeURIComponent(key)}`;
+}
+
 function isView(value: string): value is PageView {
   return (pageViews as readonly string[]).includes(value);
 }

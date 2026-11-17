@@ -23,6 +23,10 @@ beforeEach(async () => {
   writeFileSync(join(pageDir, "assets", "index-abc123.js"), script);
   writeFileSync(join(pageDir, "assets", "index-abc123.css"), "body{}");
   writeFileSync(join(pageDir, "secret.txt"), "not served");
+  writeFileSync(join(pageDir, "sw.js"), "self.addEventListener(\"push\", () => undefined);");
+  mkdirSync(join(pageDir, "icons"));
+  writeFileSync(join(pageDir, "icons", "icon-192.png"), Buffer.from([137, 80, 78, 71]));
+  writeFileSync(join(pageDir, "icons", "notes.txt"), "not an icon");
   clock = new TestClock();
   key = await signingKey("key-1");
 });
@@ -75,6 +79,41 @@ describe("the page", () => {
     expect(await response.text()).toBe(script);
     const style = await call(running, "/assets/index-abc123.css");
     expect(style.headers.get("content-type")).toBe("text/css; charset=utf-8");
+  });
+
+  it("serves the service worker from the root, fresh every time, under the page's own policy", async () => {
+    const running = await start();
+    const response = await call(running, "/sw.js");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
+    expect(await response.text()).toContain("push");
+  });
+
+  it("serves the icons and builds the manifest in Chinese from the catalog", async () => {
+    const running = await start();
+    const icon = await call(running, "/icons/icon-192.png");
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await icon.arrayBuffer())).toEqual(Buffer.from([137, 80, 78, 71]));
+    expect((await call(running, "/icons/notes.txt")).status).toBe(404);
+    expect((await call(running, "/icons/missing.png")).status).toBe(404);
+    expect((await call(running, "/icons/..%5csecret.txt")).status).toBe(404);
+    const manifest = await call(running, "/manifest.webmanifest");
+    expect(manifest.status).toBe(200);
+    expect(manifest.headers.get("content-type")).toBe("application/manifest+json; charset=utf-8");
+    const body = (await manifest.json()) as { name: string; display: string; lang: string; icons: { src: string; purpose: string }[] };
+    expect(body).toMatchObject({ name: "Super-agent2", display: "standalone", lang: "zh-CN" });
+    expect(body.icons.map((entry) => entry.purpose)).toEqual(["any", "any", "maskable"]);
+    expect(body.icons.every((entry) => entry.src.startsWith("/icons/"))).toBe(true);
+  });
+
+  it("keeps the worker, the icons and the manifest behind the front door", async () => {
+    const running = await start();
+    for (const path of ["/sw.js", "/icons/icon-192.png", "/manifest.webmanifest"]) {
+      expect((await call(running, path, {}, false)).status, path).toBe(403);
+    }
   });
 
   it("answers HEAD without a body", async () => {

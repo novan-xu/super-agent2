@@ -1,13 +1,14 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, request } from "node:http";
 import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
-import { defaultPageDir, startHub } from "@super-agent2/hub";
+import { defaultPageDir, generateVapidKeys, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
+import { createHarness, demoTarget } from "./harness.js";
 
 const { values } = parseArgs({
   options: {
@@ -16,6 +17,7 @@ const { values } = parseArgs({
     brain: { type: "string", default: "demo" },
     model: { type: "string" },
     fresh: { type: "boolean", default: false },
+    push: { type: "string", default: "generated" },
   },
 });
 
@@ -28,6 +30,11 @@ const brainKind = values.brain;
 
 if (brainKind !== "demo" && brainKind !== "claude" && brainKind !== "none") {
   process.stderr.write("--brain must be demo, claude or none\n");
+  process.exit(1);
+}
+
+if (values.push !== "generated" && values.push !== "none") {
+  process.stderr.write("--push must be generated or none\n");
   process.exit(1);
 }
 
@@ -57,6 +64,21 @@ async function ownerAssertion(): Promise<string> {
   return token;
 }
 
+function vapidKeys(): VapidKeys | undefined {
+  if (values.push === "none") {
+    return undefined;
+  }
+  const file = join(dataDir, "vapid.json");
+  if (existsSync(file)) {
+    return JSON.parse(readFileSync(file, "utf8")) as VapidKeys;
+  }
+  const keys = generateVapidKeys();
+  writeFileSync(file, JSON.stringify(keys));
+  return keys;
+}
+
+const vapid = vapidKeys();
+
 const hub = await startHub({
   config: {
     accessTeam: team,
@@ -69,8 +91,11 @@ const hub = await startHub({
     credentialPaths: [],
     brainTokenFile: join(hubDir, "brain.token"),
     pageDir: defaultPageDir,
+    ...(vapid === undefined ? {} : { vapid }),
   },
   keySource: () => Promise.resolve(keys),
+  targets: [localTarget({ environment: process.env }), demoTarget()],
+  credentials: () => ({ ok: true, credentials: {} }),
 });
 const hubPort = hub.address.port;
 const hubUrl = `http://127.0.0.1:${hubPort}`;
@@ -125,8 +150,19 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
   return headers;
 }
 
+const harness = createHarness({ hub, publicUrl: `http://127.0.0.1:${port}`, hubUrl, assertion: ownerAssertion });
+
 const proxy = createServer((incoming, outgoing) => {
   const path = new URL(incoming.url ?? "/", "http://page-dev").pathname;
+  if (path.startsWith("/__harness/") && path !== "/__harness/offline" && path !== "/__harness/online") {
+    void harness.handle(incoming, outgoing, path).then((handled) => {
+      if (!handled) {
+        outgoing.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        outgoing.end("unknown harness path\n");
+      }
+    });
+    return;
+  }
   if (path === "/__harness/offline" || path === "/__harness/online") {
     offline = path.endsWith("offline");
     outgoing.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
@@ -204,6 +240,8 @@ process.stdout.write(
     `Brain:    ${brainKind}`,
     `Data:     ${dataDir}`,
     `Offline:  http://127.0.0.1:${port}/__harness/offline, back with /__harness/online`,
+    `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
+    `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
   ].join("\n"),
 );
