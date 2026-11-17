@@ -320,17 +320,47 @@ describe("the end of the hub", () => {
     expect(() => running.start({ target: "hub", command })).toThrow();
   });
 
-  it("marks commands left unfinished by a hub that died as interrupted", () => {
+  it("marks commands left running by a hub that died as interrupted, and asks the gate again about held ones", async () => {
     const insert = database.connection.prepare(
       "INSERT INTO commands (id, target, command, account, state, created_at) VALUES (?, 'hub', 'x', 'novan-xu', ?, ?)",
     );
+    insert.run("pending-one", "pending", clock.now());
     insert.run("running-one", "running", clock.now());
     insert.run("held-one", "held", clock.now());
     insert.run("done-one", "exited", clock.now());
     clock.advance(60_000);
-    service = createCommandService({ database, clock, targets: [], credentials: testCredentials });
+    const seen: CommandRecord[] = [];
+    let drop: (reason: string) => void = () => undefined;
+    service = createCommandService({
+      database,
+      clock,
+      targets: [],
+      credentials: testCredentials,
+      gate: (command) => {
+        seen.push(command);
+        return new Promise((resolve) => {
+          drop = (reason) => resolve({ kind: "drop", reason });
+        });
+      },
+    });
+    expect(service.get("pending-one")).toMatchObject({ state: "interrupted", endedAt: clock.now(), reason: interruptedReason });
     expect(service.get("running-one")).toMatchObject({ state: "interrupted", endedAt: clock.now(), reason: interruptedReason });
-    expect(service.get("held-one")?.state).toBe("interrupted");
     expect(service.get("done-one")?.state).toBe("exited");
+    expect(service.get("held-one")?.state).toBe("held");
+    expect(seen.map((command) => [command.id, command.state])).toEqual([["held-one", "held"]]);
+    drop("refused");
+    expect(await service.finished("held-one")).toMatchObject({ state: "dropped", reason: "refused" });
+  });
+
+  it("leaves a held command held when it closes", async () => {
+    const { service: running } = create((_command, control) => {
+      control.hold("waiting for the owner");
+      return new Promise(() => undefined);
+    });
+    const { id } = running.start({ target: "hub", command: "anything" });
+    await waitForState(running, id, "held");
+    await running.close();
+    service = undefined;
+    expect(running.get(id)).toMatchObject({ state: "held", reason: "waiting for the owner", endedAt: null });
   });
 });

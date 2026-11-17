@@ -27,8 +27,24 @@ describe("loadConfig", () => {
         dataDir: "/data",
         port: 8080,
         host: "0.0.0.0",
+        projectFolders: [],
+        credentialPaths: [],
       },
     });
+  });
+
+  it("reads the project folders and the extra credential paths", () => {
+    const result = loadConfig({
+      ...valid,
+      HUB_PROJECT_FOLDERS: "/srv/projects, ~/work ,C:\work",
+      HUB_CREDENTIAL_PATHS: "**/vault/**,!**/vault/README.md",
+    });
+    expect(result.ok && result.config.projectFolders).toEqual(["/srv/projects", "~/work", "C:\work"]);
+    expect(result.ok && result.config.credentialPaths).toEqual(["**/vault/**", "!**/vault/README.md"]);
+  });
+
+  it("refuses a project folder that is not absolute", () => {
+    expect(problemsFor({ ...valid, HUB_PROJECT_FOLDERS: "/srv/projects,projects" })[0]).toMatch(/^HUB_PROJECT_FOLDERS must be absolute folders/);
   });
 
   it("reads the port and host", () => {

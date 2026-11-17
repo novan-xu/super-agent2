@@ -6,6 +6,8 @@ import {
   type CommandList,
   type CommandResponse,
   type Health,
+  HoldDecision,
+  type HoldList,
   type Identity,
   type OutputResponse,
   type Refusal,
@@ -17,13 +19,17 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
 import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
+import type { AnswerError, ConfirmationLock } from "./lock.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
 export const socketPath = "/ws";
 export const commandsPath = "/api/commands";
+export const holdsPath = "/api/holds";
 
-const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop)?$/;
+const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
+
+const maximumBodyBytes = 16 * 1024;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -33,6 +39,7 @@ export interface HubServerOptions {
   readonly commands: CommandService;
   readonly verify: AccessVerifier;
   readonly admit: Admission;
+  readonly lock?: ConfirmationLock;
 }
 
 export interface HubServer {
@@ -50,7 +57,7 @@ function pathOf(request: IncomingMessage): string {
   return new URL(request.url ?? "/", "http://hub").pathname;
 }
 
-type Body = Health | Refusal | Session | CommandList | CommandResponse | OutputResponse;
+type Body = Health | Refusal | Session | CommandList | CommandResponse | OutputResponse | HoldList;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -78,6 +85,53 @@ function isJson(request: IncomingMessage): boolean {
   const type = request.headers["content-type"] ?? "";
   return type.split(";")[0]?.trim().toLowerCase() === "application/json";
 }
+
+function withoutDefaultPort(host: string): string {
+  return host.toLowerCase().replace(/:(?:80|443)$/, "");
+}
+
+function isSameOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  const site = request.headers["sec-fetch-site"];
+  if (typeof origin !== "string" || host === undefined || (site !== undefined && site !== "same-origin")) {
+    return false;
+  }
+  try {
+    return withoutDefaultPort(new URL(origin).host) === withoutDefaultPort(host);
+  } catch {
+    return false;
+  }
+}
+
+function readBody(request: IncomingMessage): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= maximumBodyBytes) {
+        chunks.push(chunk);
+      }
+    });
+    request.on("end", () => resolve(size > maximumBodyBytes ? undefined : Buffer.concat(chunks).toString("utf8")));
+    request.on("error", () => resolve(undefined));
+  });
+}
+
+function parseDecision(text: string | undefined): HoldDecision | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = HoldDecision.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const answerStatus: Readonly<Record<AnswerError, 403 | 404 | 409>> = { forbidden: 403, not_found: 404, conflict: 409 };
 
 function refuseSocket(socket: Duplex, status: 403 | 404): void {
   const reason = status === 403 ? "Forbidden" : "Not Found";
@@ -116,13 +170,57 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { protocol: protocolVersion, identity });
       return;
     }
-    if (path.startsWith(commandsPath) && serveCommands(request, response, path, method)) {
+    if (path === holdsPath && method === "GET" && options.lock !== undefined) {
+      const holds = options.lock.waiting().flatMap((hold) => {
+        const command = options.commands.get(hold.command);
+        return command === undefined ? [] : [{ command, hold }];
+      });
+      sendJson(response, 200, { holds });
+      return;
+    }
+    if (path.startsWith(commandsPath) && (await serveCommands(request, response, path, method))) {
       return;
     }
     sendJson(response, 404, { error: "not_found" });
   };
 
-  const serveCommands = (request: IncomingMessage, response: ServerResponse, path: string, method: string): boolean => {
+  const answer = async (request: IncomingMessage, response: ServerResponse, id: string, verdict: "release" | "refuse"): Promise<void> => {
+    const lock = options.lock;
+    if (lock === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!isSameOrigin(request)) {
+      request.resume();
+      sendJson(response, 403, { error: "forbidden" });
+      return;
+    }
+    if (!isJson(request)) {
+      request.resume();
+      sendJson(response, 415, { error: "unsupported_media_type" });
+      return;
+    }
+    const decision = parseDecision(await readBody(request));
+    if (decision === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    const given = { assertion: headerValue(request), fingerprint: decision.fingerprint };
+    const outcome = verdict === "release" ? await lock.release(id, given) : await lock.refuse(id, given);
+    if (!outcome.ok) {
+      sendJson(response, answerStatus[outcome.error], { error: outcome.error });
+      return;
+    }
+    const command = options.commands.get(id);
+    if (command === undefined) {
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    sendJson(response, 202, { command });
+  };
+
+  const serveCommands = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
     const url = new URL(request.url ?? "/", "http://hub");
     if (path === commandsPath && method === "GET") {
       const limit = integerParameter(url, "limit", defaultListLimit, maximumListLimit);
@@ -162,6 +260,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       const stopped = options.commands.stop(id) ?? command;
       sendJson(response, 202, { command: stopped });
+      return true;
+    }
+    if ((action === "/release" || action === "/refuse") && method === "POST") {
+      await answer(request, response, id, action === "/release" ? "release" : "refuse");
       return true;
     }
     return false;

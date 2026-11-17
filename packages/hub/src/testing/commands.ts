@@ -59,6 +59,18 @@ export function recordingTarget(name: string, environment: Record<string, string
   };
 }
 
+export function fakeTarget(name: string): Target & { jobs: Job[] } {
+  const jobs: Job[] = [];
+  return {
+    name,
+    jobs,
+    run: (job) => {
+      jobs.push(job);
+      return { ended: Promise.resolve({ exitCode: 0, signal: null }), stop: () => Promise.resolve() };
+    },
+  };
+}
+
 export function textOf(chunks: readonly OutputChunk[], stream?: OutputChunk["stream"]): string {
   return chunks
     .filter((chunk) => stream === undefined || chunk.stream === stream)

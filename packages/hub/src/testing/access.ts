@@ -88,5 +88,14 @@ export function unsignedAssertion(claims: Record<string, unknown>, kid: string):
 }
 
 export function testConfig(dataDir: string): Config {
-  return { accessTeam: team, accessAudience: audience, ownerEmail, dataDir, port: 0, host: "127.0.0.1" };
+  return {
+    accessTeam: team,
+    accessAudience: audience,
+    ownerEmail,
+    dataDir,
+    port: 0,
+    host: "127.0.0.1",
+    projectFolders: [],
+    credentialPaths: [],
+  };
 }

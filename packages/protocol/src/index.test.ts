@@ -4,6 +4,7 @@ import {
   ClientMessage,
   CommandRequest,
   Hello,
+  HoldDecision,
   Identity,
   ProtocolVersion,
   ServerMessage,
@@ -73,5 +74,15 @@ describe("socket messages", () => {
   it("carries output chunks from the hub", () => {
     const chunk = { command: "c1", seq: 1, stream: "stdout", data: "hi", at: 1 };
     expect(ServerMessage.parse({ type: "output", chunk })).toEqual({ type: "output", chunk });
+  });
+});
+
+describe("HoldDecision", () => {
+  it("names the fingerprint of what was held and nothing else", () => {
+    const fingerprint = "ab".repeat(32);
+    expect(HoldDecision.parse({ fingerprint })).toEqual({ fingerprint });
+    expect(HoldDecision.safeParse({}).success).toBe(false);
+    expect(HoldDecision.safeParse({ fingerprint: "AB".repeat(32) }).success).toBe(false);
+    expect(HoldDecision.safeParse({ fingerprint: "ab" }).success).toBe(false);
   });
 });

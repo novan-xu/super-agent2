@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { CommandList, CommandResponse, OutputResponse, ServerMessage } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { type Hub, startHub } from "./hub.js";
+import type { Hub } from "./hub.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { nodeScript, recordingTarget, testCredentials, testEnvironment, waitForFile, waitForOutput } from "./testing/commands.js";
+import { startTestHub } from "./testing/http.js";
 
 let dataDir: string;
 let workDir: string;
@@ -29,7 +30,7 @@ afterEach(async () => {
 });
 
 async function start(): Promise<Hub> {
-  hub = await startHub({
+  hub = await startTestHub({
     config: testConfig(dataDir),
     keySource: staticKeySource(keySet(key)),
     clock,
