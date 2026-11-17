@@ -114,3 +114,78 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   application's name or domain.
 - **Other options:** `PORT` and `DATA_DIR` without prefix; a default data folder such as `/data`; `PRAGMA user_version`
   instead of a table; migrations as separate `.sql` files.
+
+## 2026-11-17 — The command service
+
+- **Chosen:** `CommandService` in `packages/hub/src/commands.ts` is the interface callers use: `start` takes a target
+  name, a shell command, an account (`novan-xu` or `nuofan-island`, `novan-xu` when none is given) and an optional
+  folder, stores the command and returns at once; `finished`, `get`, `list`, `output`, `subscribe` and `stop` follow it.
+  A command's states are `pending` (in the gate), `held`, `running`, then one of `exited`, `stopped`, `dropped`,
+  `failed` (it could not start: unknown target, missing token, bad folder, gate error) or `interrupted`. Output is kept as
+  numbered chunks per stream, decoded as UTF-8, with no size limit. An unknown target or a missing token is recorded as a
+  failed command rather than thrown, so the caller reads one kind of answer; a request that does not parse is thrown.
+- **Why:** One interface for the brain's tools (#5), the page (#6) and runners (#9). Numbered chunks let a reader resume
+  from the last chunk it saw without gaps or repeats.
+- **Other options:** Returning output only at the end; a size cap on stored output; throwing for an unknown target.
+
+## 2026-11-17 — The gate every command passes through
+
+- **Chosen:** A `CommandGate` is one function called with the stored command and a control that can mark it `held` with a
+  reason and that signals when the command is stopped while waiting. It answers `allow` or `drop` with a reason, at once
+  or later. The hub's default gate allows everything. #4 replaces it through `startHub({ gate })`.
+- **Why:** Holding, releasing and dropping are all expressed by when and how the gate answers, so callers and the service
+  do not change when the confirmation lock arrives.
+- **Other options:** A synchronous match function plus a separate hold queue; events the lock listens to.
+
+## 2026-11-17 — Targets, shells and stopping
+
+- **Chosen:** A target is a name and a `run` function. `hub` runs the command through Node's platform shell (`/bin/sh -c`
+  on Linux and macOS, `cmd.exe /d /s /c` on Windows) in its own process group, with standard input closed. `nas` exists
+  when `NAS_SSH_DESTINATION` is set (`NAS_SSH_PORT` and `NAS_SSH_IDENTITY` are optional) and runs
+  `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -- <destination> bash -s`,
+  writing a small script to its standard input that exports the credentials, runs the command with `sh -c` as a job of
+  its own (`set -m`) and kills that job's whole process group when standard input closes. Stopping is immediate and
+  forced: `SIGKILL` to the process group on Linux and macOS, `taskkill /T /F` on Windows, closing the script's input on
+  the NAS. A command ends when its output pipes close, so it is not recorded as ended while a process it started still
+  holds them. There is no time limit.
+- **Why:** Credentials sent through standard input never appear in a command line on either machine. Closing the input
+  also stops the remote command when the hub or the connection dies. `accept-new` lets the first connection from a new
+  container work without a prepared `known_hosts`, and still refuses a changed host key. A forced stop is what the owner
+  means by stop, and it cannot be ignored by the command.
+- **Other options:** `ssh -tt`, which mixes the two streams and rewrites line ends; `SendEnv`, which needs the NAS's
+  `sshd` to accept each variable; `SIGTERM` first with a grace period; bash for the hub's own commands.
+
+## 2026-11-17 — Credentials in commands
+
+- **Chosen:** Every command gets the chosen account's token as `GH_TOKEN` and `GITHUB_TOKEN`, plus `WOODPECKER_SERVER`,
+  `WOODPECKER_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCESS_API_TOKEN` when the hub has
+  them. On the hub the rest of the hub's environment is passed through, except `GITHUB_TOKEN_NOVAN_XU` and
+  `GITHUB_TOKEN_NUOFAN_ISLAND`, so only the chosen account is present. On the NAS only those credentials are added to the
+  login environment. A command whose account has no token fails before it starts, naming the missing variable.
+  `CLOUDFLARE_API_TOKEN` is the name assumed for the Cloudflare API token that the design lists without a name.
+- **Why:** `gh`, `git` through `gh`, and most tools read `GH_TOKEN` or `GITHUB_TOKEN`. Removing the other account's token
+  keeps the per-command choice meaningful. Failing early is clearer than letting `gh` fall back to whatever login exists.
+- **Other options:** Passing both account tokens to every command; running without a token when it is missing; a
+  separate variable list per target.
+
+## 2026-11-17 — Reading and stopping commands from outside the hub
+
+- **Chosen:** Behind the front door: `GET /api/commands?limit=` (newest first, 50 by default, at most 500),
+  `GET /api/commands/<id>`, `GET /api/commands/<id>/output?after=<seq>`, and `POST /api/commands/<id>/stop`, which needs
+  `Content-Type: application/json`, answers 202 with the command as it is at that moment, and 415 otherwise. An unknown
+  command or a malformed parameter answers 404. On `/ws` every page receives `command` messages for every change of
+  state; a page sends `follow` with a command id and an optional `after`, and receives that command's stored output from
+  there and then new output as it is produced, until it sends `unfollow`. A message the hub does not understand closes the
+  socket with 1008. Starting a command is not offered over HTTP; the brain's tools in #5 call the service inside the hub.
+- **Why:** The page needs to see commands as they run and to stop one; nothing in this issue needs to start one from
+  outside. The JSON content type keeps a cross-site form from stopping a command through the owner's cookie.
+- **Other options:** A start endpoint now; separate WebSocket paths per command; server-sent events.
+
+## 2026-11-17 — Commands across a restart
+
+- **Chosen:** When the hub closes it stops every unfinished command and records it as `interrupted`. When it starts, any
+  command still recorded as `pending`, `held` or `running` (left by a hub that died) is recorded as `interrupted`, with
+  the start time as its end time. Its stored output is kept.
+- **Why:** A command cannot outlive the process that was reading its output, so "running" after a restart would be
+  false. Held commands are not resumed because the gate's waiting lives in memory; #4 can change that.
+- **Other options:** Leaving commands running on the NAS across a hub restart and reattaching; resuming held commands.

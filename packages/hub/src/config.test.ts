@@ -37,6 +37,26 @@ describe("loadConfig", () => {
     expect(result.ok && result.config.host).toBe("127.0.0.1");
   });
 
+  it("reads the NAS's SSH destination, port and key", () => {
+    const result = loadConfig({
+      ...valid,
+      NAS_SSH_DESTINATION: "owner@nas.local",
+      NAS_SSH_PORT: "2222",
+      NAS_SSH_IDENTITY: "/run/secrets/nas_key",
+    });
+    expect(result.ok && result.config.nas).toEqual({
+      destination: "owner@nas.local",
+      port: 2222,
+      identityFile: "/run/secrets/nas_key",
+    });
+    const plain = loadConfig({ ...valid, NAS_SSH_DESTINATION: "nas" });
+    expect(plain.ok && plain.config.nas).toEqual({ destination: "nas" });
+  });
+
+  it.each(["-oProxyCommand=x", "owner@nas local", ""])("refuses the SSH destination %j", (destination) => {
+    expect(problemsFor({ ...valid, NAS_SSH_DESTINATION: destination })[0]).toMatch(/^NAS_SSH_DESTINATION /);
+  });
+
   it.each(["ACCESS_TEAM", "ACCESS_AUD", "OWNER_EMAIL", "HUB_DATA_DIR"] as const)("names %s when it is missing", (name) => {
     expect(problemsFor({ ...valid, [name]: undefined })).toEqual([`${name} is required`]);
   });
