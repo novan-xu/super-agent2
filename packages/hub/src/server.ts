@@ -28,7 +28,11 @@ import {
   type ServerMessage,
   type Session,
   type WaitingList,
+  type MachineList,
   protocolVersion,
+  runnerLinkPath,
+  RunnerToHub,
+  runnerTokenHeader,
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { z } from "zod";
@@ -40,6 +44,8 @@ import type { HubDatabase } from "./database.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
+import type { Machine } from "./machines.js";
+import type { Runners } from "./runners.js";
 import type { ToolServer } from "./tools.js";
 import type { Waiting } from "./waiting.js";
 
@@ -52,6 +58,7 @@ export const conversationsPath = "/api/conversations";
 export const waitingPath = "/api/waiting";
 export const pushPath = "/api/push";
 export const pushSubscriptionPath = "/api/push/subscription";
+export const machinesPath = "/api/machines";
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
@@ -76,6 +83,8 @@ export interface HubServerOptions {
   readonly page?: PageFiles;
   readonly waiting?: Waiting;
   readonly push?: PushService;
+  readonly runners?: Runners;
+  readonly heartbeatMilliseconds?: number;
 }
 
 export interface HubServer {
@@ -107,7 +116,8 @@ type Body =
   | EntryResponse
   | WaitingList
   | PushKey
-  | PushState;
+  | PushState
+  | MachineList;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -231,6 +241,15 @@ function isBrainPath(path: string): boolean {
   return path.startsWith("/brain/");
 }
 
+function isRunnerPath(path: string): boolean {
+  return path.startsWith("/runner/");
+}
+
+function runnerToken(request: IncomingMessage): string | undefined {
+  const value = request.headers[runnerTokenHeader];
+  return typeof value === "string" ? value : undefined;
+}
+
 function refuseSocket(socket: Duplex, status: 403 | 404): void {
   const reason = status === 403 ? "Forbidden" : "Not Found";
   socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
@@ -252,6 +271,19 @@ export function createHubServer(options: HubServerOptions): HubServer {
   };
 
   const isBrain = (request: IncomingMessage): boolean => options.brainToken?.(brainAuthorization(request)) ?? false;
+
+  const runnerMachine = async (request: IncomingMessage): Promise<Machine | undefined> => {
+    const runners = options.runners;
+    if (runners === undefined) {
+      return undefined;
+    }
+    try {
+      const result = await options.verify(headerValue(request));
+      return result.ok ? runners.admit(result.identity, runnerToken(request)) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const serveTools = async (request: IncomingMessage, response: ServerResponse, method: string): Promise<void> => {
     const tools = options.tools;
@@ -313,6 +345,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 404, { error: "not_found" });
       return;
     }
+    if (isRunnerPath(path)) {
+      request.resume();
+      sendJson(response, 403, { error: "forbidden" });
+      return;
+    }
     const identity = await authenticate(request);
     if (identity === undefined) {
       sendJson(response, 403, { error: "forbidden" });
@@ -328,6 +365,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return command === undefined ? [] : [{ command, hold }];
       });
       sendJson(response, 200, { holds });
+      return;
+    }
+    if (path === machinesPath && method === "GET" && options.runners !== undefined) {
+      sendJson(response, 200, { machines: options.runners.statuses() });
       return;
     }
     if (path === waitingPath && method === "GET" && options.waiting !== undefined) {
@@ -597,6 +638,56 @@ export function createHubServer(options: HubServerOptions): HubServer {
     });
   };
 
+  const heartbeat = options.heartbeatMilliseconds ?? 15000;
+
+  const serveRunner = (client: WebSocket, machine: Machine): void => {
+    const runners = options.runners;
+    if (runners === undefined) {
+      client.close(1011, "unavailable");
+      return;
+    }
+    const link = runners.attach(machine, {
+      send: (message) => {
+        if (client.readyState === client.OPEN) {
+          client.send(JSON.stringify(message));
+        }
+      },
+      close: (code, reason) => {
+        if (client.readyState === client.OPEN || client.readyState === client.CONNECTING) {
+          client.close(code, reason);
+        }
+      },
+    });
+    let alive = true;
+    client.on("pong", () => {
+      alive = true;
+    });
+    const timer = setInterval(() => {
+      if (!alive) {
+        client.terminate();
+        return;
+      }
+      alive = false;
+      client.ping();
+    }, heartbeat);
+    timer.unref();
+    client.on("close", () => {
+      clearInterval(timer);
+      link.closed();
+    });
+    client.on("message", (data, binary) => {
+      alive = true;
+      let message: RunnerToHub;
+      try {
+        message = RunnerToHub.parse(binary ? undefined : JSON.parse(String(data)));
+      } catch {
+        client.close(1008, "invalid message");
+        return;
+      }
+      link.receive(message);
+    });
+  };
+
   const serveSocket = (client: WebSocket, identity: Identity): void => {
     const followed = new Set<string>();
     const watched = new Set<string>();
@@ -670,6 +761,19 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return;
       }
       sockets.handleUpgrade(request, socket, head, (client: WebSocket) => serveBrain(client));
+      return;
+    }
+    if (isRunnerPath(path)) {
+      const machine = await runnerMachine(request);
+      if (machine === undefined) {
+        refuseSocket(socket, 403);
+        return;
+      }
+      if (path !== runnerLinkPath) {
+        refuseSocket(socket, 404);
+        return;
+      }
+      sockets.handleUpgrade(request, socket, head, (client: WebSocket) => serveRunner(client, machine));
       return;
     }
     const identity = await authenticate(request);

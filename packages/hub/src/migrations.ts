@@ -124,4 +124,19 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE machines (
+        name TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        access_client_id TEXT NOT NULL,
+        access_token_id TEXT,
+        created_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        last_seen_at INTEGER,
+        report TEXT
+      ) STRICT;
+    `,
+  },
 ];

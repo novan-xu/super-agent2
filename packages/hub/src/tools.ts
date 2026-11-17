@@ -62,6 +62,7 @@ export interface ToolServerOptions {
   readonly commands: CommandService;
   readonly conversations: ConversationService;
   readonly targets: () => readonly string[];
+  readonly machines?: () => string;
 }
 
 interface ToolResult {
@@ -96,6 +97,15 @@ function heldText(command: CommandRecord): string {
   ].join("\n");
 }
 
+function machineText(described: string): string[] {
+  return described === ""
+    ? []
+    : [
+        `${described}.`,
+        "A work machine runs the command as its user through its own shell (cmd.exe on Windows, /bin/sh on macOS), with no sandbox; a machine that is offline cannot run it.",
+      ];
+}
+
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
 
@@ -108,6 +118,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         description: [
           "Run a shell command on a target through the hub, with the owner's credentials, and wait until it ends.",
           `Targets now: ${targets.join(", ")}. "hub" runs in the hub's own container; "nas" runs on the NAS host.`,
+          ...machineText(options.machines?.() ?? ""),
           `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
           "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
         ].join(" "),

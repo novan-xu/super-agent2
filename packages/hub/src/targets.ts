@@ -13,6 +13,7 @@ export interface Job {
 export interface ExecutionEnd {
   readonly exitCode: number | null;
   readonly signal: string | null;
+  readonly lost?: string;
 }
 
 export interface Execution {
@@ -25,6 +26,35 @@ export type OutputSink = (stream: OutputStream, data: Buffer) => void;
 export interface Target {
   readonly name: string;
   run(job: Job, sink: OutputSink): Execution;
+}
+
+export interface TargetDirectory {
+  find(name: string): Target | undefined;
+  names(): string[];
+}
+
+export function fixedTargets(targets: readonly Target[]): TargetDirectory {
+  const byName = new Map(targets.map((target) => [target.name, target]));
+  return { find: (name) => byName.get(name), names: () => [...byName.keys()] };
+}
+
+export function combinedTargets(...directories: readonly TargetDirectory[]): TargetDirectory {
+  return {
+    find: (name) => {
+      for (const directory of directories) {
+        const target = directory.find(name);
+        if (target !== undefined) {
+          return target;
+        }
+      }
+      return undefined;
+    },
+    names: () => [...new Set(directories.flatMap((directory) => directory.names()))],
+  };
+}
+
+export function isTargetDirectory(value: readonly Target[] | TargetDirectory): value is TargetDirectory {
+  return !Array.isArray(value);
 }
 
 export const hubTargetName = "hub";

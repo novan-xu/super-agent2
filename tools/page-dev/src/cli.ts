@@ -64,6 +64,24 @@ async function ownerAssertion(): Promise<string> {
   return token;
 }
 
+async function serviceAssertion(clientId: string): Promise<string> {
+  const seconds = Math.floor(Date.now() / 1000);
+  return new SignJWT({ iss: `https://${team}.cloudflareaccess.com`, aud: [audience], common_name: clientId, sub: "", type: "app", iat: seconds, exp: seconds + 600 })
+    .setProtectedHeader({ alg: "RS256", kid: "page-dev", typ: "JWT" })
+    .sign(pair.privateKey);
+}
+
+function assertionFor(incoming: IncomingMessage): Promise<string> {
+  const clientId = incoming.headers["cf-access-client-id"];
+  const clientSecret = incoming.headers["cf-access-client-secret"];
+  if (typeof clientId === "string" && clientId !== "" && typeof clientSecret === "string" && clientSecret !== "") {
+    return serviceAssertion(clientId);
+  }
+  return ownerAssertion();
+}
+
+const replacedHeaders = new Set(["cf-access-jwt-assertion", "cf-access-client-id", "cf-access-client-secret"]);
+
 function vapidKeys(): VapidKeys | undefined {
   if (values.push === "none") {
     return undefined;
@@ -142,7 +160,7 @@ const open = new Set<Socket>();
 function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
   for (const [name, value] of Object.entries(incoming.headers)) {
-    if (value !== undefined && name !== "cf-access-jwt-assertion") {
+    if (value !== undefined && !replacedHeaders.has(name)) {
       headers[name] = value;
     }
   }
@@ -180,7 +198,7 @@ const proxy = createServer((incoming, outgoing) => {
     incoming.socket.destroy();
     return;
   }
-  void ownerAssertion().then((assertion) => {
+  void assertionFor(incoming).then((assertion) => {
     const upstream = request(
       { host: "127.0.0.1", port: hubPort, method: incoming.method, path: incoming.url, headers: forwardHeaders(incoming, assertion) },
       (answer) => {
@@ -203,7 +221,7 @@ proxy.on("upgrade", (incoming: IncomingMessage, socket: Socket, head: Buffer) =>
     socket.destroy();
     return;
   }
-  void ownerAssertion().then((assertion) => {
+  void assertionFor(incoming).then((assertion) => {
     const upstream = request({ host: "127.0.0.1", port: hubPort, method: incoming.method, path: incoming.url, headers: forwardHeaders(incoming, assertion) });
     upstream.on("upgrade", (answer, upstreamSocket: Socket, upstreamHead: Buffer) => {
       const lines = [`HTTP/1.1 ${answer.statusCode ?? 101} ${answer.statusMessage ?? "Switching Protocols"}`];
@@ -240,6 +258,7 @@ process.stdout.write(
     `Brain:    ${brainKind}`,
     `Data:     ${dataDir}`,
     `Offline:  http://127.0.0.1:${port}/__harness/offline, back with /__harness/online`,
+    `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

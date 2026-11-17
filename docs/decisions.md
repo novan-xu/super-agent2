@@ -792,3 +792,117 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   checked: the new tunnel registered its connections, the host name redirects to the Cloudflare Access sign-in, a path
   that Access lets through is answered by the new hub with its own refusal, the hub is healthy and the brain is linked.
 - **Other options:** Close #8 on those checks alone.
+
+## 2026-11-17 — How a runner passes the front door
+
+- **Chosen:** A runner opens a WebSocket at `/runner/link` through the front door with three headers:
+  `CF-Access-Client-Id` and `CF-Access-Client-Secret`, which Cloudflare Access turns into the signed assertion the hub
+  already verifies (a `service` identity), and `x-runner-token`, its own runner token. The hub admits the connection only
+  when the assertion is a service token, the runner token belongs to a machine that is not revoked, and the assertion's
+  `common_name` equals the Access client id recorded for that machine. Every other path still refuses a service identity,
+  with or without a runner token, and plain HTTP on `/runner/` answers 403. A runner can do nothing on the link but say
+  hello, report and answer the commands it is sent. The Access application must have a Service Auth policy that lets the
+  machines' service tokens through; that is set in Cloudflare by the owner and was not changed here.
+- **Why:** Two independent secrets are needed, and binding the runner token to its own service token means a leaked
+  runner token is useless with another machine's service token. A header of our own keeps the runner token out of
+  `Authorization`, which Access can be configured to read.
+- **Other options:** The runner token alone with any service token; the runner token in `Authorization`; a separate
+  host name for runners.
+
+## 2026-11-17 — Adding and revoking a machine
+
+- **Chosen:** Migration 6 adds a `machines` table: the name, the SHA-256 of the runner token (never the token), the Access
+  client id and, when the hub made it, the service token's id, the time it was added and revoked, when it was last seen,
+  and its last report. The hub's command line is `node packages/hub/dist/machines-cli.js add <name> | revoke <name> | list`
+  with `HUB_DATA_DIR` (in the container: `docker exec superagent2-hub node packages/hub/dist/machines-cli.js …`). `add`
+  creates an Access service token named `superagent2-runner-<name>` through Cloudflare's API
+  (`POST /accounts/<CLOUDFLARE_ACCOUNT_ID>/access/service_tokens` with `CLOUDFLARE_ACCESS_API_TOKEN`), or reuses one with
+  `--access-client-id`, and prints once a line `superagent2-runner-setup:<base64url JSON>` holding the hub's address
+  (`--hub` or `HUB_PUBLIC_URL`), the name, the client id and secret and the runner token. A machine name is lower-case
+  letters, digits and dashes, and not `hub` or `nas`. `revoke` marks the machine revoked; a running hub sees the change
+  through SQLite's `data_version` once a second and closes that runner's connection with code 4003, and a revoked token is
+  refused at the next connection. Adding a revoked name again issues a new token. The Cloudflare call is behind an
+  interface with a fake in the tests; it has not been made against the real API. The token is created with Cloudflare's
+  default lifetime, and `revoke` does not delete it in Cloudflare.
+- **Why:** The owner or the brain adds a machine once, by hand; the printed line is the one thing to carry to the machine.
+  Polling the database is how a second process tells the running hub, without a control endpoint. Run through the
+  command channel, `add`'s output would be stored with the command, so it is meant to be run in a terminal.
+- **Other options:** An admin endpoint on the hub; writing the machine's file directly; deleting the service token on
+  revoke, which is a credential deletion the lock would hold anyway; a token lifetime of our own choosing.
+
+## 2026-11-17 — The runner on a machine
+
+- **Chosen:** `packages/runner` runs as `node packages/runner/dist/main.js <setup|install|uninstall|run|status|programs>`
+  from a checkout of the repository built with `pnpm build`. Its files are in `~/.superagent2` (or
+  `SUPERAGENT2_RUNNER_HOME`): `runner.env` with `SUPERAGENT2_HUB`, `MACHINE_NAME`, `ACCESS_CLIENT_ID`,
+  `ACCESS_CLIENT_SECRET`, `RUNNER_TOKEN`, and optionally `RUNNER_SLOTS` and `RUNNER_MODELS_<PROGRAM>`; `runner.log`;
+  `supervisor.pid`; and `running.json`. `setup` reads the hub's line from standard input (and the client secret when the
+  line has none), never from the command line, and writes `runner.env` readable only by the user: mode 0600 on macOS,
+  and on Windows `icacls /inheritance:r /grant:r <user>:F`. This replaces the design's `~/.superagent/runner.env`, which
+  is the first Super-agent's folder.
+- **Why:** A checkout is what a work machine already has, and the folder of its own keeps the first Super-agent's
+  installed runner untouched.
+- **Other options:** A packaged copy of the runner in `~/.superagent2/app`; the settings in the system's credential store.
+
+## 2026-11-17 — Commands on a runner, and when the connection is lost
+
+- **Chosen:** A runner is one more target behind the target interface, found by its machine name, so the brain's
+  `run_command`, the page and the lock reach it unchanged; the target list the tools describe includes each machine with
+  its system and whether it is online. The hub sends `run` with the command, folder and the same credentials as on the
+  other targets; the runner runs it through Node's platform shell (`cmd.exe /d /s /c` on Windows, `/bin/sh -c` on
+  macOS) as the machine's user, with no sandbox, sends the output as base64 chunks and `ended` or `failed`, and on `stop`
+  kills the whole tree (`taskkill /T /F`, or `SIGKILL` to the process group). When the link drops, for any reason, the
+  runner kills every command it runs and the hub records them `interrupted` with the reason that the connection to the
+  machine was lost; when the hub closes they are recorded with the hub's own reason. A runner that died with commands
+  running stops their trees at its next start, from the process ids it keeps in `running.json`, if the machine has not
+  restarted since. A machine that is registered but offline fails the command at once. The hub pings each runner every 15
+  seconds and drops one that misses a pong; a runner that hears nothing for 60 seconds drops the connection. A runner
+  reconnects after 1, 2, 4 … up to 30 seconds, and waits longer after a revocation. A second connection of the same
+  machine replaces the first. `GET /api/machines` lists the machines for the owner.
+- **Why:** Reattaching to commands across a dropped connection would need output buffered on the machine and a way to
+  tell the hub what happened while it could not hear; killing them makes "interrupted" true, which is the same rule the
+  NAS target follows.
+- **Other options:** Keeping commands running across a drop and reattaching; holding a command until its machine comes
+  online.
+
+## 2026-11-17 — What a runner reports about its programs
+
+- **Chosen:** The runner reports its host name, system, release, architecture, user and slots, and for each of `codex`,
+  `claude`, `dsh` and `agy` (Antigravity) whether it is on the path, its version (`--version`) and its models with their
+  efforts, each with where the list came from. Codex: `codex debug models`, keeping models whose `visibility` is `list`,
+  with their `supported_reasoning_levels`. Claude Code: an `initialize` control request to
+  `claude -p --input-format stream-json --output-format stream-json --verbose`, whose answer lists the models with
+  `resolvedModel` and `supportedEffortLevels`; the process is stopped once it has answered, and no message is sent.
+  Antigravity: `agy models`, where a trailing `-low`, `-medium`, `-high` and the like is read as an effort of the model
+  before it (`gemini-3.8-flash-high` is `gemini-3.8-flash` at `high`), and the other models take the efforts its
+  `--help` lists for `--effort`. dsh cannot say: its SDK profile has no listing method, and `initialize` checks the effort
+  but accepts any model name, so its list comes from configuration, by default `deepseek-flash` with `off`, `low`, `high`
+  and `max`, the efforts its `initialize` accepted on this PC. `RUNNER_MODELS_<PROGRAM>` (`model:effort|effort,…`)
+  replaces any program's list. Programs are listed when the runner starts and every six hours, and the hub is sent a new
+  report. Free slots equal `RUNNER_SLOTS` (default 2) until workers (#11) take them.
+- **Why:** Found from each program's help and from experiments here with codex-cli 0.163.0, Claude Code 2.1.326,
+  dsh 0.2.1-rc.2 and Antigravity 1.5.10; the design refuses a model or effort a machine does not offer, so the list
+  should be the program's own wherever it can say.
+- **Other options:** A fixed list per program in the hub; asking dsh's account API for its models directly.
+
+## 2026-11-17 — Starting at login
+
+- **Chosen:** Windows: `install` adds the value `SuperAgent2Runner` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+  running `node main.js launch`, which starts a hidden, detached supervisor unless one is already running; the supervisor
+  runs `main.js run`, restarts it 2 seconds after it exits, or up to a minute when it keeps exiting quickly, and appends its output
+  to `runner.log`, rotated at 5 MB. macOS: `install` writes `~/Library/LaunchAgents/com.superagent2.runner.plist` with
+  `RunAtLoad`, `KeepAlive`, the installing shell's `PATH` and the log, and loads it with `launchctl bootstrap gui/<uid>`.
+  `uninstall` removes the Run value or unloads and deletes the launch agent and stops the runner; `--purge` also deletes
+  the settings folder. Both refuse to install before `setup`.
+- **Why:** Both start as the user at login without administrator rights. The Run key shows a console window for a moment
+  at login; creating a scheduled task with a logon trigger can need elevation.
+- **Other options:** A scheduled task; a Windows service, which would run as another user; a shortcut in the Startup
+  folder.
+
+## 2026-11-17 — Runners in the development harness
+
+- **Chosen:** `tools/page-dev` signs a request that carries `CF-Access-Client-Id` and `CF-Access-Client-Secret` as a
+  service token with that client id, as Cloudflare would, and drops both headers; `/__harness/hold` takes `target=` so a
+  command can be started on a machine through the command service.
+- **Why:** The runner is verified against the real front door check, without a bypass in the hub.
+- **Other options:** A fake runner connection in the harness.
