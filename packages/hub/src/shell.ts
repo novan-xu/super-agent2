@@ -1,3 +1,5 @@
+import { type CharacterClass, powershellDash, powershellDoubleQuote, powershellSingleQuote, powershellSpace } from "./unicode.js";
+
 export type Dialect = "posix" | "powershell";
 
 export const dialects: readonly Dialect[] = ["posix", "powershell"];
@@ -33,7 +35,22 @@ interface Balanced {
   readonly end: number;
 }
 
-function balanced(text: string, start: number, open: string, close: string, escape: string): Balanced {
+interface Quoting {
+  readonly escape: string;
+  readonly single: CharacterClass;
+  readonly double: CharacterClass;
+}
+
+const posixQuoting: Quoting = {
+  escape: "\\",
+  single: { has: (char) => char === "'" },
+  double: { has: (char) => char === '"' },
+};
+
+const powershellQuoting: Quoting = { escape: "`", single: powershellSingleQuote, double: powershellDoubleQuote };
+
+function balanced(text: string, start: number, open: string, close: string, quoting: Quoting): Balanced {
+  const { escape, single, double } = quoting;
   let depth = 1;
   let index = start + 1;
   while (index < text.length) {
@@ -42,14 +59,17 @@ function balanced(text: string, start: number, open: string, close: string, esca
       index += 2;
       continue;
     }
-    if (char === "'") {
-      const end = text.indexOf("'", index + 1);
-      index = end === -1 ? text.length : end + 1;
+    if (single.has(char)) {
+      index += 1;
+      while (index < text.length && !single.has(text[index])) {
+        index += 1;
+      }
+      index += 1;
       continue;
     }
-    if (char === '"') {
+    if (double.has(char)) {
       index += 1;
-      while (index < text.length && text[index] !== '"') {
+      while (index < text.length && !double.has(text[index])) {
         index += text[index] === escape ? 2 : 1;
       }
       index += 1;
@@ -201,15 +221,15 @@ function readPosixDollar(text: string, index: number, builder: Builder, quoted: 
   if (next === "(") {
     if (text[index + 2] === "(") {
       builder.appendUnknown();
-      return balanced(text, index + 1, "(", ")", "\\").end;
+      return balanced(text, index + 1, "(", ")", posixQuoting).end;
     }
-    const inner = balanced(text, index + 1, "(", ")", "\\");
+    const inner = balanced(text, index + 1, "(", ")", posixQuoting);
     builder.nested(inner.content);
     builder.appendUnknown();
     return inner.end;
   }
   if (next === "{") {
-    const inner = balanced(text, index + 1, "{", "}", "\\");
+    const inner = balanced(text, index + 1, "{", "}", posixQuoting);
     if (simpleName.test(inner.content) || /^env:[A-Za-z_][A-Za-z0-9_]*$/i.test(inner.content)) {
       builder.appendVariable(inner.content);
     } else {
@@ -427,7 +447,7 @@ export function parsePosix(text: string): SimpleCommand[] {
       continue;
     }
     if (char === "(") {
-      const inner = balanced(text, index, "(", ")", "\\");
+      const inner = balanced(text, index, "(", ")", posixQuoting);
       if (builder.atCommandStart()) {
         builder.nested(inner.content);
       } else {
@@ -443,7 +463,7 @@ export function parsePosix(text: string): SimpleCommand[] {
     }
     if (char === "<" || char === ">") {
       if (text[index + 1] === "(") {
-        const inner = balanced(text, index + 1, "(", ")", "\\");
+        const inner = balanced(text, index + 1, "(", ")", posixQuoting);
         builder.nested(inner.content);
         builder.appendUnknown();
         index = inner.end;
@@ -483,13 +503,13 @@ function powershellEscape(char: string): string {
 function readPowershellDollar(text: string, index: number, builder: Builder): number {
   const next = text[index + 1];
   if (next === "(") {
-    const inner = balanced(text, index + 1, "(", ")", "`");
+    const inner = balanced(text, index + 1, "(", ")", powershellQuoting);
     builder.nested(inner.content);
     builder.appendUnknown();
     return inner.end;
   }
   if (next === "{") {
-    const inner = balanced(text, index + 1, "{", "}", "`");
+    const inner = balanced(text, index + 1, "{", "}", powershellQuoting);
     if (/^(?:env:)?[A-Za-z_][A-Za-z0-9_]*$/i.test(inner.content)) {
       builder.appendVariable(inner.content);
     } else {
@@ -518,9 +538,10 @@ function readPowershellDouble(text: string, start: number, builder: Builder): nu
   let index = start;
   while (index < text.length) {
     const char = text[index] ?? "";
-    if (char === '"') {
-      if (text[index + 1] === '"') {
-        builder.append('"');
+    if (powershellDoubleQuote.has(char)) {
+      const next = text[index + 1];
+      if (powershellDoubleQuote.has(next)) {
+        builder.append(next ?? "");
         index += 2;
         continue;
       }
@@ -545,9 +566,10 @@ function readPowershellSingle(text: string, start: number, builder: Builder): nu
   builder.append("");
   let index = start;
   while (index < text.length) {
-    if (text[index] === "'") {
-      if (text[index + 1] === "'") {
-        builder.append("'");
+    if (powershellSingleQuote.has(text[index])) {
+      const next = text[index + 1];
+      if (powershellSingleQuote.has(next)) {
+        builder.append(next ?? "");
         index += 2;
         continue;
       }
@@ -560,16 +582,33 @@ function readPowershellSingle(text: string, start: number, builder: Builder): nu
 }
 
 function readHereString(text: string, index: number, builder: Builder): number {
-  const quote = text[index + 1] ?? "'";
+  const expandable = powershellDoubleQuote.has(text[index + 1]);
+  const closes = expandable ? powershellDoubleQuote : powershellSingleQuote;
   const bodyStart = text.indexOf("\n", index) + 1;
-  const terminator = `\n${quote}@`;
-  const end = text.indexOf(terminator, bodyStart);
-  const stop = end === -1 ? text.length : end;
+  let end = -1;
+  for (let position = text.indexOf("\n", bodyStart - 1); position !== -1; position = text.indexOf("\n", position + 1)) {
+    if (closes.has(text[position + 1]) && text[position + 2] === "@") {
+      end = position;
+      break;
+    }
+  }
+  const stop = end === -1 ? text.length : Math.max(end, bodyStart);
   builder.append(text.slice(bodyStart, stop).replace(/\r$/, ""));
-  if (quote === '"' && /\$[({A-Za-z_]/.test(text.slice(bodyStart, stop))) {
+  if (expandable && /\$[({A-Za-z_]/.test(text.slice(bodyStart, stop))) {
     builder.appendUnknown();
   }
-  return end === -1 ? text.length : end + terminator.length;
+  return end === -1 ? text.length : end + 3;
+}
+
+function opensHereString(text: string, start: number): boolean {
+  let index = start;
+  while (index < text.length && text[index] !== "\n" && text[index] !== "\r" && powershellSpace.has(text[index])) {
+    index += 1;
+  }
+  if (text[index] === "\r") {
+    index += 1;
+  }
+  return text[index] === "\n";
 }
 
 export function parsePowershell(text: string): SimpleCommand[] {
@@ -577,7 +616,7 @@ export function parsePowershell(text: string): SimpleCommand[] {
   let index = 0;
   while (index < text.length) {
     const char = text[index] ?? "";
-    if (char === " " || char === "\t" || char === "\r") {
+    if (char === "\r" || powershellSpace.has(char)) {
       builder.endWord();
       index += 1;
       continue;
@@ -610,24 +649,21 @@ export function parsePowershell(text: string): SimpleCommand[] {
       index = end === -1 ? text.length : end + 2;
       continue;
     }
-    if (char === "'") {
+    if (powershellSingleQuote.has(char)) {
       index = readPowershellSingle(text, index + 1, builder);
       continue;
     }
-    if (char === '"') {
+    if (powershellDoubleQuote.has(char)) {
       index = readPowershellDouble(text, index + 1, builder);
       continue;
     }
-    if (char === "@" && !builder.wordActive && (text[index + 1] === "'" || text[index + 1] === '"')) {
-      const after = text.slice(index + 2).match(/^[ \t]*\r?\n/);
-      if (after !== null) {
-        index = readHereString(text, index, builder);
-        continue;
-      }
+    if (char === "@" && !builder.wordActive && (powershellSingleQuote.has(text[index + 1]) || powershellDoubleQuote.has(text[index + 1])) && opensHereString(text, index + 2)) {
+      index = readHereString(text, index, builder);
+      continue;
     }
     if (char === "@" && (text[index + 1] === "(" || text[index + 1] === "{")) {
       const open = text[index + 1] ?? "(";
-      const inner = balanced(text, index + 1, open, open === "(" ? ")" : "}", "`");
+      const inner = balanced(text, index + 1, open, open === "(" ? ")" : "}", powershellQuoting);
       builder.nested(inner.content);
       builder.appendUnknown();
       index = inner.end;
@@ -643,7 +679,7 @@ export function parsePowershell(text: string): SimpleCommand[] {
       continue;
     }
     if (char === "(" || char === "{") {
-      const inner = balanced(text, index, char, char === "(" ? ")" : "}", "`");
+      const inner = balanced(text, index, char, char === "(" ? ")" : "}", powershellQuoting);
       builder.nested(inner.content);
       builder.appendUnknown();
       index = inner.end;
@@ -699,6 +735,13 @@ export function parsePowershell(text: string): SimpleCommand[] {
         }
       }
       index = end;
+      continue;
+    }
+    if (!builder.wordActive && powershellDash.has(char)) {
+      while (index < text.length && powershellDash.has(text[index])) {
+        builder.append("-");
+        index += 1;
+      }
       continue;
     }
     builder.append(char);

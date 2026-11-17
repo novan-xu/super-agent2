@@ -1906,3 +1906,63 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   Woodpecker server and an unresolved conflict against GitHub; the tests cover both with the fake forge.
 - **Why:** The issue's "Done when" list, on this PC.
 - **Other options:** None.
+
+## 2026-11-17 — The Unicode characters each shell reads as ordinary ones
+
+- **Chosen:** The sets below are kept as data in `packages/hub/src/unicode.ts` and were found on this PC by experiment,
+  never by running a destructive command. PowerShell 5.1 (5.1.26100): every character from U+0001 to U+FFFF, surrogates
+  excepted, was given to `[System.Management.Automation.Language.Parser]::ParseInput` as `a<c>b`, `a <c>b`,
+  `1 <c>eq 1`, `a <c>x y<c>` and as the closing character of `'x` and `"x`, and the tokens were read. White space:
+  U+0009, U+000B, U+000C, U+0020, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and
+  U+3000; only U+000A and U+000D end a line. Dashes that start a parameter or an operator: U+002D and U+2013 to U+2015;
+  U+2010 to U+2012, U+2212 and the full-width hyphen are ordinary characters. Single quotes: U+0027 and U+2018 to
+  U+201B; double quotes: U+0022 and U+201C to U+201E. Any quote of a kind closes a string opened by any quote of the
+  same kind, two in a row stand for one, and the curly ones also open and close here-strings (`@‘`, `’@`). A dash
+  counts only at the start of a word (`a–b` is one word); `–Recurse` binds as `-Recurse` for a cmdlet, while a native
+  program is handed the en dash itself; `––` is the end-of-parameters token, and `–-%` is not the stop-parsing token.
+  `powershell.exe` accepts `–NoProfile –Command` on its own command line. No look-alike separator (full-width `；`,
+  `｜`, `＆`) splits a statement, and U+200B and U+180E do not split a word. PowerShell 7 is not installed on this PC,
+  so it was not checked; the sets above are the ones the PowerShell reading uses for both. cmd (Windows 11, run through
+  `cmd /d /c` with `echo<c>zz` and `dir /b<c>C:\Windows\win.ini` for 150 candidate characters): it ends the command
+  name and splits arguments at the same white space as PowerShell plus U+180E, and not at U+200B; curly quotes are not
+  quotes, en and em dashes do not start a switch, and full-width separators do not separate. The PowerShell reading now
+  treats PowerShell's white space, dashes and quotes as PowerShell does; the text given to `cmd /c` has cmd's white
+  space read as spaces before it is read; the POSIX reading is unchanged, since a POSIX shell splits only on space, tab
+  and newline and has only ASCII quotes.
+- **Why:** A command written with these characters runs as the listed form in PowerShell or cmd, and the lock must
+  read it the way the shell that runs it will. Probing the tokenizer itself, character by character, gives the exact
+  sets rather than a remembered approximation.
+- **Other options:** Treating every Unicode space and dash as ASCII in every reading, which would make the POSIX reading
+  split where bash does not; reading `cmd /c` text with a reader of its own.
+
+## 2026-11-17 — Invisible and look-alike characters in a command
+
+- **Chosen:** Besides the two readings, the lock reads every script (the command and every script inside it) a second
+  time with invisible and look-alike characters folded, and holds the command if that reading matches a listed form.
+  Folding, kept as data in `packages/hub/src/unicode.ts`: invisible characters are removed (soft hyphen, combining
+  grapheme joiner, Arabic letter mark, Hangul fillers, Khmer inherent vowels, Mongolian variation selectors, U+200B to
+  U+200F, the bidirectional embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, U+2060 to U+2064,
+  U+206A to U+206F, variation selectors, U+FEFF, the interlinear annotation characters, the shorthand format controls,
+  the musical format controls and the tag characters); look-alike spaces (cmd's white space beyond ASCII) become a
+  space; look-alike dashes (U+02D7, U+2010 to U+2015, U+2043, U+2212, U+FE58, U+FE63, U+FF0D) become `-`; look-alike
+  slashes (U+2044, U+2215, U+29F8) become `/`; Cyrillic, Greek, Armenian and Latin small-capital letters that look
+  like ASCII letters become them; any other character whose NFKC compatibility form is made only of ASCII letters,
+  digits, space and `.,:;|&=+~@%!_*/-` becomes that form (full-width letters, digits and separators, mathematical
+  letters, ligatures). Look-alike quotes are removed, except the curly quotes the PowerShell reading already reads as
+  quotes. Quotes, `$`, backticks, backslashes, brackets, `<`, `>` and `#` are never produced by folding, so folding
+  never opens or closes a quoted string or a substitution; the quoting of the folded text is the shell's own. ASCII
+  text is never folded, so ordinary commands are read exactly as before. In effect a command is held when an invisible
+  or look-alike character sits in the program name, a subcommand, a flag or a target of a listed form, or joins such a
+  word to the rest of the command (a zero-width word between `repo` and `delete`, a full-width `；` before `gh`), and
+  folding it away makes the form appear. Chinese, Japanese, emoji, accented letters and full-width punctuation inside
+  a commit message, an issue title, a file name or an echoed string stay one word under folding, so they never make a
+  form appear and run as before.
+- **Why:** The reader cannot be sure what such a command does: a bidirectional override can show `delete` while the
+  shell sees something else, and a look-alike letter makes a listed command look like another. In a POSIX shell the
+  command usually fails rather than doing harm, but a needless hold here costs one click on a command no one writes by
+  accident, while a miss cannot be undone. Folding the text and reading it again keeps one definition of the forms,
+  instead of a second list of suspicious spellings.
+- **Other options:** Holding every command with any invisible or non-ASCII character, which would hold every Chinese
+  commit message; folding inside words only, which misses a look-alike separator joining a form; holding only when
+  the folded word equals a listed word, which would need every form restated; the full Unicode confusables table,
+  which maps CJK and other everyday characters and would be larger than the reader.
