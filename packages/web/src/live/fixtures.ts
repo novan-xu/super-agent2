@@ -70,6 +70,8 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     branch: null,
     pullRequest: null,
     round: 0,
+    freeRetry: false,
+    stuck: null,
     waitsFor: [],
     waits: [],
     deployedAt: null,
@@ -171,4 +173,17 @@ export function startCard(
     choice: fixtureChoice(overrides.choice),
     machines: [...(overrides.machines ?? fixtureMachines)],
   };
+}
+
+export function stuckTicket(id: number, overrides: Partial<NonNullable<Ticket["stuck"]>> = {}): Ticket {
+  return ticket(id, {
+    state: "stuck",
+    round: 3,
+    branch: `sa2/ticket-${id}-beef`,
+    stuck: { at: 40_000, round: 3, from: "verifying", failure: { kind: "workflow", detail: "Pipeline #9 on abc1234 failed: workflow check, step test (exit code 1)" }, where: null, ...overrides },
+  });
+}
+
+export function stuckCard(id: number, overrides: Partial<NonNullable<Ticket["stuck"]>> = {}, guidance: { readonly en: string; readonly zh: string } | null = { en: "Return hello", zh: "让 greet 返回 hello" }): WaitingCard {
+  return { kind: "stuck", key: `stuck:${id}-40000`, at: 40_000, ticket: stuckTicket(id, overrides), guidance };
 }

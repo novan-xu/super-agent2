@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createPushDevice, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
-import type { Behaviour, ScriptedRunners } from "./scripted.js";
+import { createPushDevice, type FakeForge, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
+import type { Behaviour, HandBack, ScriptedRunners } from "./scripted.js";
 import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
@@ -31,6 +31,54 @@ export function createAllowanceForcing(): AllowanceForcing {
       }
     },
     forced: () => Object.fromEntries(forced),
+  };
+}
+
+export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined): (given: HandBack) => void {
+  let pipelines = 0;
+  return (given) => {
+    const head = createHash("sha1").update(`${given.ticket}:${given.attempt}:${Date.now()}`).digest("hex");
+    const repository = forge.repository(given.repository);
+    for (const issue of hub()?.tickets.get(given.ticket)?.issues ?? []) {
+      if (!repository.issues.has(issue.number)) {
+        repository.issues.set(issue.number, "open");
+      }
+    }
+    const pull = repository.pulls.get(given.pullRequest);
+    if (pull === undefined) {
+      forge.pull(given.repository, given.pullRequest, head, ["src/parser.ts"], given.branch);
+    } else {
+      pull.head = head;
+    }
+    forge.tree(given.repository, head, ["src/parser.ts", ".woodpecker/check.yaml"]);
+    const woodpecker = forge.woodpecker.get(given.repository) ?? { id: 100 + forge.woodpecker.size, active: true, configFile: "", pipelines: [] };
+    forge.woodpecker.set(given.repository, woodpecker);
+    const red = given.behaviour === "red-always" || (given.behaviour === "red-once" && given.attempt === 1);
+    pipelines += 1;
+    const step = 5000 + pipelines;
+    woodpecker.pipelines.push({
+      number: pipelines,
+      commit: head,
+      ref: `refs/pull/${given.pullRequest}/merge`,
+      event: "pull_request",
+      status: red ? "failure" : "success",
+      workflows: [
+        {
+          name: "check",
+          state: red ? "failure" : "success",
+          steps: [
+            { id: step - 1000, name: "clone", state: "success", exitCode: 0 },
+            { id: step, name: "test", state: red ? "failure" : "success", exitCode: red ? 1 : 0 },
+          ],
+        },
+      ],
+      config: ["check"],
+    });
+    forge.logs.set(step, [
+      "+ pnpm test",
+      ...Array.from({ length: 600 }, (_, index) => ` ✓ src/notes.test.ts > keeps note ${index + 1} as it was written`),
+      ...(red ? [" FAIL src/parser.test.ts > parses relative dates", "AssertionError: expected '2026-11-18' to be '2026-11-17'", " Test Files  1 failed | 12 passed (13)"] : [" Test Files  13 passed (13)"]),
+    ]);
   };
 }
 
@@ -314,10 +362,38 @@ export function createHarness(options: HarnessOptions): Harness {
 
   let nextIssue = 1000 + Math.floor(Math.random() * 8000);
 
-  const scenario = async (response: ServerResponse): Promise<void> => {
+  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail" };
+
+  const loopCase = async (url: URL, response: ServerResponse): Promise<void> => {
+    const name = url.searchParams.get("case") ?? "";
+    const behaviour = loopCases[name];
+    if (behaviour === undefined) {
+      json(response, 400, { error: "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round) or worker (the worker fails once)", cases: Object.keys(loopCases) });
+      return;
+    }
+    nextIssue += 1;
+    await startPlans(
+      [
+        {
+          name,
+          repository: "novan-xu/garden-notes",
+          title: [`Failure loop: ${name}`, `失败循环：${name}`],
+          titles: [[`Parse relative dates (${name})`, `解析相对日期（${name}）`]],
+          behaviour,
+          machine: "studio",
+          engine: "claude",
+        },
+      ],
+      response,
+    );
+  };
+
+  const scenario = (response: ServerResponse): Promise<void> => startPlans(scenarioPlan, response);
+
+  const startPlans = async (plans: readonly Planned[], response: ServerResponse): Promise<void> => {
     options.scripted.connect();
     const ids = new Map<string, number>();
-    for (const plan of scenarioPlan) {
+    for (const plan of plans) {
       const issues =
         plan.repository === null
           ? []
@@ -451,6 +527,10 @@ export function createHarness(options: HarnessOptions): Harness {
         }
         const result = await callTool(name, args as Record<string, unknown>, url.searchParams.get("conversation") ?? undefined);
         json(response, result.isError ? 409 : 200, result);
+        return true;
+      }
+      if (path === "/__harness/loop") {
+        await loopCase(url, response);
         return true;
       }
       if (path === "/__harness/scenario") {

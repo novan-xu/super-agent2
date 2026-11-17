@@ -330,4 +330,29 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN free_retry INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE tickets ADD COLUMN stuck_at INTEGER;
+      ALTER TABLE tickets ADD COLUMN stuck_round INTEGER;
+      ALTER TABLE tickets ADD COLUMN stuck_from TEXT;
+      ALTER TABLE tickets ADD COLUMN stuck_failure TEXT;
+      ALTER TABLE tickets ADD COLUMN stuck_detail TEXT;
+      ALTER TABLE tickets ADD COLUMN stuck_where_en TEXT;
+      ALTER TABLE tickets ADD COLUMN stuck_where_zh TEXT;
+      CREATE TABLE ticket_rounds (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        seq INTEGER NOT NULL,
+        round INTEGER,
+        attempt INTEGER NOT NULL,
+        failure TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        guidance_en TEXT NOT NULL,
+        guidance_zh TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        PRIMARY KEY (ticket_id, seq)
+      ) STRICT;
+    `,
+  },
 ];

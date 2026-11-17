@@ -32,6 +32,13 @@ export function payloadOf(card: WaitingCard): PushPayload {
         url: cardAddress(card.key),
         tag: "start",
       };
+    case "stuck":
+      return {
+        title: text("waiting.title"),
+        body: text("notice.waiting.stuck", { ticket: card.ticket.id, round: card.ticket.stuck?.round ?? card.ticket.round }),
+        url: cardAddress(card.key),
+        tag: card.key,
+      };
   }
 }
 

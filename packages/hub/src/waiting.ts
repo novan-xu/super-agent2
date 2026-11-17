@@ -1,4 +1,4 @@
-import { cardKey, type HoldCard, type StartCard, type WaitingCard } from "@super-agent2/protocol";
+import { cardKey, type HoldCard, type StartCard, type StuckCard, type WaitingCard } from "@super-agent2/protocol";
 import type { CommandService } from "./commands.js";
 import type { ConfirmationLock } from "./lock.js";
 import type { TicketService } from "./tickets.js";
@@ -17,6 +17,7 @@ export interface WaitingOptions {
   readonly lock: ConfirmationLock | undefined;
   readonly tickets?: TicketService;
   readonly starts?: () => StartCard[];
+  readonly stuck?: () => StuckCard[];
 }
 
 export function newestFirst(cards: readonly WaitingCard[]): WaitingCard[] {
@@ -35,7 +36,7 @@ export function holdCards(options: WaitingOptions): HoldCard[] {
 }
 
 export function allCards(options: WaitingOptions): WaitingCard[] {
-  return newestFirst([...holdCards(options), ...(options.starts?.() ?? [])]);
+  return newestFirst([...holdCards(options), ...(options.stuck?.() ?? []), ...(options.starts?.() ?? [])]);
 }
 
 export function createWaiting(options: WaitingOptions): Waiting {
@@ -84,7 +85,7 @@ export function createWaiting(options: WaitingOptions): Waiting {
     schedule();
   });
 
-  const unsubscribeTickets = options.starts === undefined ? () => undefined : (options.tickets?.subscribe(() => schedule()) ?? (() => undefined));
+  const unsubscribeTickets = options.starts === undefined && options.stuck === undefined ? () => undefined : (options.tickets?.subscribe(() => schedule()) ?? (() => undefined));
 
   const unsubscribe = () => {
     unsubscribeCommands();

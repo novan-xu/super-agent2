@@ -7,6 +7,8 @@ export * from "./config.js";
 export * from "./conversations.js";
 export * from "./credentials.js";
 export * from "./database.js";
+export * from "./failure-loop.js";
+export * from "./fake-forge.js";
 export * from "./defaults.js";
 export * from "./github-api.js";
 export * from "./hub.js";

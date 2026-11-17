@@ -1,4 +1,4 @@
-import { activeWorkStates, type FailedStep, type Ticket, unmetWaits, type VerificationWait, type WorkFailure } from "@super-agent2/protocol";
+import { activeWorkStates, type FailedStep, type LoopFailureKind, type Ticket, unmetWaits, type VerificationWait, type WorkFailure } from "@super-agent2/protocol";
 
 export const ticketPhases = [
   "pending",
@@ -14,6 +14,7 @@ export const ticketPhases = [
   "verifying",
   "verifyFailed",
   "conflicted",
+  "stuck",
   "merged",
   "delivered",
   "stopped",
@@ -36,6 +37,7 @@ export const phaseLooks: Readonly<Record<TicketPhase, { readonly tone: Tone; rea
   verifying: { tone: "info", live: false },
   verifyFailed: { tone: "bad", live: false },
   conflicted: { tone: "warn", live: false },
+  stuck: { tone: "warn", live: false },
   merged: { tone: "ok", live: false },
   delivered: { tone: "info", live: false },
   stopped: { tone: "mute", live: false },
@@ -47,6 +49,7 @@ export function ticketPhase(ticket: Ticket): TicketPhase {
       return ticket.verification?.state === "failed" ? "verifyFailed" : ticket.verification?.state === "conflict" ? "conflicted" : "verifying";
     case "pending":
     case "waiting":
+    case "stuck":
     case "merged":
     case "delivered":
     case "stopped":
@@ -86,7 +89,8 @@ export type TicketProblem =
   | { readonly kind: "stopped"; readonly reason: string }
   | { readonly kind: "verifyWaiting"; readonly wait: VerificationWait; readonly commit: string; readonly reason: string | null }
   | { readonly kind: "verifyFailed"; readonly failures: readonly FailedStep[]; readonly reason: string | null }
-  | { readonly kind: "conflicted"; readonly reason: string | null };
+  | { readonly kind: "conflicted"; readonly reason: string | null }
+  | { readonly kind: "stuck"; readonly round: number; readonly failure: LoopFailureKind; readonly where: string | null; readonly detail: string };
 
 export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>): TicketProblem | null {
   const phase = ticketPhase(ticket);
@@ -113,6 +117,10 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
       return { kind: "verifyFailed", failures: ticket.verification?.failures ?? [], reason: ticket.verification?.reason ?? null };
     case "conflicted":
       return { kind: "conflicted", reason: ticket.verification?.reason ?? null };
+    case "stuck": {
+      const stuck = ticket.stuck;
+      return stuck === null ? null : { kind: "stuck", round: stuck.round, failure: stuck.failure.kind, where: stuck.where === null ? null : stuck.where.zh, detail: stuck.failure.detail };
+    }
     case "verifying": {
       const verification = ticket.verification;
       if (verification === null || verification.waiting === null) {

@@ -4,6 +4,8 @@ import {
   activeWorkStates,
   finishedTicketStates,
   type GeneratedText,
+  guidanceRefusal,
+  type LoopFailure,
   type RunnerWorkEvent,
   StoredWorkEvent,
   type Ticket,
@@ -23,7 +25,8 @@ import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createTicketFiles, type TicketFiles } from "./files.js";
-import { clip } from "./reports.js";
+import type { FailureReport } from "./failure-loop.js";
+import { clip, tail } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { TicketService, TicketWork } from "./tickets.js";
 
@@ -39,6 +42,12 @@ export interface WorkServiceOptions {
   readonly files?: TicketFiles;
   readonly deliver?: (conversation: string | null, delivery: Delivery) => void;
   readonly branchSuffix?: () => string;
+  readonly report?: (report: FailureReport) => void;
+}
+
+export interface GuidedRound {
+  readonly guidance: GeneratedText;
+  readonly failure: LoopFailure;
 }
 
 export type WorkOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
@@ -51,7 +60,7 @@ export interface WorkService extends TicketWork {
   begin(ticket: Ticket): void;
   stop(ticket: Ticket): void;
   reassign(ticket: Ticket): void;
-  again(ticket: number, note: string, reason?: GeneratedText): WorkOutcome;
+  again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound): WorkOutcome;
   message(ticket: number, text: string, from: WorkSender): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
@@ -183,6 +192,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const outputOf = (ticket: number, attempt: number, limit: number): string => {
     const rows = selectRecent.all(ticket, attempt, defaultEventLimit).reverse();
     const parts: string[] = [];
+    const streamed = new Map<string, string>();
     for (const row of rows) {
       const stored = storedOf(row);
       if (stored === undefined) {
@@ -193,18 +203,39 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         parts.push(event.delta);
       } else if (event.kind === "tool.started") {
         parts.push(`\n[${event.name}] ${event.input}\n`);
-      } else if (event.kind === "tool.finished" && event.output !== null) {
-        parts.push(`${event.output}\n`);
+      } else if (event.kind === "tool.output") {
+        streamed.set(event.call, (streamed.get(event.call) ?? "") + event.delta);
+      } else if (event.kind === "tool.finished") {
+        const output = event.output ?? streamed.get(event.call) ?? "";
+        streamed.delete(event.call);
+        if (output !== "") {
+          parts.push(`${output}\n`);
+        }
       } else if (event.kind === "phase" || event.kind === "failed") {
         parts.push(`\n[${event.kind === "phase" ? event.phase : "failed"}] ${event.kind === "phase" ? event.detail : event.reason}\n`);
       }
     }
-    const joined = parts.join("");
-    return joined.length <= limit ? joined : clip(joined, limit);
+    for (const output of streamed.values()) {
+      parts.push(`${output}\n`);
+    }
+    return tail(parts.join(""), limit);
   };
 
   const failed = (ticket: Ticket, attempt: Attempt, failure: WorkFailure, reason: string) => {
     if (closed) {
+      return;
+    }
+    if (options.report !== undefined) {
+      options.report({
+        ticket: ticket.id,
+        failure: { kind: failure, detail: reason },
+        evidence: [
+          `The worker of ticket ${ticket.id} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${failureWords[failure]}: ${reason}`,
+          ticket.kind === "writing" ? "It is a writing ticket, with no branch." : `Branch: ${ticket.branch ?? "(none)"}; pull request: ${ticket.pullRequest === null ? "none yet" : `#${ticket.pullRequest}`}.`,
+          "The worker's output ends with:",
+          outputOf(ticket.id, attempt.attempt, 8_000) || "(no output)",
+        ].join("\n"),
+      });
       return;
     }
     tell(
@@ -342,7 +373,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     removeEverywhere(ticket);
   };
 
-  const nextAttempt = (ticket: Ticket, note: string | null, previous: Attempt | undefined): void => {
+  const nextAttempt = (ticket: Ticket, note: string | null, previous: Attempt | undefined, back?: { readonly reason: GeneratedText | undefined; readonly round: GuidedRound | undefined }): void => {
     if (ticket.machine === null || ticket.engine === null || ticket.model === null || ticket.effort === null) {
       throw new Error(`Ticket ${ticket.id} has no machine, engine, model and effort chosen`);
     }
@@ -366,6 +397,17 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const number = (previous?.attempt ?? 0) + 1;
     tickets.change((writes) => {
+      if (back !== undefined) {
+        const current = writes.get(ticket.id);
+        if (current?.state === "verifying") {
+          writes.move(ticket.id, "working", back.reason);
+        } else if (current?.state !== "working") {
+          throw new Error(`Ticket ${ticket.id} is ${current?.state ?? "gone"} and cannot go back to work`);
+        }
+        if (back.round !== undefined) {
+          writes.startRound(ticket.id, { failure: back.round.failure, guidance: back.round.guidance, attempt: number });
+        }
+      }
       if (previous !== undefined && (previous.state === "queued" || isActive(previous.state))) {
         end(ticket.id, previous.attempt, "replaced", null, null);
       }
@@ -640,7 +682,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         : `The owner moved this ticket here from ${latest.machine}, now with ${ticket.engine ?? "?"} ${ticket.model ?? "?"} at ${ticket.effort ?? "?"}. The earlier work was pushed to the branch where it could be; continue from there.`;
       nextAttempt(ticket, note, latest);
     },
-    again: (id, note, reason) => {
+    again: (id, note, reason, round) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
         return { ok: false, reason: `There is no ticket ${id}` };
@@ -652,14 +694,14 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (latest !== undefined && (latest.state === "queued" || isActive(latest.state))) {
         return { ok: false, reason: `Ticket ${id} already has a worker` };
       }
-      if (ticket.state === "verifying") {
-        const moved = tickets.move(id, "working", reason);
-        if (!moved.ok) {
-          return { ok: false, reason: `Ticket ${id} could not go back to working` };
+      if (round !== undefined) {
+        const refusal = guidanceRefusal(ticket);
+        if (refusal !== null) {
+          return { ok: false, reason: `Ticket ${id} cannot have a guided round now (${refusal})` };
         }
       }
       try {
-        nextAttempt(tickets.get(id) ?? ticket, note, latest);
+        nextAttempt(ticket, note, latest, { reason, round });
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }

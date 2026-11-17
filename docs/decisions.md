@@ -1793,3 +1793,116 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   file; the tests cover them with a fake Woodpecker.
 - **Why:** The harness exercises the real front door, start, runner link and GitHub; only Woodpecker is out of reach here.
 - **Other options:** A local fake Woodpecker in the harness, which would have been a second fake rather than the server.
+
+## 2026-11-17 — What a failure is, and what counts as a guided round
+
+- **Chosen:** A failure is what the hub already records: a red workflow (verification `failed`), a conflict the worker
+  did not resolve (verification `conflict`), and a failed attempt (`no-pull-request`, `program`, `lost`, `prepare`). A
+  guided round is one call of `guide_ticket` after such a failure: the brain's guidance goes to the worker, which starts
+  again on the same branch, resuming its session where the machine and engine are the same. It is counted when it
+  starts, in the same transaction that inserts the attempt. Not failures, so never told as one and never counted: a
+  dropped link to a runner that comes back with its worker still running, a machine that is offline (the attempt
+  waits, queued or unreachable), and a pipeline that never reports (the ticket waits in verifying). A failure of the
+  machine (`lost`, `prepare`) gets one retry that is not counted; a second failure of the machine in a row is counted,
+  as is any failure of the work after it. The hub's own conflict send-back (the first time a head conflicts) is the
+  design's merge step, not a failure, and is not a round; the owner's 改派 is the owner's action, not a round, and does
+  not reset the count. The rules are plain functions in `packages/protocol/src/rounds.ts`: `countsAsRound`,
+  `capReached`, `loopFailureOf`, `guidanceRefusal`, `nextRound`, `stuckOffers`.
+- **Why:** The owner should be called for work that keeps failing, not for a machine restart or a slow pipeline; one
+  free retry, and only one in a row, keeps a real failure from being hidden behind a machine that fails each time.
+  Counting at the start of the round, in the hub, means a round the brain never started cannot be counted and one it
+  started cannot be uncounted.
+- **Other options:** Counting every attempt, which would call the owner for infrastructure; never counting machine
+  failures, which lets a broken machine loop for ever; counting at the end of a round.
+
+## 2026-11-17 — Where the count lives, and why nothing the brain calls can start a fourth round
+
+- **Chosen:** The count is `tickets.round`, with `tickets.free_retry`, and `ticket_rounds` keeps each round (its number,
+  or none for an uncounted retry, the attempt it started, the failure it answered, and the guidance in English and
+  Chinese). The only writer that raises it is `TicketWrites.startRound`, which throws when a counted round would go past
+  three; the only writer that lowers it is `TicketWrites.resume`, called only from the owner's answer. At the third
+  failure after three rounds the hub moves the ticket to `stuck` itself. Every path to another attempt was checked:
+  `guide_ticket` refuses past the cap and on a stuck ticket; `WorkService.again` with a round re-checks the rules and the
+  write refuses; `again` without a round (the conflict send-back) and the owner's 改派 need the ticket in working or
+  verifying, which a stuck ticket is not; `merge_ticket` needs verifying; `message_worker` needs a running worker;
+  `stop_ticket` is refused on a stuck ticket (the decision is the owner's), and a stopped ticket has no moves, so it
+  cannot be reopened; a new ticket for the same issue starts only with the owner's 开始; verification checks and the
+  runner's reconnection never make a new attempt. The owner's answer is the page's own request with the owner's signed
+  assertion, a same-origin `Origin` and a JSON body, which the brain cannot make.
+- **Why:** The cap is one of the five constraints in code. Putting the throw in the write that inserts the round, not
+  only in the tool, holds it for any caller.
+- **Other options:** A check in the tool alone; a separate table of caps per ticket; letting the brain stop a stuck
+  ticket.
+
+## 2026-11-17 — The stop at the cap is a state of its own
+
+- **Chosen:** A new ticket state `stuck` (等你决定). Working and verifying move to it, and it moves back to the state it
+  came from (`stuck_from`), or to stopped. It is open, not finished, so nothing removes the worktree: the branch, the
+  pull request and the worker's output stay, and a runner that reconnects keeps the folder. While it is stuck no
+  worker is dispatched, verification does not check it, and it is not reassignable. The ticket records when it
+  stopped, at which round, the failure, and where it is stuck in the brain's words. A move from stuck back to verifying
+  does not count as a new hand-back, so the rules are not run again and the failure is not told twice.
+- **Why:** `stopped` is final and removes the worktree; the owner must be able to resume the same ticket.
+- **Other options:** Using `stopped` and opening a new ticket on resume; a flag on a working ticket, which every path
+  would have to remember to check.
+
+## 2026-11-17 — The owner's answer, and the card in 等你
+
+- **Chosen:** A stuck ticket is a card in 等你 (`StuckCard`, key `stuck:<ticket>-<time it stopped>`) with the ticket's
+  title linked to it, the failure, 第 n 轮, the repository, and where it is stuck: the brain's `describe_stuck` text, or,
+  until the brain has written it or if it cannot, the last guidance and the hub's failure as recorded. It has a box for
+  words to the brain, 继续, and 放弃, which takes a second press. `POST /api/tickets/<n>/answer` with
+  `{"at", "answer": "resume" | "give-up", "words"?}` answers it; a stale `at` is refused. Resume moves it back with the
+  count at zero, starts nothing, and tells the brain with the owner's words and the failure, so the brain's next guidance
+  is round 1 of the new count. Give up stops the ticket ("引导到上限后，你放弃了它"), which removes the worktree. The card
+  appearing sends one push notification, 工单 n 引导 3 轮还没通过，等你决定, to the card's address.
+- **Why:** The design says the owner is involved after three rounds, and the card is the one place the count can be
+  reset. The worker hears only from the brain, in English, so the owner's Chinese words go to the brain.
+- **Other options:** Resuming with the owner's words sent straight to the worker; a resume that starts a round at once;
+  the stuck ticket's panel as the place to answer.
+
+## 2026-11-17 — What the brain is handed, and in which conversation
+
+- **Chosen:** For a red workflow, the end of each failing step's log from Woodpecker (kept as its last 20000 characters,
+  handed as its last 8000); for a failed worker, the end of its output (8000 characters), which now includes a command's
+  streamed output when the program sends no final output; for an unresolved conflict, the files changed both by the pull
+  request and on the base branch since it branched, from GitHub's compare. A text cut to its end says so: "[the first n of
+  m characters are cut; this is the end, where the failure is]". The message says which round the guidance would start,
+  or that the cap was reached. These are notices with a prompt in the ticket's own conversation (where it was filed),
+  or, for a ticket with none, the most recent conversation, as every other notice of the hub; the brain takes each as a
+  turn without the owner sending anything, and the owner sees the notice, the brain's tool calls and its answer in
+  对话.
+- **Why:** The failing line is at the end of a log; the beginning of a 20000-character log is setup noise. A conversation
+  of its own per ticket would hide the loop from where the owner talks to the brain.
+- **Other options:** Head and tail, as `clip` does; a conversation per ticket; asking the brain to read the logs itself.
+
+## 2026-11-17 — The failure loop in the development harness
+
+- **Chosen:** `tools/page-dev --forge fake` serves GitHub and Woodpecker from the hub's fake forge (moved from
+  `src/testing` to `src/fake-forge.ts` and exported, as the push test device already is), with placeholder tokens, and
+  checks verifying tickets every two seconds. A scripted worker that hands back registers its pull request there with a
+  new head and a pipeline. `/__harness/loop?case=` starts a scripted ticket on `studio`: `fixed` (red once, then
+  green), `red` (red every round), `stuck` (the worker fails every round), `worker` (the worker fails once). The demo
+  brain answers a hub failure with `guide_ticket`, quoting the failing line, and the cap with `describe_stuck`.
+- **Why:** The loop has to run with nobody at a computer, and a red pipeline on demand needs a Woodpecker the harness
+  controls; the real server is out of reach from this PC.
+- **Other options:** A second fake inside page-dev; driving the tools by hand.
+
+## 2026-11-17 — What was verified of the failure loop
+
+- **Chosen:** Recorded as verified on this PC. With `--forge fake`, scripted runners and the demo brain, unattended: a
+  ticket whose first pipeline was red was guided once and merged (round 1); a ticket whose worker failed every time went
+  through three guided rounds, stopped as `stuck` with its branch and output kept, appeared as a card in 等你, and a
+  pretend device received the push 工单 2 引导 3 轮还没通过，等你决定; through the brain's tools endpoint `guide_ticket`,
+  `merge_ticket`, `stop_ticket` and `message_worker` were refused and the owner's 改派 answered 409, with no fifth
+  attempt; the owner's answer from another origin (403), not as JSON (415) and with a stale card (409) was refused, and
+  the owner's answer with words resumed it with the count at zero, after which the demo brain's guidance was round 1
+  again; the ticket's timeline showed each round with the guidance in Chinese. With the real `claude` brain, a local
+  runner (Claude Code, `claude-haiku-5-5`) and `novan-xu/super-agent-sandbox` issue #91, made to fail once: the worker
+  stopped without a pull request as the issue said, the hub told the brain, and the brain's guidance (round 1) quoted
+  the issue's rule, said the first session was over, and told the worker to add `loop-check/product.txt` with 391, open
+  the pull request closing #91 and check it with `git show`, `cat` and `gh pr view` before handing back. The worker did,
+  and pull request #92 merged by the documentation rule, closing #91. Not verified live: a red pipeline on the real
+  Woodpecker server and an unresolved conflict against GitHub; the tests cover both with the fake forge.
+- **Why:** The issue's "Done when" list, on this PC.
+- **Other options:** None.

@@ -43,6 +43,8 @@ const ticket = {
   branch: null,
   pullRequest: null,
   round: 0,
+  freeRetry: false,
+  stuck: null,
   waitsFor: [],
   waits: [],
   deployedAt: null,
@@ -66,7 +68,7 @@ describe("ticket states", () => {
   });
 
   it("splits the states into open and finished", () => {
-    expect(openTicketStates).toEqual(["pending", "waiting", "working", "verifying"]);
+    expect(openTicketStates).toEqual(["pending", "waiting", "working", "verifying", "stuck"]);
     expect(finishedTicketStates).toEqual(["merged", "delivered", "stopped"]);
     expect(isOpenTicket("pending")).toBe(true);
     expect(isOpenTicket("stopped")).toBe(false);

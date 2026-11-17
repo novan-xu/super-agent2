@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type Ticket } from "@super-agent2/protocol";
+import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type StuckAnswer, type Ticket } from "@super-agent2/protocol";
 import { type CSSProperties, useEffect, useMemo } from "react";
 import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
@@ -10,6 +10,7 @@ import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
+import { StuckCard } from "./StuckCard.js";
 import { engineName, momentOf, PhaseStatus, problemLines, problemTone } from "./TicketParts.js";
 
 export interface CardActions {
@@ -18,6 +19,7 @@ export interface CardActions {
   answer(key: string, verdict: Verdict): void;
   start(keys: readonly string[]): void;
   choose(key: string, change: ChoiceChange): void;
+  answerStuck(key: string, answer: StuckAnswer, words: string): void;
 }
 
 export interface WorkbenchViewProps {
@@ -141,6 +143,7 @@ function Tickets({ tickets, hrefOf, open, now }: { readonly tickets: TicketsStat
 export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets, ticketHref, openTicket, now }: WorkbenchViewProps) {
   const count = waitingCount(waiting);
   const holds = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "hold" ? [card] : [])), [waiting.cards]);
+  const stuck = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "stuck" ? [card] : [])), [waiting.cards]);
   const starts = useMemo(() => startView(waiting.cards), [waiting.cards]);
   const present = focus !== null && waiting.cards.some((card) => card.key === focus);
 
@@ -179,6 +182,19 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
         <div className="od-stack" style={{ "--od-gap": "16px" } as CSSProperties}>
           {holds.map((card) => (
             <Card key={card.key} card={card} waiting={waiting} actions={actions} focus={focus} />
+          ))}
+          {stuck.map((card) => (
+            <StuckCard
+              key={card.key}
+              card={card}
+              use={useOf(waiting, card.key)}
+              focused={focus === card.key}
+              href={ticketHref(card.ticket.id)}
+              open={() => openTicket(card.ticket.id)}
+              arm={() => actions.arm(card.key)}
+              disarm={() => actions.disarm(card.key)}
+              answer={(answer, words) => actions.answerStuck(card.key, answer, words)}
+            />
           ))}
         </div>
         <StartBlocks view={starts} waiting={waiting} focus={focus} start={actions.start} choose={actions.choose} />

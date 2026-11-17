@@ -44,6 +44,7 @@ import {
   runnerLinkPath,
   RunnerToHub,
   runnerTokenHeader,
+  StuckAnswerRequest,
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { z } from "zod";
@@ -54,6 +55,7 @@ import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import type { FailureLoop, StuckAnswerError } from "./failure-loop.js";
 import type { TicketFiles } from "./files.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
@@ -96,7 +98,13 @@ const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
 const ticketFileRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/files\/([^/]{1,400})$/;
 
-const ticketWorkRoute =/^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop)$/;
+const ticketWorkRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop|answer)$/;
+
+const stuckAnswerStatus: Readonly<Record<StuckAnswerError, number>> = {
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
+};
 
 const maximumWorkEvents = 5_000;
 
@@ -130,6 +138,7 @@ export interface HubServerOptions {
   readonly files?: TicketFiles;
   readonly work?: WorkService;
   readonly chains?: ChainStarter;
+  readonly loop?: FailureLoop;
   readonly defaults?: StartDefaults;
   readonly heartbeatMilliseconds?: number;
 }
@@ -879,6 +888,27 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return false;
     }
     if (!ownerAction(request, response)) {
+      return true;
+    }
+    if (route[2] === "answer") {
+      const loop = options.loop;
+      if (loop === undefined) {
+        request.resume();
+        sendJson(response, 404, { error: "not_found" });
+        return true;
+      }
+      const given = parseJson(await readBody(request), StuckAnswerRequest.strict());
+      if (given === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return true;
+      }
+      const outcome = await loop.answer({ assertion: headerValue(request), ticket: id, request: given });
+      if (!outcome.ok) {
+        sendJson(response, stuckAnswerStatus[outcome.error], { error: outcome.error });
+        return true;
+      }
+      options.waiting?.refresh();
+      sendJson(response, 202, { ticket: outcome.ticket });
       return true;
     }
     if (route[2] === "stop") {

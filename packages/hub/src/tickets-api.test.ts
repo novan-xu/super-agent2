@@ -137,6 +137,8 @@ describe("the brain's ticket tools", () => {
       "read_allowance",
       "choose_defaults",
       "merge_ticket",
+      "guide_ticket",
+      "describe_stuck",
     ]);
   });
 

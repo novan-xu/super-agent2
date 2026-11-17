@@ -28,6 +28,8 @@ function ticket(id: number): Ticket {
     branch: null,
     pullRequest: null,
     round: 0,
+    freeRetry: false,
+    stuck: null,
     waitsFor: [],
     waits: [],
     deployedAt: null,

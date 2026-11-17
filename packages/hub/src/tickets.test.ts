@@ -64,6 +64,8 @@ describe("tickets", () => {
       branch: null,
       pullRequest: null,
       round: 0,
+      freeRetry: false,
+      stuck: null,
       waitsFor: [],
       stopReason: null,
       conversation: "c-1",

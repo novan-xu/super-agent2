@@ -1,5 +1,13 @@
 import {
   canMoveTicket,
+  capReached,
+  countsAsRound,
+  LoopFailure,
+  LoopFailureKind,
+  roundCap,
+  StuckFrom,
+  TicketRound,
+  type TicketStuck,
   ChosenBy,
   type Difficulty,
   GeneratedText,
@@ -89,6 +97,12 @@ export interface TicketWork {
 
 export const noTicketWork: TicketWork = { begin: () => undefined, stop: () => undefined };
 
+export interface RoundToStart {
+  readonly failure: LoopFailure;
+  readonly guidance: GeneratedText;
+  readonly attempt: number;
+}
+
 export interface TicketWrites {
   get(id: number): Ticket | undefined;
   open(request: TicketToOpen): number;
@@ -108,6 +122,10 @@ export interface TicketWrites {
   setBranch(id: number, branch: string): void;
   setPullRequest(id: number, pullRequest: number, report: GeneratedText): void;
   setReport(id: number, report: GeneratedText): void;
+  startRound(id: number, round: RoundToStart): TicketRound;
+  stick(id: number, failure: LoopFailure): Ticket;
+  describeStuck(id: number, where: GeneratedText): Ticket;
+  resume(id: number, reason: GeneratedText): Ticket;
 }
 
 export interface TicketService {
@@ -116,6 +134,7 @@ export interface TicketService {
   list(options?: ListOptions): Ticket[];
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
+  rounds(id: number): TicketRound[];
   writing(id: number): TicketWriting | undefined;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
@@ -163,6 +182,14 @@ const TicketRow = z.object({
   report_en: z.string().nullable(),
   report_zh: z.string().nullable(),
   round: z.number().int(),
+  free_retry: z.number().int(),
+  stuck_at: z.number().int().nullable(),
+  stuck_round: z.number().int().nullable(),
+  stuck_from: z.string().nullable(),
+  stuck_failure: z.string().nullable(),
+  stuck_detail: z.string().nullable(),
+  stuck_where_en: z.string().nullable(),
+  stuck_where_zh: z.string().nullable(),
   stop_reason_en: z.string().nullable(),
   stop_reason_zh: z.string().nullable(),
   conversation_id: z.string().nullable(),
@@ -237,6 +264,42 @@ const IdRow = z.object({ ticket_id: z.number().int() });
 const WritingRow = z.object({ task: z.string(), materials: z.string() });
 
 const SeqRow = z.object({ seq: z.number().int().nullable() });
+
+const RoundRow = z.object({
+  seq: z.number().int(),
+  round: z.number().int().nullable(),
+  attempt: z.number().int(),
+  failure: z.string(),
+  detail: z.string(),
+  guidance_en: z.string(),
+  guidance_zh: z.string(),
+  at: z.number().int(),
+});
+
+function roundOf(row: unknown): TicketRound {
+  const value = RoundRow.parse(row);
+  return TicketRound.parse({
+    seq: value.seq,
+    round: value.round,
+    attempt: value.attempt,
+    failure: { kind: value.failure, detail: value.detail },
+    guidance: { en: value.guidance_en, zh: value.guidance_zh },
+    at: value.at,
+  });
+}
+
+function stuckOf(row: z.infer<typeof TicketRow>): TicketStuck | null {
+  if (row.state !== "stuck" || row.stuck_at === null || row.stuck_from === null || row.stuck_failure === null) {
+    return null;
+  }
+  return {
+    at: row.stuck_at,
+    round: row.stuck_round ?? row.round,
+    from: StuckFrom.parse(row.stuck_from),
+    failure: { kind: LoopFailureKind.parse(row.stuck_failure), detail: row.stuck_detail ?? "" },
+    where: pair(row.stuck_where_en, row.stuck_where_zh),
+  };
+}
 
 function pair(en: string | null, zh: string | null): GeneratedText | null {
   return en === null || zh === null ? null : { en, zh };
@@ -319,6 +382,19 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateOwnerChoice = connection.prepare("UPDATE tickets SET owner_machine = ?, owner_engine = ?, owner_model = ?, owner_effort = ? WHERE id = ?");
   const updateChosen = connection.prepare("UPDATE tickets SET machine = ?, engine = ?, model = ?, effort = ?, chosen_by = ?, chosen_at = ? WHERE id = ?");
   const updateRan = connection.prepare("UPDATE tickets SET ran = ? WHERE id = ?");
+  const selectRounds = connection.prepare("SELECT * FROM ticket_rounds WHERE ticket_id = ? ORDER BY seq");
+  const selectLastRound = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_rounds WHERE ticket_id = ?");
+  const insertRound = connection.prepare(
+    "INSERT INTO ticket_rounds (ticket_id, seq, round, attempt, failure, detail, guidance_en, guidance_zh, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const updateRound = connection.prepare("UPDATE tickets SET round = ?, free_retry = ? WHERE id = ?");
+  const updateStuck = connection.prepare(
+    "UPDATE tickets SET stuck_at = ?, stuck_round = ?, stuck_from = ?, stuck_failure = ?, stuck_detail = ?, stuck_where_en = NULL, stuck_where_zh = NULL WHERE id = ?",
+  );
+  const updateStuckWhere = connection.prepare("UPDATE tickets SET stuck_where_en = ?, stuck_where_zh = ? WHERE id = ?");
+  const clearStuck = connection.prepare(
+    "UPDATE tickets SET round = 0, free_retry = 0, stuck_at = NULL, stuck_round = NULL, stuck_from = NULL, stuck_failure = NULL, stuck_detail = NULL, stuck_where_en = NULL, stuck_where_zh = NULL WHERE id = ?",
+  );
 
   const toTicket = (row: unknown): Ticket => {
     const value = TicketRow.parse(row);
@@ -365,6 +441,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       work: attempt === undefined ? null : workStatusOf(attempt),
       verification: verification === undefined ? null : verificationOf(verification),
       round: value.round,
+      freeRetry: value.free_retry === 1,
+      stuck: stuckOf(value),
       waitsFor: waits.map((wait) => wait.ticket),
       waits,
       deployedAt: value.deployed_at,
@@ -628,6 +706,65 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         updateReport.run(given.en, given.zh, id);
         touch(id);
       },
+      startRound: (id, start) => {
+        const current = existing(id);
+        if (current.state !== "working") {
+          throw new TicketError(`Ticket ${id} is ${current.state}; a guided round starts only on a ticket going back to work`);
+        }
+        const failure = LoopFailure.parse(start.failure);
+        const guidance = GeneratedText.parse(start.guidance);
+        if (capReached(current.round, failure.kind, current.freeRetry)) {
+          throw new TicketError(`Ticket ${id} has had ${current.round} guided rounds, the cap of ${roundCap}; only the owner can give it more`);
+        }
+        const counted = countsAsRound(failure.kind, current.freeRetry);
+        const round = counted ? current.round + 1 : current.round;
+        const seq = (SeqRow.parse(selectLastRound.get(id)).seq ?? 0) + 1;
+        const now = clock.now();
+        insertRound.run(id, seq, counted ? round : null, start.attempt, failure.kind, failure.detail, guidance.en, guidance.zh, now);
+        updateRound.run(round, counted ? 0 : 1, id);
+        touch(id);
+        return { seq, round: counted ? round : null, attempt: start.attempt, failure, guidance, at: now };
+      },
+      stick: (id, given) => {
+        const current = existing(id);
+        const from = StuckFrom.safeParse(current.state);
+        if (!from.success || !canMoveTicket(current.kind, current.state, "stuck")) {
+          throw new TicketError(`Ticket ${id} is ${current.state} and cannot stop for the owner`);
+        }
+        const failure = LoopFailure.parse(given);
+        const now = clock.now();
+        updateState.run("stuck", now, id, current.state);
+        recordMove(id, current.state, "stuck", undefined, now);
+        updateStuck.run(now, current.round, from.data, failure.kind, failure.detail, id);
+        touched.add(id);
+        return existing(id);
+      },
+      describeStuck: (id, where) => {
+        const current = existing(id);
+        if (current.state !== "stuck") {
+          throw new TicketError(`Ticket ${id} is ${current.state}, not stopped for the owner`);
+        }
+        const given = GeneratedText.parse(where);
+        updateStuckWhere.run(given.en, given.zh, id);
+        touch(id);
+        return existing(id);
+      },
+      resume: (id, reason) => {
+        const current = existing(id);
+        if (current.state !== "stuck" || current.stuck === null) {
+          throw new TicketError(`Ticket ${id} is ${current.state}, not stopped for the owner`);
+        }
+        const to = current.stuck.from;
+        if (!canMoveTicket(current.kind, "stuck", to)) {
+          throw new TicketError(`Ticket ${id} cannot go back to ${to}`);
+        }
+        const now = clock.now();
+        updateState.run(to, now, id, "stuck");
+        recordMove(id, "stuck", to, GeneratedText.parse(reason), now);
+        clearStuck.run(id);
+        touched.add(id);
+        return existing(id);
+      },
     };
     inside = true;
     let result: T;
@@ -683,9 +820,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     moves: movesOf,
     detail: (id) => {
       const ticket = get(id);
-      return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf) };
+      return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf) };
     },
     writing: writingOf,
+    rounds: (id) => selectRounds.all(id).map(roundOf),
     forIssue: (repository, number) =>
       selectByIssue.all(repository, number).flatMap((row) => {
         const ticket = get(IdRow.parse(row).ticket_id);
