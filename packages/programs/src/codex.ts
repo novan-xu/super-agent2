@@ -1,11 +1,15 @@
 import { conversationHeader } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, SteerResult } from "../program.js";
+import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
 import { type ProgramSettings, toolTokenVariable } from "./settings.js";
 
-const ThreadResult = z.looseObject({ thread: z.looseObject({ id: z.string() }) });
+const ThreadResult = z.looseObject({
+  thread: z.looseObject({ id: z.string() }),
+  model: z.string().optional(),
+  reasoningEffort: z.string().nullable().optional(),
+});
 const TurnResult = z.looseObject({ turn: z.looseObject({ id: z.string() }) });
 
 const Item = z.looseObject({
@@ -130,15 +134,21 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   const finishedTurns = new Set<string>();
   const streamed = new Set<string>();
 
+  const tools = options.tools;
   const config = {
     model_reasoning_effort: settings.effort,
-    "mcp_servers.hub": {
-      url: options.tools.url,
-      bearer_token_env_var: toolTokenVariable,
-      http_headers: { [conversationHeader]: options.tools.conversation },
-      tool_timeout_sec: 86_400,
-      startup_timeout_sec: 60,
-    },
+    ...(tools === null
+      ? {}
+      : {
+          "mcp_servers.hub": {
+            url: tools.url,
+            bearer_token_env_var: toolTokenVariable,
+            http_headers: { [conversationHeader]: tools.conversation },
+            tool_timeout_sec: 86_400,
+            startup_timeout_sec: 60,
+          },
+        }),
+    ...settings.codexConfig,
   };
 
   const emitEnd = (outcome: "completed" | "interrupted") => {
@@ -261,8 +271,9 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   let rpc: Rpc | undefined;
   const child: LineProcess = spawnLines(invocationOf(settings.program, ["app-server"]), {
     cwd: options.workspace,
-    env: { ...settings.environment, [toolTokenVariable]: options.tools.token },
+    env: tools === null ? { ...settings.environment } : { ...settings.environment, [toolTokenVariable]: tools.token },
     onMessage: (message) => rpc?.handle(message),
+    tree: settings.processTree === true,
   });
   rpc = createRpc({ write: (message) => child.write(message), jsonrpc: false, onNotification, onRequest });
   const client = rpc;
@@ -277,19 +288,28 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
 
   const ready = (async () => {
     await client.request("initialize", {
-      clientInfo: { name: "super-agent2-brain", title: "Super-agent2 brain", version: "0.0.0" },
+      clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super-agent2 brain", version: "0.0.0" },
       capabilities: { experimentalApi: false, optOutNotificationMethods: ["thread/tokenUsage/updated"] },
     });
     client.notify("initialized");
     const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never", sandbox: "danger-full-access", config };
+    const reportModel = (result: z.infer<typeof ThreadResult>) => {
+      if (result.model !== undefined) {
+        listener({ type: "model", model: result.model, effort: result.reasoningEffort ?? null });
+      }
+    };
     if (threadId === undefined) {
       const result = ThreadResult.parse(await client.request("thread/start", common));
       threadId = result.thread.id;
       listener({ type: "session", session: threadId });
+      reportModel(result);
       return threadId;
     }
     try {
-      await client.request("thread/resume", { ...common, threadId, excludeTurns: true });
+      const resumed = ThreadResult.safeParse(await client.request("thread/resume", { ...common, threadId, excludeTurns: true }));
+      if (resumed.success) {
+        reportModel(resumed.data);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw Object.assign(new Error(message), { lostSession: /no rollout found|not found/i.test(message) });
@@ -348,5 +368,6 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
       child.kill();
       await child.exited;
     },
+    processId: () => child.pid,
   };
 }

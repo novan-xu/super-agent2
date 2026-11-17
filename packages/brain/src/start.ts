@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { brainToolsPath } from "@super-agent2/protocol";
 import { type Brain, createBrain } from "./brain.js";
-import type { Clock } from "./clock.js";
+import type { Clock } from "@super-agent2/programs";
 import { type BrainConfig, loadBrainConfig } from "./config.js";
 import { createHubLink, type HubLink } from "./link.js";
-import type { ProgramAdapter } from "./program.js";
-import { programAdapter } from "./programs/index.js";
+import type { ProgramAdapter } from "@super-agent2/programs";
+import { programAdapter } from "@super-agent2/programs";
 import { prepareWorkspace } from "./workspace.js";
 
 export interface RunningBrain {

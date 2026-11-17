@@ -84,7 +84,7 @@ class FakeRunner {
         this.wake();
       },
     });
-    this.link.receive({ type: "hello", protocol: protocolVersion, machine: report });
+    this.link.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
     return this;
   }
 

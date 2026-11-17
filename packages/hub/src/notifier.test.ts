@@ -32,6 +32,8 @@ function ticket(id: number): Ticket {
     waits: [],
     deployedAt: null,
     beginFailure: null,
+    report: null,
+    work: null,
     stopReason: null,
     conversation: null,
     createdAt: 1,

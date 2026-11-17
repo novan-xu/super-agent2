@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ConversationId } from "./conversations.js";
 import { GeneratedText } from "./generated.js";
 import { ProgramId } from "./runner.js";
+import { WorkStatus } from "./work.js";
 
 export const ticketKinds = ["writing", "parameter", "fix", "feature", "refactor", "maintenance"] as const;
 export const TicketKind = z.enum(ticketKinds);
@@ -132,6 +133,8 @@ export const Ticket = z.object({
   ran: TicketRun.nullable(),
   branch: z.string().nullable(),
   pullRequest: IssueNumber.nullable(),
+  report: GeneratedText.nullable(),
+  work: WorkStatus.nullable(),
   round: z.number().int().nonnegative(),
   waitsFor: z.array(TicketId),
   waits: z.array(TicketWait),
@@ -153,6 +156,11 @@ export const TicketMove = z.object({
   at: z.number().int(),
 });
 export type TicketMove = z.infer<typeof TicketMove>;
+
+export const TicketResponse = z.object({
+  ticket: Ticket,
+});
+export type TicketResponse = z.infer<typeof TicketResponse>;
 
 export const TicketList = z.object({
   tickets: z.array(Ticket),

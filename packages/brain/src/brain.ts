@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { BrainInput, BrainMessage, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
-import type { Clock } from "./clock.js";
-import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "./program.js";
+import type { Clock } from "@super-agent2/programs";
+import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
 import { continuationPrompt, turnPrompt } from "./prompt.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
 

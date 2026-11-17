@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AllowanceReading } from "./allowance.js";
 import { OutputStream, TargetName } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
+import { MessageWork, RunnerWorkEvent, StartWork, StopWork, SyncWork, WorkHeld } from "./work.js";
 
 export const runnerLinkPath = "/runner/link";
 export const runnerTokenHeader = "x-runner-token";
@@ -55,6 +56,7 @@ export const RunnerHello = z.object({
   type: z.literal("hello"),
   protocol: ProtocolVersion,
   machine: MachineReport,
+  works: z.array(WorkHeld).default([]),
 });
 export type RunnerHello = z.infer<typeof RunnerHello>;
 
@@ -87,7 +89,7 @@ export const RunnerFailed = z.object({
 });
 export type RunnerFailed = z.infer<typeof RunnerFailed>;
 
-export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerOutput, RunnerEnded, RunnerFailed]);
+export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerOutput, RunnerEnded, RunnerFailed, RunnerWorkEvent]);
 export type RunnerToHub = z.infer<typeof RunnerToHub>;
 
 export const RunnerWelcome = z.object({
@@ -112,7 +114,7 @@ export const StopCommand = z.object({
 });
 export type StopCommand = z.infer<typeof StopCommand>;
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RunCommand, StopCommand]);
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RunCommand, StopCommand, StartWork, SyncWork, MessageWork, StopWork]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {

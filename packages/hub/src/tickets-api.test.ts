@@ -128,6 +128,7 @@ describe("the brain's ticket tools", () => {
       "open_ticket",
       "list_tickets",
       "read_ticket",
+      "message_worker",
       "stop_ticket",
       "arrange_chains",
       "report_deployment",

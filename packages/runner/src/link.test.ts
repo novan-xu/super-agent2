@@ -124,7 +124,7 @@ describe("the runner's link", () => {
     expect(socket.url).toBe("wss://agent.example.com/runner/link");
     expect(socket.headers).toEqual({ [accessClientIdHeader]: "id.access", [accessClientSecretHeader]: "client-secret", [runnerTokenHeader]: "t".repeat(43) });
     socket.events.open();
-    expect(socket.sent).toEqual([{ type: "hello", protocol: protocolVersion, machine: report }]);
+    expect(socket.sent).toEqual([{ type: "hello", protocol: protocolVersion, machine: report, works: [] }]);
     socket.events.message(JSON.stringify({ type: "welcome", protocol: protocolVersion, name: "pc" }));
     expect(link.connected()).toBe(true);
     socket.events.message(JSON.stringify({ type: "run", id: "c1", command: "echo hi", cwd: null, environment: { GH_TOKEN: "x" } }));
@@ -215,6 +215,36 @@ describe("the runner's link", () => {
     await hub.until(() => hub.sockets[3]);
     expect(delays).toEqual([0, 1, 5]);
     expect(first.sent.filter((message) => message.type === "ended")).toEqual([]);
+    await link.close();
+  });
+
+  it("lists its workers in its hello, hands work messages to them, and keeps them running when the link drops", async () => {
+    const hub = fakeHub();
+    const shell = fakeShell();
+    const received: unknown[] = [];
+    const works = {
+      held: () => [{ ticket: 4, attempt: 2, last: 17, live: true, ended: false }],
+      busy: () => 1,
+      receive: (message: unknown) => void received.push(message),
+      idle: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    };
+    const link = createRunnerLink({ config, report: () => report, execute: shell.execute, connect: hub.connect, retryDelay: () => 0, works: () => works });
+    link.start();
+    const socket = await hub.until(() => hub.sockets[0]);
+    socket.events.open();
+    expect(socket.sent).toEqual([{ type: "hello", protocol: protocolVersion, machine: report, works: [{ ticket: 4, attempt: 2, last: 17, live: true, ended: false }] }]);
+    socket.events.message(JSON.stringify({ type: "welcome", protocol: protocolVersion, name: "pc" }));
+    socket.events.message(JSON.stringify({ type: "work.sync", ticket: 4, attempt: 2, after: 10 }));
+    socket.events.message(JSON.stringify({ type: "work.stop", ticket: 4, save: false, remove: true }));
+    expect(received).toEqual([
+      { type: "work.sync", ticket: 4, attempt: 2, after: 10 },
+      { type: "work.stop", ticket: 4, save: false, remove: true },
+    ]);
+    link.send({ type: "work.event", ticket: 4, attempt: 2, seq: 18, at: 1, event: { kind: "text", block: "b", delta: "x" } });
+    expect(socket.sent.at(-1)).toMatchObject({ type: "work.event", seq: 18 });
+    socket.events.close(1006, "");
+    expect(received).toHaveLength(2);
     await link.close();
   });
 

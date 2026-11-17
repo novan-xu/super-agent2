@@ -23,6 +23,7 @@ import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import type { WorkService } from "./work.js";
 
 export const supportedMcpVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
@@ -87,6 +88,8 @@ const ListArguments = z.object({
 const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
 
 const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
+
+const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1).max(20_000) });
 
 const ChainArgument = z.object({
   name: z.string().trim().min(1).max(100),
@@ -163,6 +166,7 @@ export interface TicketTools {
   readonly filer: IssueFiler;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
+  readonly work?: WorkService;
 }
 
 function defaultsDefinitions() {
@@ -399,6 +403,21 @@ function ticketDefinitions() {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The ticket number" } },
         required: ["ticket"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "message_worker",
+      title: "Send a message to a ticket's worker",
+      description:
+        "Send a message to the worker running a ticket, in English. It reaches the worker in the middle of its work (or as its next turn when its program cannot take a message mid-turn). Use it to correct or guide a worker; the owner can do the same from the page.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: { type: "integer", minimum: 1, description: "The ticket number" },
+          text: { type: "string", description: "The message, in English" },
+        },
+        required: ["ticket", "text"],
         additionalProperties: false,
       },
     },
@@ -662,9 +681,24 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         const detail = tools.tickets.detail(parsed.data.ticket);
-        return detail === undefined
-          ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
-          : { text: ticketReport(detail.ticket, detail.moves) };
+        if (detail === undefined) {
+          return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
+        }
+        const output = tools.work?.output(detail.ticket.id) ?? "";
+        return { text: output === "" ? ticketReport(detail.ticket, detail.moves) : [ticketReport(detail.ticket, detail.moves), "The latest worker's output ends with:", output].join("\n") };
+      }
+      case "message_worker": {
+        if (tools.work === undefined) {
+          return undefined;
+        }
+        const parsed = MessageWorkerArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain");
+        return sent.ok
+          ? { text: `Sent to the worker of ticket ${parsed.data.ticket}. Read the ticket to see how it answers.` }
+          : { text: sent.reason, isError: true };
       }
       case "stop_ticket": {
         const parsed = StopTicketArguments.safeParse(raw);

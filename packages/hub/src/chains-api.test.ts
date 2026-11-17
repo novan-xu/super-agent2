@@ -120,7 +120,7 @@ function connect(running: Hub, name: string, report: MachineReport): void {
   if (machine === undefined) {
     throw new Error("machine missing");
   }
-  running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined }).receive({ type: "hello", protocol: protocolVersion, machine: report });
+  running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined }).receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
 }
 
 async function stateDefaults(running: Hub, engine: "codex" | "claude" = "codex"): Promise<void> {

@@ -6,6 +6,7 @@ import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from 
 import { machineReport } from "./machine.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { runShell } from "./shell.js";
+import { createWorks, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
   readonly files: RunnerFiles;
@@ -17,10 +18,12 @@ export interface RunnerServiceOptions {
   readonly reprobeMilliseconds?: number;
   readonly allowanceMilliseconds?: number;
   readonly now?: () => number;
+  readonly work?: Partial<Pick<WorksOptions, "adapters" | "findProgram" | "run" | "remote" | "readPullRequest">>;
 }
 
 export interface RunnerService {
   readonly link: RunnerLink;
+  readonly works: Works;
   readonly probed: Promise<void>;
   readonly allowanceRead: Promise<void>;
   close(): Promise<void>;
@@ -70,15 +73,28 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   }
   let programs: ProgramReport[] = [];
   let allowances: AllowanceReading[] = [];
+  let bound: RunnerLink | undefined;
+  const works = createWorks({
+    home: files.home,
+    environment: options.environment,
+    send: (message) => bound?.send(message),
+    ledger,
+    log,
+    changed: () => bound?.update(),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...options.work,
+  });
   const link = createRunnerLink({
     config,
-    report: () => machineReport(config.slots, programs, process.platform, allowances),
+    report: () => machineReport(config.slots, programs, process.platform, allowances, works.busy()),
+    works: () => works,
     execute: (job, sink) => runShell(job, sink, { environment: options.environment }),
     ledger,
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
     onEvent: (event) => log(describe(event)),
   });
+  bound = link;
   const prober = options.prober ?? systemProber({ environment: options.environment, cwd: files.probe });
   const definitions = programDefinitions(config.models);
   const probe = async () => {
@@ -122,11 +138,13 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   allowanceTimer.unref();
   return {
     link,
+    works,
     probed,
     allowanceRead,
     close: async () => {
       clearInterval(timer);
       clearInterval(allowanceTimer);
+      await works.close();
       await link.close();
     },
   };

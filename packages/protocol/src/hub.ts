@@ -4,6 +4,7 @@ import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, TurnUpdate, U
 import { ProtocolVersion } from "./version.js";
 import { TicketsUpdate, TicketUpdate } from "./tickets.js";
 import { WaitingUpdate } from "./waiting.js";
+import { UnwatchTicket, WatchTicket, WorkEventUpdate } from "./work.js";
 
 export const PersonIdentity = z.object({
   kind: z.literal("person"),
@@ -63,9 +64,10 @@ export const ServerMessage = z.discriminatedUnion("type", [
   WaitingUpdate,
   TicketsUpdate,
   TicketUpdate,
+  WorkEventUpdate,
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessage>;
 
-export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand, WatchConversation, UnwatchConversation]);
+export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand, WatchConversation, UnwatchConversation, WatchTicket, UnwatchTicket]);
 export type ClientMessage = z.infer<typeof ClientMessage>;

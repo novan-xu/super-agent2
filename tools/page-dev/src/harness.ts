@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createPushDevice, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
-import { AllowanceProgram, AllowanceState, allowancePrograms, type Subscriptions, TicketState } from "@super-agent2/protocol";
+import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
 
@@ -81,6 +81,7 @@ export interface HarnessOptions {
   readonly hubUrl: string;
   readonly assertion: () => Promise<string>;
   readonly allowance: AllowanceForcing;
+  readonly brainToken: () => string;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -124,6 +125,93 @@ export function createHarness(options: HarnessOptions): Harness {
     }
     const result = options.hub.tickets.move(id, to.data);
     json(response, result.ok ? 200 : 409, result.ok ? { id, state: result.ticket.state } : { id, error: result.error, state: result.ticket?.state ?? null });
+  };
+
+  const callTool = async (name: string, args: Record<string, unknown>): Promise<{ readonly text: string; readonly isError: boolean }> => {
+    const answer = await fetch(`${options.hubUrl}${brainToolsPath}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${options.brainToken()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    });
+    const body = (await answer.json()) as { result?: { content?: { text?: string }[]; isError?: boolean } };
+    return { text: (body.result?.content ?? []).map((part) => part.text ?? "").join("\n"), isError: body.result?.isError === true };
+  };
+
+  const startWork = async (url: URL, response: ServerResponse): Promise<void> => {
+    const repository = url.searchParams.get("repository") ?? "";
+    const issues = (url.searchParams.get("issues") ?? "").split(",").map(Number).filter((number) => Number.isInteger(number) && number > 0);
+    const machine = url.searchParams.get("machine");
+    const engine = ProgramId.safeParse(url.searchParams.get("engine"));
+    const model = url.searchParams.get("model");
+    const effort = url.searchParams.get("effort");
+    if (repository === "" || issues.length === 0 || machine === null || !engine.success || model === null || effort === null) {
+      json(response, 400, { error: "give repository=, issues=1,2, machine=, engine=, model= and effort=" });
+      return;
+    }
+    const steps: { readonly step: string; readonly text: string }[] = [];
+    const call = async (name: string, args: Record<string, unknown>): Promise<string | undefined> => {
+      const result = await callTool(name, args);
+      steps.push({ step: name, text: result.text });
+      return result.isError ? undefined : result.text;
+    };
+    const opened: number[] = [];
+    for (const issue of issues) {
+      const text = await call("open_ticket", {
+        repository,
+        issue,
+        title_zh: `测试问题 ${issue}`,
+        summary: { en: `A small test issue, #${issue}`, zh: `一个很小的测试问题 ${issue}` },
+        kind: "fix",
+        platform: "any",
+      });
+      const ticket = text === undefined ? undefined : /ticket (\d+)/.exec(text)?.[1];
+      if (ticket === undefined) {
+        json(response, 409, { error: "open_ticket failed", steps });
+        return;
+      }
+      opened.push(Number(ticket));
+    }
+    let ticket = Math.min(...opened);
+    if (issues.length > 1) {
+      const arranged = await call("arrange_chains", {
+        chains: [{ name: "test", repository, issues, title: { en: `Test chain of ${issues.length} issues`, zh: `${issues.length} 个问题的测试链` }, summary: { en: "A chain of small test issues", zh: "几个小测试问题组成的链" } }],
+      });
+      if (arranged === undefined) {
+        json(response, 409, { error: "arrange_chains failed", steps });
+        return;
+      }
+      const pending = options.hub.tickets.list({ open: true }).find((entry) => entry.state === "pending" && entry.issues.length === issues.length && entry.repository === repository);
+      ticket = pending?.id ?? ticket;
+    }
+    const stated = await call("choose_defaults", {
+      chains: [
+        {
+          ticket,
+          kind: "fix",
+          issues: issues.map((number) => ({ number, difficulty: "mechanical" })),
+          reason: { en: "A tiny test task", zh: "很小的测试任务" },
+          platform: "any",
+          engine: engine.data === "claude" ? "claude" : "codex",
+        },
+      ],
+    });
+    if (stated === undefined) {
+      json(response, 409, { error: "choose_defaults failed", steps });
+      return;
+    }
+    const assertion = await options.assertion();
+    const chosen = await options.hub.chains.starter.choose({ assertion, ticket, change: { machine, engine: engine.data, model, effort } });
+    if (!chosen.ok) {
+      json(response, 409, { error: `choice refused: ${chosen.error}`, steps });
+      return;
+    }
+    const card = options.hub.chains.cards().find((entry) => entry.ticket.id === ticket);
+    if (card === undefined) {
+      json(response, 409, { error: "no start card", steps });
+      return;
+    }
+    const started = await options.hub.chains.starter.start({ assertion, chains: [{ ticket, fingerprint: card.fingerprint }] });
+    json(response, started.ok ? 200 : 409, { ticket, started: started.ok ? started.tickets.map((entry) => ({ id: entry.id, state: entry.state })) : started.error, steps });
   };
 
   const forceAllowance = (url: URL, response: ServerResponse): void => {
@@ -172,6 +260,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/ticket") {
         moveTicket(url, response);
+        return true;
+      }
+      if (path === "/__harness/work") {
+        await startWork(url, response);
         return true;
       }
       if (path === "/__harness/allowance") {

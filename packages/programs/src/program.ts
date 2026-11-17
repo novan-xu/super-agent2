@@ -2,6 +2,7 @@ import type { Provider } from "@super-agent2/protocol";
 
 export type ProgramEvent =
   | { readonly type: "session"; readonly session: string }
+  | { readonly type: "model"; readonly model: string; readonly effort: string | null }
   | { readonly type: "text"; readonly block: string; readonly delta: string }
   | { readonly type: "tool.started"; readonly call: string; readonly name: string; readonly input: string }
   | { readonly type: "tool.output"; readonly call: string; readonly delta: string }
@@ -20,7 +21,7 @@ export interface ToolEndpoint {
 
 export interface OpenOptions {
   readonly session: string | null;
-  readonly tools: ToolEndpoint;
+  readonly tools: ToolEndpoint | null;
   readonly workspace: string;
 }
 
@@ -31,6 +32,7 @@ export interface ProgramHandle {
   steer(text: string): Promise<SteerResult>;
   interrupt(): void;
   close(): Promise<void>;
+  processId?(): number | undefined;
 }
 
 export interface ProgramAdapter {

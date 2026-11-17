@@ -1,14 +1,37 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { killProcessTree } from "./tree.js";
 
 export interface Invocation {
   readonly command: string;
   readonly args: readonly string[];
 }
 
+export function npmShimTarget(shim: string, text: string): string | undefined {
+  const match = /"%dp0%\\([^"]+\.[cm]?js)"/i.exec(text);
+  return match?.[1] === undefined ? undefined : join(dirname(shim), match[1]);
+}
+
+function shimTarget(program: string): string | undefined {
+  if (!/\.cmd$/i.test(program)) {
+    return undefined;
+  }
+  try {
+    return npmShimTarget(program, readFileSync(program, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 export function invocationOf(program: string, args: readonly string[]): Invocation {
   if (/\.[cm]?js$/i.test(program)) {
     return { command: process.execPath, args: [program, ...args] };
+  }
+  const target = shimTarget(program);
+  if (target !== undefined) {
+    return { command: process.execPath, args: [target, ...args] };
   }
   return { command: program, args };
 }
@@ -24,6 +47,7 @@ export interface LineProcess {
   kill(): void;
   alive(): boolean;
   stderr(): string;
+  readonly pid: number | undefined;
   readonly exited: Promise<Exit>;
 }
 
@@ -31,6 +55,7 @@ export interface SpawnOptions {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly onMessage: (message: unknown) => void;
+  readonly tree?: boolean;
 }
 
 const stderrLimit = 4_000;
@@ -49,6 +74,7 @@ export function spawnLines(invocation: Invocation, options: SpawnOptions): LineP
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: options.tree === true && process.platform !== "win32",
     });
   } catch (error) {
     alive = false;
@@ -60,6 +86,7 @@ export function spawnLines(invocation: Invocation, options: SpawnOptions): LineP
       kill: () => undefined,
       alive: () => false,
       stderr: () => tail,
+      pid: undefined,
       exited,
     };
   }
@@ -107,12 +134,17 @@ export function spawnLines(invocation: Invocation, options: SpawnOptions): LineP
       }
     },
     kill: () => {
+      if (options.tree === true && child.pid !== undefined) {
+        void killProcessTree(child.pid);
+        return;
+      }
       if (alive) {
         child.kill("SIGKILL");
       }
     },
     alive: () => alive,
     stderr: () => tail.trim(),
+    pid: child.pid,
     exited,
   };
 }

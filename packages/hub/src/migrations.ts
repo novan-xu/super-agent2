@@ -241,4 +241,43 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN report_en TEXT;
+      ALTER TABLE tickets ADD COLUMN report_zh TEXT;
+      CREATE TABLE ticket_attempts (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        attempt INTEGER NOT NULL,
+        machine TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        model TEXT NOT NULL,
+        effort TEXT NOT NULL,
+        state TEXT NOT NULL,
+        session TEXT,
+        resume_session TEXT,
+        note TEXT,
+        handover INTEGER NOT NULL DEFAULT 0,
+        failure TEXT,
+        reason TEXT,
+        unreachable_since INTEGER,
+        last_seq INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        ended_at INTEGER,
+        PRIMARY KEY (ticket_id, attempt)
+      ) STRICT;
+      CREATE INDEX ticket_attempts_by_state ON ticket_attempts (state, machine);
+      CREATE TABLE ticket_work_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        attempt INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        UNIQUE (ticket_id, attempt, seq)
+      ) STRICT;
+      CREATE INDEX ticket_work_events_by_ticket ON ticket_work_events (ticket_id, id);
+    `,
+  },
 ];

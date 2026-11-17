@@ -3,7 +3,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener } from "../program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
 import { conversationVariable, type ProgramSettings, toolTokenVariable } from "./settings.js";
@@ -40,6 +40,8 @@ const TurnEnd = z.looseObject({
       .optional(),
   }),
 });
+
+const DshInitialized = z.looseObject({ model: z.string().optional(), reasoningEffort: z.string().nullable().optional() });
 
 const limitCodes = new Set(["ACCOUNT_QUOTA", "QUOTA", "RATE_LIMIT"]);
 
@@ -84,7 +86,10 @@ export function dshTurnEnd(data: unknown, now: number): ProgramEvent | undefined
   }
 }
 
-export function dshPatch(url: string): string {
+export function dshPatch(url: string | null): string {
+  if (url === null) {
+    return ["- id: session-log-deepseek", "  config:", "    enabled: false", ""].join("\n");
+  }
   return [
     "- insert:",
     "    - id: super-agent-hub",
@@ -128,13 +133,14 @@ interface Running {
 
 function openDsh(settings: ProgramSettings, options: OpenOptions, listener: ProgramListener): ProgramHandle {
   const patch = join(tmpdir(), `super-agent2-dsh-${randomUUID()}.yml`);
-  writeFileSync(patch, dshPatch(options.tools.url));
+  writeFileSync(patch, dshPatch(options.tools?.url ?? null));
   let session = options.session;
   let stored = options.session !== null;
   let current: Running | undefined;
   let running = false;
   let stopping = false;
   let closed = false;
+  let reportedModel = false;
 
   const fail = (reason: string, lostSession = false) => {
     if (closed) {
@@ -195,10 +201,10 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       env: {
         ...settings.environment,
         DSH_PERMISSION_MODE: "danger-full-access",
-        [toolTokenVariable]: options.tools.token,
-        [conversationVariable]: options.tools.conversation,
+        ...(options.tools === null ? {} : { [toolTokenVariable]: options.tools.token, [conversationVariable]: options.tools.conversation }),
       },
       onMessage: (message) => rpc?.handle(message),
+      tree: settings.processTree === true,
     });
     rpc = createRpc({
       write: (message) => child.write(message),
@@ -218,12 +224,18 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
     });
     const client = rpc;
     const ready = (async () => {
-      await client.request("initialize", {
-        cwd: options.workspace,
-        provider: dshProvider,
-        model: settings.model,
-        reasoningEffort: settings.effort,
-      });
+      const initialized = DshInitialized.safeParse(
+        await client.request("initialize", {
+          cwd: options.workspace,
+          provider: dshProvider,
+          model: settings.model,
+          reasoningEffort: settings.effort,
+        }),
+      );
+      if (initialized.success && initialized.data.model !== undefined && !reportedModel) {
+        reportedModel = true;
+        listener({ type: "model", model: initialized.data.model, effort: initialized.data.reasoningEffort ?? null });
+      }
       if (session === null) {
         session = randomUUID();
         listener({ type: "session", session });
@@ -302,5 +314,6 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       }
       rmSync(patch, { force: true });
     },
+    processId: () => current?.child.pid,
   };
 }

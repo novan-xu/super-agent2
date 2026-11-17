@@ -22,7 +22,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   record(message);
   const { id, method, params } = message;
   if (method === "initialize") return send({ id, result: { userAgent: "fake" } });
-  if (method === "thread/start") { threadId = "thread-new"; return send({ id, result: { thread: { id: threadId } } }); }
+  if (method === "thread/start") {
+    threadId = "thread-new";
+    const reported = process.env.FAKE_REPORT_MODEL ? { model: params.model, reasoningEffort: params.config.model_reasoning_effort } : {};
+    return send({ id, result: { thread: { id: threadId }, ...reported } });
+  }
   if (method === "thread/resume") {
     if (params.threadId === "missing") return send({ id, error: { code: -32600, message: "no rollout found for thread id missing" } });
     threadId = params.threadId;
@@ -139,7 +143,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     delta("msg-next", "接着：" + text);
     return result([message.uuid]);
   }
-  send({ type: "system", subtype: "init", session_id: session });
+  send({ type: "system", subtype: "init", session_id: session, ...(process.env.FAKE_REPORT_MODEL ? { model: args[args.indexOf("--model") + 1] } : {}) });
   pending = [message.uuid];
   if (text === "wait" || text === "split") {
     mode = text;

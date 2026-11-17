@@ -8,6 +8,8 @@ import {
   protocolVersion,
   runnerCloseCodes,
   type RunnerToHub,
+  type RunnerWorkEvent,
+  type WorkHeld,
 } from "@super-agent2/protocol";
 import { interruptedReason } from "./commands.js";
 import type { Machine, MachineStore } from "./machines.js";
@@ -23,7 +25,18 @@ export interface RunnerLink {
   closed(): void;
 }
 
+export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.sync" | "work.message" | "work.stop" }>;
+
+export interface WorkLink {
+  hello(machine: string, works: readonly WorkHeld[]): void;
+  event(machine: string, message: RunnerWorkEvent): void;
+  closed(machine: string): void;
+}
+
 export interface Runners extends TargetDirectory {
+  bindWork(link: WorkLink): void;
+  sendWork(machine: string, message: WorkMessageToRunner): boolean;
+  report(machine: string): MachineReport | undefined;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
   attach(machine: Machine, connection: RunnerConnection): RunnerLink;
   revoke(name: string): Machine | undefined;
@@ -57,6 +70,17 @@ const systemNames: Readonly<Record<string, string>> = { win32: "Windows", darwin
 export function createRunners(options: RunnersOptions): Runners {
   const { machines } = options;
   const links = new Map<string, Link>();
+  let work: WorkLink | undefined;
+  const tellWork = (body: (link: WorkLink) => void) => {
+    if (work === undefined) {
+      return;
+    }
+    try {
+      body(work);
+    } catch {
+      return;
+    }
+  };
   const listeners = new Set<() => void>();
   const announce = () => {
     for (const listener of listeners) {
@@ -79,6 +103,7 @@ export function createRunners(options: RunnersOptions): Runners {
   const drop = (link: Link, code: number, reason: string, lost: string) => {
     if (links.get(link.machine.name) === link) {
       links.delete(link.machine.name);
+      tellWork((bound) => bound.closed(link.machine.name));
     }
     end(link, lost);
     link.connection.close(code, reason);
@@ -145,6 +170,18 @@ export function createRunners(options: RunnersOptions): Runners {
       });
 
   return {
+    bindWork: (link) => {
+      work = link;
+    },
+    sendWork: (name, message) => {
+      const link = links.get(name);
+      if (link?.report === undefined) {
+        return false;
+      }
+      link.connection.send(message);
+      return true;
+    },
+    report: (name) => links.get(name)?.report,
     find: (name) => (machines.active(name) === undefined ? undefined : target(name)),
     names: () => statuses().map((status) => status.name),
     admit: (identity, token) => {
@@ -177,6 +214,13 @@ export function createRunners(options: RunnersOptions): Runners {
               connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name });
             }
             announce();
+            if (message.type === "hello") {
+              tellWork((bound) => bound.hello(machine.name, message.works));
+            }
+            return;
+          }
+          if (message.type === "work.event") {
+            tellWork((bound) => bound.event(machine.name, message));
             return;
           }
           const pending = link.pending.get(message.id);
@@ -198,6 +242,7 @@ export function createRunners(options: RunnersOptions): Runners {
           if (links.get(machine.name) === link) {
             links.delete(machine.name);
             machines.seen(machine.name);
+            tellWork((bound) => bound.closed(machine.name));
           }
           end(link, text("command.reason.machineLost", { target: machine.name }));
           announce();
