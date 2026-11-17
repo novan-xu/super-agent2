@@ -14,7 +14,40 @@ interface Rooted {
   readonly caseless: boolean;
 }
 
+const markedVariable = /^\u0000\u0002([^\u0003]+)\u0003(.*)$/s;
+
+const windowsVariable = /^%([A-Za-z_][A-Za-z0-9_]*)%(.*)$/s;
+
+export function variableRoot(name: string): string {
+  const environment = /^env:(.+)$/i.exec(name);
+  return environment === null ? `$${name}` : `$${(environment[1] ?? "").toUpperCase()}`;
+}
+
+function variableOf(text: string): Rooted | undefined {
+  const marked = markedVariable.exec(text);
+  const windows = marked === null ? windowsVariable.exec(text) : null;
+  const found = marked ?? windows;
+  if (found === null) {
+    return undefined;
+  }
+  const rest = found[2] ?? "";
+  if (rest !== "" && !/^[\\/]/.test(rest)) {
+    return undefined;
+  }
+  const name = found[1] ?? "";
+  const root = windows === null ? variableRoot(name) : `$${name.toUpperCase()}`;
+  return { root, rest, caseless: windows !== null || /^env:/i.test(name) };
+}
+
+function climbable(root: string): boolean {
+  return !root.startsWith("$") && !root.startsWith("~");
+}
+
 function rootOf(text: string): Rooted | undefined {
+  const variable = variableOf(text);
+  if (variable !== undefined) {
+    return variable;
+  }
   const unc = /^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)(.*)$/.exec(text);
   if (unc !== null) {
     return { root: `//${unc[1] ?? ""}/${unc[2] ?? ""}`.toLowerCase(), rest: unc[3] ?? "", caseless: true };
@@ -33,13 +66,16 @@ function rootOf(text: string): Rooted | undefined {
   return undefined;
 }
 
-function walk(base: readonly string[], rest: string): string[] | undefined {
+function walk(base: readonly string[], rest: string, floor: boolean): string[] | undefined {
   const parts = [...base];
   for (const part of rest.split(/[\\/]+/)) {
     if (part === "" || part === ".") {
       continue;
     }
     if (part === "..") {
+      if (floor && parts.length === 0) {
+        return undefined;
+      }
       parts.pop();
       continue;
     }
@@ -52,18 +88,18 @@ function walk(base: readonly string[], rest: string): string[] | undefined {
 }
 
 export function locate(text: string, cwd: Location | undefined): Location {
-  if (text.includes(unknownMark) || text === "") {
+  if (text === "") {
     return { known: false, text };
   }
   const rooted = rootOf(text);
   if (rooted !== undefined) {
-    const parts = walk([], rooted.rest);
+    const parts = rooted.rest.includes(unknownMark) ? undefined : walk([], rooted.rest, !climbable(rooted.root));
     return parts === undefined ? { known: false, text } : { known: true, root: rooted.root, parts, caseless: rooted.caseless };
   }
-  if (cwd === undefined || !cwd.known) {
+  if (text.includes(unknownMark) || cwd === undefined || !cwd.known) {
     return { known: false, text };
   }
-  const parts = walk(cwd.parts, text);
+  const parts = walk(cwd.parts, text, !climbable(cwd.root));
   return parts === undefined ? { known: false, text } : { known: true, root: cwd.root, parts, caseless: cwd.caseless };
 }
 

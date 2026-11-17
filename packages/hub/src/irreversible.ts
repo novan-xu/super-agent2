@@ -1,6 +1,6 @@
 import { type ApiRequest, type Effect, effectsOf, type Push, textEffects } from "./effects.js";
 import { expand, type Invocation, programName } from "./invocations.js";
-import { absolute, globMatcher, isDevice, isSessionItem, type Location, type PathMatcher, pathText, within } from "./paths.js";
+import { absolute, globMatcher, isDevice, isSessionItem, type Location, type PathMatcher, pathText, variableRoot, within } from "./paths.js";
 import type { Word } from "./shell.js";
 
 export const formIds = [
@@ -36,7 +36,10 @@ export interface TextRule {
 
 export interface LockSettings {
   readonly projectFolders: readonly Location[];
+  readonly temporaryFolders: readonly Location[];
   readonly credentials: PathMatcher;
+  readonly configuredCredentials: PathMatcher;
+  readonly projectConfiguration: PathMatcher;
   readonly defaultBranches: ReadonlySet<string>;
 }
 
@@ -112,14 +115,25 @@ function insideProject(target: Location, contents: boolean, settings: LockSettin
   return settings.projectFolders.some((folder) => within(target, folder, !contents));
 }
 
+function insideTemporary(target: Location, contents: boolean, settings: LockSettings): boolean {
+  return settings.temporaryFolders.some((folder) => within(target, folder, !contents));
+}
+
 function touchesCredential(effect: Effect, settings: LockSettings): boolean {
   if (effect.kind !== "delete" && effect.kind !== "write" && effect.kind !== "relocate") {
     return false;
   }
-  if (isDevice(effect.target)) {
+  const { target } = effect;
+  if (isDevice(target)) {
     return false;
   }
-  return (effect.target.known && effect.target.root === "cert:") || settings.credentials(effect.target);
+  if ((target.known && target.root === "cert:") || settings.configuredCredentials(target)) {
+    return true;
+  }
+  if (settings.projectConfiguration(target) && insideProject(target, false, settings)) {
+    return false;
+  }
+  return settings.credentials(target);
 }
 
 export const irreversibleForms: readonly IrreversibleForm[] = [
@@ -219,7 +233,10 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
     id: "file-deletion",
     description: "deletes files outside project folders",
     effect: (effect, settings) =>
-      effect.kind === "delete" && !isSessionItem(effect.target) && !insideProject(effect.target, effect.contents, settings),
+      effect.kind === "delete" &&
+      !isSessionItem(effect.target) &&
+      !insideProject(effect.target, effect.contents, settings) &&
+      !insideTemporary(effect.target, effect.contents, settings),
   },
 ];
 
@@ -264,19 +281,34 @@ export const defaultCredentialPaths: readonly string[] = [
 
 export const defaultBranchNames: readonly string[] = ["main", "master", "trunk"];
 
+export const temporaryFolders: readonly string[] = ["/tmp", "/var/tmp", "$TMPDIR", "$TMP", "$TEMP"];
+
+export const projectConfigurationPaths: readonly string[] = ["**/.env", "**/.env.*"];
+
+function folderLocation(folder: string): Location | undefined {
+  if (folder.startsWith("$")) {
+    return { known: true, root: variableRoot(folder.slice(1)), parts: [], caseless: false };
+  }
+  return absolute(folder);
+}
+
 export interface LockSettingsInput {
   readonly projectFolders: readonly string[];
   readonly credentialPaths: readonly string[];
 }
 
 export function lockSettings(input: LockSettingsInput): LockSettings {
-  const projectFolders = input.projectFolders.flatMap((folder) => {
-    const location = absolute(folder);
-    return location === undefined ? [] : [location];
-  });
+  const locations = (folders: readonly string[]) =>
+    folders.flatMap((folder) => {
+      const location = folderLocation(folder);
+      return location === undefined ? [] : [location];
+    });
   return {
-    projectFolders,
+    projectFolders: locations(input.projectFolders.filter((folder) => !folder.startsWith("$"))),
+    temporaryFolders: locations(temporaryFolders),
     credentials: globMatcher([...defaultCredentialPaths, ...input.credentialPaths]),
+    configuredCredentials: globMatcher(input.credentialPaths),
+    projectConfiguration: globMatcher(projectConfigurationPaths),
     defaultBranches: new Set(defaultBranchNames),
   };
 }
@@ -405,7 +437,7 @@ function matchesRequest(rule: RequestRule, request: ApiRequest): boolean {
 const evidenceLimit = 200;
 
 function shorten(text: string): string {
-  const clean = text.replaceAll("\u0000", "…");
+  const clean = text.replace(/\u0000\u0002([^\u0003]*)\u0003/g, "$$$1").replaceAll("\u0000", "…");
   return clean.length > evidenceLimit ? `${clean.slice(0, evidenceLimit - 1)}…` : clean;
 }
 

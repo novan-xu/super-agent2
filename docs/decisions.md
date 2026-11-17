@@ -274,3 +274,23 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** This PC's dynamic port range starts at 1024, so a test listening on port 0 sometimes got such a port and
   failed with "bad port", which has nothing to do with the code under test.
 - **Other options:** Fixed ports per test, which collide when test files run in parallel.
+
+## 2026-11-17 — Temporary folders and a project's own `.env`
+
+- **Chosen:** Two exceptions to the confirmation lock, both kept as data in `packages/hub/src/irreversible.ts`.
+  Deleting something strictly inside a system temporary folder runs without a hold. The folders are `/tmp`,
+  `/var/tmp`, `$TMPDIR`, `$TMP` and `$TEMP`, in every spelling the reader sees: `${TMPDIR}`, `$env:TEMP`,
+  `${env:TMP}` and `%TEMP%`. A variable assigned from `mktemp` with no folder of its own (`dir=$(mktemp -d)`,
+  `local f=$(mktemp -t x.XXXX)`) counts as a folder inside `$TMPDIR` until it is assigned again. `find` with a filter
+  such as `-name` or `-mtime`, or with `-mindepth 1`, deletes inside its root rather than the root itself. Still held:
+  the temporary folder itself, a path that climbs out of it with `..` (above a variable or `~` the reader cannot tell
+  where `..` leads), a variable of another name, `mktemp -p <folder>`, and a credential file in a temporary folder.
+  Inside a project folder, `.env` and `.env.*` are the project's local configuration: writing, copying onto,
+  appending to, moving and deleting them runs without a hold. The built-in credential list still applies to them
+  outside project folders. Anything named in `HUB_CREDENTIAL_PATHS` is a credential wherever it is, project folder
+  included.
+- **Why:** A needless hold stops unattended work until the owner clicks, and these two are routine: clearing scratch
+  files, and setting up a project's local `.env` from `.env.example`. The deployment's real secrets are named in
+  `HUB_CREDENTIAL_PATHS` or live outside project folders, so they stay protected.
+- **Other options:** Leaving both held; treating `/tmp` as a project folder through `HUB_PROJECT_FOLDERS`, which would
+  also allow deleting `/tmp` itself; exempting every `*.env` file inside project folders.

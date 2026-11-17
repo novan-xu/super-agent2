@@ -165,8 +165,14 @@ function findDeletions(invocation: Invocation): Effect[] {
   if (!invocation.args.some((word) => word.text === "-delete")) {
     return [];
   }
-  return findRootWords(invocation.args).map((word) => ({ kind: "delete", target: locate(word.text, invocation.cwd), contents: false }));
+  const filtered = invocation.args.some(
+    (word, index) =>
+      findTests.has(word.text) || (word.text === "-mindepth" && Number(invocation.args[index + 1]?.text ?? "0") >= 1),
+  );
+  return findRootWords(invocation.args).map((word) => ({ kind: "delete", target: locate(word.text, invocation.cwd), contents: filtered }));
 }
+
+const findTests = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-type", "-mtime", "-mmin", "-atime", "-amin", "-ctime", "-cmin", "-newer", "-size", "-user", "-group", "-perm", "-links", "-lname", "-ilname", "-samefile", "-inum"]);
 
 function remoteAware(text: string, cwd: Location | undefined): Location {
   const remote = /^(?:rsync:\/\/[^/]+\/|[^/\\:]{2,}:)(.*)$/.exec(text);

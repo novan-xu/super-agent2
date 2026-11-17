@@ -1,5 +1,5 @@
 import { type Location, locate } from "./paths.js";
-import { type Dialect, dialects, parseScript, type Redirect, unknownMark, type Word } from "./shell.js";
+import { type Dialect, dialects, parsePosix, parseScript, type Redirect, type SimpleCommand, unknownMark, variableMark, type Word } from "./shell.js";
 
 export interface Invocation {
   readonly program: string;
@@ -86,6 +86,58 @@ const powershellValues = new Set(["-executionpolicy", "-ex", "-ep", "-windowstyl
 interface Context {
   readonly out: Expansion;
   readonly depth: number;
+  readonly temporaries: Set<string>;
+}
+
+export const temporaryVariable = "TMPDIR";
+
+const madeByMktemp = "tmp.XXXXXXXXXX";
+
+const declarations = new Set(["local", "export", "declare", "readonly", "typeset"]);
+
+const mktempFlags = new Set(["-d", "-q", "-u", "-t", "--directory", "--quiet", "--dry-run"]);
+
+function makesTemporary(script: string): boolean {
+  const commands = parsePosix(script);
+  const words = commands[0]?.words ?? [];
+  if (commands.length !== 1 || programName(words[0]) !== "mktemp") {
+    return false;
+  }
+  const args = words.slice(1);
+  const flags = args.filter((word) => word.text.startsWith("-"));
+  const operands = args.filter((word) => !word.text.startsWith("-"));
+  if (args.some((word) => word.dynamic) || !flags.every((word) => mktempFlags.has(word.text))) {
+    return false;
+  }
+  return operands.length === 0 || (flags.some((word) => word.text === "-t") && operands.every((word) => !/[\\/]/.test(word.text)));
+}
+
+function noteAssignments(command: SimpleCommand, temporaries: Set<string>): void {
+  const words = command.words.filter((word, index) => index > 0 || !declarations.has(word.text));
+  if (words.length === 0 || !words.every((word) => assignment.test(word.text))) {
+    return;
+  }
+  for (const word of words) {
+    const name = word.text.slice(0, word.text.indexOf("=")).replace(/\+$/, "");
+    const value = word.text.slice(word.text.indexOf("=") + 1);
+    const script = command.nested[0];
+    if (value === unknownMark && command.nested.length === 1 && script !== undefined && makesTemporary(script)) {
+      temporaries.add(name);
+    } else {
+      temporaries.delete(name);
+    }
+  }
+}
+
+function withTemporaries(word: Word, temporaries: ReadonlySet<string>): Word {
+  if (!word.dynamic || temporaries.size === 0) {
+    return word;
+  }
+  let text = word.text;
+  for (const name of temporaries) {
+    text = text.replaceAll(variableMark(name), `${variableMark(temporaryVariable)}/${madeByMktemp}`);
+  }
+  return text === word.text ? word : { text, dynamic: true };
 }
 
 function texts(words: readonly Word[]): string {
@@ -106,10 +158,11 @@ function walk(text: string, dialect: Dialect, cwd: Location | undefined, context
   context.out.texts.push(text);
   let current = cwd;
   for (const command of parseScript(text, dialect)) {
-    const inner: Context = { out: context.out, depth: context.depth + 1 };
+    const inner: Context = { ...context, depth: context.depth + 1 };
     for (const script of command.nested) {
       walk(script, dialect, current, inner);
     }
+    noteAssignments(command, context.temporaries);
     for (const redirect of command.redirects) {
       if (redirect.heredoc !== undefined) {
         context.out.texts.push(redirect.heredoc);
@@ -121,7 +174,7 @@ function walk(text: string, dialect: Dialect, cwd: Location | undefined, context
 
 function walkAll(text: string, cwd: Location | undefined, context: Context): void {
   for (const dialect of dialects) {
-    walk(text, dialect, cwd, { out: context.out, depth: context.depth + 1 });
+    walk(text, dialect, cwd, { out: context.out, depth: context.depth + 1, temporaries: new Set() });
   }
 }
 
@@ -169,7 +222,7 @@ function stripWrapper(words: Word[], wrapper: Wrapper, cwd: Location | undefined
         }
       }
       if (value !== undefined && wrapper.script?.includes(key) === true) {
-        walk(value.text, dialect, dir, { out: context.out, depth: context.depth + 1 });
+        walk(value.text, dialect, dir, { ...context, depth: context.depth + 1 });
         return { words: [], cwd, done: true };
       }
     }
@@ -246,18 +299,18 @@ function powershellScript(args: readonly Word[], cwd: Location | undefined, cont
     }
     const name = word.text.toLowerCase().split(":")[0] ?? "";
     if (!word.text.startsWith("-") && !word.text.startsWith("/")) {
-      walk(texts(args.slice(index)), "powershell", dir, { out: context.out, depth: context.depth + 1 });
+      walk(texts(args.slice(index)), "powershell", dir, { ...context, depth: context.depth + 1 });
       return { cwd: dir };
     }
     const bare = name.replace(/^[-/]+/, "");
     if (bare === "c" || isPrefix(bare, "command", 2)) {
-      walk(texts(args.slice(index + 1)), "powershell", dir, { out: context.out, depth: context.depth + 1 });
+      walk(texts(args.slice(index + 1)), "powershell", dir, { ...context, depth: context.depth + 1 });
       return { cwd: dir };
     }
     if (bare === "e" || bare === "ec" || isPrefix(bare, "encodedcommand", 2)) {
       const encoded = args[index + 1];
       if (encoded !== undefined && !encoded.dynamic) {
-        walk(Buffer.from(encoded.text, "base64").toString("utf16le"), "powershell", dir, { out: context.out, depth: context.depth + 1 });
+        walk(Buffer.from(encoded.text, "base64").toString("utf16le"), "powershell", dir, { ...context, depth: context.depth + 1 });
       }
       return { cwd: dir };
     }
@@ -391,9 +444,9 @@ function visit(
   cwd: Location | undefined,
   context: Context,
 ): Location | undefined {
-  let words = [...original];
+  let words = original.map((word) => withTemporaries(word, context.temporaries));
   let dir = cwd;
-  const inner: Context = { out: context.out, depth: context.depth + 1 };
+  const inner: Context = { ...context, depth: context.depth + 1 };
   for (let guard = 0; guard < 32; guard += 1) {
     const first = words[0];
     if (first === undefined) {
@@ -518,7 +571,7 @@ function visit(
 export function expand(text: string, cwd: Location | undefined): Expansion {
   const out: Expansion = { invocations: [], texts: [], cwd };
   for (const dialect of dialects) {
-    walk(text, dialect, cwd, { out, depth: 0 });
+    walk(text, dialect, cwd, { out, depth: 0, temporaries: new Set() });
   }
   return out;
 }

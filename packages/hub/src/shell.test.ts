@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePosix, parsePowershell, type SimpleCommand, unknownMark } from "./shell.js";
+import { parsePosix, parsePowershell, type SimpleCommand, unknownMark, variableMark } from "./shell.js";
 
 function words(commands: readonly SimpleCommand[]): string[][] {
   return commands.map((command) => command.words.map((word) => word.text));
@@ -17,7 +17,7 @@ describe("reading POSIX shell text", () => {
     expect(command?.words.map((word) => [word.text, word.dynamic])).toEqual([
       ["rm", false],
       ["-rf", false],
-      [`${unknownMark}/x`, true],
+      [`${variableMark("HOME")}/x`, true],
       [unknownMark, true],
       [unknownMark, true],
     ]);

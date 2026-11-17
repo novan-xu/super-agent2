@@ -4,6 +4,12 @@ export const dialects: readonly Dialect[] = ["posix", "powershell"];
 
 export const unknownMark = "\u0000";
 
+export function variableMark(name: string): string {
+  return `${unknownMark}\u0002${name}\u0003`;
+}
+
+const simpleName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 export interface Word {
   readonly text: string;
   readonly dynamic: boolean;
@@ -103,6 +109,12 @@ class Builder {
     this.active = true;
   }
 
+  appendVariable(name: string): void {
+    this.text += variableMark(name);
+    this.dynamic = true;
+    this.active = true;
+  }
+
   discardWord(): void {
     this.text = "";
     this.dynamic = false;
@@ -176,7 +188,7 @@ class Builder {
 }
 
 function windowsish(text: string): boolean {
-  return /^(?:[A-Za-z]:|\.{1,2}|~)$/.test(text) || text.includes("\\");
+  return /^(?:[A-Za-z]:|\.{1,2}|~)$/.test(text) || text.includes("\\") || /\u0002env:[^\u0003]*\u0003$/i.test(text);
 }
 
 function skipLine(text: string, index: number): number {
@@ -197,8 +209,13 @@ function readPosixDollar(text: string, index: number, builder: Builder, quoted: 
     return inner.end;
   }
   if (next === "{") {
-    builder.appendUnknown();
-    return balanced(text, index + 1, "{", "}", "\\").end;
+    const inner = balanced(text, index + 1, "{", "}", "\\");
+    if (simpleName.test(inner.content) || /^env:[A-Za-z_][A-Za-z0-9_]*$/i.test(inner.content)) {
+      builder.appendVariable(inner.content);
+    } else {
+      builder.appendUnknown();
+    }
+    return inner.end;
   }
   if (next === "'" && !quoted) {
     let position = index + 2;
@@ -222,11 +239,17 @@ function readPosixDollar(text: string, index: number, builder: Builder, quoted: 
       while (position < text.length && /[A-Za-z0-9_]/.test(text[position] ?? "")) {
         position += 1;
       }
-    } else {
-      position += 1;
+      if (text.slice(index + 1, position).toLowerCase() === "env" && text[position] === ":" && /[A-Za-z_]/.test(text[position + 1] ?? "")) {
+        position += 1;
+        while (position < text.length && /[A-Za-z0-9_]/.test(text[position] ?? "")) {
+          position += 1;
+        }
+      }
+      builder.appendVariable(text.slice(index + 1, position));
+      return position;
     }
     builder.appendUnknown();
-    return position;
+    return position + 1;
   }
   builder.append("$");
   return index + 1;
@@ -466,19 +489,24 @@ function readPowershellDollar(text: string, index: number, builder: Builder): nu
     return inner.end;
   }
   if (next === "{") {
-    builder.appendUnknown();
-    return balanced(text, index + 1, "{", "}", "`").end;
+    const inner = balanced(text, index + 1, "{", "}", "`");
+    if (/^(?:env:)?[A-Za-z_][A-Za-z0-9_]*$/i.test(inner.content)) {
+      builder.appendVariable(inner.content);
+    } else {
+      builder.appendUnknown();
+    }
+    return inner.end;
   }
   if (next !== undefined && /[A-Za-z0-9_?^$:]/.test(next)) {
     let position = index + 1;
     if (/[?^$]/.test(next)) {
-      position += 1;
-    } else {
-      while (position < text.length && /[A-Za-z0-9_:]/.test(text[position] ?? "")) {
-        position += 1;
-      }
+      builder.appendUnknown();
+      return position + 1;
     }
-    builder.appendUnknown();
+    while (position < text.length && /[A-Za-z0-9_:]/.test(text[position] ?? "")) {
+      position += 1;
+    }
+    builder.appendVariable(text.slice(index + 1, position));
     return position;
   }
   builder.append("$");
