@@ -1,4 +1,34 @@
-import type { WaitingCard } from "@super-agent2/protocol";
+import type { Ticket, WaitingCard } from "@super-agent2/protocol";
+
+export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
+  const repository = "novan-xu/super-agent-sandbox";
+  const title = { en: `Work ${id}`, zh: `工作 ${id}` };
+  const summary = { en: "Do it", zh: "做这件事" };
+  return {
+    id,
+    repository,
+    issues: [{ repository, number: id, url: `https://github.com/${repository}/issues/${id}`, title, summary }],
+    title,
+    summary,
+    kind: "feature",
+    difficulty: null,
+    platform: null,
+    state: "pending",
+    machine: null,
+    engine: null,
+    model: null,
+    effort: null,
+    branch: null,
+    pullRequest: null,
+    round: 0,
+    waitsFor: [],
+    stopReason: null,
+    conversation: null,
+    createdAt: id * 1000,
+    updatedAt: id * 1000,
+    ...overrides,
+  };
+}
 
 export function holdCard(id: string, overrides: { readonly at?: number; readonly command?: string; readonly cwd?: string | null; readonly fingerprint?: string } = {}): WaitingCard {
   const at = overrides.at ?? 1_000;

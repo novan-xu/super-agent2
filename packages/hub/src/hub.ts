@@ -18,6 +18,8 @@ import { createMachineStore, type MachineStore } from "./machines.js";
 import { createRunners, type Runners } from "./runners.js";
 import { combinedTargets, type Environment, fixedTargets, localTarget, sshTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
+import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
+import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -30,6 +32,8 @@ export interface HubOptions {
   readonly pushFetch?: typeof fetch;
   readonly machinePollMilliseconds?: number;
   readonly heartbeatMilliseconds?: number;
+  readonly issueHost?: IssueHost;
+  readonly ticketWork?: TicketWork;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -49,6 +53,7 @@ export interface Hub {
   readonly push: PushService | undefined;
   readonly machines: MachineStore;
   readonly runners: Runners;
+  readonly tickets: TicketService;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -71,6 +76,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     machines,
     ...(options.machinePollMilliseconds === undefined ? {} : { pollMilliseconds: options.machinePollMilliseconds }),
   });
+  const tickets = createTicketService({ database, clock, ...(options.ticketWork === undefined ? {} : { work: options.ticketWork }) });
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
     const brainToken = brainTokenCheck(ensureBrainToken(config.brainTokenFile));
@@ -104,7 +110,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,
-      tools: createToolServer({ commands, conversations, targets: () => targets.names(), machines: () => runners.describe() }),
+      tools: createToolServer({
+        commands,
+        conversations,
+        targets: () => targets.names(),
+        machines: () => runners.describe(),
+        tickets: { tickets, filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }) },
+      }),
+      tickets,
       brainToken,
       runners,
       ...(options.heartbeatMilliseconds === undefined ? {} : { heartbeatMilliseconds: options.heartbeatMilliseconds }),
@@ -128,6 +141,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       push,
       machines,
       runners,
+      tickets,
       address,
       close: async () => {
         try {

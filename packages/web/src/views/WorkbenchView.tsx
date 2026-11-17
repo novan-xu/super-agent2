@@ -1,7 +1,8 @@
 import { text } from "@super-agent2/catalog";
-import type { WaitingCard } from "@super-agent2/protocol";
+import { chineseOf, type Ticket, type WaitingCard } from "@super-agent2/protocol";
 import { type CSSProperties, useEffect } from "react";
 import { offersSwitch, type PushPhase } from "../live/push.js";
+import { ticketTones, type TicketsState } from "../live/tickets.js";
 import { type Verdict, type WaitingState, useOf, waitingCount } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { HoldCard } from "./HoldCard.js";
@@ -19,6 +20,7 @@ export interface WorkbenchViewProps {
   readonly focused: () => void;
   readonly push: PushPhase;
   readonly togglePush: () => void;
+  readonly tickets: TicketsState;
 }
 
 function Card({ card, waiting, actions, focus }: { readonly card: WaitingCard; readonly waiting: WaitingState; readonly actions: CardActions; readonly focus: string | null }) {
@@ -60,7 +62,50 @@ function PushSwitch({ phase, toggle }: { readonly phase: PushPhase; readonly tog
   );
 }
 
-export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush }: WorkbenchViewProps) {
+function TicketRow({ ticket }: { readonly ticket: Ticket }) {
+  const { tone, live } = ticketTones[ticket.state];
+  return (
+    <div className="lrow" id={`ticket-${ticket.id}`}>
+      <span className={`status status--${tone}`}>
+        <span className={live ? `dot dot--${tone} dot--live` : `dot dot--${tone}`} />
+        <span>{text(`ticket.state.${ticket.state}`)}</span>
+      </span>
+      <span className="lrow-main">
+        <span className="lrow-title">{chineseOf(ticket.title)}</span>
+        <span className="lrow-meta">
+          {ticket.repository === null ? null : <span className="mono">{ticket.repository}</span>}
+          <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function Tickets({ tickets }: { readonly tickets: TicketsState }) {
+  return (
+    <section className="section" aria-label={text("tickets.list")}>
+      <div className="section-head">
+        <h2>{text("tickets.title")}</h2>
+        {tickets.known ? <span className="count">{tickets.open.length}</span> : null}
+      </div>
+      {tickets.known && tickets.open.length === 0 ? (
+        <div className="empty">
+          <Icon name="check" />
+          <strong>{text("tickets.empty")}</strong>
+        </div>
+      ) : null}
+      {tickets.open.length > 0 ? (
+        <div className="list">
+          {tickets.open.map((ticket) => (
+            <TicketRow key={ticket.id} ticket={ticket} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets }: WorkbenchViewProps) {
   const count = waitingCount(waiting);
   const present = focus !== null && waiting.cards.some((card) => card.key === focus);
 
@@ -102,6 +147,7 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
           ))}
         </div>
       </section>
+      <Tickets tickets={tickets} />
     </div>
   );
 }

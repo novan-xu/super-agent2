@@ -1,7 +1,7 @@
 import type { CommandRecord, Conversation, OwnerEntry } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
-import { holdCard } from "../live/fixtures.js";
+import { holdCard, ticket } from "../live/fixtures.js";
 import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
 
@@ -28,6 +28,8 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     interrupt: (id) => answer(`interrupt ${id}`, { conversation }),
     release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),
     refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
+    tickets: (scope) => answer(`tickets ${scope ?? "open"}`, { tickets: [] }),
+    ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [] }),
     pushKey: () => answer("pushKey", { publicKey: null }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),

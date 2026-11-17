@@ -95,6 +95,23 @@ export const messages = {
   "push.install": "先把本页添加到主屏幕，才能收到通知",
 
   "notice.waiting.hold": "有一条命令等你确认",
+
+  "tickets.title": "工单",
+  "tickets.list": "进行中的工单",
+  "tickets.empty": "没有进行中的工单",
+  "ticket.state.pending": "待开始",
+  "ticket.state.waiting": "等前序",
+  "ticket.state.working": "进行中",
+  "ticket.state.verifying": "验证中",
+  "ticket.state.merged": "已合并",
+  "ticket.state.delivered": "已交付",
+  "ticket.state.stopped": "已停止",
+  "ticket.kind.writing": "写作",
+  "ticket.kind.parameter": "参数",
+  "ticket.kind.fix": "修复",
+  "ticket.kind.feature": "功能",
+  "ticket.kind.refactor": "重构",
+  "ticket.kind.maintenance": "维护",
 } as const;
 
 export type Messages = typeof messages;

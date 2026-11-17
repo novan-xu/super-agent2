@@ -906,3 +906,54 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   command can be started on a machine through the command service.
 - **Why:** The runner is verified against the real front door check, without a bypass in the hub.
 - **Other options:** A fake runner connection in the harness.
+
+## 2026-11-17 — The ticket and its states
+
+- **Chosen:** `packages/protocol/src/tickets.ts` defines the ticket: a number, the repository (none for `writing`), its
+  issues in working order (each with its number, link, and a title and summary as `GeneratedText`), its own title and
+  summary, kind, difficulty, platform, state, machine, engine (`codex`, `claude`, `dsh`, `antigravity`), model, effort,
+  branch, pull request, guided round, the tickets it waits for, why it stopped, and the conversation it was filed in.
+  Ticket numbers are integers counted by the hub. The allowed moves are one table, `ticketMoves`: pending to waiting,
+  working or stopped; waiting to working or stopped; working to verifying, delivered or stopped; verifying to working,
+  merged or stopped; merged, delivered and stopped are final. `statesOutsideKind` keeps a writing ticket out of
+  verifying and merged, and code out of delivered. `canMoveTicket` is the only check, and the hub refuses any other
+  move. Migration 7 adds `tickets`, `ticket_issues`, `ticket_waits` and `ticket_moves`, the last being every move with
+  its time and optional reason. Machine, engine, model, effort, branch, pull request and round are columns nothing
+  sets yet (#11, #24). Stopping only changes the state, stores the reason and calls `TicketWork.stop`, which does
+  nothing until #11 gives it a worker to stop.
+- **Why:** One table of moves is reviewable at a glance and testable exhaustively. A stopped ticket is final because
+  #13's 改派 and #16's rounds act on a running ticket, and work after a stop is a new ticket for the same issue, which is
+  allowed. Integers are short for the brain to say and for the owner to read.
+- **Other options:** Letting a stopped ticket return to pending; random ids; one table with issues as JSON.
+
+## 2026-11-17 — Filing an issue without filing it twice
+
+- **Chosen:** `file_issue` runs `gh api` on the `hub` target through the command service, as the account that owns the
+  repository (`novan-xu` or `nuofan-island`; another owner gets `novan-xu` unless `account` says otherwise). The body is
+  written by the hub to a file in the system temporary folder and sent with `--input`, so no text of the issue passes
+  through a shell's quoting on Linux or on Windows; the file is removed afterwards. Before creating, the hub records
+  the filing under a hash of the repository, title and body (`issue_filings`, in migration 7), and records the issue's
+  number when GitHub answers. A repeated call finds the record: with a number it reuses the issue; without one (the
+  earlier attempt failed part-way) it lists the repository's issues updated since ten minutes before that attempt and
+  reuses one with the same title and body before creating anything. Identical calls at the same moment share one
+  attempt. A held command is reported as held, and the call can be repeated after the owner confirms. `open_ticket`
+  makes a ticket for an issue that already exists, reading its English title from GitHub; it refuses a pull request
+  or a closed issue, and returns the existing ticket for an issue that has one that has not stopped.
+- **Why:** GitHub's issue list answers with `Cache-Control: s-maxage=60`; verifying on this PC, a list made just before
+  the creation was served again seconds later without the new issue, and a second identical call filed a duplicate.
+  The record in the hub does not depend on GitHub's caches, and the `since` address of the fallback is never requested
+  before the creation it looks for.
+- **Other options:** Searching GitHub before every creation; a marker in the issue body; calling GitHub's API from the
+  hub with `fetch` instead of through the command channel.
+
+## 2026-11-17 — Tickets for the brain and for the page
+
+- **Chosen:** Five tools beside the command tools: `file_issue`, `open_ticket`, `list_tickets` (open by default, `all`
+  for every ticket), `read_ticket` (with its moves) and `stop_ticket` (with an English and Chinese reason). They answer
+  in English. The page reads `GET /api/tickets?scope=open|all&limit=` and `GET /api/tickets/<number>` (the ticket and
+  its moves); `/ws` sends `tickets` with every open ticket after `hello`, and `ticket` whenever one changes. 工作台 lists
+  the open tickets under 等你, newest first, each as one row with its state, Chinese title, repository and kind, in the
+  prototype's `lrow` style, and drops a ticket when it finishes. Rows do not open anything until #13.
+- **Why:** The same shape as the waiting list and the conversations, so #13 can build on it. Sending one ticket per
+  change keeps a finished ticket's update reaching a page that shows it.
+- **Other options:** The whole list on every change; a separate 工单 view now.
