@@ -1,0 +1,47 @@
+export const messages = {
+  "app.name": "Super-agent2",
+
+  "navigation.workbench": "工作台",
+  "navigation.conversation": "对话",
+  "navigation.history": "历史",
+  "navigation.memory": "记忆",
+  "navigation.settings": "设置",
+
+  "command.state.pending": "排队中",
+  "command.state.held": "等你确认",
+  "command.state.running": "运行中",
+  "command.state.exited": "已结束",
+  "command.state.stopped": "已停止",
+  "command.state.dropped": "未执行",
+  "command.state.failed": "没能运行",
+  "command.state.interrupted": "被中断",
+
+  "command.reason.refused": "你拒绝了这条命令",
+  "command.reason.withdrawn": "命令在等你确认时被停止了",
+  "command.reason.changed": "命令在被拦下之后有改动，所以没有执行",
+  "command.reason.interrupted": "hub 在命令结束前停止了，命令被中断",
+  "command.reason.noTarget": "没有名为 {target} 的执行目标",
+  "command.reason.noToken": "没有设置 {variable}，hub 拿不到 {account} 的 GitHub 令牌",
+
+  "hold.answer.released": "已放行",
+  "hold.answer.refused": "已拒绝",
+  "hold.answer.withdrawn": "已撤回",
+
+  "hold.form.repositoryDeletion": "删除仓库",
+  "hold.form.repositoryPublication": "把仓库设为公开",
+  "hold.form.defaultBranchRewrite": "强制推送或改写默认分支的历史",
+  "hold.form.dataDeletion": "删除数据库或数据卷",
+  "hold.form.credentialChange": "删除或替换凭据",
+  "hold.form.fileDeletion": "删除项目文件夹以外的文件",
+  "hold.reason": "等你确认：{description}（{evidence}）",
+
+  "refusal.forbidden": "只有你本人能这样操作",
+  "refusal.not_found": "找不到这一项",
+  "refusal.unsupported_media_type": "请求的格式不对",
+  "refusal.bad_request": "请求有误",
+  "refusal.conflict": "这一项已经处理过或已有变化，请刷新后再看",
+} as const;
+
+export type Messages = typeof messages;
+
+export type MessageKey = keyof Messages;

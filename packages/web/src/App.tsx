@@ -1,3 +1,5 @@
+import { text } from "@super-agent2/catalog";
+
 export function App() {
-  return <main className="main">Super-agent2</main>;
+  return <main className="main">{text("app.name")}</main>;
 }

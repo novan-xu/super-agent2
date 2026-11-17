@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import { describe, expect, it } from "vitest";
 import { type FormId, findIrreversible, irreversibleForms, lockSettings } from "./irreversible.js";
 
@@ -357,7 +358,7 @@ describe("ordinary commands", () => {
 describe("evidence", () => {
   it("says what was matched", () => {
     const match = findIrreversible({ command: "cd /srv/projects/app && gh repo delete novan-xu/x --yes", cwd: null }, settings);
-    expect(match).toEqual({ form: "repository-deletion", description: "deletes a repository", evidence: "gh repo delete novan-xu/x --yes" });
+    expect(match).toEqual({ form: "repository-deletion", description: text("hold.form.repositoryDeletion"), evidence: "gh repo delete novan-xu/x --yes" });
     const deletion = findIrreversible({ command: "rm -rf /data/old", cwd: project }, settings);
     expect(deletion?.evidence).toContain("/data/old");
   });

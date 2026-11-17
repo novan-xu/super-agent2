@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { text } from "@super-agent2/catalog";
 import { type CommandRecord, Hold, type HoldAnswer } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { AccessVerifier } from "./access.js";
@@ -7,11 +8,11 @@ import type { CommandGate, GateDecision } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { findIrreversible, type LockSettings } from "./irreversible.js";
 
-export const refusedReason = "The owner refused it";
+export const refusedReason = text("command.reason.refused");
 
-export const withdrawnReason = "The command was stopped while it waited for the owner";
+export const withdrawnReason = text("command.reason.withdrawn");
 
-export const changedReason = "The command changed after it was held, so it was not run";
+export const changedReason = text("command.reason.changed");
 
 export interface OwnerAnswer {
   readonly assertion: string | undefined;
@@ -45,7 +46,7 @@ export function fingerprintOf(command: CommandRecord): string {
 }
 
 export function holdReason(description: string, evidence: string): string {
-  return `Held until the owner confirms it: ${description} (${evidence})`;
+  return text("hold.reason", { description, evidence });
 }
 
 const HoldRow = z.object({

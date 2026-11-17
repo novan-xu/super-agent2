@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import { type ApiRequest, type Effect, effectsOf, type Push, textEffects } from "./effects.js";
 import { expand, type Invocation, programName } from "./invocations.js";
 import { absolute, globMatcher, isDevice, isSessionItem, type Location, type PathMatcher, pathText, variableRoot, within } from "./paths.js";
@@ -139,7 +140,7 @@ function touchesCredential(effect: Effect, settings: LockSettings): boolean {
 export const irreversibleForms: readonly IrreversibleForm[] = [
   {
     id: "repository-deletion",
-    description: "deletes a repository",
+    description: text("hold.form.repositoryDeletion"),
     commands: [{ programs: ["gh"], subcommand: [["repo"], ["delete"]] }],
     requests: [
       { api: "github", methods: ["DELETE"], path: repository },
@@ -148,7 +149,7 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
   {
     id: "repository-publication",
-    description: "makes a repository public",
+    description: text("hold.form.repositoryPublication"),
     commands: [
       { programs: ["gh"], subcommand: [["repo"], ["edit"]], option: { names: ["--visibility"], value: /^public$/i } },
       { programs: ["gh"], subcommand: [["repo"], ["create", "new"]], flags: ["--public"] },
@@ -161,7 +162,7 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
   {
     id: "default-branch-rewrite",
-    description: "force-pushes to or rewrites the history of a default branch",
+    description: text("hold.form.defaultBranchRewrite"),
     commands: [
       { programs: ["git"], subcommand: [["filter-repo", "filter-branch"]] },
       { programs: ["git-filter-repo", "bfg"] },
@@ -176,7 +177,7 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
   {
     id: "data-deletion",
-    description: "deletes a database or a data volume",
+    description: text("hold.form.dataDeletion"),
     commands: [
       { programs: dockers, subcommand: [["volume"], ["rm", "remove", "prune"]] },
       { programs: dockers, subcommand: [["system"], ["prune"]], flags: ["--volumes"] },
@@ -203,7 +204,7 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
   {
     id: "credential-change",
-    description: "deletes or replaces a credential",
+    description: text("hold.form.credentialChange"),
     commands: [
       { programs: ["gh"], subcommand: [["secret"], ["delete", "remove", "set"]] },
       { programs: ["gh"], subcommand: [["auth"], ["logout"]] },
@@ -231,7 +232,7 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
   {
     id: "file-deletion",
-    description: "deletes files outside project folders",
+    description: text("hold.form.fileDeletion"),
     effect: (effect, settings) =>
       effect.kind === "delete" &&
       !isSessionItem(effect.target) &&

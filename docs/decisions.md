@@ -294,3 +294,67 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   `HUB_CREDENTIAL_PATHS` or live outside project folders, so they stay protected.
 - **Other options:** Leaving both held; treating `/tmp` as a project folder through `HUB_PROJECT_FOLDERS`, which would
   also allow deleting `/tmp` itself; exempting every `*.env` file inside project folders.
+
+## 2026-11-17 — The Chinese catalog
+
+- **Chosen:** A sixth workspace package, `packages/catalog` (`@super-agent2/catalog`), used by the hub and the page and
+  not by `protocol`. `messages` is one flat object of dotted keys (`navigation.workbench`, `command.state.running`,
+  `hold.reason`, `refusal.not_found`) kept `as const`, so a missing or misspelled key is a type error. `text(key, values)`
+  fills `{name}` placeholders; the placeholder names are read from the message's own type, so a missing, misspelled or extra
+  value is a type error too, and a value may be a string or a number. A count is a placeholder (`{count} 项`): Chinese has
+  no plural forms, so there are none here either. There is no fallback language and no lookup that can miss at run time.
+  The keys for states, hold answers and refusals are the protocol's own enum values, so the page reaches them with
+  `command.state.${state}`. Its tests require every message to hold Chinese and no other English, apart from `Super-agent2`,
+  `hub` and `GitHub`, and the hub's tests require a key for every command state, hold answer and refusal.
+- **Why:** Both the page and the hub need the same text, and `protocol` is the messages between parts, not their words.
+  Flat keys need no path type or cast. Seeding only what exists (the five navigation items, the command and hold states
+  and refusals of #3 and #4, and the product name) follows the rule not to invent labels for views that do not exist.
+- **Other options:** Nested objects with a path type; putting the catalog inside `protocol`; a message-format library such
+  as ICU; separate catalogs for the hub and the page.
+
+## 2026-11-17 — The hub stores its own reasons in Chinese
+
+- **Chosen:** The reasons the hub itself gives (a command refused, withdrawn, changed after it was held, interrupted by a
+  restart, sent to an unknown target or without a token) and the hold's text (`Held until the owner confirms it: …`) are
+  built from the catalog when they happen and stored as Chinese text in the same `reason` and `description` columns as
+  before. The six forms of the confirmation lock take their `description` from the catalog. Raw material stays as it is: a
+  hold's `evidence` (the command or the path found in it), the message of an error thrown by the system (`spawn` failures
+  and the like), and the HTTP status lines.
+- **Why:** The owner only ever sees these through the page, which shows them unchanged, so one stored sentence is simplest
+  and needs no migration. The reasons that only wrap raw material, such as `evidence`, are what the owner needs to see as
+  it is.
+- **Other options:** Storing a code and parameters and translating when shown, which lets the wording change later but gives
+  every reader two things to keep in step; storing English and Chinese side by side.
+
+## 2026-11-17 — Text an LLM generates for the owner
+
+- **Chosen:** `GeneratedText` in `packages/protocol/src/generated.ts` is `{ en, zh }`. Both must be non-empty after
+  trimming, and `zh` must contain at least one Chinese character, so an English sentence pasted into `zh` is refused as
+  well as a missing one. A proper noun or technical term inside a Chinese sentence is fine; a copy that has none at all is
+  not. `chineseOf` returns the copy the page shows.
+- **Why:** The refusal belongs at the boundary, where the message is parsed, and every later message that carries
+  generated text (a ticket's title and summary, a report, guidance, a stop reason, a notice) gets it by using the type.
+  Checking for a Chinese character catches the most likely mistake, a model that writes English twice.
+- **Other options:** Only checking that `zh` is present; a language detector; keeping the two copies as separate fields on
+  every message.
+
+## 2026-11-17 — What counts as literal text in the page's markup
+
+- **Chosen:** A new tool, `tools/markup-text`, run by `pnpm check` after the build as `pnpm markup`, parses every `.tsx`,
+  `.jsx` and `.html` file under `packages/web` (not tests) with Babel and parse5 and fails on any literal that holds a
+  letter in any script, naming the file, line and column. That covers text between tags; the shown attributes
+  (`placeholder`, `title`, `alt`, `aria-label`, `aria-description`, `aria-placeholder`, `aria-roledescription`,
+  `aria-valuetext`, `label`, `caption`, `legend`, `summary`, `text`, `tooltip`, `hint`, `heading`, `description`,
+  `message` and `children`, on elements and on components alike); and the literals that flow into those places through a
+  conditional, a logical or `+` expression, a template string, an array, a callback's return value, a `const` that is not
+  reassigned, or a lookup in a literal object or array (the specific property when it is named). A string that is not
+  shown (`className`, `href`, `key`, `data-*`, `type`, `role`, `style`, and so on) is not looked at. Whitespace,
+  digits, punctuation and symbols are not language and are allowed, so `·`, `—`, `×` and `{404}` pass. Chinese written
+  in the markup fails like English: the interface's own text is written only in the catalog. `index.html` follows the same
+  rule, so the page's title is set from the catalog in `main.tsx`. A file that cannot be parsed fails.
+- **Why:** The goal is that nothing on screen is English; a letter test finds that without a list of words. Following a
+  value from where it is shown is what lets the rule see `{ok ? "Saved" : …}` and a label held in a constant without
+  flagging `className="btn"`. Naming the shown attributes, rather than every attribute, is what keeps class names, ids and
+  URLs out.
+- **Other options:** Flagging every string literal in the page's files; flagging only text between tags; a list of
+  attributes to skip instead of a list to read; also flagging digits.

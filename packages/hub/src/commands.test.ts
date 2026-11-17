@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { text } from "@super-agent2/catalog";
 import type { CommandRecord } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type CommandGate, type CommandService, createCommandService, interruptedReason } from "./commands.js";
@@ -194,7 +195,7 @@ setInterval(() => undefined, 1000);
   it("records an unknown target as failed", async () => {
     const { service: running } = create();
     const record = await finished(running, running.start({ target: "elsewhere", command: "anything" }).id);
-    expect(record).toMatchObject({ state: "failed", reason: "There is no target named elsewhere" });
+    expect(record).toMatchObject({ state: "failed", reason: text("command.reason.noTarget", { target: "elsewhere" }) });
   });
 
   it("refuses to run without the chosen account's token and names the missing variable only", async () => {

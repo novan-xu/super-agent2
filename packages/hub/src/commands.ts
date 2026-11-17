@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
+import { text } from "@super-agent2/catalog";
 import {
   CommandRecord,
   CommandRequest,
@@ -51,7 +52,7 @@ export interface CommandServiceOptions {
   readonly gate?: CommandGate;
 }
 
-export const interruptedReason = "the hub stopped before the command ended";
+export const interruptedReason = text("command.reason.interrupted");
 
 const interruptedStates: readonly CommandState[] = ["pending", "running"];
 
@@ -210,7 +211,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     }
     const target = targets.get(initial.target);
     if (target === undefined) {
-      finish(entry.id, "failed", { reason: `There is no target named ${initial.target}` });
+      finish(entry.id, "failed", { reason: text("command.reason.noTarget", { target: initial.target }) });
       return;
     }
     const credentials = options.credentials(initial.account);
