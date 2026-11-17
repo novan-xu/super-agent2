@@ -50,6 +50,7 @@ export interface ConversationService {
   send(id: string, message: string): OwnerEntry | undefined;
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
+  tell(conversation: string | null, notice: string, prompt: string): string;
   linked(): boolean;
   attach(connection: BrainConnection): BrainLink;
   subscribe(listener: ConversationListener): () => void;
@@ -582,18 +583,32 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   });
 
+  const create = (): Conversation => {
+    const id = randomUUID();
+    const now = clock.now();
+    insertConversation.run(id, now, now);
+    const conversation = get(id);
+    if (conversation === undefined) {
+      throw new Error(`Conversation ${id} was not stored`);
+    }
+    emit({ type: "conversation", conversation });
+    return conversation;
+  };
+
+  const tell = (conversation: string | null, notice: string, prompt: string): string => {
+    const target = (conversation === null ? undefined : get(conversation)) ?? selectConversations.all(1).map(toConversation)[0] ?? create();
+    const id = addEntry({ conversation: target.id, kind: "notice", turn: null, body: { text: notice }, prompt });
+    const stored = selectEntry.get(id);
+    if (stored !== undefined) {
+      deliver(EntryRow.parse(stored));
+    }
+    updateConversation(target.id, {});
+    return target.id;
+  };
+
   return {
-    create: () => {
-      const id = randomUUID();
-      const now = clock.now();
-      insertConversation.run(id, now, now);
-      const conversation = get(id);
-      if (conversation === undefined) {
-        throw new Error(`Conversation ${id} was not stored`);
-      }
-      emit({ type: "conversation", conversation });
-      return conversation;
-    },
+    create,
+    tell,
     get,
     list: (limit = 50) => selectConversations.all(limit).map(toConversation),
     detail: (id) => {

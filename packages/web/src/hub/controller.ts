@@ -1,6 +1,7 @@
+import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { createPageStore, type PageStore } from "../live/page.js";
-import { canAnswer, cardOf, type Verdict } from "../live/waiting.js";
+import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
 import type { Failure, HubApi } from "./api.js";
 import { HubSocket, type HubSocketOptions } from "./socket.js";
 
@@ -118,6 +119,26 @@ export class PageController {
       return false;
     }
     this.store.dispatch({ type: "waiting", action: { type: "answered", key } });
+    return true;
+  }
+
+  async startChains(keys: readonly string[]): Promise<boolean> {
+    const waiting = this.store.getState().waiting;
+    if (!canStart(waiting, keys)) {
+      return false;
+    }
+    const cards = startedWith(waiting.cards, keys);
+    this.store.dispatch({ type: "waiting", action: { type: "starting", keys } });
+    const answer = await this.options.api.startChains(cards.map((card) => ({ ticket: card.ticket.id, fingerprint: card.fingerprint })));
+    if (!answer.ok) {
+      for (const key of keys) {
+        this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });
+      }
+      return false;
+    }
+    for (const key of keys) {
+      this.store.dispatch({ type: "waiting", action: { type: "answered", key } });
+    }
     return true;
   }
 

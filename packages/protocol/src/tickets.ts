@@ -66,6 +66,13 @@ export const TicketIssue = z.object({
 });
 export type TicketIssue = z.infer<typeof TicketIssue>;
 
+export const TicketWait = z.object({
+  ticket: TicketId,
+  deployment: z.boolean(),
+  waived: z.boolean(),
+});
+export type TicketWait = z.infer<typeof TicketWait>;
+
 export const Ticket = z.object({
   id: TicketId,
   repository: RepositoryName.nullable(),
@@ -84,6 +91,9 @@ export const Ticket = z.object({
   pullRequest: IssueNumber.nullable(),
   round: z.number().int().nonnegative(),
   waitsFor: z.array(TicketId),
+  waits: z.array(TicketWait),
+  deployedAt: z.number().int().nullable(),
+  beginFailure: z.string().nullable(),
   stopReason: GeneratedText.nullable(),
   conversation: ConversationId.nullable(),
   createdAt: z.number().int(),

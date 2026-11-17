@@ -1,5 +1,6 @@
 export * from "./access.js";
 export * from "./brain.js";
+export * from "./chains.js";
 export * from "./commands.js";
 export * from "./conversations.js";
 export * from "./generated.js";

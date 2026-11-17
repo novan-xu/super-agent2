@@ -1,6 +1,7 @@
-import { cardKey, type HoldCard, type WaitingCard } from "@super-agent2/protocol";
+import { cardKey, type HoldCard, type StartCard, type WaitingCard } from "@super-agent2/protocol";
 import type { CommandService } from "./commands.js";
 import type { ConfirmationLock } from "./lock.js";
+import type { TicketService } from "./tickets.js";
 
 export type WaitingListener = (cards: readonly WaitingCard[]) => void;
 
@@ -14,6 +15,8 @@ export interface Waiting {
 export interface WaitingOptions {
   readonly commands: CommandService;
   readonly lock: ConfirmationLock | undefined;
+  readonly tickets?: TicketService;
+  readonly starts?: () => StartCard[];
 }
 
 export function newestFirst(cards: readonly WaitingCard[]): WaitingCard[] {
@@ -31,9 +34,13 @@ export function holdCards(options: WaitingOptions): HoldCard[] {
   return cards;
 }
 
+export function allCards(options: WaitingOptions): WaitingCard[] {
+  return newestFirst([...holdCards(options), ...(options.starts?.() ?? [])]);
+}
+
 export function createWaiting(options: WaitingOptions): Waiting {
   const listeners = new Set<WaitingListener>();
-  let current = newestFirst(holdCards(options));
+  let current = allCards(options);
   let closed = false;
   let scheduled = false;
 
@@ -41,7 +48,7 @@ export function createWaiting(options: WaitingOptions): Waiting {
     if (closed) {
       return;
     }
-    const next = newestFirst(holdCards(options));
+    const next = allCards(options);
     if (JSON.stringify(next) === JSON.stringify(current)) {
       return;
     }
@@ -55,12 +62,8 @@ export function createWaiting(options: WaitingOptions): Waiting {
     }
   };
 
-  const unsubscribe = options.commands.subscribe((event) => {
-    if (event.type !== "command" || scheduled) {
-      return;
-    }
-    const key = cardKey("hold", event.command.id);
-    if (event.command.state !== "held" && !current.some((card) => card.key === key)) {
+  const schedule = () => {
+    if (scheduled) {
       return;
     }
     scheduled = true;
@@ -68,7 +71,25 @@ export function createWaiting(options: WaitingOptions): Waiting {
       scheduled = false;
       refresh();
     });
+  };
+
+  const unsubscribeCommands = options.commands.subscribe((event) => {
+    if (event.type !== "command" || scheduled) {
+      return;
+    }
+    const key = cardKey("hold", event.command.id);
+    if (event.command.state !== "held" && !current.some((card) => card.key === key)) {
+      return;
+    }
+    schedule();
   });
+
+  const unsubscribeTickets = options.starts === undefined ? () => undefined : (options.tickets?.subscribe(() => schedule()) ?? (() => undefined));
+
+  const unsubscribe = () => {
+    unsubscribeCommands();
+    unsubscribeTickets();
+  };
 
   return {
     cards: () => {

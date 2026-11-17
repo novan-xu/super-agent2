@@ -22,6 +22,9 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     pullRequest: null,
     round: 0,
     waitsFor: [],
+    waits: [],
+    deployedAt: null,
+    beginFailure: null,
     stopReason: null,
     conversation: null,
     createdAt: id * 1000,
@@ -61,5 +64,30 @@ export function holdCard(id: string, overrides: { readonly at?: number; readonly
       answeredAt: null,
       answeredBy: null,
     },
+  };
+}
+
+export function startCard(
+  id: number,
+  overrides: {
+    readonly before?: readonly { readonly id: number; readonly zh: string; readonly state?: Ticket["state"] }[];
+    readonly startable?: boolean;
+    readonly ticket?: Partial<Ticket>;
+    readonly fingerprint?: string;
+  } = {},
+): WaitingCard {
+  return {
+    kind: "start",
+    key: `start:${id}`,
+    at: id * 1000,
+    ticket: ticket(id, overrides.ticket),
+    fingerprint: overrides.fingerprint ?? String(id % 10).repeat(64),
+    before: (overrides.before ?? []).map((entry) => ({
+      id: entry.id,
+      title: { en: `Work ${entry.id}`, zh: entry.zh },
+      repository: "novan-xu/super-agent-sandbox",
+      state: entry.state ?? "pending",
+    })),
+    startable: overrides.startable ?? true,
   };
 }

@@ -48,6 +48,12 @@ const shapes = {
   ),
   folder: <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   swap: <path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5" />,
+  repo: (
+    <>
+      <path d="M5.5 18.5V5.5a2 2 0 0 1 2-2h11v14h-11a2 2 0 0 0-2 2 2 2 0 0 0 2 2h11" />
+      <path d="M9 7.5h6" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof shapes;

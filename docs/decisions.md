@@ -957,3 +957,74 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The same shape as the waiting list and the conversations, so #13 can build on it. Sending one ticket per
   change keeps a finished ticket's update reaching a page that shows it.
 - **Other options:** The whole list on every change; a separate 工单 view now.
+
+## 2026-11-17 — How an arrangement names its chains
+
+- **Chosen:** `arrange_chains` takes a list of chains, each with a name, its repository, its issue numbers in working
+  order, and `after`: names of other chains in the same call, or ticket numbers (a started ticket may be named, which
+  is how later work follows a closed chain). `after_deployment` makes every wait of that chain also wait for the
+  brain's `report_deployment` on the ticket before it. Every issue named must be on a pending ticket, and every issue
+  of a pending ticket the call touches must be named. A chain keeps the number of the pending ticket whose issues
+  equal its own, otherwise the lowest-numbered ticket it takes issues from, otherwise it gets a new ticket. A ticket
+  whose issues all went to other chains is moved to stopped with the reason that it joined ticket N; what waited for
+  it now waits for the chains that took its issues. A chain of several issues needs its own title and summary; its
+  difficulty is the highest of its tickets'; two different platforms on one chain are refused. The whole result is
+  checked for a cycle over every open ticket before anything is written, and the writes are one SQLite transaction,
+  so a refused arrangement changes nothing.
+- **Why:** Issues are what the brain knows and what it splits or joins when the owner asks for another arrangement;
+  ticket numbers alone could not split a chain. Keeping a number where the chain is unchanged keeps the owner's card
+  the same. Stopping a joined ticket instead of deleting it keeps its history, and a pending ticket has no work to stop.
+- **Other options:** Chains named by ticket numbers only; deleting joined tickets; an arrangement that must cover every
+  pending ticket at once.
+
+## 2026-11-17 — Starting a chain only from the owner's own page
+
+- **Chosen:** `POST /api/chains/start` with `{ chains: [{ ticket, fingerprint }] }`. The route refuses a request
+  without a same-origin `Origin` (or with `Sec-Fetch-Site` other than `same-origin`) with 403, one that is not JSON
+  with 415, and a malformed body with 400. The start itself is `ChainStarter.start`, which takes the raw Access
+  assertion and verifies again that it is a `person` identity with the owner's email, as the lock's release does; the
+  brain's tools are given only `ChainArranger` (arrange, report a deployment, let a waiting ticket proceed), which has
+  no way to move a pending ticket. The fingerprint is a SHA-256 over the chain and every pending ticket arranged
+  after it (ids, repository, kind, difficulty, platform, titles, issues and waits), computed by the hub for each card;
+  a start whose fingerprint differs from the current one, that names a ticket no longer pending, or that would leave a
+  pending ticket before one it starts unstarted, is refused with 409 and starts nothing. The moves are one
+  transaction, so of two identical starts from two devices one succeeds and the other gets 409.
+- **Why:** The same structure as the confirmation lock: what starts work is something only the owner's browser can
+  produce, so no brain token, service token or tool reaches it. A fingerprint rather than a global version number
+  keeps a start from being refused because an unrelated issue was filed meanwhile.
+- **Other options:** One arrangement version for everything; a confirmation step on the card; letting the brain start
+  a chain after the owner said so in the conversation.
+
+## 2026-11-17 — What a start does, and when a waiting ticket begins
+
+- **Chosen:** 开始 on a card starts that chain and every pending chain whose pending predecessors are all in the same
+  start (`arrangedAfter` in `packages/protocol/src/chains.ts`); 全部开始 sends every card shown. Each started ticket
+  whose waits are all met moves to working; the rest move to waiting. A wait is met when the ticket before it is
+  merged, and, for a deployment wait, also reported deployed; a waived wait is met. Moving to working writes a row in
+  `ticket_begins` in the same transaction; `TicketWork.begin` is called after the commit and the row is marked done,
+  or failed with the reason, which `read_ticket` shows and the brain is told in the ticket's conversation (or the
+  newest one); the ticket stays working. At the hub's start, rows neither done nor failed are begun again, and every
+  waiting ticket whose waits are met begins, so a merge the hub did not see is not lost. Merging is not built here:
+  the chain service listens to ticket changes, so the move to merged that #15 will make begins what waits. When a
+  ticket stops while another waits for it (or is pending and arranged after it), the brain is told and decides:
+  `proceed_ticket` waives the waits on stopped tickets, `stop_ticket` stops the waiting one. The brain cannot proceed
+  a pending ticket.
+- **Why:** Writing the begin in the same transaction as the move means a restart in between cannot lose it; calling
+  the hook again after a restart is safer than not calling it, and #11 owns making a second call harmless. Keeping a
+  ticket whose begin failed, rather than stopping it, leaves the decision to the brain, as the issue asks.
+- **Other options:** Moving a ticket whose begin failed to stopped; a retry tool for the brain; beginning work from the
+  merge code of #15.
+
+## 2026-11-17 — Start cards and their notice
+
+- **Chosen:** Every pending ticket is a `start` card in the waiting list, so it counts in 等你. Its `before` lists the
+  waits not yet met, with their Chinese titles and states, and `startable` is false while something pending is before
+  it. 工作台 shows the cards under 可以开始 (nothing before) and 之后 (grouped under what they wait for, with a thin
+  rule), in ticket order, below the held commands. A card shows its repository, kind and the chain's issues in order by
+  their Chinese titles with their numbers, and 开始 when it is startable; 全部开始 appears beside the first heading when
+  there is more than one card. Pending tickets are left out of the ticket list below, since they are cards. Web Push
+  sends one notice, tagged `start`, when one or more chains become ready to start together; chains that still wait
+  send none.
+- **Why:** The design lists a chain to start among what waits for the owner. One notice per batch matches how the
+  brain files several issues at once; the shared tag lets a device replace the previous notice.
+- **Other options:** A separate count for chains; a notice per chain; showing pending tickets twice.

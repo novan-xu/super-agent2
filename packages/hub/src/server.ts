@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 import {
   BrainMessage,
   brainLinkPath,
+  ChainStart,
   brainToolsPath,
   ClientMessage,
   conversationHeader,
@@ -40,6 +41,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { z } from "zod";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
 import type { BrainTokenCheck } from "./brain-token.js";
+import type { ChainStarter } from "./chains.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
@@ -63,6 +65,7 @@ export const pushPath = "/api/push";
 export const pushSubscriptionPath = "/api/push/subscription";
 export const machinesPath = "/api/machines";
 export const ticketsPath = "/api/tickets";
+export const chainStartPath = "/api/chains/start";
 
 const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
@@ -91,6 +94,7 @@ export interface HubServerOptions {
   readonly push?: PushService;
   readonly runners?: Runners;
   readonly tickets?: TicketService;
+  readonly chains?: ChainStarter;
   readonly heartbeatMilliseconds?: number;
 }
 
@@ -396,6 +400,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(ticketsPath) && serveTickets(request, response, path, method)) {
       return;
     }
+    if (path === chainStartPath && method === "POST") {
+      await startChains(request, response);
+      return;
+    }
     if ((method === "GET" || method === "HEAD") && (await servePage(response, path, method === "HEAD"))) {
       return;
     }
@@ -452,6 +460,37 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     sendJson(response, 202, { command });
+  };
+
+  const startChains = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const chains = options.chains;
+    if (chains === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!isSameOrigin(request)) {
+      request.resume();
+      sendJson(response, 403, { error: "forbidden" });
+      return;
+    }
+    if (!isJson(request)) {
+      request.resume();
+      sendJson(response, 415, { error: "unsupported_media_type" });
+      return;
+    }
+    const start = parseJson(await readBody(request), ChainStart);
+    if (start === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    const outcome = await chains.start({ assertion: headerValue(request), chains: start.chains });
+    if (!outcome.ok) {
+      sendJson(response, outcome.error === "forbidden" ? 403 : 409, { error: outcome.error });
+      return;
+    }
+    options.waiting?.refresh();
+    sendJson(response, 202, { tickets: [...outcome.tickets] });
   };
 
   const servePush = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {

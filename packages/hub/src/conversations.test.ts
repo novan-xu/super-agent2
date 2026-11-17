@@ -127,7 +127,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "file_issue", "open_ticket", "list_tickets", "read_ticket", "stop_ticket"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "file_issue", "open_ticket", "list_tickets", "read_ticket", "stop_ticket", "arrange_chains", "report_deployment", "proceed_ticket"]);
     expect(list.result.tools[0]?.description).toContain("Targets now: hub.");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);

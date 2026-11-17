@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
+import { type Chains, createChains } from "./chains.js";
 import { type Clock, systemClock } from "./clock.js";
 import { allowEverything, type CommandGate, type CommandService, createCommandService } from "./commands.js";
 import type { Config } from "./config.js";
@@ -54,6 +55,7 @@ export interface Hub {
   readonly machines: MachineStore;
   readonly runners: Runners;
   readonly tickets: TicketService;
+  readonly chains: Chains;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -71,6 +73,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let waiting: Waiting;
   let push: PushService | undefined;
   let server: HubServer;
+  let chains: Chains;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -98,7 +101,20 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
     conversations = createConversationService({ database, clock, commands });
-    waiting = createWaiting({ commands, lock });
+    const told = conversations;
+    chains = createChains({
+      database,
+      clock,
+      tickets,
+      verify,
+      ownerEmail: config.ownerEmail,
+      tell: (conversation, notice, prompt) => {
+        told.tell(conversation, notice, prompt);
+      },
+      ...(options.ticketWork === undefined ? {} : { work: options.ticketWork }),
+    });
+    const listed = chains;
+    waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards() });
     push =
       config.vapid === undefined
         ? undefined
@@ -115,9 +131,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         conversations,
         targets: () => targets.names(),
         machines: () => runners.describe(),
-        tickets: { tickets, filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }) },
+        tickets: {
+          tickets,
+          filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
+          chains: chains.arranger,
+        },
       }),
       tickets,
+      chains: chains.starter,
       brainToken,
       runners,
       ...(options.heartbeatMilliseconds === undefined ? {} : { heartbeatMilliseconds: options.heartbeatMilliseconds }),
@@ -132,6 +153,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   }
   try {
     const address = await server.listen(config.port, config.host);
+    chains.resume();
     return {
       database,
       commands,
@@ -142,12 +164,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       machines,
       runners,
       tickets,
+      chains,
       address,
       close: async () => {
         try {
           runners.close();
           await server.close();
         } finally {
+          chains.close();
+          await chains.idle();
           waiting.close();
           await push?.close();
           conversations.close();
@@ -158,6 +183,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
+    chains.close();
     waiting.close();
     await push?.close();
     conversations.close();

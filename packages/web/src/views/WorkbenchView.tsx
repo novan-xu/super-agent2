@@ -1,16 +1,19 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type Ticket, type WaitingCard } from "@super-agent2/protocol";
-import { type CSSProperties, useEffect } from "react";
+import { chineseOf, type HoldCard as HoldCardData, type Ticket } from "@super-agent2/protocol";
+import { type CSSProperties, useEffect, useMemo } from "react";
+import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
 import { ticketTones, type TicketsState } from "../live/tickets.js";
 import { type Verdict, type WaitingState, useOf, waitingCount } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { HoldCard } from "./HoldCard.js";
+import { StartBlocks } from "./StartCard.js";
 
 export interface CardActions {
   arm(key: string): void;
   disarm(key: string): void;
   answer(key: string, verdict: Verdict): void;
+  start(keys: readonly string[]): void;
 }
 
 export interface WorkbenchViewProps {
@@ -23,20 +26,17 @@ export interface WorkbenchViewProps {
   readonly tickets: TicketsState;
 }
 
-function Card({ card, waiting, actions, focus }: { readonly card: WaitingCard; readonly waiting: WaitingState; readonly actions: CardActions; readonly focus: string | null }) {
-  switch (card.kind) {
-    case "hold":
-      return (
-        <HoldCard
-          card={card}
-          use={useOf(waiting, card.key)}
-          focused={focus === card.key}
-          arm={() => actions.arm(card.key)}
-          disarm={() => actions.disarm(card.key)}
-          answer={(verdict) => actions.answer(card.key, verdict)}
-        />
-      );
-  }
+function Card({ card, waiting, actions, focus }: { readonly card: HoldCardData; readonly waiting: WaitingState; readonly actions: CardActions; readonly focus: string | null }) {
+  return (
+    <HoldCard
+      card={card}
+      use={useOf(waiting, card.key)}
+      focused={focus === card.key}
+      arm={() => actions.arm(card.key)}
+      disarm={() => actions.disarm(card.key)}
+      answer={(verdict) => actions.answer(card.key, verdict)}
+    />
+  );
 }
 
 function PushSwitch({ phase, toggle }: { readonly phase: PushPhase; readonly toggle: () => void }) {
@@ -82,21 +82,22 @@ function TicketRow({ ticket }: { readonly ticket: Ticket }) {
 }
 
 function Tickets({ tickets }: { readonly tickets: TicketsState }) {
+  const shown = tickets.open.filter((ticket) => ticket.state !== "pending");
   return (
     <section className="section" aria-label={text("tickets.list")}>
       <div className="section-head">
         <h2>{text("tickets.title")}</h2>
-        {tickets.known ? <span className="count">{tickets.open.length}</span> : null}
+        {tickets.known ? <span className="count">{shown.length}</span> : null}
       </div>
-      {tickets.known && tickets.open.length === 0 ? (
+      {tickets.known && shown.length === 0 ? (
         <div className="empty">
           <Icon name="check" />
           <strong>{text("tickets.empty")}</strong>
         </div>
       ) : null}
-      {tickets.open.length > 0 ? (
+      {shown.length > 0 ? (
         <div className="list">
-          {tickets.open.map((ticket) => (
+          {shown.map((ticket) => (
             <TicketRow key={ticket.id} ticket={ticket} />
           ))}
         </div>
@@ -107,6 +108,8 @@ function Tickets({ tickets }: { readonly tickets: TicketsState }) {
 
 export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets }: WorkbenchViewProps) {
   const count = waitingCount(waiting);
+  const holds = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "hold" ? [card] : [])), [waiting.cards]);
+  const starts = useMemo(() => startView(waiting.cards), [waiting.cards]);
   const present = focus !== null && waiting.cards.some((card) => card.key === focus);
 
   useEffect(() => {
@@ -142,10 +145,11 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
           </div>
         ) : null}
         <div className="od-stack" style={{ "--od-gap": "16px" } as CSSProperties}>
-          {waiting.cards.map((card) => (
+          {holds.map((card) => (
             <Card key={card.key} card={card} waiting={waiting} actions={actions} focus={focus} />
           ))}
         </div>
+        <StartBlocks view={starts} waiting={waiting} focus={focus} start={actions.start} />
       </section>
       <Tickets tickets={tickets} />
     </div>
