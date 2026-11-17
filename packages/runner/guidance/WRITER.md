@@ -26,6 +26,12 @@ will answer a question or fix something for you. What you deliver goes straight 
 - If a message arrives while you work, it comes from the owner or from the brain (the agent that gave you this task).
   Take it into account at once.
 
+## Language
+
+The owner reads what you say as you work, live. Write your commentary, and anything else you say that is not part of
+the result, in Simplified Chinese; keep names and technical terms as they are. The result itself is in whatever language
+the task asks for.
+
 ## Handing back
 
 Put your result in the output folder named in your task, then write a JSON file at the hand-back path named there.

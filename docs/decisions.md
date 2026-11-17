@@ -1518,6 +1518,15 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options:** A real worker on the sandbox repository; a fake runner process connecting over the network; writing
   events into the database directly.
 
+## 2026-11-17 — A worker's commentary is Chinese
+
+- **Chosen:** `WORKER.md` and `WRITER.md` tell the worker to write its running commentary, and anything else it says
+  that is not a command, code, a commit, a pull request or an issue, in Simplified Chinese, since the owner reads it
+  live in the ticket's timeline; what goes into the repository or to GitHub stays English, and a writing worker's
+  result is in the language the task asks for. The harness's scripted workers speak Chinese.
+- **Why:** The design shows the owner Chinese only, except raw material; commentary is prose written to be read.
+- **Other options:** Translating the commentary in the hub; showing it in English as raw material.
+
 ## 2026-11-17 — PR in the catalog
 
 - **Chosen:** `PR` is kept as it is in the interface's Chinese text, like GitHub and hub, and added to the terms the

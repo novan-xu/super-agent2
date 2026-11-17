@@ -65,11 +65,9 @@ function report(name: string, platform: MachinePlatform, busy: number): MachineR
   return { hostname: name, platform, release: "scripted", arch: "x64", user: "page-dev", slots: { total: 4, free: Math.max(0, 4 - busy) }, programs, allowances: [] };
 }
 
-const words = (text: string): string[] => text.split(/(?<= )/);
+const words = (text: string): string[] => text.match(/[\s\S]{1,3}/gu) ?? [];
 
-const opening = words(
-  "I read the issues and the code around them. The change touches the parser and its tests, so I start there and keep each step small enough to check on its own.",
-);
+const opening = words("我读完了这几个问题和相关的代码。改动涉及解析器和它的测试，所以先从那里开始，每一步都小到可以单独检查。");
 
 const lines = (count: number, prefix: string): string[] => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}\n`);
 
@@ -156,13 +154,13 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
     work.step += 1;
     const step = work.step;
     tool(work, `c${step}`, step % 2 === 0 ? `pnpm vitest run src/parser --reporter dot` : `git diff --stat`, lines(6 + (step % 5), step % 2 === 0 ? "test passed" : "src/parser.ts | changed line"), true, () =>
-      stream(work, `b${step}`, words(`Step ${step} is done: the parser keeps the old behaviour for plain input and the new case passes. Moving on to the next case. `), () => later(work, 600, () => loop(work))),
+      stream(work, `b${step}`, words(`第 ${step} 步完成：普通输入的行为没变，新的情况也通过了。接着做下一种情况。`), () => later(work, 600, () => loop(work))),
     );
   };
 
   const finish = (work: Running) => {
     tool(work, "test", "pnpm test", lines(8, "ok"), true, () =>
-      stream(work, "done", words("All tests pass. I opened the pull request and wrote the hand-back file."), () => {
+      stream(work, "done", words("测试全部通过。PR 已经开好，交回文件也写好了。"), () => {
         const number = 100 + work.ticket;
         emit(work, {
           kind: "finished",
@@ -183,9 +181,9 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
   };
 
   const deliver = (work: Running) => {
-    stream(work, "draft", words("Drafting the letter from the material, keeping its tone. "), () =>
+    stream(work, "draft", words("按材料起草这封信，保持原来的语气。"), () =>
       later(work, 8000, () =>
-        stream(work, "final", words("The text and the file are in the output folder."), () => {
+        stream(work, "final", words("正文和文件都放进输出文件夹了。"), () => {
           const letter = "Dear neighbours,\n\nThe garden gate will be repainted on Saturday morning. Please use the side entrance until noon.\n\nThank you.";
           const data = Buffer.from(`# Notice\n\n${letter}\n`, "utf8");
           emit(work, {
@@ -245,7 +243,7 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
           return;
         }
         emit(work, { kind: "message", id: message.id, from: message.from, text: message.text, delivery: "steered" });
-        emit(work, { kind: "text", block: `reply-${message.id}`, delta: `Noted: "${message.text}". I will take it into the next step.` });
+        emit(work, { kind: "text", block: `reply-${message.id}`, delta: `收到：「${message.text}」。下一步会照这个做。` });
         return;
       }
       case "work.stop": {
