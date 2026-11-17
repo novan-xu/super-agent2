@@ -39,9 +39,14 @@ export interface ConfirmationLockOptions {
   readonly settings: LockSettings;
 }
 
+export function environmentEntries(command: Pick<CommandRecord, "environment">): [string, string][] {
+  return Object.entries(command.environment).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 export function fingerprintOf(command: CommandRecord): string {
+  const environment = environmentEntries(command);
   return createHash("sha256")
-    .update(JSON.stringify([command.id, command.target, command.command, command.account, command.cwd]))
+    .update(JSON.stringify([command.id, command.target, command.command, command.account, command.cwd, ...(environment.length === 0 ? [] : [environment])]))
     .digest("hex");
 }
 

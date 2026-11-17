@@ -21,6 +21,7 @@ export interface HoldCardProps {
 
 export function HoldCard({ card, use, focused, arm, disarm, answer }: HoldCardProps) {
   const { command, hold } = card;
+  const environment = Object.entries(command.environment).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const sending = use.step === "sending";
   const busy = (verdict: Verdict) => (sending && use.verdict === verdict ? " is-busy" : "");
   return (
@@ -50,6 +51,19 @@ export function HoldCard({ card, use, focused, arm, disarm, answer }: HoldCardPr
           ),
         )}
       </pre>
+      {environment.length === 0 ? null : (
+        <pre className="raw raw-environment" tabIndex={0} aria-label={text("hold.environment")} title={text("hold.environment")}>
+          {rawSegments(environment.map(([name, value]) => `${name}=${value}`).join("\n")).map((segment, index) =>
+            segment.hidden ? (
+              <mark key={index} className="raw-hidden" title={text("hold.hidden")}>
+                {segment.text}
+              </mark>
+            ) : (
+              segment.text
+            ),
+          )}
+        </pre>
+      )}
       {command.cwd === null ? null : (
         <div className="raw-folder" title={text("hold.folder")}>
           <Icon name="folder" />

@@ -70,6 +70,21 @@ describe("工作台", () => {
     expect(html).not.toContain("‮");
   });
 
+  it("shows the environment a held command runs with, each name and value below the command, in order of name", () => {
+    const html = render(
+      state(holdCard("a1", { command: "node rollback.mjs", environment: { SUPERAGENT2_PREVIOUS_COMMIT: "1111111", SUPERAGENT2_COMMIT: "2222222" } })),
+    );
+    const command = html.indexOf("node rollback.mjs");
+    const shown = html.indexOf("SUPERAGENT2_COMMIT=2222222\nSUPERAGENT2_PREVIOUS_COMMIT=1111111");
+    expect(command).toBeGreaterThan(0);
+    expect(shown).toBeGreaterThan(command);
+    expect(html).toContain('aria-label="命令收到的环境变量"');
+  });
+
+  it("leaves out the environment when there is none", () => {
+    expect(render(state(holdCard("a1")))).not.toContain("raw-environment");
+  });
+
   it("leaves out the folder when there is none", () => {
     expect(render(state(holdCard("a1", { cwd: null })))).not.toContain("raw-folder");
   });

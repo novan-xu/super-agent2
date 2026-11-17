@@ -8,6 +8,7 @@ const command = {
   command: "gh repo delete x --yes",
   account: "novan-xu",
   cwd: null,
+  environment: { SUPERAGENT2_COMMIT: "abc1234" },
   state: "held",
   exitCode: null,
   signal: null,

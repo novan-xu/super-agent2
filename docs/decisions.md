@@ -2078,3 +2078,22 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   the first two with the real lock and a reopened database.
 - **Why:** The fake forge is smaller than a branch in the sandbox, and the toy exercises real processes and a real port.
 - **Other options:** The file on a branch of `novan-xu/super-agent-sandbox` with `--credentials environment`.
+
+## 2026-11-17 — A held command's environment is part of what the owner confirms
+
+- **Chosen:** A command's environment is on its record (`CommandRecord.environment`, `{}` when it has none) and in the
+  hold's fingerprint, as its entries sorted by name, appended only when there is at least one, so the fingerprint of a
+  command without environment is exactly what it was before. Holds stored before this change are of commands without
+  environment and stay releasable; a hold whose stored fingerprint does not cover the environment the command now has
+  no longer matches and the command is dropped as changed, as a changed command text already is. The confirmation card
+  shows the environment below the command, as raw text, `NAME=value` per line in order of name, only when there is one.
+  A command's environment can never name a credential (`GH_TOKEN`, `GITHUB_TOKEN`, the account token variables and the
+  forwarded Woodpecker and Cloudflare variables, in any case): the command service refuses such a request, since
+  credentials are merged in only at run time and would silently win, which the card would misrepresent. The lock reads
+  the command text alone; a variable it cannot know in a destructive position (a deletion of a path built from
+  `$SUPERAGENT2_PREVIOUS_COMMIT`, `$env:…`, `%…%`, a force-push of `$SUPERAGENT2_COMMIT`) is an unknown target and is
+  held, as `rm -rf $DIR` already was; examples are in the held table.
+- **Why:** What is confirmed must be exactly what was held and what the owner saw; a rollback's environment decides
+  which commit it goes back to. Keeping the old form for an empty environment keeps every hold already waiting valid.
+- **Other options:** Dropping every hold stored before the change; letting credential names through and hiding them on
+  the card; substituting the variables into the text the lock reads.

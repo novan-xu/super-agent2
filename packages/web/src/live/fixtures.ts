@@ -87,7 +87,7 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   };
 }
 
-export function holdCard(id: string, overrides: { readonly at?: number; readonly command?: string; readonly cwd?: string | null; readonly fingerprint?: string } = {}): WaitingCard {
+export function holdCard(id: string, overrides: { readonly at?: number; readonly command?: string; readonly cwd?: string | null; readonly environment?: Readonly<Record<string, string>>; readonly fingerprint?: string } = {}): WaitingCard {
   const at = overrides.at ?? 1_000;
   return {
     kind: "hold",
@@ -99,6 +99,7 @@ export function holdCard(id: string, overrides: { readonly at?: number; readonly
       command: overrides.command ?? "gh repo delete novan-xu/old --yes",
       account: "novan-xu",
       cwd: overrides.cwd === undefined ? "/srv/projects/app" : overrides.cwd,
+      environment: { ...(overrides.environment ?? {}) },
       state: "held",
       exitCode: null,
       signal: null,

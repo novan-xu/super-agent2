@@ -40,6 +40,7 @@ export const CommandRecord = z.object({
   command: z.string(),
   account: GitHubAccount,
   cwd: z.string().nullable(),
+  environment: CommandEnvironment.default({}),
   state: CommandState,
   exitCode: z.number().int().nullable(),
   signal: z.string().nullable(),

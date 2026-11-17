@@ -90,6 +90,7 @@ export const messages = {
   "hold.target": "执行目标",
   "hold.account": "GitHub 账号",
   "hold.folder": "文件夹",
+  "hold.environment": "命令收到的环境变量",
   "hold.hidden": "不可见字符",
 
   "push.label": "通知",
