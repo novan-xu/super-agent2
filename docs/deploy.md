@@ -129,7 +129,33 @@ out after going back, and `codex login` has to be run again in `superagent-brain
   screen (Share, then Add to Home Screen) and open it from there, since iPhone allows push only for a page on the home
   screen. Then turn on 通知 next to 等你 in 工作台 and allow notifications.
 
-## Known gaps
+## Woodpecker from the hub
 
-- `WOODPECKER_SERVER`, as copied from the first Super-agent, is an address on the NAS's Tailscale name that the hub
-  container cannot reach: a request to it times out. Reading CI from the hub needs an address the container can reach.
+`WOODPECKER_SERVER` is `https://novanstorage.tail62dd17.ts.net:9443`, the NAS's own Tailscale name. On the NAS host that
+name resolves through Tailscale's resolver to the NAS's Tailscale address, `100.72.209.101`, where port 9443 is served.
+Inside a container the name is resolved by public DNS instead, which answers with Tailscale's public relay addresses,
+and a request to those times out. `deploy/compose.yaml` therefore gives the hub an extra host entry,
+`novanstorage.tail62dd17.ts.net:100.72.209.101`: the container keeps the name, so TLS still checks the right
+certificate, and reaches the address through the host. It takes effect when `up` recreates the hub.
+
+To check it, on the NAS:
+
+```sh
+docker exec superagent2-hub sh -c 'curl -sS -m 10 "$WOODPECKER_SERVER/version"'
+```
+
+Before the hub is recreated, the same request with `--resolve novanstorage.tail62dd17.ts.net:9443:100.72.209.101`
+proves the address without changing the container. If the NAS's Tailscale address ever changes, change the entry.
+
+## CI
+
+Woodpecker checks this repository with `.woodpecker/check-macos.yaml` and `.woodpecker/check-windows.yaml`, on the Mac
+mini's and the PC's agents. Both run `pnpm check` on every pull request's head, on every push to `main`, and by hand.
+Each downloads the Node version in `.node-version` from nodejs.org, checks it against the release's `SHASUMS256.txt`,
+installs the pnpm version in `package.json`'s `packageManager` with that Node's npm, all inside the workflow's own
+folder, and changes nothing on the agent. GitHub shows their statuses as `ci/woodpecker/pr/check-macos` and
+`ci/woodpecker/pr/check-windows` on a pull request, and as `ci/woodpecker/push/...` on `main`.
+
+The repository is activated on the server under the owner's account; activation made the GitHub webhook. Its settings
+are the server's defaults: pull requests allowed, approval only for forks, a 60-minute limit, and a running pipeline
+cancelled by a newer push or pull request commit.

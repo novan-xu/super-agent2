@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -264,5 +264,16 @@ describe("the commands behind filing", () => {
     github.failAfterCreate = 1;
     await filer.file(filing());
     expect(existsSync(scratchDir) ? readdirSync(scratchDir) : []).toEqual([]);
+  });
+
+  it("names the scratch file by the folder's real path when the folder is reached through a name a shell would read", async () => {
+    const real = join(dataDir, "real");
+    mkdirSync(real);
+    scratchDir = join(dataDir, "SCRATC~1");
+    symlinkSync(real, scratchDir, "junction");
+    setUp();
+    const outcome = await filer.file(filing());
+    expect(outcome.ok).toBe(true);
+    expect(readdirSync(real)).toEqual([]);
   });
 });

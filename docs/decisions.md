@@ -1533,3 +1533,75 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   catalog's test accepts.
 - **Why:** The prototype says PR, and it is the term the owner reads on GitHub.
 - **Other options:** 拉取请求; 合并请求.
+
+## 2026-11-17 — How the hub reaches Woodpecker
+
+- **Chosen:** `deploy/compose.yaml` gives the hub the extra host entry `novanstorage.tail62dd17.ts.net:100.72.209.101`,
+  and `WOODPECKER_SERVER` stays as it is. The name resolves to the NAS's Tailscale address only through Tailscale's
+  resolver on the host; Docker's resolver answers the container with the name's public records, Tailscale's relay
+  addresses, and a request there times out. A request from inside the running hub with curl's `--resolve` to that
+  address answered `/version` and `/api/user`, which proved the remedy without changing the container.
+- **Why:** The name is kept, so TLS still checks the server's certificate; nothing outside this project changes.
+- **Other options:** Joining the Woodpecker server's Docker network and calling it over plain HTTP, which ties the hub
+  to another project's network; host networking for the hub; changing `WOODPECKER_SERVER` to the bare address, which
+  breaks TLS.
+
+## 2026-11-17 — The Woodpecker workflows
+
+- **Chosen:** `.woodpecker/check-macos.yaml` and `.woodpecker/check-windows.yaml`, selecting their agents by the label
+  each agent requires, `target: macos` and `target: windows` (the agents declare `!target=macos` and `!target=windows`,
+  so a workflow without the label is never taken). Both run on `pull_request`, on `push` to `main`, and on `manual`.
+  Each downloads the Node version in a new `.node-version` (24.14.1, the Dockerfile's) from nodejs.org into the
+  workflow's own folder beside the checkout, checks it against the release's `SHASUMS256.txt`, installs the pnpm of
+  `packageManager` with that Node's npm into the same folder, then runs `pnpm install --frozen-lockfile` and
+  `pnpm check`. The macOS step runs in `bash` (the local backend runs it with `-e`); the Windows step runs in Windows
+  PowerShell, which stops on its own errors but not on a failing program, so every program call is followed by an exit
+  on a non-zero `$LASTEXITCODE`. The clone step sets `lfs: false`, since the Mac mini's Git has no LFS. The pull request
+  pipeline checks out the head commit itself, not a merge with `main`.
+- **Why:** The agents are shared and must not change, and neither has a pinned Node and pnpm in its own path. The
+  folder beside the checkout is removed with the workflow and is outside the files the zero-comment check reads. A push
+  to `main` gives the merged commit its own result.
+- **Other options:** Using the Node installed on each machine, which is not pinned; corepack, which needs its signing
+  keys to know the pnpm release; one workflow with a matrix, which cannot choose a shell per platform; running only on
+  pull requests.
+
+## 2026-11-17 — The repository on the Woodpecker server
+
+- **Chosen:** `novan-xu/super-agent2` was activated through the API with the owner's token from inside the hub
+  (repository id 6), which made the GitHub webhook. Its settings were left at the server's defaults: pull requests
+  allowed, approval for forks only, a 60-minute limit, and a running pipeline cancelled by a newer `push` or
+  `pull_request` pipeline. Nothing else on the server was changed.
+- **Why:** The defaults are what the checks need; a commit superseded on the same pull request need not finish.
+- **Other options:** Keeping superseded pipelines running.
+
+## 2026-11-17 — What the hub will read from Woodpecker
+
+- **Chosen:** Recorded for #15, from the server as it answers today.
+  - GitHub shows one commit status per workflow, with the contexts `ci/woodpecker/pr/check-macos` and
+    `ci/woodpecker/pr/check-windows` on a pull request's commit, and `ci/woodpecker/push/check-macos` and
+    `ci/woodpecker/push/check-windows` on a push. Each status's `target_url` is
+    `<server>/repos/<repo id>/pipeline/<number>/<workflow pid>`, so the pipeline is named by the status itself.
+  - The repository's id comes from `GET /api/repos/lookup/novan-xu/super-agent2`. A pipeline is found from a commit by
+    listing `GET /api/repos/<id>/pipelines?event=pull_request&ref=refs/pull/<n>/` (the list has no commit filter; a
+    pull request's pipelines carry the ref `refs/pull/<n>/merge` but run the head commit) and taking the newest whose
+    `commit` is the head's SHA, or by the number in the status's `target_url`.
+  - `GET /api/repos/<id>/pipelines/<number>` returns `status` and `workflows`, each with `name`, `state` and
+    `children`, the steps, each with `id`, `name`, `state` and `exit_code`. A failing step is a child whose `state` is
+    `failure`.
+  - `GET /api/repos/<id>/logs/<number>/<step id>` returns the step's log as an array of lines whose `data` is the
+    line's bytes in base64.
+  - Every request carries `Authorization: Bearer $WOODPECKER_TOKEN`; the token is the owner's, with administrator rights.
+- **Why:** #15 waits for these pipelines and hands a failing step's log to the brain.
+- **Other options:** Reading only GitHub's statuses, which carry no logs.
+
+## 2026-11-17 — What the first runs on macOS and on the Windows agent found
+
+- **Chosen:** Two fixes. On macOS the temporary folder is reached through `/var`, a link to `/private/var`, so a command's
+  working folder printed by the command differs from the one asked for; the hub's test now compares the real paths of
+  both. On the Windows agent the temporary folder is the short name `C:\Users\WOODPE~1\...`, whose `~` the hub's issue
+  filing refused as a character a shell would read; the filer now names its scratch file by the folder's real path,
+  which has no short names and no links, and a test reaches the scratch folder through a link named `SCRATC~1`.
+- **Why:** Both were assumptions of the one machine the code had run on. The second would also stop a hub run on any
+  Windows machine whose temporary folder has a short name.
+- **Other options:** Loosening the filer's check to accept `~`; setting `TMP` and `TEMP` in the workflow, which would
+  hide the fault instead of fixing it.
