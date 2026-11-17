@@ -6,8 +6,10 @@ import {
   type HubToRunner,
   type MachineReport,
   protocolVersion,
+  releaseVersionHeader,
   runnerCloseCodes,
   runnerLinkPath,
+  runnerReleasePath,
   runnerTokenHeader,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -307,6 +309,48 @@ describe("the runner's path at the front door", () => {
     const machines = await fetch(`${base}/api/machines`, { headers: { "cf-access-jwt-assertion": owner } });
     expect(machines.status).toBe(200);
     expect(await machines.json()).toEqual({ machines: [expect.objectContaining({ name: "pc", online: false })] });
+  });
+
+  it("announces the hub's version and hands its release only to an admitted runner", async () => {
+    const version = "a".repeat(40);
+    const asked: { url: string; authorization: string | null }[] = [];
+    let answer = 200;
+    const forgeFetch: typeof fetch = async (input, init) => {
+      asked.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") });
+      return answer === 200 ? new Response(new Uint8Array([31, 139, 8, 0, 1, 2, 3]), { status: 200 }) : new Response("no", { status: answer });
+    };
+    hub = await startTestHub({
+      config: { ...testConfig(dataDir), version, sourceRepository: "novan-xu/super-agent2" },
+      keySource: staticKeySource(keySet(key)),
+      clock,
+      targets: [fakeTarget("hub")],
+      credentials: testCredentials,
+      gate: () => ({ kind: "allow" as const }),
+      forgeFetch,
+    });
+    const running = hub;
+    const base = `http://127.0.0.1:${running.address.port}`;
+    expect(await (await fetch(`${base}/health`)).json()).toEqual({ status: "ok", version });
+    const { token } = running.machines.add({ name: "pc", accessClientId: clientId });
+    const service = await assertion({ key, clock, claims: serviceClaims() });
+    const owner = await assertion({ key, clock, claims: personClaims() });
+    expect((await fetch(`${base}${runnerReleasePath}`, { headers: { "cf-access-jwt-assertion": service } })).status).toBe(403);
+    expect((await fetch(`${base}${runnerReleasePath}`, { headers: { "cf-access-jwt-assertion": owner, [runnerTokenHeader]: token } })).status).toBe(403);
+    expect(asked).toEqual([]);
+    const release = await fetch(`${base}${runnerReleasePath}`, { headers: { "cf-access-jwt-assertion": service, [runnerTokenHeader]: token } });
+    expect(release.status).toBe(200);
+    expect(release.headers.get(releaseVersionHeader)).toBe(version);
+    expect([...new Uint8Array(await release.arrayBuffer())]).toEqual([31, 139, 8, 0, 1, 2, 3]);
+    expect(asked).toEqual([{ url: `https://api.github.com/repos/novan-xu/super-agent2/tarball/${version}`, authorization: `Bearer ${testTokens["novan-xu"]}` }]);
+    answer = 404;
+    expect((await fetch(`${base}${runnerReleasePath}`, { headers: { "cf-access-jwt-assertion": service, [runnerTokenHeader]: token } })).status).toBe(503);
+
+    const admitted = await connect(running, runnerLinkPath, { "cf-access-jwt-assertion": service, [runnerTokenHeader]: token });
+    const welcome = new Promise<unknown>((resolve) => admitted.socket?.once("message", (data) => resolve(JSON.parse(String(data)))));
+    admitted.socket?.send(JSON.stringify({ type: "hello", protocol: protocolVersion, machine: { ...report, version: "b".repeat(40) } }));
+    expect(await welcome).toEqual({ type: "welcome", protocol: protocolVersion, name: "pc", version });
+    expect(running.runners.describe()).toBe(`"pc" is a work machine (Windows, online, runner at bbbbbbb, not yet the hub's version)`);
+    admitted.socket?.close();
   });
 
   it("closes a runner that sends something it does not understand", async () => {

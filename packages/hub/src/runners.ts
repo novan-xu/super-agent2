@@ -50,6 +50,7 @@ export interface Runners extends TargetDirectory {
 export interface RunnersOptions {
   readonly machines: MachineStore;
   readonly pollMilliseconds?: number;
+  readonly version?: string;
 }
 
 interface Pending {
@@ -211,7 +212,7 @@ export function createRunners(options: RunnersOptions): Runners {
             link.report = message.machine;
             machines.seen(machine.name, message.machine);
             if (first) {
-              connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name });
+              connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name, ...(options.version === undefined ? {} : { version: options.version }) });
             }
             announce();
             if (message.type === "hello") {
@@ -259,7 +260,8 @@ export function createRunners(options: RunnersOptions): Runners {
       statuses()
         .map((status) => {
           const system = status.report === null ? "" : `${systemNames[status.report.platform] ?? status.report.platform}, `;
-          return `"${status.name}" is a work machine (${system}${status.online ? "online" : "offline"})`;
+          const runner = status.report?.version === undefined ? "" : `, runner at ${status.report.version.slice(0, 7)}${options.version === undefined || status.report.version === options.version ? "" : ", not yet the hub's version"}`;
+          return `"${status.name}" is a work machine (${system}${status.online ? "online" : "offline"}${runner})`;
         })
         .join("; "),
     sweep,

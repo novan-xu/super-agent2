@@ -27,6 +27,8 @@ COPY --from=build /app /app
 USER node
 WORKDIR /app/packages/hub
 ENV NODE_ENV=production HOME=/home/node HUB_DATA_DIR=/var/lib/superagent2/hub HUB_PORT=8080
+ARG SUPERAGENT2_REVISION=
+ENV SUPERAGENT2_REVISION=${SUPERAGENT2_REVISION}
 EXPOSE 8080
 CMD ["node", "dist/main.js"]
 
@@ -42,4 +44,6 @@ COPY --from=build /app /app
 USER node
 WORKDIR /app/packages/brain
 ENV NODE_ENV=production HOME=/home/node CLAUDE_CONFIG_DIR=/home/node/.claude DISABLE_AUTOUPDATER=1
+ARG SUPERAGENT2_REVISION=
+ENV SUPERAGENT2_REVISION=${SUPERAGENT2_REVISION}
 CMD ["node", "dist/main.js"]

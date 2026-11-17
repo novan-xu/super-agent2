@@ -5,12 +5,14 @@ import {
   Deployment,
   DeploymentFile,
   deploymentFile,
+  type DeploymentOutcome,
   type DeploymentPhase,
   DeploymentResult,
   type DeploymentStepKind,
   deploymentVariables,
   finishedStates,
   readDeploymentFile,
+  readDeploymentOutcome,
   RepositoryName,
 } from "@super-agent2/protocol";
 import { z } from "zod";
@@ -138,6 +140,8 @@ function noticeOf(deployment: Deployment): string {
       return text("notice.deployment.unrecovered", { repository, commit });
     case "failed":
       return text("notice.deployment.failed", { repository, commit });
+    case "unchanged":
+      return text("notice.deployment.unchanged", { repository, commit });
     case "not-run":
       return text("notice.deployment.notRun", { repository, commit });
     case "interrupted":
@@ -348,7 +352,7 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
     return found;
   };
 
-  const succeed = async (id: number) => {
+  const succeed = async (id: number, reason = "The service passed its health check after the deploy command.") => {
     const deployment = get(id);
     if (deployment === undefined) {
       return;
@@ -359,7 +363,50 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
     }
     const marked = tickets.filter((ticket) => options.deployed?.(ticket).ok ?? false);
     update(id, { deployed_tickets: JSON.stringify(marked) });
-    end(id, "succeeded", `The service passed its health check after the deploy command.`);
+    end(id, "succeeded", reason);
+  };
+
+  const outcomeOf = (command: string): DeploymentOutcome | undefined =>
+    readDeploymentOutcome(
+      commands
+        .output(command)
+        .filter((chunk) => chunk.stream === "stdout")
+        .map((chunk) => chunk.data)
+        .join(""),
+    );
+
+  const stepWords: Readonly<Record<DeploymentStepKind, string>> = {
+    deploy: "deploy command",
+    health: "health check",
+    rollback: "rollback command",
+    recheck: "health check after the rollback",
+  };
+
+  const reported = async (deployment: Deployment, kind: DeploymentStepKind, outcome: DeploymentOutcome) => {
+    note(deployment.id, `The ${stepWords[kind]} reported how the deployment ended: ${outcome.result}.`);
+    if (outcome.previous !== undefined && deployment.previous === null) {
+      update(deployment.id, { previous: outcome.previous });
+    }
+    if (outcome.result === "succeeded") {
+      await succeed(deployment.id, outcome.reason);
+      return;
+    }
+    end(deployment.id, outcome.result, outcome.reason);
+  };
+
+  const probe = async (deployment: Deployment, why: string) => {
+    note(deployment.id, `${why} The health check ran once to read whether the deployment reported how it ended.`);
+    const id = runStep(deployment, "health", deployment.file.health.command);
+    await settleWithin(id, deployment.file.health.withinSeconds * 1000);
+    if (closed) {
+      return;
+    }
+    const outcome = outcomeOf(id);
+    if (outcome !== undefined) {
+      await reported(deployment, "health", outcome);
+      return;
+    }
+    end(deployment.id, "interrupted", `${why} The health check reported no outcome, so whether it finished is not known, and nothing was rolled back.`);
   };
 
   const commandPhase = async (deployment: Deployment, kind: "deploy" | "rollback") => {
@@ -370,6 +417,11 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
     }
     const record = await settle(step.command, stopping.signal);
     if (closed || record === undefined) {
+      return;
+    }
+    const told = outcomeOf(step.command);
+    if (told !== undefined) {
+      await reported(deployment, kind, told);
       return;
     }
     const outcome = ran(record);
@@ -383,7 +435,7 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
         return;
       }
       if (outcome === "interrupted") {
-        end(deployment.id, "interrupted", `The deploy command was interrupted while it ran (${record.reason ?? "no reason recorded"}); whether it finished is not known, and nothing was rolled back.`);
+        await probe(deployment, `The deploy command was interrupted while it ran (${record.reason ?? "no reason recorded"}).`);
         return;
       }
       fail(deployment, `The deploy command ${ended(record)}.`);
@@ -433,6 +485,11 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
       const id = runStep(deployment, kind, deployment.file.health.command);
       const record = await settleWithin(id, Math.max(deadline, started + every) - started);
       if (closed) {
+        return;
+      }
+      const told = outcomeOf(id);
+      if (told !== undefined) {
+        await reported(deployment, kind, told);
         return;
       }
       if (record?.state === "exited" && record.exitCode === 0) {
@@ -534,6 +591,8 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
         return "failed, and the rollback did not bring the service back";
       case "failed":
         return "failed, and nothing was rolled back";
+      case "unchanged":
+        return "failed before it replaced anything; the version that ran before still runs";
       case "not-run":
         return "did not run";
       case "interrupted":

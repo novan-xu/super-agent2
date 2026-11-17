@@ -1,4 +1,4 @@
-name: superagent2
+name: ${SUPERAGENT2_PROJECT:?run this file through deploy.sh}
 
 x-logging: &logging
   driver: json-file
@@ -8,37 +8,41 @@ x-logging: &logging
 
 services:
   hub:
-    image: superagent2-hub:current
+    image: ${SUPERAGENT2_PROJECT}-hub:${SUPERAGENT2_TAG:-current}
     build:
-      context: ..
+      context: ${SUPERAGENT2_SOURCE:?run this file through deploy.sh}
       dockerfile: deploy/Dockerfile
       target: hub
-    container_name: superagent2-hub
-    hostname: superagent2-hub
+      args:
+        SUPERAGENT2_REVISION: ${SUPERAGENT2_REVISION:-}
+    container_name: ${SUPERAGENT2_PROJECT}-hub
+    hostname: ${SUPERAGENT2_PROJECT}-hub
     restart: unless-stopped
     init: true
     env_file:
-      - /share/Container/superagent2/secrets/hub.env
+      - ${SUPERAGENT2_ROOT:?run this file through deploy.sh}/secrets/hub.env
     environment:
       HUB_DATA_DIR: /var/lib/superagent2/hub
       HUB_PORT: "8080"
       HUB_HOST: 0.0.0.0
       HUB_BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
-      HUB_PROJECT_FOLDERS: /share/Container/superagent2/projects
-      HUB_CREDENTIAL_PATHS: /share/Container/superagent2/secrets,/share/Container/superagent2/secrets/**,/share/Container/superagent/secrets,/share/Container/superagent/secrets/**,/var/lib/superagent2/link/**,/run/superagent2/ssh/**
+      HUB_PROJECT_FOLDERS: ${SUPERAGENT2_ROOT}/projects
+      HUB_CREDENTIAL_PATHS: ${SUPERAGENT2_ROOT}/secrets,${SUPERAGENT2_ROOT}/secrets/**,/share/Container/superagent2/secrets,/share/Container/superagent2/secrets/**,/share/Container/superagent/secrets,/share/Container/superagent/secrets/**,/var/lib/superagent2/link/**,/run/superagent2/ssh/**
+      HUB_SOURCE_REPOSITORY: novan-xu/super-agent2
+      SUPERAGENT2_INSTANCE: ${SUPERAGENT2_PROJECT}
       NAS_SSH_DESTINATION: novanxu@host.docker.internal
       NAS_SSH_IDENTITY: /run/superagent2/ssh/nas_ed25519
     extra_hosts:
       - host.docker.internal:host-gateway
       - novanstorage.tail62dd17.ts.net:100.72.209.101
     ports:
-      - 127.0.0.1:18180:8080
+      - 127.0.0.1:${SUPERAGENT2_HUB_PORT:?run this file through deploy.sh}:8080
     volumes:
       - hub-data:/var/lib/superagent2/hub
       - brain-link:/var/lib/superagent2/link
       - hub-home:/home/node
-      - /share/Container/superagent2/secrets/ssh:/run/superagent2/ssh:ro
-      - /share/Container/superagent2/projects:/share/Container/superagent2/projects
+      - ${SUPERAGENT2_ROOT}/secrets/ssh:/run/superagent2/ssh:ro
+      - ${SUPERAGENT2_ROOT}/projects:${SUPERAGENT2_ROOT}/projects
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s
@@ -49,20 +53,22 @@ services:
     logging: *logging
 
   brain:
-    image: superagent2-brain:current
+    image: ${SUPERAGENT2_PROJECT}-brain:${SUPERAGENT2_TAG:-current}
     build:
-      context: ..
+      context: ${SUPERAGENT2_SOURCE}
       dockerfile: deploy/Dockerfile
       target: brain
-    container_name: superagent2-brain
-    hostname: superagent2-brain
+      args:
+        SUPERAGENT2_REVISION: ${SUPERAGENT2_REVISION:-}
+    container_name: ${SUPERAGENT2_PROJECT}-brain
+    hostname: ${SUPERAGENT2_PROJECT}-brain
     restart: unless-stopped
     init: true
     depends_on:
       hub:
         condition: service_healthy
     env_file:
-      - /share/Container/superagent2/secrets/brain.env
+      - ${SUPERAGENT2_ROOT}/secrets/brain.env
     environment:
       BRAIN_HUB_URL: http://hub:8080
       BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
@@ -78,7 +84,7 @@ services:
 
   tunnel:
     image: cloudflare/cloudflared:2026.10.4
-    container_name: superagent2-tunnel
+    container_name: ${SUPERAGENT2_PROJECT}-tunnel
     profiles:
       - tunnel
     restart: unless-stopped
@@ -87,25 +93,26 @@ services:
       hub:
         condition: service_healthy
     env_file:
-      - /share/Container/superagent2/secrets/tunnel.env
+      - path: ${SUPERAGENT2_ROOT}/secrets/tunnel.env
+        required: false
     logging: *logging
 
 volumes:
   hub-data:
-    name: superagent2-hub-data
+    name: ${SUPERAGENT2_PROJECT}-hub-data
   hub-home:
-    name: superagent2-hub-home
+    name: ${SUPERAGENT2_PROJECT}-hub-home
   brain-link:
-    name: superagent2-brain-link
+    name: ${SUPERAGENT2_PROJECT}-brain-link
   brain-codex:
-    name: superagent2-brain-codex
+    name: ${SUPERAGENT2_PROJECT}-brain-codex
   brain-claude:
-    name: superagent2-brain-claude
+    name: ${SUPERAGENT2_PROJECT}-brain-claude
   brain-dsh:
-    name: superagent2-brain-dsh
+    name: ${SUPERAGENT2_PROJECT}-brain-dsh
   brain-workspace:
-    name: superagent2-brain-workspace
+    name: ${SUPERAGENT2_PROJECT}-brain-workspace
 
 networks:
   default:
-    name: superagent2_default
+    name: ${SUPERAGENT2_PROJECT}_default

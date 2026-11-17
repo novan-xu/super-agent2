@@ -5,6 +5,11 @@ import { ProtocolVersion } from "./version.js";
 import { MessageWork, RunnerWorkEvent, StartWork, StartWriting, StopWork, SyncWork, WorkHeld } from "./work.js";
 
 export const runnerLinkPath = "/runner/link";
+export const runnerReleasePath = "/runner/release";
+export const releaseVersionHeader = "x-superagent2-version";
+
+export const Revision = z.string().regex(/^[0-9a-f]{40}$/);
+export type Revision = z.infer<typeof Revision>;
 export const runnerTokenHeader = "x-runner-token";
 export const accessClientIdHeader = "cf-access-client-id";
 export const accessClientSecretHeader = "cf-access-client-secret";
@@ -49,6 +54,7 @@ export const MachineReport = z.object({
   slots: z.object({ total: z.number().int().nonnegative(), free: z.number().int().nonnegative() }),
   programs: z.array(ProgramReport),
   allowances: z.array(AllowanceReading).default([]),
+  version: Revision.optional(),
 });
 export type MachineReport = z.infer<typeof MachineReport>;
 
@@ -96,6 +102,7 @@ export const RunnerWelcome = z.object({
   type: z.literal("welcome"),
   protocol: ProtocolVersion,
   name: MachineName,
+  version: Revision.optional(),
 });
 export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 

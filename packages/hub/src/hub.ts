@@ -14,6 +14,7 @@ import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
 import { pageFiles } from "./page.js";
 import { createPushService, type PushService } from "./push-service.js";
+import { gitHubRelease } from "./release.js";
 import { createHubServer, type HubServer } from "./server.js";
 import { createWaiting, type Waiting } from "./waiting.js";
 import { createMachineStore, type MachineStore } from "./machines.js";
@@ -99,6 +100,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
+    ...(config.version === undefined ? {} : { version: config.version }),
     ...(options.machinePollMilliseconds === undefined ? {} : { pollMilliseconds: options.machinePollMilliseconds }),
   });
   const defaults = createStartDefaults({
@@ -257,6 +259,18 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       defaults,
       brainToken,
       runners,
+      ...(config.version === undefined ? {} : { version: config.version }),
+      ...(config.version === undefined || config.sourceRepository === undefined
+        ? {}
+        : {
+            release: gitHubRelease({
+              repository: config.sourceRepository,
+              version: config.version,
+              credentials,
+              fetch: options.forgeFetch ?? fetch,
+              ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }),
+            }),
+          }),
       ...(options.heartbeatMilliseconds === undefined ? {} : { heartbeatMilliseconds: options.heartbeatMilliseconds }),
       ...(push === undefined ? {} : { push }),
       ...(lock === undefined ? {} : { lock }),

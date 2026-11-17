@@ -35,7 +35,7 @@ export type ExecuteCommand = (job: ShellJob, sink: ShellSink) => ShellRun;
 
 export type LinkEvent =
   | { readonly type: "connecting"; readonly url: string }
-  | { readonly type: "connected"; readonly name: string }
+  | { readonly type: "connected"; readonly name: string; readonly version?: string }
   | { readonly type: "refused"; readonly status: number }
   | { readonly type: "closed"; readonly code: number; readonly reason: string; readonly stopped: number }
   | { readonly type: "started"; readonly id: string; readonly pid: number | undefined }
@@ -227,7 +227,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         if (message.type === "welcome") {
           welcomed = true;
           attempt = 0;
-          emit({ type: "connected", name: message.name });
+          emit({ type: "connected", name: message.name, ...(message.version === undefined ? {} : { version: message.version }) });
           return;
         }
         if (message.type === "run") {
