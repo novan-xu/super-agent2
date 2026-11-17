@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -155,7 +155,7 @@ export function commandIssueHost(options: CommandIssueHostOptions): IssueHost {
     },
     create: async (repository, account, title, body) => {
       mkdirSync(scratchDir, { recursive: true });
-      const file = join(scratchDir, `${randomUUID()}.json`);
+      const file = join(realpathSync.native(scratchDir), `${randomUUID()}.json`);
       writeFileSync(file, JSON.stringify({ title, body }), { mode: 0o600 });
       try {
         const result = parsed(await run(createIssueCommand(repository, file), account), IssueJson);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { text } from "@super-agent2/catalog";
@@ -103,7 +103,8 @@ describe("running a command", () => {
     const command = nodeScript(workDir, `console.log(process.cwd());`);
     const record = await finished(running, running.start({ target: "hub", command, cwd: workDir }).id);
     expect(record.cwd).toBe(workDir);
-    expect(textOf(running.output(record.id)).trim().toLowerCase()).toBe(workDir.toLowerCase());
+    const printed = realpathSync.native(textOf(running.output(record.id)).trim());
+    expect(printed.toLowerCase()).toBe(realpathSync.native(workDir).toLowerCase());
   });
 
   it("gives the command the chosen account's token and not the other's", async () => {
