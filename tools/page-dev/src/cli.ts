@@ -260,6 +260,7 @@ process.stdout.write(
     `Offline:  http://127.0.0.1:${port}/__harness/offline, back with /__harness/online`,
     `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
+    `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
   ].join("\n"),

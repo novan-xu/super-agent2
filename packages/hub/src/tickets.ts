@@ -28,6 +28,19 @@ export interface TicketToOpen {
   readonly conversation?: string | undefined;
 }
 
+export interface TicketDescription {
+  readonly title: GeneratedText;
+  readonly summary: GeneratedText;
+  readonly kind: TicketKind;
+  readonly difficulty: Difficulty | null;
+  readonly platform: Platform | null;
+}
+
+export interface WaitToSet {
+  readonly ticket: number;
+  readonly deployment: boolean;
+}
+
 export type MoveError = "not_found" | "refused";
 
 export type MoveResult = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly error: MoveError; readonly ticket?: Ticket };
@@ -40,10 +53,24 @@ export interface ListOptions {
 export type TicketListener = (ticket: Ticket) => void;
 
 export interface TicketWork {
+  begin(ticket: Ticket): void | Promise<void>;
   stop(ticket: Ticket): void;
 }
 
-export const noTicketWork: TicketWork = { stop: () => undefined };
+export const noTicketWork: TicketWork = { begin: () => undefined, stop: () => undefined };
+
+export interface TicketWrites {
+  get(id: number): Ticket | undefined;
+  open(request: TicketToOpen): number;
+  setIssues(id: number, issues: readonly TicketIssue[]): void;
+  describe(id: number, description: TicketDescription): void;
+  setWaits(id: number, waits: readonly WaitToSet[]): void;
+  redirectWaits(from: number, to: number): void;
+  waive(id: number, before: number): boolean;
+  deployed(id: number): void;
+  move(id: number, to: TicketState, reason?: GeneratedText): Ticket;
+  touched(id: number): void;
+}
 
 export interface TicketService {
   open(request: TicketToOpen): Ticket;
@@ -52,8 +79,10 @@ export interface TicketService {
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
   forIssue(repository: string, number: number): Ticket[];
+  waitingFor(id: number): Ticket[];
   move(id: number, to: TicketState, reason?: GeneratedText): MoveResult;
   stop(id: number, reason: GeneratedText): MoveResult;
+  change<T>(body: (writes: TicketWrites) => T): T;
   subscribe(listener: TicketListener): () => void;
 }
 
@@ -86,6 +115,7 @@ const TicketRow = z.object({
   stop_reason_en: z.string().nullable(),
   stop_reason_zh: z.string().nullable(),
   conversation_id: z.string().nullable(),
+  deployed_at: z.number().int().nullable(),
   created_at: z.number().int(),
   updated_at: z.number().int(),
 });
@@ -100,7 +130,9 @@ const IssueRow = z.object({
   summary_zh: z.string(),
 });
 
-const WaitRow = z.object({ waits_for: z.number().int() });
+const WaitRow = z.object({ waits_for: z.number().int(), deployment: z.number().int(), waived_at: z.number().int().nullable() });
+
+const BeginRow = z.object({ failure: z.string().nullable() });
 
 const MoveRow = z.object({
   ticket_id: z.number().int(),
@@ -127,10 +159,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const { clock } = options;
   const work = options.work ?? noTicketWork;
   const listeners = new Set<TicketListener>();
+  let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
   const selectIssues = connection.prepare("SELECT * FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
-  const selectWaits = connection.prepare("SELECT waits_for FROM ticket_waits WHERE ticket_id = ? ORDER BY waits_for");
+  const selectWaits = connection.prepare("SELECT waits_for, deployment, waived_at FROM ticket_waits WHERE ticket_id = ? ORDER BY waits_for");
+  const selectBegin = connection.prepare("SELECT failure FROM ticket_begins WHERE ticket_id = ? AND failed_at IS NOT NULL AND done_at IS NULL");
   const selectMoves = connection.prepare("SELECT * FROM ticket_moves WHERE ticket_id = ? ORDER BY seq");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets ORDER BY created_at DESC, id DESC LIMIT ?");
@@ -138,6 +172,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     `SELECT * FROM tickets WHERE state IN (${openTicketStates.map(() => "?").join(", ")}) ORDER BY created_at DESC, id DESC LIMIT ?`,
   );
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
+  const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
     `INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
@@ -145,7 +180,22 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  const insertWait = connection.prepare("INSERT INTO ticket_waits (ticket_id, waits_for) VALUES (?, ?)");
+  const deleteIssues = connection.prepare("DELETE FROM ticket_issues WHERE ticket_id = ?");
+  const insertWait = connection.prepare("INSERT INTO ticket_waits (ticket_id, waits_for, deployment) VALUES (?, ?, ?)");
+  const deleteWaits = connection.prepare("DELETE FROM ticket_waits WHERE ticket_id = ?");
+  const selectRedirected = connection.prepare(
+    "SELECT w.ticket_id, w.deployment FROM ticket_waits w JOIN tickets t ON t.id = w.ticket_id WHERE w.waits_for = ? AND t.state = 'pending'",
+  );
+  const deleteWait = connection.prepare("DELETE FROM ticket_waits WHERE ticket_id = ? AND waits_for = ?");
+  const upsertWait = connection.prepare(
+    "INSERT INTO ticket_waits (ticket_id, waits_for, deployment) VALUES (?, ?, ?) ON CONFLICT (ticket_id, waits_for) DO UPDATE SET deployment = MAX(deployment, excluded.deployment)",
+  );
+  const waiveWait = connection.prepare("UPDATE ticket_waits SET waived_at = ? WHERE ticket_id = ? AND waits_for = ? AND waived_at IS NULL");
+  const updateDescription = connection.prepare(
+    "UPDATE tickets SET title_en = ?, title_zh = ?, summary_en = ?, summary_zh = ?, kind = ?, difficulty = ?, platform = ? WHERE id = ?",
+  );
+  const updateDeployed = connection.prepare("UPDATE tickets SET deployed_at = ? WHERE id = ? AND deployed_at IS NULL");
+  const updateTouched = connection.prepare("UPDATE tickets SET updated_at = ? WHERE id = ?");
   const insertMove = connection.prepare(
     "INSERT INTO ticket_moves (ticket_id, seq, from_state, to_state, reason_en, reason_zh, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
@@ -164,6 +214,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         summary: { en: issue.summary_en, zh: issue.summary_zh },
       };
     });
+    const waits = selectWaits.all(value.id).map((entry) => {
+      const wait = WaitRow.parse(entry);
+      return { ticket: wait.waits_for, deployment: wait.deployment === 1, waived: wait.waived_at !== null };
+    });
+    const begin = selectBegin.get(value.id);
     return Ticket.parse({
       id: value.id,
       repository: value.repository,
@@ -181,7 +236,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       branch: value.branch,
       pullRequest: value.pull_request,
       round: value.round,
-      waitsFor: selectWaits.all(value.id).map((entry) => WaitRow.parse(entry).waits_for),
+      waitsFor: waits.map((wait) => wait.ticket),
+      waits,
+      deployedAt: value.deployed_at,
+      beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
       conversation: value.conversation_id,
       createdAt: value.created_at,
@@ -212,18 +270,6 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     insertMove.run(id, last + 1, from, to, reason?.en ?? null, reason?.zh ?? null, at);
   };
 
-  const transaction = <T>(body: () => T): T => {
-    connection.exec("BEGIN IMMEDIATE");
-    try {
-      const result = body();
-      connection.exec("COMMIT");
-      return result;
-    } catch (error) {
-      connection.exec("ROLLBACK");
-      throw error;
-    }
-  };
-
   const announce = (ticket: Ticket) => {
     for (const listener of listeners) {
       try {
@@ -247,17 +293,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         throw new TicketError("A ticket for code work needs at least one issue");
       }
     }
-    const numbers = new Set<number>();
-    for (const issue of request.issues) {
-      TicketIssue.parse(issue);
-      if (issue.repository !== request.repository) {
-        throw new TicketError(`Issue #${issue.number} is in ${issue.repository}, not in the ticket's repository ${request.repository ?? ""}`);
-      }
-      if (numbers.has(issue.number)) {
-        throw new TicketError(`Issue #${issue.number} is listed twice`);
-      }
-      numbers.add(issue.number);
-    }
+    checkIssues(request.repository, request.issues);
     GeneratedText.parse(request.title);
     GeneratedText.parse(request.summary);
     for (const before of request.waitsFor ?? []) {
@@ -267,33 +303,47 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     }
   };
 
-  const move = (id: number, to: TicketState, reason?: GeneratedText, after?: () => void): MoveResult => {
-    const current = get(id);
-    if (current === undefined) {
-      return { ok: false, error: "not_found" };
+  const checkIssues = (repository: string | null, issues: readonly TicketIssue[]) => {
+    const numbers = new Set<number>();
+    for (const issue of issues) {
+      TicketIssue.parse(issue);
+      if (issue.repository !== repository) {
+        throw new TicketError(`Issue #${issue.number} is in ${issue.repository}, not in the ticket's repository ${repository ?? ""}`);
+      }
+      if (numbers.has(issue.number)) {
+        throw new TicketError(`Issue #${issue.number} is listed twice`);
+      }
+      numbers.add(issue.number);
     }
-    if (!canMoveTicket(current.kind, current.state, to)) {
-      return { ok: false, error: "refused", ticket: current };
-    }
-    const now = clock.now();
-    transaction(() => {
-      updateState.run(to, now, id, current.state);
-      recordMove(id, current.state, to, reason, now);
-      after?.();
-    });
-    const ticket = get(id);
-    if (ticket === undefined) {
-      return { ok: false, error: "not_found" };
-    }
-    announce(ticket);
-    return { ok: true, ticket };
   };
 
-  return {
-    open: (request) => {
-      check(request);
-      const now = clock.now();
-      const id = transaction(() => {
+  const insertIssues = (id: number, issues: readonly TicketIssue[]) => {
+    issues.forEach((issue, position) => {
+      insertIssue.run(id, position, issue.repository, issue.number, issue.url, issue.title.en.trim(), issue.title.zh.trim(), issue.summary.en.trim(), issue.summary.zh.trim());
+    });
+  };
+
+  const change = <T>(body: (writes: TicketWrites) => T): T => {
+    if (inside) {
+      throw new Error("Ticket changes do not nest");
+    }
+    const touched = new Set<number>();
+    const touch = (id: number) => {
+      updateTouched.run(clock.now(), id);
+      touched.add(id);
+    };
+    const existing = (id: number): Ticket => {
+      const ticket = get(id);
+      if (ticket === undefined) {
+        throw new TicketError(`There is no ticket ${id}`);
+      }
+      return ticket;
+    };
+    const writes: TicketWrites = {
+      get,
+      open: (request) => {
+        check(request);
+        const now = clock.now();
         const result = insertTicket.run(
           request.repository,
           request.kind,
@@ -307,31 +357,125 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           now,
           now,
         );
-        const ticketId = Number(result.lastInsertRowid);
-        request.issues.forEach((issue, position) => {
-          insertIssue.run(
-            ticketId,
-            position,
-            issue.repository,
-            issue.number,
-            issue.url,
-            issue.title.en.trim(),
-            issue.title.zh.trim(),
-            issue.summary.en.trim(),
-            issue.summary.zh.trim(),
-          );
-        });
+        const id = Number(result.lastInsertRowid);
+        insertIssues(id, request.issues);
         for (const before of new Set(request.waitsFor ?? [])) {
-          insertWait.run(ticketId, before);
+          insertWait.run(id, before, 0);
         }
-        recordMove(ticketId, null, "pending", undefined, now);
-        return ticketId;
-      });
+        recordMove(id, null, "pending", undefined, now);
+        touched.add(id);
+        return id;
+      },
+      setIssues: (id, issues) => {
+        const ticket = existing(id);
+        checkIssues(ticket.repository, issues);
+        deleteIssues.run(id);
+        insertIssues(id, issues);
+        touch(id);
+      },
+      describe: (id, description) => {
+        existing(id);
+        const title = GeneratedText.parse(description.title);
+        const summary = GeneratedText.parse(description.summary);
+        updateDescription.run(title.en, title.zh, summary.en, summary.zh, description.kind, description.difficulty, description.platform, id);
+        touch(id);
+      },
+      setWaits: (id, waits) => {
+        existing(id);
+        deleteWaits.run(id);
+        const seen = new Set<number>();
+        for (const wait of waits) {
+          if (wait.ticket === id) {
+            throw new TicketError(`Ticket ${id} cannot wait for itself`);
+          }
+          existing(wait.ticket);
+          if (!seen.has(wait.ticket)) {
+            seen.add(wait.ticket);
+            insertWait.run(id, wait.ticket, wait.deployment ? 1 : 0);
+          }
+        }
+        touch(id);
+      },
+      redirectWaits: (from, to) => {
+        for (const row of selectRedirected.all(from)) {
+          const value = z.object({ ticket_id: z.number().int(), deployment: z.number().int() }).parse(row);
+          deleteWait.run(value.ticket_id, from);
+          if (value.ticket_id !== to) {
+            upsertWait.run(value.ticket_id, to, value.deployment);
+          }
+          touch(value.ticket_id);
+        }
+      },
+      waive: (id, before) => {
+        const changed = waiveWait.run(clock.now(), id, before).changes > 0;
+        if (changed) {
+          touch(id);
+        }
+        return changed;
+      },
+      deployed: (id) => {
+        updateDeployed.run(clock.now(), id);
+        touch(id);
+      },
+      move: (id, to, reason) => {
+        const current = existing(id);
+        if (!canMoveTicket(current.kind, current.state, to)) {
+          throw new TicketError(`Ticket ${id} is ${current.state} and cannot become ${to}`);
+        }
+        const now = clock.now();
+        updateState.run(to, now, id, current.state);
+        recordMove(id, current.state, to, reason, now);
+        if (to === "stopped" && reason !== undefined) {
+          updateStopReason.run(reason.en, reason.zh, id);
+        }
+        touched.add(id);
+        return existing(id);
+      },
+      touched: (id) => touch(id),
+    };
+    inside = true;
+    let result: T;
+    try {
+      connection.exec("BEGIN IMMEDIATE");
+      try {
+        result = body(writes);
+        connection.exec("COMMIT");
+      } catch (error) {
+        connection.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      inside = false;
+    }
+    for (const id of [...touched].sort((a, b) => a - b)) {
+      const ticket = get(id);
+      if (ticket !== undefined) {
+        announce(ticket);
+      }
+    }
+    return result;
+  };
+
+  const move = (id: number, to: TicketState, reason?: GeneratedText): MoveResult => {
+    const current = get(id);
+    if (current === undefined) {
+      return { ok: false, error: "not_found" };
+    }
+    if (!canMoveTicket(current.kind, current.state, to)) {
+      return { ok: false, error: "refused", ticket: current };
+    }
+    const ticket = change((writes) => writes.move(id, to, reason));
+    return { ok: true, ticket: get(id) ?? ticket };
+  };
+
+  return {
+    open: (request) => {
+      check(request);
+      const id = change((writes) => writes.open(request));
       const ticket = get(id);
       if (ticket === undefined) {
         throw new Error(`Ticket ${id} was not stored`);
       }
-      announce(ticket);
       return ticket;
     },
     get,
@@ -350,15 +494,21 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const ticket = get(IdRow.parse(row).ticket_id);
         return ticket === undefined ? [] : [ticket];
       }),
-    move: (id, to, reason) => move(id, to, reason),
+    waitingFor: (id) =>
+      selectWaitingFor.all(id).flatMap((row) => {
+        const ticket = get(IdRow.parse(row).ticket_id);
+        return ticket === undefined ? [] : [ticket];
+      }),
+    move,
     stop: (id, reason) => {
       const given = GeneratedText.parse(reason);
-      const result = move(id, "stopped", given, () => updateStopReason.run(given.en, given.zh, id));
+      const result = move(id, "stopped", given);
       if (result.ok) {
         work.stop(result.ticket);
       }
       return result;
     },
+    change,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

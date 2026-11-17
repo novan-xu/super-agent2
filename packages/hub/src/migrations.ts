@@ -205,4 +205,20 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN deployed_at INTEGER;
+      ALTER TABLE ticket_waits ADD COLUMN deployment INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE ticket_waits ADD COLUMN waived_at INTEGER;
+      CREATE INDEX ticket_waits_by_before ON ticket_waits (waits_for);
+      CREATE TABLE ticket_begins (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets (id),
+        due_at INTEGER NOT NULL,
+        done_at INTEGER,
+        failed_at INTEGER,
+        failure TEXT
+      ) STRICT;
+    `,
+  },
 ];

@@ -140,6 +140,7 @@ export function App() {
       arm: (key: string) => controller.arm(key),
       disarm: (key: string) => controller.disarm(key),
       answer: (key: string, verdict: Verdict) => void controller.answer(key, verdict),
+      start: (keys: readonly string[]) => void controller.startChains(keys),
     }),
     [controller],
   );

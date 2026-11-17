@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { CommandRecord } from "./commands.js";
+import { GeneratedText } from "./generated.js";
 import { Hold } from "./holds.js";
+import { RepositoryName, Ticket, TicketId, TicketState } from "./tickets.js";
 
-export const cardKinds = ["hold"] as const;
+export const cardKinds = ["hold", "start"] as const;
 
 export type CardKind = (typeof cardKinds)[number];
 
@@ -20,7 +22,28 @@ export const HoldCard = z.object({
 
 export type HoldCard = z.infer<typeof HoldCard>;
 
-export const WaitingCard = z.discriminatedUnion("kind", [HoldCard]);
+export const ChainBefore = z.object({
+  id: TicketId,
+  title: GeneratedText,
+  repository: RepositoryName.nullable(),
+  state: TicketState,
+});
+
+export type ChainBefore = z.infer<typeof ChainBefore>;
+
+export const StartCard = z.object({
+  kind: z.literal("start"),
+  key: z.string().min(1),
+  at: z.number().int(),
+  ticket: Ticket,
+  fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  before: z.array(ChainBefore),
+  startable: z.boolean(),
+});
+
+export type StartCard = z.infer<typeof StartCard>;
+
+export const WaitingCard = z.discriminatedUnion("kind", [HoldCard, StartCard]);
 
 export type WaitingCard = z.infer<typeof WaitingCard>;
 

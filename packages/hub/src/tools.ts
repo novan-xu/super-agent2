@@ -14,6 +14,7 @@ import {
   ticketKinds,
 } from "@super-agent2/protocol";
 import { z } from "zod";
+import type { ArrangeOutcome, ChainArranger, TicketOutcome } from "./chains.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
@@ -84,6 +85,23 @@ const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
 
 const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
 
+const ChainArgument = z.object({
+  name: z.string().trim().min(1).max(100),
+  repository: RepositoryName,
+  issues: z.array(z.number().int().positive()).min(1).max(100),
+  after: z.array(z.union([z.string().trim().min(1), z.number().int().positive()])).max(100).optional(),
+  after_deployment: z.boolean().optional(),
+  title: GeneratedText.optional(),
+  summary: GeneratedText.optional(),
+  kind: TicketKind.optional(),
+  difficulty: Difficulty.optional(),
+  platform: Platform.optional(),
+});
+
+const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1).max(100) });
+
+const TicketArgument = z.object({ ticket: z.number().int().positive() });
+
 const generatedSchema = (what: string) => ({
   type: "object",
   properties: {
@@ -128,6 +146,107 @@ export interface ToolServerOptions {
 export interface TicketTools {
   readonly tickets: TicketService;
   readonly filer: IssueFiler;
+  readonly chains?: ChainArranger;
+}
+
+function chainDefinitions() {
+  return [
+    {
+      name: "arrange_chains",
+      title: "Arrange pending tickets into chains",
+      description: [
+        "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: one worker, one branch, one pull request, its issues worked on in the order given.",
+        "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
+        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once you report the deployment with report_deployment).",
+        "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again.",
+        "Every issue of a pending ticket you touch must be named. A chain of several issues needs its own title and summary in English and Chinese; a chain that keeps one ticket's issues keeps that ticket's title. Tickets whose issues all went to other chains are closed as joined.",
+        "The whole arrangement is checked first: one that has a cycle, or names an issue or ticket that does not exist, is refused and nothing changes. Calling it again with a new arrangement rearranges.",
+        "Only the owner starts a chain, with 开始 on its card in 工作台; you cannot start one.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          chains: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "A short name for the chain, used by `after` in this call" },
+                repository: { type: "string", description: "The repository as owner/name; every issue of a chain is in it" },
+                issues: { type: "array", items: { type: "integer", minimum: 1 }, minItems: 1, description: "The issue numbers in working order" },
+                after: {
+                  type: "array",
+                  items: { anyOf: [{ type: "string" }, { type: "integer", minimum: 1 }] },
+                  description: "What must merge before this chain begins: chain names of this call, or ticket numbers",
+                },
+                after_deployment: { type: "boolean", description: "Also wait until you report the earlier work deployed" },
+                title: generatedSchema("chain title"),
+                summary: generatedSchema("one or two sentence chain summary"),
+                kind: { type: "string", enum: codeKinds, description: "The chain's kind, if not its first ticket's" },
+                ...startChoices,
+              },
+              required: ["name", "repository", "issues"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["chains"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "report_deployment",
+      title: "Report merged work deployed",
+      description:
+        "Report that you deployed the merged work of a ticket. Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
+      inputSchema: {
+        type: "object",
+        properties: { ticket: { type: "integer", minimum: 1, description: "The merged ticket whose work is deployed" } },
+        required: ["ticket"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "proceed_ticket",
+      title: "Let a waiting ticket go ahead",
+      description:
+        "A ticket the owner started waits for others to merge. When one of those stops, you are told, and decide: stop the waiting ticket with stop_ticket, or let it go ahead with this tool, which drops its wait on every stopped ticket; it then begins once what it still waits for has merged.",
+      inputSchema: {
+        type: "object",
+        properties: { ticket: { type: "integer", minimum: 1, description: "The waiting ticket" } },
+        required: ["ticket"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function arrangedText(outcome: ArrangeOutcome): ToolResult {
+  if (!outcome.ok) {
+    return { text: outcome.reason, isError: true };
+  }
+  const lines = outcome.chains.map(({ name, ticket }) => {
+    const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
+    const after =
+      ticket.waits.length === 0
+        ? "nothing before it"
+        : `after ${ticket.waits.map((wait) => `ticket ${wait.ticket}${wait.deployment ? " (merged and deployed)" : ""}`).join(", ")}`;
+    return `Chain ${name} is ticket ${ticket.id} in ${ticket.repository ?? ""}: ${issues}; ${after}.`;
+  });
+  if (outcome.joined.length > 0) {
+    lines.push(`Closed as joined into other chains: ${outcome.joined.map((id) => `ticket ${id}`).join(", ")}.`);
+  }
+  lines.push("They wait for the owner to start them with 开始 on their cards in 工作台. Tell the owner, in Chinese, how the work is arranged.");
+  return { text: lines.join("\n") };
+}
+
+function ticketOutcomeText(outcome: TicketOutcome, done: string): ToolResult {
+  if (!outcome.ok) {
+    return { text: outcome.reason, isError: true };
+  }
+  const began = outcome.began.length === 0 ? "Nothing began yet." : `Began: ${outcome.began.map((ticket) => `ticket ${ticket.id}`).join(", ")}.`;
+  return { text: `${done}\n${ticketLine(outcome.ticket)}\n${began}` };
 }
 
 function ticketDefinitions() {
@@ -232,7 +351,7 @@ function filingText(outcome: FilingOutcome): ToolResult {
     : outcome.issueCreated
       ? `Filed ${where} and opened ticket ${outcome.ticket.id}.`
       : `Used the existing issue ${where} and opened ticket ${outcome.ticket.id}.`;
-  return { text: `${first}\n${ticketReport(outcome.ticket)}` };
+  return { text: `${first}\n${ticketReport(outcome.ticket)}\nOnce the issues for this need are filed, arrange them into chains with arrange_chains.` };
 }
 
 interface ToolResult {
@@ -330,6 +449,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         },
       },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
+      ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
     ];
   };
 
@@ -473,6 +593,52 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
           : { text: `Ticket ${parsed.data.ticket} is ${result.ticket?.state ?? "finished"} and cannot be stopped.`, isError: true };
+      }
+      default:
+        return chainCall(tools.chains, name, raw);
+    }
+  };
+
+  const chainCall = (chains: ChainArranger | undefined, name: string, raw: unknown): ToolResult | undefined => {
+    if (chains === undefined) {
+      return undefined;
+    }
+    switch (name) {
+      case "arrange_chains": {
+        const parsed = ArrangeArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return arrangedText(
+          chains.arrange(
+            parsed.data.chains.map((chain) => ({
+              name: chain.name,
+              repository: chain.repository,
+              issues: chain.issues,
+              after: chain.after,
+              afterDeployment: chain.after_deployment,
+              title: chain.title,
+              summary: chain.summary,
+              kind: chain.kind,
+              difficulty: chain.difficulty,
+              platform: chain.platform,
+            })),
+          ),
+        );
+      }
+      case "report_deployment": {
+        const parsed = TicketArgument.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return ticketOutcomeText(chains.deployed(parsed.data.ticket), `Recorded that the work of ticket ${parsed.data.ticket} is deployed.`);
+      }
+      case "proceed_ticket": {
+        const parsed = TicketArgument.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return ticketOutcomeText(chains.proceed(parsed.data.ticket), `Ticket ${parsed.data.ticket} no longer waits for the tickets that stopped.`);
       }
       default:
         return undefined;

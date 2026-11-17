@@ -82,3 +82,18 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .push-note { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .push-note .od-icon { flex: none; color: var(--warn); }
 .section-head .push-note { text-align: right; }
+
+.chain-block { display: grid; gap: var(--space-3); }
+.chain-head { display: flex; align-items: center; gap: var(--space-3); min-height: 32px; }
+.chain-head h3 { color: var(--muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; }
+.chain-stack { --od-gap: 12px; }
+.chain-group { display: grid; gap: var(--space-2); padding-left: var(--space-4); border-left: 2px solid var(--border-soft); }
+.chain-group + .chain-group { margin-top: var(--space-3); }
+.chain-before { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); color: var(--fg-2); font-size: var(--text-sm); }
+.chain-before-item { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.chain-before-item > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.chain-issues { display: grid; gap: var(--space-1); padding: 0; list-style: none; counter-reset: chain; }
+.chain-issue { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; padding: var(--space-1) 0; counter-increment: chain; }
+.chain-issue::before { content: counter(chain); flex: none; min-width: 1.25em; color: var(--muted); font-family: var(--font-mono); font-size: var(--text-xs); text-align: right; }
+.chain-issue .check-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.chain-issue .check-meta { flex: none; }

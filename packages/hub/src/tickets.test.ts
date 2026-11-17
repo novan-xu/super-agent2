@@ -133,7 +133,7 @@ describe("tickets", () => {
 
   it("stops a ticket with its reason, hands it to the work that would stop a worker, and refuses to stop it twice", () => {
     const stoppedWork: number[] = [];
-    const tickets = createTicketService({ database: open(), clock, work: { stop: (ticket) => stoppedWork.push(ticket.id) } });
+    const tickets = createTicketService({ database: open(), clock, work: { begin: () => undefined, stop: (ticket) => stoppedWork.push(ticket.id) } });
     const ticket = tickets.open(request());
     const reason = { en: "The owner changed their mind", zh: "主人改主意了" };
     const result = tickets.stop(ticket.id, reason);

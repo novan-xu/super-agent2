@@ -23,6 +23,7 @@ export type WaitingAction =
   | { readonly type: "arm"; readonly key: string }
   | { readonly type: "disarm"; readonly key: string }
   | { readonly type: "sending"; readonly key: string; readonly verdict: Verdict }
+  | { readonly type: "starting"; readonly keys: readonly string[] }
   | { readonly type: "failed"; readonly key: string; readonly failure: Failure }
   | { readonly type: "answered"; readonly key: string };
 
@@ -64,8 +65,16 @@ function withUse(state: WaitingState, key: string, use: CardUse): WaitingState {
   return { ...state, use: { ...state.use, [key]: use } };
 }
 
+function fingerprintOf(card: WaitingCard): string {
+  return card.kind === "hold" ? card.hold.fingerprint : card.fingerprint;
+}
+
 function shownCard(card: WaitingCard, before: WaitingCard | undefined): boolean {
-  return before === undefined || before.hold.fingerprint === card.hold.fingerprint;
+  return before === undefined || (before.kind === card.kind && fingerprintOf(before) === fingerprintOf(card));
+}
+
+export function canStart(state: WaitingState, keys: readonly string[]): boolean {
+  return keys.length > 0 && keys.every((key) => cardOf(state, key)?.kind === "start" && useOf(state, key).step === "idle");
 }
 
 function receive(state: WaitingState, incoming: readonly WaitingCard[]): WaitingState {
@@ -95,6 +104,10 @@ export function waitingReducer(state: WaitingState, action: WaitingAction): Wait
     case "sending":
       return canAnswer(state, action.key, action.verdict)
         ? withUse(state, action.key, { step: "sending", verdict: action.verdict, failure: null })
+        : state;
+    case "starting":
+      return canStart(state, action.keys)
+        ? { ...state, use: { ...state.use, ...Object.fromEntries(action.keys.map((key) => [key, { step: "sending", verdict: null, failure: null } satisfies CardUse])) } }
         : state;
     case "failed":
       return cardOf(state, action.key) === undefined ? state : withUse(state, action.key, { step: "idle", verdict: null, failure: action.failure });

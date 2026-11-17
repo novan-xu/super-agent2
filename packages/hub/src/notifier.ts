@@ -25,12 +25,43 @@ export function payloadOf(card: WaitingCard): PushPayload {
         url: cardAddress(card.key),
         tag: card.key,
       };
+    case "start":
+      return {
+        title: text("waiting.title"),
+        body: text("notice.waiting.start"),
+        url: cardAddress(card.key),
+        tag: "start",
+      };
   }
+}
+
+export function noticeKey(card: WaitingCard): string | undefined {
+  if (card.kind === "start") {
+    return card.before.length === 0 ? `${card.key}:ready` : undefined;
+  }
+  return card.key;
+}
+
+export function arrivals(known: ReadonlySet<string>, cards: readonly WaitingCard[]): WaitingCard[] {
+  const arrived = cards.filter((card) => {
+    const key = noticeKey(card);
+    return key !== undefined && !known.has(key);
+  });
+  const holds = arrived.filter((card) => card.kind !== "start");
+  const start = arrived.find((card) => card.kind === "start");
+  return start === undefined ? holds : [...holds, start];
+}
+
+function noticeKeys(cards: readonly WaitingCard[]): string[] {
+  return cards.flatMap((card) => {
+    const key = noticeKey(card);
+    return key === undefined ? [] : [key];
+  });
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {
   const pending = new Set<Promise<void>>();
-  const known = new Set(options.waiting.cards().map((card) => card.key));
+  const known = new Set(noticeKeys(options.waiting.cards()));
   let closed = false;
 
   const deliver = async (card: WaitingCard): Promise<void> => {
@@ -47,8 +78,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
   };
 
   const unsubscribe = options.waiting.subscribe((cards) => {
-    const present = new Set(cards.map((card) => card.key));
-    const arrived = closed ? [] : cards.filter((card) => !known.has(card.key));
+    const present = new Set(noticeKeys(cards));
+    const arrived = closed ? [] : arrivals(known, cards);
     known.clear();
     for (const key of present) {
       known.add(key);

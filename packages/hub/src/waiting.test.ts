@@ -195,9 +195,9 @@ describe("what waits for the owner, live", () => {
     clock.advance(1000);
     const second = await hold(running, "gh repo delete novan-xu/two --yes");
     const page = await open(running);
-    expect(page.lastCards()?.map((card) => card.command.id)).toEqual([second.id, first.id]);
+    expect(page.lastCards()?.map((card) => (card.kind === "hold" ? card.command.id : card.key))).toEqual([second.id, first.id]);
     const list = WaitingList.parse(await (await owner(running, "/api/waiting", { method: "GET" })).json());
-    expect(list.cards.map((card) => card.command.id)).toEqual([second.id, first.id]);
+    expect(list.cards.map((card) => (card.kind === "hold" ? card.command.id : card.key))).toEqual([second.id, first.id]);
   });
 
   it("runs the command when the owner releases it, and every other page sees the card leave", async () => {
@@ -257,7 +257,7 @@ describe("what waits for the owner, live", () => {
     hub = undefined;
     const second = await start();
     const page = await open(second);
-    expect(page.lastCards()?.map((card) => card.command.id)).toEqual([held.id]);
+    expect(page.lastCards()?.map((card) => (card.kind === "hold" ? card.command.id : card.key))).toEqual([held.id]);
   });
 });
 

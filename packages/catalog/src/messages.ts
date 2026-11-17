@@ -112,6 +112,17 @@ export const messages = {
   "ticket.kind.feature": "功能",
   "ticket.kind.refactor": "重构",
   "ticket.kind.maintenance": "维护",
+  "ticket.reason.joined": "按新的安排并入了工单 {ticket}",
+
+  "chains.list": "等你开始的工单",
+  "chains.now": "可以开始",
+  "chains.later": "之后",
+  "chains.start": "开始",
+  "chains.startAll": "全部开始",
+  "chains.issues": "按顺序要做的事",
+  "notice.waiting.start": "有新的工单可以开始",
+  "notice.ticketBeginFailed": "工单 {ticket} 没能开始，大脑会决定怎么处理",
+  "notice.ticketBeforeStopped": "工单 {before} 停止了，排在它后面的工单 {ticket} 由大脑决定是否继续",
 } as const;
 
 export type Messages = typeof messages;

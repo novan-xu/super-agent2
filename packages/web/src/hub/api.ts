@@ -1,4 +1,5 @@
 import {
+  type ChainStartItem,
   CommandResponse,
   ConversationDetail,
   ConversationList,
@@ -57,6 +58,7 @@ export const hubApi = {
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
   tickets: (scope: "open" | "all" = "open") => call(`/api/tickets?scope=${scope}`, TicketList),
   ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
+  startChains: (chains: readonly ChainStartItem[]) => call("/api/chains/start", TicketList, { chains }),
   pushKey: () => call("/api/push", PushKey),
   subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
   unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),

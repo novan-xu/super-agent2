@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createPushDevice, type Hub, type PushDevice, receivePush, type Target } from "@super-agent2/hub";
+import { TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
 
@@ -85,6 +86,17 @@ export function createHarness(options: HarnessOptions): Harness {
     json(response, 200, { id: record.id, state: record.state, command });
   };
 
+  const moveTicket = (url: URL, response: ServerResponse): void => {
+    const id = Number(url.searchParams.get("id"));
+    const to = TicketState.safeParse(url.searchParams.get("to"));
+    if (!Number.isInteger(id) || id <= 0 || !to.success) {
+      json(response, 400, { error: "give id=<ticket> and to=<state>" });
+      return;
+    }
+    const result = options.hub.tickets.move(id, to.data);
+    json(response, result.ok ? 200 : 409, result.ok ? { id, state: result.ticket.state } : { id, error: result.error, state: result.ticket?.state ?? null });
+  };
+
   const newDevice = async (response: ServerResponse): Promise<void> => {
     const publicKey = options.hub.push?.publicKey;
     if (publicKey === undefined) {
@@ -109,6 +121,10 @@ export function createHarness(options: HarnessOptions): Harness {
       const url = new URL(request.url ?? "/", "http://page-dev");
       if (path === "/__harness/hold") {
         hold(url, response);
+        return true;
+      }
+      if (path === "/__harness/ticket") {
+        moveTicket(url, response);
         return true;
       }
       if (path === "/__harness/device/new") {

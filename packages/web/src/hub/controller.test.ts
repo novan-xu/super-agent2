@@ -1,7 +1,7 @@
 import type { CommandRecord, Conversation, OwnerEntry } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
-import { holdCard, ticket } from "../live/fixtures.js";
+import { holdCard, startCard, ticket } from "../live/fixtures.js";
 import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
 
@@ -30,6 +30,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
     tickets: (scope) => answer(`tickets ${scope ?? "open"}`, { tickets: [] }),
     ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [] }),
+    startChains: (chains) => answer(`start ${chains.map((chain) => `${chain.ticket}:${chain.fingerprint.slice(0, 1)}`).join(" ")}`, { tickets: [] }),
     pushKey: () => answer("pushKey", { publicKey: null }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
@@ -156,6 +157,75 @@ describe("PageController", () => {
       page.store.dispatch({ type: "server", message: { type: "waiting", cards: [] } });
       expect(page.store.getState().waiting.cards).toEqual([]);
       expect(page.store.getState().waiting.known).toBe(true);
+    });
+  });
+
+  describe("starting chains", () => {
+    function shown(hub: HubApi): PageController {
+      const page = controller(hub);
+      const cards = [startCard(1), startCard(2, { before: [{ id: 1, zh: "工作 1" }], startable: false }), startCard(3), holdCard("a1")];
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards } });
+      return page;
+    }
+
+    it("names each chain with the arrangement the page showed", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.startChains(["start:1"])).toBe(true);
+      expect(hub.calls).toEqual(["start 1:1"]);
+      expect(page.store.getState().waiting.cards.map((card) => card.key)).not.toContain("start:1");
+    });
+
+    it("starts everything shown with one request", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.startChains(["start:1", "start:2", "start:3"])).toBe(true);
+      expect(hub.calls).toEqual(["start 1:1 2:2 3:3"]);
+    });
+
+    it("sends one request however many times 开始 is pressed", async () => {
+      let finish: (value: Answer<{ tickets: never[] }>) => void = () => undefined;
+      let requests = 0;
+      const hub = api({
+        startChains: () =>
+          new Promise((resolve) => {
+            requests += 1;
+            finish = resolve;
+          }),
+      });
+      const page = shown(hub);
+      const presses = [page.startChains(["start:1"]), page.startChains(["start:1"]), page.startChains(["start:1", "start:3"])];
+      expect(useOf(page.store.getState().waiting, "start:1").step).toBe("sending");
+      finish({ ok: true, value: { tickets: [] } });
+      expect(await Promise.all(presses)).toEqual([true, false, false]);
+      expect(requests).toBe(1);
+    });
+
+    it("keeps the cards and says why when the hub refuses", async () => {
+      const page = shown(api({ startChains: () => Promise.resolve({ ok: false, error: "conflict" }) }));
+      expect(await page.startChains(["start:1", "start:3"])).toBe(false);
+      expect(useOf(page.store.getState().waiting, "start:1")).toEqual({ step: "idle", verdict: null, failure: "conflict" });
+      expect(useOf(page.store.getState().waiting, "start:3").failure).toBe("conflict");
+      expect(page.store.getState().waiting.cards).toHaveLength(4);
+    });
+
+    it("does not start a hold, or a card that is not there", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.startChains(["hold:a1"])).toBe(false);
+      expect(await page.startChains(["start:9"])).toBe(false);
+      expect(await page.startChains([])).toBe(false);
+      expect(hub.calls).toEqual([]);
+    });
+
+    it("forgets a failure when the card's arrangement changes", () => {
+      const page = controller(api());
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards: [startCard(1)] } });
+      page.store.dispatch({ type: "waiting", action: { type: "failed", key: "start:1", failure: "conflict" } });
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards: [startCard(1)] } });
+      expect(useOf(page.store.getState().waiting, "start:1").failure).toBe("conflict");
+      page.store.dispatch({ type: "server", message: { type: "waiting", cards: [startCard(1, { fingerprint: "e".repeat(64) })] } });
+      expect(useOf(page.store.getState().waiting, "start:1").failure).toBeNull();
     });
   });
 });

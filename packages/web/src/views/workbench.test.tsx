@@ -1,14 +1,14 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { holdCard, ticket } from "../live/fixtures.js";
+import { holdCard, startCard, ticket } from "../live/fixtures.js";
 import { initialTickets, receiveTickets, type TicketsState } from "../live/tickets.js";
 import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiting.js";
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined };
+const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined };
 
-function state(...cards: ReturnType<typeof holdCard>[]): WaitingState {
+function state(...cards: (ReturnType<typeof holdCard> | ReturnType<typeof startCard>)[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
 }
 
@@ -153,13 +153,13 @@ describe("the open tickets in 工作台", () => {
       state(),
       "hidden",
       null,
-      receiveTickets([ticket(1, { title: { en: "Print a greeting", zh: "启动时打印问候" } }), ticket(2, { state: "working", kind: "fix" })]),
+      receiveTickets([ticket(1, { state: "waiting", title: { en: "Print a greeting", zh: "启动时打印问候" } }), ticket(2, { state: "working", kind: "fix" })]),
     );
     expect(html.match(/class="lrow"/g)).toHaveLength(2);
     expect(html).toContain("启动时打印问候");
     expect(html).not.toContain("Print a greeting");
     expect(html).toContain("novan-xu/super-agent-sandbox");
-    expect(text(html)).toContain("|待开始|");
+    expect(text(html)).toContain("|等前序|");
     expect(text(html)).toContain("|功能|");
     expect(text(html)).toContain("|进行中|");
     expect(text(html)).toContain("|修复|");
@@ -168,8 +168,71 @@ describe("the open tickets in 工作台", () => {
   });
 
   it("comes below the 等你 row", () => {
-    const html = render(state(holdCard("a1")), "hidden", null, receiveTickets([ticket(1)]));
+    const html = render(state(holdCard("a1")), "hidden", null, receiveTickets([ticket(1, { state: "working" })]));
     expect(html.indexOf("等你")).toBeLessThan(html.indexOf("工单"));
     expect(html.indexOf("gh repo delete")).toBeLessThan(html.indexOf("工作 1"));
+  });
+});
+
+describe("start cards in 工作台", () => {
+  const pair = ticket(1, {
+    title: { en: "Parse dates and times", zh: "解析日期和时间" },
+    issues: [
+      { repository: "novan-xu/super-agent-sandbox", number: 11, url: "u", title: { en: "Parse dates", zh: "解析日期" }, summary: { en: "a", zh: "甲" } },
+      { repository: "novan-xu/super-agent-sandbox", number: 12, url: "u", title: { en: "Parse times", zh: "解析时间" }, summary: { en: "b", zh: "乙" } },
+    ],
+  });
+
+  it("shows a chain's issues in order by their Chinese titles, and no English", () => {
+    const html = render(state(startCard(1, { ticket: pair })));
+    expect(html).toContain("可以开始");
+    expect(html.indexOf("解析日期")).toBeLessThan(html.indexOf("解析时间"));
+    expect(html).toContain("#11");
+    expect(html).toContain("#12");
+    expect(html).not.toContain("Parse");
+    expect(text(html)).toContain("|开始|");
+  });
+
+  it("counts pending chains with what waits for the owner", () => {
+    const html = render(state(holdCard("a1"), startCard(1), startCard(2, { before: [{ id: 1, zh: "工作 1" }], startable: false })));
+    expect(html).toContain('<span class="count count--hot">3</span>');
+    expect(html).not.toContain("没有等你的事");
+  });
+
+  it("puts the chains that wait under 之后, each under what it waits for, without 开始 when that is not started", () => {
+    const html = render(
+      state(
+        startCard(1, { ticket: { title: { en: "Server", zh: "加接口" }, issues: [] } }),
+        startCard(2, { before: [{ id: 1, zh: "加接口" }], startable: false, ticket: { issues: [] } }),
+      ),
+    );
+    const later = html.slice(html.indexOf("之后"));
+    expect(html.indexOf("可以开始")).toBeLessThan(html.indexOf("之后"));
+    expect(later).toContain("加接口");
+    expect(later.indexOf("加接口")).toBeLessThan(later.indexOf('id="card-start:2"'));
+    expect(text(later)).not.toContain("|开始|");
+  });
+
+  it("offers 开始 under 之后 for a chain after work that has started", () => {
+    const html = render(state(startCard(5, { before: [{ id: 3, zh: "已经在做", state: "working" }] })));
+    expect(html).not.toContain("可以开始");
+    expect(text(html.slice(html.indexOf("之后")))).toContain("|开始|");
+  });
+
+  it("offers 全部开始 only when there is more than one chain to start", () => {
+    expect(render(state(startCard(1)))).not.toContain("全部开始");
+    expect(render(state(startCard(1), startCard(3)))).toContain("全部开始");
+  });
+
+  it("disables 开始 while the start is on its way and tells why it failed", () => {
+    const sending = waitingReducer(state(startCard(1)), { type: "starting", keys: ["start:1"] });
+    expect(render(sending)).toContain("is-busy");
+    const failed = waitingReducer(state(startCard(1)), { type: "failed", key: "start:1", failure: "conflict" });
+    expect(render(failed)).toContain("这一项已经处理过或已有变化，请刷新后再看");
+  });
+
+  it("leaves pending tickets out of the ticket list, since they are start cards", () => {
+    const html = render(state(startCard(1)), "hidden", null, receiveTickets([ticket(1), ticket(2, { state: "working" })]));
+    expect(html.match(/class="lrow"/g)).toHaveLength(1);
   });
 });

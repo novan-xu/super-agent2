@@ -1,4 +1,4 @@
-import type { CommandRecord, Ticket, TicketMove } from "@super-agent2/protocol";
+import type { CommandRecord, Ticket, TicketMove, TicketWait } from "@super-agent2/protocol";
 
 export const reportLimit = 40_000;
 
@@ -39,6 +39,11 @@ function chosen(value: string | number | null): string {
   return value === null ? "not set" : String(value);
 }
 
+function waitText(wait: TicketWait): string {
+  const what = `ticket ${wait.ticket}${wait.deployment ? " to be merged and deployed" : " to be merged"}`;
+  return wait.waived ? `${what} (waived)` : what;
+}
+
 export function ticketLine(ticket: Ticket): string {
   const where = ticket.repository === null ? "no repository" : ticket.repository;
   const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
@@ -62,8 +67,14 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}`,
     `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}`,
     `Branch: ${chosen(ticket.branch)}; pull request: ${ticket.pullRequest === null ? "none" : `#${ticket.pullRequest}`}; guided round: ${ticket.round}`,
-    `Waits for: ${ticket.waitsFor.length === 0 ? "nothing" : ticket.waitsFor.map((id) => `ticket ${id}`).join(", ")}`,
+    `Waits for: ${ticket.waits.length === 0 ? "nothing" : ticket.waits.map(waitText).join(", ")}`,
   );
+  if (ticket.deployedAt !== null) {
+    lines.push(`Deployed: reported at ${new Date(ticket.deployedAt).toISOString()}`);
+  }
+  if (ticket.beginFailure !== null) {
+    lines.push(`Its work could not begin: ${ticket.beginFailure}`);
+  }
   if (ticket.stopReason !== null) {
     lines.push(`Stopped because: ${ticket.stopReason.en}`);
   }
