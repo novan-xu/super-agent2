@@ -111,4 +111,17 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        vapid_key TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];

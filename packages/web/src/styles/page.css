@@ -71,3 +71,14 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .sysline-reason { min-width: 0; overflow-wrap: anywhere; }
 .sysline { align-items: flex-start; }
 .sysline .od-icon { margin-top: 4px; }
+
+.wcard-kind { flex-wrap: wrap; }
+.wcard--focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.raw { margin: 0; padding: var(--space-3) var(--space-4); max-height: 60dvh; overflow: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--sunk); color: var(--fg); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.raw-hidden { padding: 0 3px; border-radius: 3px; background: var(--warn-soft); color: var(--warn); font-size: var(--text-xs); }
+.raw-folder { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; color: var(--fg-2); font-size: var(--text-sm); }
+.raw-folder .od-icon { flex: none; margin-top: 3px; color: var(--muted); }
+.raw-folder .mono { min-width: 0; overflow-wrap: anywhere; }
+.push-note { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.push-note .od-icon { flex: none; color: var(--warn); }
+.section-head .push-note { text-align: right; }

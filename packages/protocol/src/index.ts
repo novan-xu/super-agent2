@@ -7,3 +7,4 @@ export * from "./holds.js";
 export * from "./hub.js";
 export * from "./page.js";
 export * from "./version.js";
+export * from "./waiting.js";

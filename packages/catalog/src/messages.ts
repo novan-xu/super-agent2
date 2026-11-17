@@ -75,6 +75,24 @@ export const messages = {
   "day.date": "{month}月{day}日",
   "day.dateWithYear": "{year}年{month}月{day}日",
   "failure.network": "没连上 hub，请再试一次",
+
+  "waiting.title": "等你",
+  "waiting.empty": "没有等你的事",
+  "waiting.list": "等你的事",
+  "hold.confirm": "确认",
+  "hold.refuse": "拒绝",
+  "hold.cancel": "取消",
+  "hold.command": "要执行的命令",
+  "hold.target": "执行目标",
+  "hold.account": "GitHub 账号",
+  "hold.folder": "文件夹",
+  "hold.hidden": "不可见字符",
+
+  "push.label": "通知",
+  "push.blocked": "浏览器拒绝了通知，请在系统设置里允许后再打开",
+  "push.install": "先把本页添加到主屏幕，才能收到通知",
+
+  "notice.waiting.hold": "有一条命令等你确认",
 } as const;
 
 export type Messages = typeof messages;

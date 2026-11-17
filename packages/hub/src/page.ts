@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pageAssetsPath, pageRoute } from "@super-agent2/protocol";
+import { manifestPath, pageAssetsPath, pageIconsPath, pageRoute, serviceWorkerPath } from "@super-agent2/protocol";
+import { webManifest } from "./manifest.js";
 
 export interface PageFile {
   readonly body: Buffer;
@@ -26,6 +27,8 @@ const types: Readonly<Record<string, string>> = {
   map: "application/json; charset=utf-8",
 };
 
+const iconExtensions: ReadonlySet<string> = new Set(["png", "svg", "ico", "webp"]);
+
 export const pageSecurityHeaders: Readonly<Record<string, string>> = {
   "content-security-policy":
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -48,16 +51,24 @@ export function pageFiles(directory: string): PageFiles {
       const body = await readOrNothing(join(directory, "index.html"));
       return body === undefined ? undefined : { body, type: "text/html; charset=utf-8", immutable: false };
     }
-    if (!path.startsWith(pageAssetsPath)) {
+    if (path === manifestPath) {
+      return { body: Buffer.from(webManifest()), type: "application/manifest+json; charset=utf-8", immutable: false };
+    }
+    if (path === serviceWorkerPath) {
+      const body = await readOrNothing(join(directory, "sw.js"));
+      return body === undefined ? undefined : { body, type: types["js"] ?? "text/javascript", immutable: false };
+    }
+    const folder = path.startsWith(pageAssetsPath) ? "assets" : path.startsWith(pageIconsPath) ? "icons" : undefined;
+    if (folder === undefined) {
       return undefined;
     }
-    const name = path.slice(pageAssetsPath.length);
+    const name = path.slice(folder === "assets" ? pageAssetsPath.length : pageIconsPath.length);
     const extension = name.split(".").pop() ?? "";
     const type = types[extension];
-    if (!assetName.test(name) || type === undefined) {
+    if (!assetName.test(name) || type === undefined || (folder === "icons" && !iconExtensions.has(extension))) {
       return undefined;
     }
-    const body = await readOrNothing(join(directory, "assets", name));
-    return body === undefined ? undefined : { body, type, immutable: true };
+    const body = await readOrNothing(join(directory, folder, name));
+    return body === undefined ? undefined : { body, type, immutable: folder === "assets" };
   };
 }

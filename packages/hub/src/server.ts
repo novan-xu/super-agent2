@@ -20,12 +20,18 @@ import {
   type HoldList,
   type Identity,
   type OutputResponse,
+  PushRemoval,
+  type PushKey,
+  type PushState,
+  PushSubscriptionRequest,
   type Refusal,
   type ServerMessage,
   type Session,
+  type WaitingList,
   protocolVersion,
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { z } from "zod";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
 import type { BrainTokenCheck } from "./brain-token.js";
 import type { CommandService } from "./commands.js";
@@ -33,7 +39,9 @@ import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
+import type { PushService } from "./push-service.js";
 import type { ToolServer } from "./tools.js";
+import type { Waiting } from "./waiting.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
@@ -41,6 +49,9 @@ export const socketPath = "/ws";
 export const commandsPath = "/api/commands";
 export const holdsPath = "/api/holds";
 export const conversationsPath = "/api/conversations";
+export const waitingPath = "/api/waiting";
+export const pushPath = "/api/push";
+export const pushSubscriptionPath = "/api/push/subscription";
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
@@ -63,6 +74,8 @@ export interface HubServerOptions {
   readonly tools?: ToolServer;
   readonly brainToken?: BrainTokenCheck;
   readonly page?: PageFiles;
+  readonly waiting?: Waiting;
+  readonly push?: PushService;
 }
 
 export interface HubServer {
@@ -91,7 +104,10 @@ type Body =
   | ConversationList
   | ConversationResponse
   | ConversationDetail
-  | EntryResponse;
+  | EntryResponse
+  | WaitingList
+  | PushKey
+  | PushState;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -159,6 +175,18 @@ function parseDecision(text: string | undefined): HoldDecision | undefined {
   }
   try {
     const parsed = HoldDecision.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseJson<Schema extends z.ZodType>(text: string | undefined, schema: Schema): z.output<Schema> | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = schema.safeParse(JSON.parse(text));
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
@@ -302,6 +330,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { holds });
       return;
     }
+    if (path === waitingPath && method === "GET" && options.waiting !== undefined) {
+      sendJson(response, 200, { cards: options.waiting.cards() });
+      return;
+    }
+    if (path.startsWith(pushPath) && (await servePush(request, response, path, method))) {
+      return;
+    }
     if (path.startsWith(commandsPath) && (await serveCommands(request, response, path, method))) {
       return;
     }
@@ -357,12 +392,62 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, answerStatus[outcome.error], { error: outcome.error });
       return;
     }
+    options.waiting?.refresh();
     const command = options.commands.get(id);
     if (command === undefined) {
       sendJson(response, 404, { error: "not_found" });
       return;
     }
     sendJson(response, 202, { command });
+  };
+
+  const servePush = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
+    if (path === pushPath && method === "GET") {
+      sendJson(response, 200, { publicKey: options.push?.publicKey ?? null });
+      return true;
+    }
+    if (path !== pushSubscriptionPath || (method !== "POST" && method !== "DELETE")) {
+      return false;
+    }
+    const push = options.push;
+    if (push === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return true;
+    }
+    if (!isSameOrigin(request)) {
+      request.resume();
+      sendJson(response, 403, { error: "forbidden" });
+      return true;
+    }
+    if (!isJson(request)) {
+      request.resume();
+      sendJson(response, 415, { error: "unsupported_media_type" });
+      return true;
+    }
+    const body = await readBody(request);
+    if (method === "DELETE") {
+      const removal = parseJson(body, PushRemoval);
+      if (removal === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return true;
+      }
+      push.unsubscribe(removal.endpoint);
+      sendJson(response, 200, { subscribed: false });
+      return true;
+    }
+    const subscription = parseJson(body, PushSubscriptionRequest);
+    if (subscription === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return true;
+    }
+    const outcome = push.subscribe(subscription, new URL(String(request.headers.origin)).origin);
+    if (outcome === "saved") {
+      sendJson(response, 200, { subscribed: true });
+    } else {
+      sendJson(response, outcome === "invalid" ? 400 : 409, { error: outcome === "invalid" ? "bad_request" : "conflict" });
+    }
+    return true;
   };
 
   const serveCommands = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
@@ -532,9 +617,12 @@ export function createHubServer(options: HubServerOptions): HubServer {
           send(event);
         }
       }) ?? (() => undefined);
+    const unsubscribeWaiting =
+      options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
     client.on("close", () => {
       unsubscribe();
       unsubscribeConversations();
+      unsubscribeWaiting();
     });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
@@ -565,6 +653,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
     });
     send({ type: "hello", protocol: protocolVersion, identity });
+    if (options.waiting !== undefined) {
+      send({ type: "waiting", cards: options.waiting.cards() });
+    }
   };
 
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {

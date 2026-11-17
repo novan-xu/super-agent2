@@ -47,7 +47,12 @@ export interface ShellProps {
   readonly actions?: ReactNode;
   readonly fill: boolean;
   readonly toast: string | null;
+  readonly waiting: number;
   readonly children?: ReactNode;
+}
+
+export function countOf(view: PageView, waiting: number): number {
+  return view === "workbench" ? waiting : 0;
 }
 
 export function Shell(props: ShellProps) {
@@ -57,7 +62,7 @@ export function Shell(props: ShellProps) {
       key={destination.view}
       className={className}
       href={props.hrefOf(destination.view)}
-      aria-label={destination.label}
+      aria-label={countOf(destination.view, props.waiting) > 0 ? `${destination.label} ${countOf(destination.view, props.waiting)}` : destination.label}
       aria-current={current === destination.view ? "page" : undefined}
       onClick={(event) => followLink(event, () => props.navigate(props.destinationOf(destination.view)))}
     >
@@ -72,6 +77,7 @@ export function Shell(props: ShellProps) {
         <>
           <Icon name={destination.icon} />
           <span className="nav-label">{destination.label}</span>
+          {countOf(destination.view, props.waiting) > 0 ? <span className="count count--hot">{countOf(destination.view, props.waiting)}</span> : null}
         </>,
       )}
     </li>
@@ -123,6 +129,7 @@ export function Shell(props: ShellProps) {
                   <Icon name={destination.icon} />
                 </span>
                 <span>{destination.label}</span>
+                {countOf(destination.view, props.waiting) > 0 ? <span className="tab-badge">{countOf(destination.view, props.waiting)}</span> : null}
               </>,
             ),
           )}

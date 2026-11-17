@@ -2,6 +2,7 @@ import type { Conversation, ConversationDetail, ConversationEntry, ConversationL
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { mergeConversations, upsertConversation } from "./list.js";
+import { initialWaiting, type WaitingAction, type WaitingState, waitingReducer } from "./waiting.js";
 
 export interface PageState {
   readonly status: SocketStatus;
@@ -9,6 +10,7 @@ export interface PageState {
   readonly listed: boolean;
   readonly list: readonly Conversation[];
   readonly current: ConversationState | null;
+  readonly waiting: WaitingState;
 }
 
 export type PageAction =
@@ -18,9 +20,10 @@ export type PageAction =
   | { readonly type: "detail"; readonly detail: ConversationDetail }
   | { readonly type: "open"; readonly conversation: string | null }
   | { readonly type: "created"; readonly conversation: Conversation }
-  | { readonly type: "own"; readonly entry: ConversationEntry };
+  | { readonly type: "own"; readonly entry: ConversationEntry }
+  | { readonly type: "waiting"; readonly action: WaitingAction };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null };
+export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting };
 
 function withCurrent(state: PageState, current: ConversationState | null): PageState {
   return current === state.current ? state : { ...state, current };
@@ -46,8 +49,16 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return { ...state, list: upsertConversation(state.list, action.conversation) };
     case "own":
       return withCurrent(state, state.current === null ? null : receiveOwn(state.current, action.entry));
+    case "waiting": {
+      const waiting = waitingReducer(state.waiting, action.action);
+      return waiting === state.waiting ? state : { ...state, waiting };
+    }
     case "server": {
       const { message } = action;
+      if (message.type === "waiting") {
+        const waiting = waitingReducer(state.waiting, { type: "snapshot", cards: message.cards });
+        return waiting === state.waiting ? state : { ...state, waiting };
+      }
       if (message.type === "brain") {
         return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };
       }

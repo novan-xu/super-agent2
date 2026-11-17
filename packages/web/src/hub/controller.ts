@@ -1,5 +1,6 @@
 import { resumeAfter } from "../live/conversation.js";
 import { createPageStore, type PageStore } from "../live/page.js";
+import { canAnswer, cardOf, type Verdict } from "../live/waiting.js";
 import type { Failure, HubApi } from "./api.js";
 import { HubSocket, type HubSocketOptions } from "./socket.js";
 
@@ -93,6 +94,31 @@ export class PageController {
     if (!answer.ok) {
       this.options.onFailure(answer.error);
     }
+  }
+
+  arm(key: string): void {
+    this.store.dispatch({ type: "waiting", action: { type: "arm", key } });
+  }
+
+  disarm(key: string): void {
+    this.store.dispatch({ type: "waiting", action: { type: "disarm", key } });
+  }
+
+  async answer(key: string, verdict: Verdict): Promise<boolean> {
+    const waiting = this.store.getState().waiting;
+    const card = cardOf(waiting, key);
+    if (card === undefined || card.kind !== "hold" || !canAnswer(waiting, key, verdict)) {
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "sending", key, verdict } });
+    const send = verdict === "release" ? this.options.api.release : this.options.api.refuse;
+    const answer = await send(card.command.id, card.hold.fingerprint);
+    if (!answer.ok) {
+      this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "answered", key } });
+    return true;
   }
 
   private async readDetail(conversation: string): Promise<void> {

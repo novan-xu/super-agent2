@@ -1,8 +1,12 @@
 import {
+  CommandResponse,
   ConversationDetail,
   ConversationList,
   ConversationResponse,
   EntryResponse,
+  PushKey,
+  type PushSubscriptionRequest,
+  PushState,
   Refusal,
 } from "@super-agent2/protocol";
 import type { z } from "zod";
@@ -11,14 +15,14 @@ export type Failure = Refusal["error"] | "network";
 
 export type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: Failure };
 
-async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<Answer<T>> {
+async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "DELETE" = "POST"): Promise<Answer<T>> {
   let response: Response;
   try {
     response = await fetch(
       path,
       body === undefined
         ? { headers: { accept: "application/json" }, cache: "no-store" }
-        : { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) },
+        : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) },
     );
   } catch {
     return { ok: false, error: "network" };
@@ -37,6 +41,8 @@ async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown): Prom
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false, error: "network" };
 }
 
+const commandPath = (id: string) => `/api/commands/${encodeURIComponent(id)}`;
+
 const conversationPath = (id: string) => `/api/conversations/${encodeURIComponent(id)}`;
 
 export const hubApi = {
@@ -45,6 +51,11 @@ export const hubApi = {
   create: () => call("/api/conversations", ConversationResponse, {}),
   send: (id: string, text: string) => call(`${conversationPath(id)}/messages`, EntryResponse, { text }),
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
+  release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
+  refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
+  pushKey: () => call("/api/push", PushKey),
+  subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
+  unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),
 };
 
 export type HubApi = typeof hubApi;

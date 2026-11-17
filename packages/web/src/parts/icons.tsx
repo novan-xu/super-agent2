@@ -34,6 +34,19 @@ const shapes = {
       <path d="M12 10v4M12 17h.01" />
     </>
   ),
+  terminal: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+      <path d="M7 10l3 2.5L7 15M12.5 15H17" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8.5" r="3.5" />
+      <path d="M5 20c.7-3.7 3.4-5.5 7-5.5s6.3 1.8 7 5.5" />
+    </>
+  ),
+  folder: <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   swap: <path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5" />,
 } satisfies Record<string, ReactNode>;
 
