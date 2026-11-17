@@ -102,6 +102,12 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
         {ticket.difficulty === null ? null : <span className="chip">{text(`ticket.difficulty.${ticket.difficulty}`)}</span>}
         {ticket.platform === null ? null : <span className="chip">{text(`ticket.platform.${ticket.platform}`)}</span>}
       </div>
+      {ticket.issues.length > 0 ? null : (
+        <>
+          <p className="card-title">{chineseOf(ticket.title)}</p>
+          <p className="chain-reason">{chineseOf(ticket.summary)}</p>
+        </>
+      )}
       {ticket.difficultyReason === null ? null : <p className="chain-reason">{chineseOf(ticket.difficultyReason)}</p>}
       <ol className="chain-issues" aria-label={text("chains.issues")}>
         {ticket.issues.map((issue) => (

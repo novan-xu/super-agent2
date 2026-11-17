@@ -25,7 +25,7 @@ export interface RunnerLink {
   closed(): void;
 }
 
-export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.sync" | "work.message" | "work.stop" }>;
+export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" }>;
 
 export interface WorkLink {
   hello(machine: string, works: readonly WorkHeld[]): void;

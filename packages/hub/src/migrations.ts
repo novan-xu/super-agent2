@@ -280,4 +280,22 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX ticket_work_events_by_ticket ON ticket_work_events (ticket_id, id);
     `,
   },
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE ticket_writing (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets (id),
+        task TEXT NOT NULL,
+        materials TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE ticket_files (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        data BLOB NOT NULL,
+        PRIMARY KEY (ticket_id, name)
+      ) STRICT;
+    `,
+  },
 ];

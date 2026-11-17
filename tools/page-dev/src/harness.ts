@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createPushDevice, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
-import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
+import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
 
@@ -127,10 +127,15 @@ export function createHarness(options: HarnessOptions): Harness {
     json(response, result.ok ? 200 : 409, result.ok ? { id, state: result.ticket.state } : { id, error: result.error, state: result.ticket?.state ?? null });
   };
 
-  const callTool = async (name: string, args: Record<string, unknown>): Promise<{ readonly text: string; readonly isError: boolean }> => {
+  const callTool = async (name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly text: string; readonly isError: boolean }> => {
     const answer = await fetch(`${options.hubUrl}${brainToolsPath}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${options.brainToken()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: {
+        authorization: `Bearer ${options.brainToken()}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     });
     const body = (await answer.json()) as { result?: { content?: { text?: string }[]; isError?: boolean } };
@@ -214,6 +219,38 @@ export function createHarness(options: HarnessOptions): Harness {
     json(response, started.ok ? 200 : 409, { ticket, started: started.ok ? started.tickets.map((entry) => ({ id: entry.id, state: entry.state })) : started.error, steps });
   };
 
+  const openWriting = async (url: URL, response: ServerResponse): Promise<void> => {
+    const task = url.searchParams.get("task");
+    const material = url.searchParams.get("text");
+    const conversation = url.searchParams.get("conversation") ?? undefined;
+    if (task === null) {
+      json(response, 400, { error: "give task= (in English) and optionally text= (the material, pasted) and conversation=<id>" });
+      return;
+    }
+    const steps: { readonly step: string; readonly text: string }[] = [];
+    const opened = await callTool(
+      "open_writing_ticket",
+      {
+        title: { en: "A test piece of writing", zh: "测试写作" },
+        summary: { en: "A tiny writing task for testing", zh: "一个很小的写作测试任务" },
+        task,
+        ...(material === null ? {} : { material: [{ name: "material.txt", source: "pasted by the owner in the conversation", text: material }] }),
+      },
+      conversation,
+    );
+    steps.push({ step: "open_writing_ticket", text: opened.text });
+    const ticket = opened.isError ? undefined : /writing ticket (\d+)/.exec(opened.text)?.[1];
+    if (ticket === undefined) {
+      json(response, 409, { error: "open_writing_ticket failed", steps });
+      return;
+    }
+    const stated = await callTool("choose_defaults", {
+      chains: [{ ticket: Number(ticket), kind: "writing", reason: { en: "A tiny writing task", zh: "很小的写作任务" }, platform: "any" }],
+    });
+    steps.push({ step: "choose_defaults", text: stated.text });
+    json(response, stated.isError ? 409 : 200, { ticket: Number(ticket), steps });
+  };
+
   const forceAllowance = (url: URL, response: ServerResponse): void => {
     for (const program of allowancePrograms) {
       const given = url.searchParams.get(program);
@@ -264,6 +301,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/work") {
         await startWork(url, response);
+        return true;
+      }
+      if (path === "/__harness/writing") {
+        await openWriting(url, response);
         return true;
       }
       if (path === "/__harness/allowance") {

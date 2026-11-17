@@ -110,6 +110,22 @@ describe("tickets", () => {
     expect(tickets.move(ticket.id, "delivered").ok).toBe(true);
   });
 
+  it("keeps a writing ticket's task and material, and refuses them on a ticket for code", () => {
+    const database = open();
+    const tickets = createTicketService({ database, clock });
+    const writing = { task: "Translate the notice.", materials: [{ name: "notice.txt", source: "pasted", text: "你好" }, { name: "terms", source: "https://example.com", text: null }] };
+    const ticket = tickets.open(request(1, { kind: "writing", repository: null, issues: [], writing }));
+    expect(tickets.writing(ticket.id)).toEqual(writing);
+    expect(tickets.writing(99)).toBeUndefined();
+    expect(() => tickets.open(request(2, { writing }))).toThrow(/Only a writing ticket/);
+    expect(() => tickets.open(request(3, { kind: "writing", repository: null, issues: [], writing: { task: " ", materials: [] } }))).toThrow(/needs its task/);
+    expect(() => tickets.open(request(4, { kind: "writing", repository: null, issues: [], writing: { task: "x", materials: [{ name: "../x", source: "s", text: null }] } }))).toThrow();
+    const reopened = createTicketService({ database, clock });
+    expect(reopened.writing(ticket.id)).toEqual(writing);
+    reopened.change((writes) => writes.setReport(ticket.id, { en: "Done", zh: "完成" }));
+    expect(reopened.get(ticket.id)?.report).toEqual({ en: "Done", zh: "完成" });
+  });
+
   it("moves only along the table, and records each move with its time and reason", () => {
     const tickets = createTicketService({ database: open(), clock });
     const ticket = tickets.open(request());

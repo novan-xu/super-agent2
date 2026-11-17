@@ -175,6 +175,10 @@ export function chosenRun(choice: StartChoice | undefined): ChosenRun | undefine
 
 const BeginRow = z.object({ ticket_id: z.number().int() });
 
+function writingEngineForCode(ticket: Ticket, owner: OwnerChoice): boolean {
+  return ticket.kind !== "writing" && owner.engine === "antigravity";
+}
+
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -438,7 +442,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(ticket.ownerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines())) {
+    if (ownerGivesUnoffered(owner, choice, defaults.machines()) || writingEngineForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     try {
@@ -471,7 +475,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(noOwnerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines())) {
+    if (ownerGivesUnoffered(owner, choice, defaults.machines()) || writingEngineForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     const run = chosenRun(choice);
@@ -542,7 +546,7 @@ export function createChains(options: ChainsOptions): Chains {
         }
         difficulty = chainDifficulty(given.map((entry) => entry.difficulty));
       } else {
-        difficulty = spec.difficulty ?? null;
+        difficulty = spec.difficulty ?? (spec.kind === "writing" ? "standard" : null);
       }
       if (difficulty === null) {
         return refuse(`ticket ${spec.ticket} needs a difficulty`);

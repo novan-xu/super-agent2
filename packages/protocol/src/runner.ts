@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AllowanceReading } from "./allowance.js";
 import { OutputStream, TargetName } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
-import { MessageWork, RunnerWorkEvent, StartWork, StopWork, SyncWork, WorkHeld } from "./work.js";
+import { MessageWork, RunnerWorkEvent, StartWork, StartWriting, StopWork, SyncWork, WorkHeld } from "./work.js";
 
 export const runnerLinkPath = "/runner/link";
 export const runnerTokenHeader = "x-runner-token";
@@ -114,7 +114,7 @@ export const StopCommand = z.object({
 });
 export type StopCommand = z.infer<typeof StopCommand>;
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RunCommand, StopCommand, StartWork, SyncWork, MessageWork, StopWork]);
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RunCommand, StopCommand, StartWork, StartWriting, SyncWork, MessageWork, StopWork]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {

@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, SteerResult } from "@super-agent2/programs";
-import type { RunnerToHub, RunnerWorkEvent, WorkEngine, WorkEvent, WorkTask } from "@super-agent2/protocol";
+import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, SteerResult, WorkerAdapter } from "@super-agent2/programs";
+import type { RunnerToHub, RunnerWorkEvent, WorkEngine, WorkEvent, WorkTask, WritingTask } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createGit, type ProcessRunner, runProcess } from "./git.js";
 import type { PullRequestState } from "./handback.js";
 import { tokenVariable } from "./identity.js";
 import { workPaths } from "./workplace.js";
 import { createWorks, maximumCorrections, type Works, type WorksOptions } from "./works.js";
+import { writingPaths } from "./writing.js";
 
 class Recorder<T> {
   readonly items: T[] = [];
@@ -97,8 +98,8 @@ class FakePrograms {
   readonly changed = new Recorder<FakeHandle>();
   steer: SteerResult = "steered";
 
-  readonly factory = (engine: WorkEngine, settings: ProgramSettings): ProgramAdapter => ({
-    provider: engine === "codex" ? "gpt" : engine === "claude" ? "claude" : "deepseek",
+  readonly factory = (engine: WorkEngine, settings: ProgramSettings): WorkerAdapter => ({
+    provider: engine === "codex" ? "gpt" : engine === "claude" ? "claude" : engine === "dsh" ? "deepseek" : "antigravity",
     model: settings.model,
     effort: settings.effort,
     open: (options, listener) => {
@@ -139,6 +140,26 @@ let sent: Recorder<RunnerToHub>;
 let pulls: Map<number, PullRequestState>;
 let ghCalls: string[][];
 let opened: Works[];
+
+const inheritedCredentials: Record<string, string> = {
+  GH_TOKEN: "inherited-gh-token",
+  GITHUB_TOKEN: "inherited-github-token",
+  GH_ENTERPRISE_TOKEN: "inherited-gh-enterprise-token",
+  GITHUB_ENTERPRISE_TOKEN: "inherited-github-enterprise-token",
+  SUPERAGENT2_GITHUB_AUTH: "inherited-auth",
+  RUNNER_TOKEN: "inherited-runner-token",
+  ACCESS_CLIENT_ID: "inherited-client-id",
+  ACCESS_CLIENT_SECRET: "inherited-client-secret",
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "credential.helper",
+  GIT_CONFIG_VALUE_0: "inherited-helper",
+};
+
+function carried(environment: Readonly<Record<string, string | undefined>>): string[] {
+  return Object.entries(environment)
+    .filter(([name, value]) => inheritedCredentials[name] === value)
+    .map(([name]) => name);
+}
 
 const git = (cwd: string) => createGit(runProcess, { ...(process.env as Record<string, string>), ...identity });
 
@@ -181,7 +202,7 @@ afterEach(async () => {
 function start(overrides: Partial<WorksOptions> = {}): Works {
   const works = createWorks({
     home,
-    environment: { ...process.env, ...identity },
+    environment: { ...process.env, ...inheritedCredentials, ...identity },
     send: (message) => sent.push(message),
     now: () => 1_000,
     adapters: programs.factory,
@@ -227,9 +248,9 @@ function kinds(ticket: number, attempt = 1): string[] {
 
 function ended(ticket: number, attempt = 1): Promise<WorkEvent> {
   return sent
-    .until(() => events(ticket, attempt).some((message) => ["finished", "failed", "stopped"].includes(message.event.kind)))
+    .until(() => events(ticket, attempt).some((message) => ["finished", "delivered", "failed", "stopped"].includes(message.event.kind)))
     .then(() => {
-      const last = events(ticket, attempt).find((message) => ["finished", "failed", "stopped"].includes(message.event.kind));
+      const last = events(ticket, attempt).find((message) => ["finished", "delivered", "failed", "stopped"].includes(message.event.kind));
       if (last === undefined) {
         throw new Error("no ending");
       }
@@ -253,7 +274,12 @@ describe("a worker on the runner", () => {
     expect(handle.options).toEqual({ session: null, tools: null, workspace: paths.worktree });
     expect(handle.settings).toMatchObject({ program: "/programs/codex", model: "gpt-6-luna", effort: "low", client: "super-agent2-worker", processTree: true });
     expect(handle.settings.environment["GH_TOKEN"]).toBe(token);
+    expect(handle.settings.environment["GITHUB_TOKEN"]).toBe(token);
     expect(handle.settings.environment[tokenVariable]).toBe(token);
+    expect(carried(handle.settings.environment)).toEqual([]);
+    for (const name of ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "RUNNER_TOKEN", "ACCESS_CLIENT_ID", "ACCESS_CLIENT_SECRET", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]) {
+      expect(handle.settings.environment[name], name).toBeUndefined();
+    }
     expect(handle.settings.environment["GIT_CONFIG_PARAMETERS"]).toContain("credential.https://github.com.helper=");
     const prompt = handle.prompts[0] ?? "";
     expect(prompt).toContain("# Guidance for a worker");
@@ -412,5 +438,159 @@ describe("a worker on the runner", () => {
     expect(last).toMatchObject({ kind: "failed", failure: "prepare" });
     expect(programs.handles).toHaveLength(0);
     expect(ghCalls).toEqual([["api", "user"]]);
+  });
+});
+
+function writingTask(ticket: number, overrides: Partial<WritingTask> = {}): WritingTask {
+  return {
+    ticket,
+    attempt: 1,
+    title: "Translate the notice",
+    task: "Translate the notice in input/notice.txt into English.",
+    materials: [
+      { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+      { name: "glossary", source: "https://example.com/glossary", text: null },
+    ],
+    engine: "antigravity",
+    model: "gemini-3.8-flash",
+    effort: "high",
+    session: null,
+    note: null,
+    ...overrides,
+  };
+}
+
+function writeOutput(ticket: number, files: Readonly<Record<string, string | Buffer>>, handback: unknown): void {
+  const paths = writingPaths(home, ticket);
+  mkdirSync(join(paths.worktree, "output"), { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    writeFileSync(join(paths.worktree, "output", name), content);
+  }
+  writeFileSync(paths.handback, typeof handback === "string" ? handback : JSON.stringify(handback));
+}
+
+const summary = { en: "Translated the notice", zh: "翻译了通知" };
+
+describe("a writing worker on the runner", () => {
+  it("makes a scratch folder with the material, briefs the program without any repository, and delivers the text and files", async () => {
+    const works = start();
+    works.receive({ type: "work.write", task: writingTask(20) });
+    const handle = await programs.prompted(1);
+    const paths = writingPaths(home, 20);
+    expect(handle.engine).toBe("antigravity");
+    expect(handle.options).toEqual({ session: null, tools: null, workspace: paths.worktree });
+    expect(handle.settings).toMatchObject({ program: "/programs/agy", model: "gemini-3.8-flash", effort: "high", processTree: true });
+    expect(carried(handle.settings.environment)).toEqual([]);
+    for (const name of Object.keys(inheritedCredentials)) {
+      expect(handle.settings.environment[name], name).toBeUndefined();
+    }
+    expect(handle.settings.environment[tokenVariable]).toBeUndefined();
+    expect(readFileSync(join(paths.worktree, "input", "notice.txt"), "utf8")).toBe("你好，世界。");
+    expect(existsSync(join(paths.worktree, "input", "glossary"))).toBe(false);
+    expect(existsSync(join(paths.worktree, "output"))).toBe(true);
+    const prompt = handle.prompts[0] ?? "";
+    expect(prompt).toContain("# Guidance for a writing worker");
+    expect(prompt).toContain("Translate the notice in input/notice.txt into English.");
+    expect(prompt).toContain("- input/notice.txt, from pasted by the owner in the conversation");
+    expect(prompt).toContain("- Not a file: get it yourself from https://example.com/glossary (named glossary)");
+    expect(prompt).toContain(paths.handback);
+    expect(prompt).toContain(join(paths.worktree, "output"));
+    expect(works.busy()).toBe(1);
+    handle.emit({ type: "session", session: "agy-conversation-20" });
+    handle.emit({ type: "model", model: "gemini-3.8-flash", effort: null });
+    writeOutput(20, { "result.md": "Hello, world.\n", "notes.pdf": Buffer.from([1, 2, 3, 4]) }, { text: "result.md", files: ["notes.pdf"], summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    const last = await ended(20);
+    expect(last).toEqual({
+      kind: "delivered",
+      text: "Hello, world.\n",
+      files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]).toString("base64") }],
+      report: summary,
+    });
+    expect(kinds(20)).toEqual(["phase:preparing", "phase:prepared", "phase:started", "phase:turn", "session", "ran", "phase:checking", "delivered"]);
+    expect(handle.closed).toBe(true);
+    expect(works.busy()).toBe(0);
+    expect(ghCalls).toEqual([]);
+    expect(existsSync(workPaths(home, repository, 20).worktree)).toBe(false);
+  });
+
+  it("delivers only files when there is no text, and tells the worker what is wrong with a hand-back until it is right", async () => {
+    const works = start();
+    works.receive({ type: "work.write", task: writingTask(21) });
+    let handle = await programs.prompted(1);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    handle = await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain("You have not handed back");
+    writeOutput(21, {}, "not json");
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    handle = await programs.prompted(3, handle);
+    expect(handle.prompts[2]).toContain("is not valid JSON");
+    expect(maximumCorrections).toBe(2);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    const last = await ended(21);
+    expect(last).toMatchObject({ kind: "failed", failure: "no-pull-request" });
+  });
+
+  it("refuses a hand-back that names a missing file, a path outside the output folder, an empty text or an oversized file", async () => {
+    const works = start();
+    works.receive({ type: "work.write", task: writingTask(22) });
+    const handle = await programs.prompted(1);
+    const paths = writingPaths(home, 22);
+    writeOutput(22, {}, { files: ["missing.docx"], summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain('names "missing.docx", but there is no such file');
+    writeOutput(22, {}, { files: ["../handback.json"], summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(3, handle);
+    expect(handle.prompts[2]).toContain("is not a file name");
+    expect(existsSync(paths.handback)).toBe(true);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect((await ended(22)).kind).toBe("failed");
+  });
+
+  it("checks sizes and text before delivering", async () => {
+    const works = start();
+    works.receive({ type: "work.write", task: writingTask(23) });
+    const handle = await programs.prompted(1);
+    writeOutput(23, { "empty.txt": "  \n", "big.bin": Buffer.alloc(4 * 1024 * 1024 + 1) }, { text: "empty.txt", summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain('"empty.txt" is empty');
+    writeOutput(23, {}, { files: ["big.bin"], summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(3, handle);
+    expect(handle.prompts[2]).toContain("a delivered file can be at most 4 MB");
+  });
+
+  it("stops and removes the scratch folder without touching Git, and lists the work after a restart", async () => {
+    const first = start();
+    first.receive({ type: "work.write", task: writingTask(24) });
+    const before = await programs.prompted(1);
+    before.emit({ type: "session", session: "agy-conversation-24" });
+    await first.close();
+    opened.splice(opened.indexOf(first), 1);
+    const again = start();
+    expect(again.held()).toEqual([{ ticket: 24, attempt: 1, last: 5, live: false, ended: false }]);
+    again.receive({ type: "work.write", task: writingTask(24) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    const resumed = programs.last();
+    expect(resumed.options.session).toBe("agy-conversation-24");
+    expect(resumed.prompts[0]).toContain("runner restarted");
+    expect(kinds(24)).toContain("phase:resumed");
+    again.receive({ type: "work.stop", ticket: 24, save: true, remove: true });
+    await again.idle();
+    expect(resumed.closed).toBe(true);
+    expect(existsSync(writingPaths(home, 24).folder)).toBe(false);
+    expect(kinds(24).slice(-2)).toEqual(["stopped", "phase:removed"]);
+    expect(ghCalls).toEqual([]);
+  });
+
+  it("reports a program that fails as a failure with its reason", async () => {
+    const works = start();
+    works.receive({ type: "work.write", task: writingTask(25) });
+    const handle = await programs.prompted(1);
+    handle.emit({ type: "unavailable", reason: "resource exhausted", until: null });
+    expect(await ended(25)).toEqual({ kind: "failed", failure: "program", reason: "resource exhausted" });
   });
 });

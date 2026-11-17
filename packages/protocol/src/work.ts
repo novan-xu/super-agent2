@@ -2,7 +2,7 @@ import { z } from "zod";
 import { GitHubAccount } from "./commands.js";
 import { GeneratedText } from "./generated.js";
 
-export const workEngines = ["codex", "claude", "dsh"] as const;
+export const workEngines = ["codex", "claude", "dsh", "antigravity"] as const;
 export const WorkEngine = z.enum(workEngines);
 export type WorkEngine = z.infer<typeof WorkEngine>;
 
@@ -18,9 +18,31 @@ export const workFailures = ["prepare", "program", "no-pull-request", "lost"] as
 export const WorkFailure = z.enum(workFailures);
 export type WorkFailure = z.infer<typeof WorkFailure>;
 
-export const workSenders = ["owner", "brain", "hub"] as const;
+export const maximumDeliveredText = 200_000;
+export const maximumDeliveredFileBytes = 4 * 1024 * 1024;
+export const maximumDeliveredBytes = 8 * 1024 * 1024;
+export const maximumDeliveredFiles = 20;
+export const maximumMaterialText = 200_000;
+export const maximumMaterials = 20;
+
+export const DeliveryFileName = z
+  .string()
+  .regex(/^[^/\\:*?"<>|\u0000-\u001f]{1,120}$/u)
+  .refine((name) => name !== "." && name !== "..", { message: "is not a file name" });
+
+export const MaterialName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
+
+export const workSenders =["owner", "brain", "hub"] as const;
 export const WorkSender = z.enum(workSenders);
 export type WorkSender = z.infer<typeof WorkSender>;
+
+export const DeliveredFile = z.object({
+  name: DeliveryFileName,
+  size: z.number().int().nonnegative(),
+  mediaType: z.string().min(1),
+  data: z.string(),
+});
+export type DeliveredFile = z.infer<typeof DeliveredFile>;
 
 export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("phase"), phase: WorkPhase, detail: z.string() }),
@@ -32,12 +54,13 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("tool.finished"), call: z.string(), output: z.string().nullable(), ok: z.boolean() }),
   z.object({ kind: z.literal("message"), id: z.string().min(1), from: WorkSender, text: z.string(), delivery: z.enum(["steered", "queued"]) }),
   z.object({ kind: z.literal("finished"), pullRequest: z.number().int().positive(), url: z.string().min(1), report: GeneratedText }),
+  z.object({ kind: z.literal("delivered"), text: z.string().nullable(), files: z.array(DeliveredFile), report: GeneratedText }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
 ]);
 export type WorkEvent = z.infer<typeof WorkEvent>;
 
-export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "failed", "stopped"];
+export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "delivered", "failed", "stopped"];
 
 export function endsWork(event: WorkEvent): boolean {
   return endingWorkEvents.includes(event.kind);
@@ -91,7 +114,28 @@ export const WorkTask = z.object({
 });
 export type WorkTask = z.infer<typeof WorkTask>;
 
-export const WorkHeld = z.object({
+export const WritingMaterial = z.object({
+  name: MaterialName,
+  source: z.string().trim().min(1).max(500),
+  text: z.string().max(maximumMaterialText).nullable(),
+});
+export type WritingMaterial = z.infer<typeof WritingMaterial>;
+
+export const WritingTask = z.object({
+  ticket: Ticket,
+  attempt: Attempt,
+  title: z.string().min(1),
+  task: z.string().min(1),
+  materials: z.array(WritingMaterial).max(maximumMaterials),
+  engine: WorkEngine,
+  model: z.string().min(1),
+  effort: z.string().min(1),
+  session: z.string().nullable(),
+  note: z.string().nullable(),
+});
+export type WritingTask = z.infer<typeof WritingTask>;
+
+export const WorkHeld =z.object({
   ticket: Ticket,
   attempt: Attempt,
   last: z.number().int().nonnegative(),
@@ -116,7 +160,13 @@ export const StartWork = z.object({
 });
 export type StartWork = z.infer<typeof StartWork>;
 
-export const SyncWork = z.object({
+export const StartWriting = z.object({
+  type: z.literal("work.write"),
+  task: WritingTask,
+});
+export type StartWriting = z.infer<typeof StartWriting>;
+
+export const SyncWork =z.object({
   type: z.literal("work.sync"),
   ticket: Ticket,
   attempt: Attempt,
@@ -191,3 +241,10 @@ export const Handback = z.object({
   summary: GeneratedText,
 });
 export type Handback = z.infer<typeof Handback>;
+
+export const WritingHandback = z.object({
+  text: z.string().min(1).nullable().optional(),
+  files: z.array(z.string().min(1)).default([]),
+  summary: GeneratedText,
+});
+export type WritingHandback = z.infer<typeof WritingHandback>;

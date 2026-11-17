@@ -213,6 +213,29 @@ describe("start cards in 工作台", () => {
     expect(text(later)).not.toContain("|开始|");
   });
 
+  it("shows a writing ticket's title and summary on its card, which has no repository and no issues", () => {
+    const html = render(
+      state(
+        startCard(1, {
+          ticket: {
+            kind: "writing",
+            repository: null,
+            issues: [],
+            title: { en: "Translate a notice", zh: "翻译一则通知" },
+            summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
+          },
+          choice: { engine: "antigravity", model: "gemini-3.8-flash", effort: "high" },
+        }),
+      ),
+    );
+    expect(html).toContain('<p class="card-title">翻译一则通知</p>');
+    expect(html).toContain("把通知译成英文");
+    expect(html).toContain("写作");
+    expect(html).not.toContain("chip--mono");
+    expect(html).toContain("Antigravity");
+    expect(text(html)).toContain("|开始|");
+  });
+
   it("offers 开始 under 之后 for a chain after work that has started", () => {
     const html = render(state(startCard(5, { before: [{ id: 3, zh: "已经在做", state: "working" }] })));
     expect(html).not.toContain("可以开始");

@@ -17,9 +17,11 @@ import {
 import { z } from "zod";
 import type { Tell } from "./chains.js";
 import type { Clock } from "./clock.js";
+import type { Delivery } from "./conversations.js";
 import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
+import { createTicketFiles, type TicketFiles } from "./files.js";
 import { clip } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { TicketService, TicketWork } from "./tickets.js";
@@ -33,6 +35,8 @@ export interface WorkServiceOptions {
   readonly runners: WorkRunners;
   readonly credentials: CredentialSource;
   readonly tell?: Tell;
+  readonly files?: TicketFiles;
+  readonly deliver?: (conversation: string | null, delivery: Delivery) => void;
   readonly branchSuffix?: () => string;
 }
 
@@ -108,6 +112,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const tell: Tell = options.tell ?? (() => undefined);
   const suffix = options.branchSuffix ?? (() => randomBytes(2).toString("hex"));
   const listeners = new Set<WorkListener>();
+  const files = options.files ?? createTicketFiles(options.database);
   const removalsSent = new Set<string>();
   let closed = false;
 
@@ -206,7 +211,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       text("notice.workerFailed", { ticket: ticket.id }),
       [
         `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${failureWords[failure]}: ${reason}`,
-        `The ticket stays working with this failure recorded, on branch ${ticket.branch ?? "(none)"}, and nothing is running for it now.`,
+        `The ticket stays working with this failure recorded${ticket.kind === "writing" ? "" : `, on branch ${ticket.branch ?? "(none)"}`}, and nothing is running for it now.`,
         "Its output ends with:",
         outputOf(ticket.id, attempt.attempt, 6_000) || "(no output)",
         "Tell the owner what happened and what you think should be done. The owner can reassign it to start it again; stop it with stop_ticket if it cannot be done.",
@@ -247,6 +252,32 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     };
   };
 
+  const startOf = (ticket: Ticket, attempt: Attempt): WorkMessageToRunner | string => {
+    if (ticket.kind === "writing") {
+      const writing = tickets.writing(ticket.id);
+      if (writing === undefined) {
+        return `Ticket ${ticket.id} has no writing task`;
+      }
+      return {
+        type: "work.write",
+        task: {
+          ticket: ticket.id,
+          attempt: attempt.attempt,
+          title: ticket.title.en,
+          task: writing.task,
+          materials: [...writing.materials],
+          engine: attempt.engine,
+          model: attempt.model,
+          effort: attempt.effort,
+          session: attempt.session ?? attempt.resume_session,
+          note: attempt.note,
+        },
+      };
+    }
+    const task = taskOf(ticket, attempt);
+    return typeof task === "string" ? task : { type: "work.start", task };
+  };
+
   const send = (machine: string, message: WorkMessageToRunner): boolean => {
     try {
       return runners.sendWork(machine, message);
@@ -276,13 +307,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (busy >= report.slots.total) {
         continue;
       }
-      const task = taskOf(ticket, attempt);
-      if (typeof task === "string") {
-        touch(ticket.id, () => end(ticket.id, attempt.attempt, "failed", "prepare", task));
-        failed(ticket, attempt, "prepare", task);
+      const message = startOf(ticket, attempt);
+      if (typeof message === "string") {
+        touch(ticket.id, () => end(ticket.id, attempt.attempt, "failed", "prepare", message));
+        failed(ticket, attempt, "prepare", message);
         continue;
       }
-      if (send(attempt.machine, { type: "work.start", task })) {
+      if (send(attempt.machine, message)) {
         touch(ticket.id, () => updateStarted.run(clock.now(), ticket.id, attempt.attempt));
       }
     }
@@ -316,7 +347,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const engine = WorkEngine.safeParse(ticket.engine);
     if (!engine.success) {
-      throw new Error(`${ticket.engine} is not an engine for code`);
+      throw new Error(`${ticket.engine} is not an engine for work`);
+    }
+    if (ticket.kind !== "writing" && engine.data === "antigravity") {
+      throw new Error("Antigravity is for writing work; code work needs Codex, Claude Code or dsh");
     }
     const machine = ticket.machine;
     const sameMachine = previous?.machine === machine;
@@ -334,7 +368,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (previous !== undefined && (previous.state === "queued" || isActive(previous.state))) {
         end(ticket.id, previous.attempt, "replaced", null, null);
       }
-      if (ticket.branch === null) {
+      if (ticket.branch === null && ticket.kind !== "writing") {
         writes.setBranch(ticket.id, branchFor(ticket.id, suffix()));
       }
       insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover, clock.now());
@@ -345,9 +379,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   const begin = (ticket: Ticket) => {
     if (ticket.kind === "writing") {
-      throw new Error("A writing ticket has no worker for code; writing work is not built yet");
-    }
-    if (ticket.repository === null || ticket.issues.length === 0) {
+      if (tickets.writing(ticket.id) === undefined) {
+        throw new Error(`Ticket ${ticket.id} has no writing task`);
+      }
+    } else if (ticket.repository === null || ticket.issues.length === 0) {
       throw new Error(`Ticket ${ticket.id} has no repository or no issues`);
     }
     if (latestOf(ticket.id) !== undefined) {
@@ -359,6 +394,26 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     nextAttempt(current, null, undefined);
+  };
+
+  const handIn = (ticket: Ticket, event: Extract<WorkEvent, { readonly kind: "delivered" }>) => {
+    if (closed || options.deliver === undefined) {
+      return;
+    }
+    const files = event.files.map((file) => ({ name: file.name, size: file.size }));
+    options.deliver(ticket.conversation, {
+      ticket: ticket.id,
+      title: ticket.title,
+      text: event.text,
+      files,
+      prompt: [
+        `[hub] The result of writing ticket ${ticket.id} (${ticket.title.en}) was delivered to the owner in this conversation. The owner sees the text as written${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. The ticket is delivered; nothing was verified.`,
+        `The worker's note: ${event.report.en}`,
+        files.length === 0 ? "Files: none." : `Files: ${files.map((file) => `${file.name} (${file.size} bytes)`).join(", ")}.`,
+        event.text === null ? "There is no text, only files." : `The delivered text:\n${clip(event.text, 20_000)}`,
+        "Tell the owner in Chinese, in a line or two, that it is delivered, and mention anything the worker flagged. If the owner wants changes, open a new writing ticket with this text as its material.",
+      ].join("\n"),
+    });
   };
 
   const apply = (machine: string, message: RunnerWorkEvent) => {
@@ -378,9 +433,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const current = latest?.attempt === attempt.attempt;
     let told: { readonly failure: WorkFailure; readonly reason: string } | undefined;
     let handedOver = false;
+    let delivered: Ticket | undefined;
     let id = 0;
+    const shown: WorkEvent = event.kind === "delivered" ? { ...event, files: event.files.map((file) => ({ ...file, data: "" })) } : event;
     tickets.change((writes) => {
-      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
+      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(shown)).lastInsertRowid);
       updateSeq.run(message.seq, attempt.ticket_id, attempt.attempt);
       const live = attempt.state === "preparing" || attempt.state === "running";
       switch (event.kind) {
@@ -404,11 +461,24 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             end(attempt.ticket_id, attempt.attempt, "finished", null, null);
           }
           const ticket = writes.get(attempt.ticket_id);
-          if (current && ticket !== undefined) {
+          if (current && ticket !== undefined && ticket.kind !== "writing") {
             writes.setPullRequest(ticket.id, event.pullRequest, event.report);
             if (ticket.state === "working") {
               writes.move(ticket.id, "verifying");
             }
+          }
+          writes.touched(attempt.ticket_id);
+          return;
+        }
+        case "delivered": {
+          if (live) {
+            end(attempt.ticket_id, attempt.attempt, "finished", null, null);
+          }
+          const ticket = writes.get(attempt.ticket_id);
+          if (current && ticket !== undefined && ticket.kind === "writing" && ticket.state === "working") {
+            files.put(ticket.id, event.files);
+            writes.setReport(ticket.id, event.report);
+            delivered = writes.move(ticket.id, "delivered");
           }
           writes.touched(attempt.ticket_id);
           return;
@@ -435,8 +505,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           return;
       }
     });
-    const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event };
+    const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event: shown };
     announce(stored);
+    if (delivered !== undefined && event.kind === "delivered") {
+      handIn(delivered, event);
+    }
     if (told !== undefined) {
       const ticket = tickets.get(attempt.ticket_id);
       const now = attemptOf(attempt.ticket_id, attempt.attempt);
@@ -444,7 +517,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         failed(ticket, now, told.failure, told.reason);
       }
     }
-    if (handedOver || event.kind === "finished" || event.kind === "failed" || event.kind === "stopped") {
+    if (handedOver || event.kind === "finished" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped") {
       dispatch();
     }
   };
@@ -472,9 +545,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       send(machine, { type: "work.sync", ticket: row.ticket_id, attempt: row.attempt, after: row.last_seq });
       if (isActive(row.state) && !work.live && !work.ended) {
-        const task = taskOf(ticket, row);
-        if (typeof task !== "string") {
-          send(machine, { type: "work.start", task });
+        const message = startOf(ticket, row);
+        if (typeof message !== "string") {
+          send(machine, message);
         }
       } else if (!isActive(row.state) && work.live) {
         send(machine, { type: "work.stop", ticket: work.ticket, save: false, remove: false });
@@ -490,9 +563,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         continue;
       }
       if (row.state === "preparing" && row.last_seq === 0) {
-        const task = taskOf(ticket, row);
-        if (typeof task !== "string") {
-          send(machine, { type: "work.start", task });
+        const message = startOf(ticket, row);
+        if (typeof message !== "string") {
+          send(machine, message);
         }
         continue;
       }
@@ -513,7 +586,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   };
 
   const unsubscribeTickets = tickets.subscribe((ticket) => {
-    if (isFinal(ticket) && ticket.kind !== "writing") {
+    if (isFinal(ticket)) {
       finish(ticket);
     }
   });

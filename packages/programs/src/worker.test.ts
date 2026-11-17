@@ -2,13 +2,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { antigravityAdapter, antigravityFailure, antigravityResult } from "./antigravity.js";
 import { claudeAdapter } from "./claude.js";
 import { codexAdapter } from "./codex.js";
 import { dshAdapter, dshPatch } from "./dsh.js";
 import { invocationOf, npmShimTarget } from "./process.js";
 import type { OpenOptions, ProgramHandle } from "./program.js";
 import type { ProgramSettings } from "./settings.js";
-import { EventLog, fakeClaudeSource, fakeCodexSource, fakeDshSource, readLog, writeFake } from "./testing/programs.js";
+import { EventLog, fakeAntigravitySource, fakeClaudeSource, fakeCodexSource, fakeDshSource, readLog, writeFake } from "./testing/programs.js";
 import { descendantsOf } from "./tree.js";
 
 let directory: string;
@@ -113,5 +114,121 @@ describe("finding and stopping a program", () => {
     const table = ["  1     0", " 10     1", " 11    10", " 12    11", " 13    10", " 20     1", " 21    20", "bad line"].join("\n");
     expect(descendantsOf(10, table).sort((a, b) => a - b)).toEqual([11, 12, 13]);
     expect(descendantsOf(99, table)).toEqual([]);
+  });
+});
+
+describe("Antigravity opened for a worker", () => {
+  const fakeProgram = () => writeFake(directory, "agy.mjs", fakeAntigravitySource);
+
+  it("runs a turn per message in one process and reports its session, model, tools and text", async () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(workerOptions(), log.listener));
+    expect(handle.processId?.()).toEqual(expect.any(Number));
+    handle.start("你好");
+    await log.ended();
+    expect(log.events[0]).toMatchObject({ type: "session", session: expect.stringMatching(/^conv-/) });
+    expect(log.events).toContainEqual({ type: "model", model: "gemini-3.8-flash", effort: null });
+    expect(log.events).toContainEqual({ type: "tool.started", call: expect.any(String), name: "write_file", input: '{"Path":"out.txt"}' });
+    expect(log.events).toContainEqual({ type: "tool.finished", call: expect.any(String), output: "1 lines", ok: true });
+    const text = log.events.filter((event) => event.type === "text");
+    expect(text.map((event) => (event.type === "text" ? event.delta : "")).join("")).toBe("译文：你好\n");
+    expect(new Set(text.map((event) => (event.type === "text" ? event.block : ""))).size).toBe(1);
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    handle.start("再来");
+    await log.ended(2);
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    const received = readLog(logFile);
+    const launches = received.filter((entry) => "args" in entry) as { args: string[]; cwd: string }[];
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.args).toEqual([
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "gemini-3.8-flash",
+      "--effort",
+      "high",
+      "--disable-slash-commands",
+      "--print=",
+    ]);
+    expect(received.filter((entry) => "event" in entry)).toEqual([
+      { event: "user", message: { content: "你好" } },
+      { event: "user", message: { content: "再来" } },
+    ]);
+  });
+
+  it("takes a message into the next turn, since it cannot enter a turn that is running", async () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(workerOptions(), log.listener));
+    handle.start("wait");
+    await log.until((events) => events.some((event) => event.type === "text"));
+    expect(await handle.steer("more")).toBe("queued");
+    expect(readLog(logFile).filter((entry) => "event" in entry)).toHaveLength(1);
+  });
+
+  it("interrupts a turn by stopping the process, and resumes the same conversation on the next message", async () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(workerOptions(), log.listener));
+    handle.start("wait");
+    await log.until((events) => events.some((event) => event.type === "text"));
+    const session = (log.events[0] as { session: string }).session;
+    handle.interrupt();
+    await log.ended();
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "interrupted" });
+    handle.start("next");
+    await log.ended(2);
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    const launches = readLog(logFile).filter((entry) => "args" in entry) as { args: string[] }[];
+    expect(launches).toHaveLength(2);
+    expect(launches[1]?.args).toContain("--conversation");
+    expect(launches[1]?.args[launches[1].args.indexOf("--conversation") + 1]).toBe(session);
+  });
+
+  it("resumes a conversation given by its id, and reports a conversation it cannot find as a lost session", async () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    const resumed = new EventLog();
+    track(adapter.open(workerOptions("known"), resumed.listener)).start("hello");
+    await resumed.ended();
+    expect(resumed.events.some((event) => event.type === "session")).toBe(false);
+    expect(resumed.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    const lost = new EventLog();
+    track(adapter.open(workerOptions("missing"), lost.listener)).start("hello");
+    await lost.ended();
+    expect(lost.events.at(-1)).toMatchObject({ type: "failed", lostSession: true });
+  });
+
+  it("tells a used-up allowance from any other failure, and reports a process that ends mid-turn", async () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    const quota = new EventLog();
+    track(adapter.open(workerOptions(), quota.listener)).start("quota");
+    await quota.ended();
+    expect(quota.events.at(-1)).toMatchObject({ type: "unavailable", until: null });
+    const broken = new EventLog();
+    track(adapter.open(workerOptions(), broken.listener)).start("broken");
+    await broken.ended();
+    expect(broken.events.at(-1)).toEqual({ type: "failed", reason: "the model request failed", lostSession: false });
+    const gone = new EventLog();
+    track(antigravityAdapter(settings(join(directory, "missing.mjs"), "gemini-3.8-flash", "high")).open(workerOptions(), gone.listener)).start("hello");
+    await gone.ended();
+    expect(gone.events.at(-1)).toMatchObject({ type: "failed", lostSession: false });
+  });
+
+  it("refuses the hub's tools", () => {
+    const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
+    expect(() => adapter.open({ session: null, tools: { url: "http://hub/brain/mcp", token: "t", conversation: "c" }, workspace: directory }, () => undefined)).toThrow(/not given/);
+  });
+
+  it("classifies failures by their text", () => {
+    expect(antigravityFailure("conversation x not found")).toMatchObject({ type: "failed", lostSession: true });
+    expect(antigravityFailure("RESOURCE_EXHAUSTED")).toMatchObject({ type: "unavailable" });
+    expect(antigravityFailure("You are not signed in")).toMatchObject({ type: "unavailable" });
+    expect(antigravityFailure("something else")).toMatchObject({ type: "failed", lostSession: false });
+    expect(antigravityResult("SUCCESS", undefined, undefined)).toEqual({ type: "turn.finished", outcome: "completed" });
+    expect(antigravityResult("SUCCESS", undefined, "interrupted")).toEqual({ type: "turn.finished", outcome: "interrupted" });
+    expect(antigravityResult("SUCCESS", undefined, "print_timeout")).toMatchObject({ type: "failed" });
   });
 });

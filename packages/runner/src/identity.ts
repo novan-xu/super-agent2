@@ -32,6 +32,13 @@ export function writeGhShims(folder: string, gh: string, platform: NodeJS.Platfo
   chmodSync(file, 0o755);
 }
 
+const inheritedCredential =
+  /^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|SUPERAGENT2_GITHUB_AUTH|RUNNER_TOKEN|ACCESS_CLIENT_ID|ACCESS_CLIENT_SECRET|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/i;
+
+export function withoutCredentials(environment: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => !inheritedCredential.test(name)));
+}
+
 export interface Identity {
   readonly name: string;
   readonly email: string;
