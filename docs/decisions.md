@@ -632,3 +632,24 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Chosen:** `tools/page-dev` starts with a pretend target `demo` that only prints the command it was given, so a command that is held and then confirmed there runs nothing. `/__harness/hold?kind=repo|branch|data|file|long|hidden` (or `?command=` and `?cwd=`) starts a command on it, which the lock holds like any other. The harness generates VAPID keys on the first start and keeps them in its data folder, so a browser's subscription survives a restart (`--push none` starts without). `/__harness/device/new` makes a pretend device with real keys and subscribes it through the hub's own route; the hub's push for it arrives at `/__harness/push/<id>` on the harness, which decrypts it, `/__harness/pushes` lists what arrived, and `/__harness/device/<id>/gone` makes that device answer 410. A real browser on this machine can subscribe too and gets a real push service's message.
 - **Why:** The check should use the real routes and the real encryption without a phone, and a held command in a test harness must be unable to do harm.
 - **Other options:** A harness that holds `gh repo delete` on the hub's own target; fake keys.
+
+## 2026-11-17 — Child agents instead of child sessions from #7
+
+- **Chosen:** From #7 on, each issue is implemented by a child agent started from the orchestrating session, in its own
+  git worktree, on its own branch and pull request, with its model and effort chosen per issue as before.
+- **Why:** The desktop app refused to start a new session on a turn that an automated event had started, and the owner
+  asked for the work not to stop. A child agent keeps the same separation: no implementation in the orchestrating
+  session, one branch and pull request per issue.
+- **Other options:** Stop and wait for the owner to start each session by hand.
+
+## 2026-11-17 — Deployment in two steps
+
+- **Chosen:** #8 is done in two steps. A child agent builds the images, the Compose file and the deploy script, and
+  rehearses them on the NAS as a separate Compose project, `superagent2`, under `/share/Container/superagent2`, without
+  the tunnel and without touching any existing container. The orchestrating session then performs the take-over itself:
+  it stops the first Super-agent's containers, which are kept with their volumes, and starts the tunnel of the new
+  project.
+- **Why:** The NAS runs the first Super-agent and a dozen unrelated services. The rehearsal proves the new system starts
+  there before anything the owner relies on is stopped, and the one step that affects what is live is taken by the
+  session that answers to the owner.
+- **Other options:** One step by a child agent; leaving the deployment until every other issue is built.
