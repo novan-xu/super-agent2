@@ -53,7 +53,7 @@ export interface CommandServiceOptions {
 
 export const interruptedReason = "the hub stopped before the command ended";
 
-const unfinishedStates: readonly CommandState[] = ["pending", "held", "running"];
+const interruptedStates: readonly CommandState[] = ["pending", "running"];
 
 const CommandRow = z.object({
   id: z.string(),
@@ -105,7 +105,9 @@ interface Active {
   readonly gateStop: AbortController;
   execution: Execution | undefined;
   ending: "stopped" | "interrupted" | undefined;
+  detached: boolean;
   seq: number;
+  readonly settle: () => void;
   readonly decoders: Record<OutputStream, StringDecoder>;
 }
 
@@ -118,16 +120,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const active = new Map<string, Active>();
   let closing = false;
 
-  const placeholders = unfinishedStates.map(() => "?").join(", ");
+  const placeholders = interruptedStates.map(() => "?").join(", ");
   connection
     .prepare(`UPDATE commands SET state = 'interrupted', reason = ?, ended_at = ? WHERE state IN (${placeholders})`)
-    .run(interruptedReason, clock.now(), ...unfinishedStates);
+    .run(interruptedReason, clock.now(), ...interruptedStates);
 
   const insertCommand = connection.prepare(
     `INSERT INTO commands (id, target, command, account, cwd, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
   );
   const selectCommand = connection.prepare("SELECT * FROM commands WHERE id = ?");
   const selectCommands = connection.prepare("SELECT * FROM commands ORDER BY rowid DESC LIMIT ?");
+  const selectHeld = connection.prepare("SELECT * FROM commands WHERE state = 'held' ORDER BY rowid");
   const insertOutput = connection.prepare(
     "INSERT INTO command_output (command_id, seq, stream, data, at) VALUES (?, ?, ?, ?, ?)",
   );
@@ -193,12 +196,12 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         stopped: entry.gateStop.signal,
       });
     } catch (error) {
-      if (!isFinished(entry.id)) {
+      if (!entry.detached && !isFinished(entry.id)) {
         finish(entry.id, "failed", { reason: messageOf(error) });
       }
       return;
     }
-    if (isFinished(entry.id)) {
+    if (entry.detached || isFinished(entry.id)) {
       return;
     }
     if (decision.kind === "drop") {
@@ -250,6 +253,41 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     entry.execution.stop().catch(() => undefined);
   };
 
+  const launch = (initial: CommandRecord) => {
+    let settle: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const entry: Active = {
+      id: initial.id,
+      done,
+      gateStop: new AbortController(),
+      execution: undefined,
+      ending: undefined,
+      detached: false,
+      seq: 0,
+      settle,
+      decoders: { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") },
+    };
+    active.set(initial.id, entry);
+    execute(entry, initial)
+      .catch((error: unknown) => {
+        if (!entry.detached && !isFinished(initial.id)) {
+          finish(initial.id, "failed", { reason: messageOf(error) });
+        }
+      })
+      .finally(() => {
+        if (active.get(initial.id) === entry) {
+          active.delete(initial.id);
+        }
+        settle();
+      });
+  };
+
+  for (const row of selectHeld.all()) {
+    launch(toRecord(row));
+  }
+
   return {
     start: (request) => {
       if (closing) {
@@ -263,29 +301,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         throw new Error(`Command ${id} was not stored`);
       }
       emit({ type: "command", command: initial });
-      let resolveDone: () => void = () => undefined;
-      const entry: Active = {
-        id,
-        done: new Promise((resolve) => {
-          resolveDone = resolve;
-        }),
-        gateStop: new AbortController(),
-        execution: undefined,
-        ending: undefined,
-        seq: 0,
-        decoders: { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") },
-      };
-      active.set(id, entry);
-      execute(entry, initial)
-        .catch((error: unknown) => {
-          if (!isFinished(id)) {
-            finish(id, "failed", { reason: messageOf(error) });
-          }
-        })
-        .finally(() => {
-          active.delete(id);
-          resolveDone();
-        });
+      launch(initial);
       return initial;
     },
     get,
@@ -314,11 +330,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     },
     close: async () => {
       closing = true;
-      const entries = [...active.values()];
-      for (const entry of entries) {
+      const ending: Active[] = [];
+      for (const entry of [...active.values()]) {
+        if (entry.execution === undefined && get(entry.id)?.state === "held") {
+          entry.detached = true;
+          active.delete(entry.id);
+          entry.settle();
+          continue;
+        }
         halt(entry, "interrupted");
+        ending.push(entry);
       }
-      await Promise.all(entries.map((entry) => entry.done));
+      await Promise.all(ending.map((entry) => entry.done));
       listeners.clear();
     },
   };

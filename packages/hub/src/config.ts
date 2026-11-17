@@ -1,5 +1,13 @@
 import { z } from "zod";
+import { isAbsolutePath } from "./paths.js";
 import type { SshDestination } from "./targets.js";
+
+function list(text: string | undefined): string[] {
+  return (text ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
 
 function present(message: string) {
   return { error: (issue: { readonly input?: unknown }) => (issue.input === undefined ? "is required" : message) };
@@ -35,6 +43,14 @@ const Environment = z.object({
     .pipe(z.number().int().min(1, { error: "must be between 1 and 65535" }).max(65535, { error: "must be between 1 and 65535" }))
     .optional(),
   NAS_SSH_IDENTITY: z.string().min(1, { error: "must not be empty" }).optional(),
+  HUB_PROJECT_FOLDERS: z
+    .string()
+    .optional()
+    .transform(list)
+    .refine((folders) => folders.every(isAbsolutePath), {
+      error: "must be absolute folders separated by commas, such as /srv/projects,~/work",
+    }),
+  HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
 });
 
 export interface Config {
@@ -45,6 +61,8 @@ export interface Config {
   readonly port: number;
   readonly host: string;
   readonly nas?: SshDestination;
+  readonly projectFolders: readonly string[];
+  readonly credentialPaths: readonly string[];
 }
 
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
@@ -65,6 +83,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,
       host: value.HUB_HOST,
+      projectFolders: value.HUB_PROJECT_FOLDERS,
+      credentialPaths: value.HUB_CREDENTIAL_PATHS,
       ...(value.NAS_SSH_DESTINATION === undefined
         ? {}
         : {

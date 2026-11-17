@@ -42,4 +42,20 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE holds (
+        command_id TEXT PRIMARY KEY REFERENCES commands (id),
+        form TEXT NOT NULL,
+        description TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        held_at INTEGER NOT NULL,
+        answer TEXT,
+        answered_at INTEGER,
+        answered_by TEXT
+      ) STRICT;
+    `,
+  },
 ];

@@ -189,3 +189,108 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** A command cannot outlive the process that was reading its output, so "running" after a restart would be
   false. Held commands are not resumed because the gate's waiting lives in memory; #4 can change that.
 - **Other options:** Leaving commands running on the NAS across a hub restart and reattaching; resuming held commands.
+
+## 2026-11-17 — How the confirmation lock reads a command
+
+- **Chosen:** The list is data in `packages/hub/src/irreversible.ts`: six forms (`repository-deletion`,
+  `repository-publication`, `default-branch-rewrite`, `data-deletion`, `credential-change`, `file-deletion`), each with
+  command patterns, API request rules, text rules or a rule over what a command deletes, writes or moves. Every command
+  is read twice, once as POSIX shell text and once as PowerShell text, and held if either reading matches. The reading
+  splits on `&&`, `||`, `;`, pipes and newlines; removes quotes; strips wrappers (`sudo`, `env`, `nohup`, `timeout`,
+  `xargs`, `npx` and others); follows `cd` and `Set-Location`; and reads inside `$(...)`, backticks, subshells, script
+  blocks, `bash -c`, `pwsh -Command` and `-EncodedCommand`, `cmd /c`, `ssh` remote commands, `eval`, `docker exec`,
+  `find -exec` and shell here-documents, to a depth of eight. `gh api`, `curl`, `wget`, HTTPie and `Invoke-RestMethod`
+  are read as API requests to GitHub and Cloudflare. Anything the reading cannot see is held: a path built from a
+  variable, a delete fed by a pipe or `xargs`, a relative path with no known folder, a force-push whose destination is
+  unknown, a request body read from a file. The default branches are `main`, `master` and `trunk`. The data-volume forms
+  apply on every target, since the hub cannot tell where a Docker client points. Not held: `DROP TABLE` and `TRUNCATE`,
+  local history rewrites (`reset`, `rebase`, `commit --amend`) until they are pushed, force-pushing tags or other
+  branches, `internal` visibility, and anything inside a script file.
+- **Why:** The design accepts that the list matches known forms and cannot see inside a script. Reading both shells
+  costs nothing when a command is valid in only one of them, and a needless hold costs one click while a miss cannot be
+  undone. Keeping the forms as data makes the list reviewable in one place.
+- **Other options:** One dialect chosen per target; a full shell parser such as mvdan/sh, which still could not read
+  PowerShell; holding every `rm`, every force-push and every `docker` command; reading the repository's default branch
+  from GitHub before deciding.
+
+## 2026-11-17 — Project folders and credential paths
+
+- **Chosen:** `HUB_PROJECT_FOLDERS` is a comma-separated list of absolute folders (`/srv/projects`, `~/work`, `C:\work`);
+  it is empty by default, so until it is set every delete is held. A delete is outside project folders unless its
+  target is strictly inside one of them; the folder itself is outside. Paths under `/` and `~` compare with case, drive
+  and UNC paths without it. `HUB_CREDENTIAL_PATHS` is a comma-separated list of glob patterns added to a built-in list
+  (`secrets/` folders, `.env` files, keys and certificates, SSH private keys and `authorized_keys`, `.netrc`,
+  `.git-credentials`, `.npmrc`, the `gh`, Docker, AWS, Kubernetes, Cloudflare tunnel and Codex logins, `~/.superagent/`);
+  a pattern starting with `!` excludes, and `*.pub`, `*.example`, `*.sample`, `*.template` and `*.dist` are excluded by
+  default. Deleting, moving away, overwriting, appending to or editing such a file is held wherever it is, as are
+  `gh secret delete` and `set`, `gh auth logout`, deleting SSH, GPG and deploy keys, `docker secret rm`,
+  `kubectl delete secret`, `wrangler secret`, `cloudflared tunnel delete`, and the GitHub and Cloudflare API calls that
+  delete or roll secrets, tokens, service tokens and tunnels.
+- **Why:** Which folders hold projects depends on the deployment (#8), and holding everything until it is said is the
+  safe default. Adding to the credential list, rather than replacing it, keeps a typo in the setting from removing the
+  protection.
+- **Other options:** A default project folder such as `/srv/projects`; treating the temporary folder as a project
+  folder; letting the setting replace the built-in credential list.
+
+## 2026-11-17 — Releasing a held command
+
+- **Chosen:** A held command is released only through `POST /api/commands/<id>/release` and refused through
+  `POST /api/commands/<id>/refuse`, each with a JSON body `{"fingerprint": "<sha256>"}`. The fingerprint covers the
+  command's id, target, text, account and folder, and is stored when the command is held; a release must name it, the
+  held record must still match it, and the command run is the record the gate was given. The lock itself verifies the
+  request's raw `Cf-Access-Jwt-Assertion` and accepts only a person whose email is `OWNER_EMAIL`; the server's front
+  door is not trusted for this, so admitting service tokens there later (#5, #9) does not let them release. Code inside
+  the hub has no way to release without that signed assertion. The request must also carry an `Origin` whose host
+  equals the `Host` header, a `Sec-Fetch-Site` of `same-origin` when present, and `Content-Type: application/json`.
+  Answers: 202 with the command; 403 for anyone but the owner or another origin; 415 for another content type; 400 for a
+  body without a fingerprint; 409 for a wrong fingerprint or a hold already answered; 404 for a command never held.
+  `GET /api/holds` lists what waits, with the fingerprint. A hold is answered once and recorded with who answered and
+  when. The caller can still stop a held command, which records it as withdrawn. Refused commands end as `dropped`
+  with the reason "The owner refused it".
+- **Why:** Only the owner's browser can produce a fresh assertion signed by Cloudflare for the owner's Google account,
+  so requiring it makes the rule structural rather than a convention. The fingerprint ties the click to exactly what
+  the owner saw. The origin and content-type checks keep another site open in the owner's browser from answering for
+  them.
+- **Other options:** Trusting the identity the front door already checked; a one-time code shown on the page; releasing
+  by command id alone; comparing the origin with a configured public URL instead of the `Host` header.
+
+## 2026-11-17 — Held commands across a restart
+
+- **Chosen:** This replaces the part of "Commands across a restart" about held commands. When the hub closes, a
+  command waiting for the owner stays `held`. When it starts, every `held` command is given to the gate again, and the
+  lock waits for the owner's answer to it as before; a hold already marked answered is cleared and asked again. A held
+  command whose stored target, text, account or folder no longer matches its fingerprint is dropped with the reason
+  "The command changed after it was held, so it was not run". `pending` and `running` commands are still recorded as
+  `interrupted`.
+- **Why:** A held command has not started, so nothing about it is lost by a restart, and the issue asks that it wait
+  until answered.
+- **Other options:** Marking held commands interrupted and asking the brain to start them again.
+
+## 2026-11-17 — Test servers and the ports fetch refuses
+
+- **Chosen:** Tests that call the hub with `fetch` start it through `startTestHub` or `listenForFetch` in
+  `packages/hub/src/testing/http.ts`, which listen again when the system hands out a port that `fetch` refuses (6000,
+  10080 and the rest of the Fetch standard's list).
+- **Why:** This PC's dynamic port range starts at 1024, so a test listening on port 0 sometimes got such a port and
+  failed with "bad port", which has nothing to do with the code under test.
+- **Other options:** Fixed ports per test, which collide when test files run in parallel.
+
+## 2026-11-17 — Temporary folders and a project's own `.env`
+
+- **Chosen:** Two exceptions to the confirmation lock, both kept as data in `packages/hub/src/irreversible.ts`.
+  Deleting something strictly inside a system temporary folder runs without a hold. The folders are `/tmp`,
+  `/var/tmp`, `$TMPDIR`, `$TMP` and `$TEMP`, in every spelling the reader sees: `${TMPDIR}`, `$env:TEMP`,
+  `${env:TMP}` and `%TEMP%`. A variable assigned from `mktemp` with no folder of its own (`dir=$(mktemp -d)`,
+  `local f=$(mktemp -t x.XXXX)`) counts as a folder inside `$TMPDIR` until it is assigned again. `find` with a filter
+  such as `-name` or `-mtime`, or with `-mindepth 1`, deletes inside its root rather than the root itself. Still held:
+  the temporary folder itself, a path that climbs out of it with `..` (above a variable or `~` the reader cannot tell
+  where `..` leads), a variable of another name, `mktemp -p <folder>`, and a credential file in a temporary folder.
+  Inside a project folder, `.env` and `.env.*` are the project's local configuration: writing, copying onto,
+  appending to, moving and deleting them runs without a hold. The built-in credential list still applies to them
+  outside project folders. Anything named in `HUB_CREDENTIAL_PATHS` is a credential wherever it is, project folder
+  included.
+- **Why:** A needless hold stops unattended work until the owner clicks, and these two are routine: clearing scratch
+  files, and setting up a project's local `.env` from `.env.example`. The deployment's real secrets are named in
+  `HUB_CREDENTIAL_PATHS` or live outside project folders, so they stay protected.
+- **Other options:** Leaving both held; treating `/tmp` as a project folder through `HUB_PROJECT_FOLDERS`, which would
+  also allow deleting `/tmp` itself; exempting every `*.env` file inside project folders.

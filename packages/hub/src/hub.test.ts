@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Hello, Session } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { type Hub, startHub } from "./hub.js";
+import type { Hub } from "./hub.js";
 import {
   assertion,
   keySet,
@@ -17,6 +17,7 @@ import {
   TestClock,
   testConfig,
 } from "./testing/access.js";
+import { startTestHub } from "./testing/http.js";
 
 let dataDir: string;
 let clock: TestClock;
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 async function start(): Promise<Hub> {
-  hub = await startHub({ config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock });
+  hub = await startTestHub({ config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock });
   return hub;
 }
 
@@ -127,7 +128,7 @@ describe("the front door", () => {
   });
 
   it("refuses everything but health when the key set cannot be fetched", async () => {
-    hub = await startHub({
+    hub = await startTestHub({
       config: testConfig(dataDir),
       keySource: async () => {
         throw new Error("offline");
