@@ -2057,3 +2057,24 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   steps and their output.
 - **Why:** The owner asked the brain from 对话 and reads the answer there; the conversation is the smallest honest place.
 - **Other options:** A section in 工作台; deployments in a ticket's detail; a notice when a deployment starts.
+
+## 2026-11-17 — Deployments in the development harness, and what was verified
+
+- **Chosen:** With `--forge fake`, a deployment file POSTed to `/__harness/deployment?repository=` is put into every
+  later scripted pull request of that repository, so its merge needs deploying; `/__harness/loop?case=green&repository=`
+  starts a ticket that merges green; the demo brain answers a merge that needs deploying with `deploy_repository` at the
+  merge commit, and a deployment's result with a line in Chinese. Verified on this PC with a toy service in a scratch
+  folder (a Node server on 127.0.0.1:5291 started detached by `node deploy.mjs <good|broken>` on the `hub` target, a
+  health check `node check.mjs` that fetches it, and `node rollback.mjs`, which starts the release recorded for
+  `SUPERAGENT2_PREVIOUS_COMMIT`), every 2 seconds for 12. Without a brain, a ticket merged with the file declared: the
+  conversation showed 工单 1 已合并，这次改动需要部署, and no command ran, no deployment was recorded and nothing answered
+  on the toy's port. With the demo brain, unattended: the merge was reported, the brain called `deploy_repository`, the
+  toy answered with the merge commit, the conversation showed …已部署到…，健康检查通过, and the ticket was marked deployed;
+  a second ticket whose file deployed the broken variant merged, the brain deployed it, seven health checks found no
+  answer, the hub ran the rollback with the first commit as `SUPERAGENT2_PREVIOUS_COMMIT`, the toy answered with the
+  first commit again, the conversation showed …没有成功，已回滚到…，旧版本恢复正常, and the second ticket stayed
+  undeployed. Every process was stopped and the scratch folders removed. Nothing was put in the sandbox repository. Not
+  verified live: a held deploy command, a restart in the middle, and a runner or the NAS as the target; the tests cover
+  the first two with the real lock and a reopened database.
+- **Why:** The fake forge is smaller than a branch in the sandbox, and the toy exercises real processes and a real port.
+- **Other options:** The file on a branch of `novan-xu/super-agent-sandbox` with `--credentials environment`.

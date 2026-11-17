@@ -38,7 +38,7 @@ function deployPlan(hub: string, turn: number): Step[] | undefined {
     const repository = merged[2] ?? "";
     return [
       { kind: "hub", call: `deploy-${turn}`, name: "deploy_repository", args: { repository, commit: mergeCommit } },
-      { kind: "text", block: `deploy-${turn}`, text: `工单 ${merged[1] ?? ""} 已合并，这次改动需要部署。我已经开始部署 ${repository} 的 ${mergeCommit.slice(0, 7)}，结果出来后告诉你。` },
+      { kind: "text", block: `deploying-${turn}`, text: `工单 ${merged[1] ?? ""} 已合并，这次改动需要部署。我已经开始部署 ${repository} 的 ${mergeCommit.slice(0, 7)}，结果出来后告诉你。` },
     ];
   }
   const result = /^\[hub\] Deployment (\d+) of (\S+) at commit (\S+) on target \S+ (succeeded|failed and was rolled back to (\S+?);|[^\n]*)/.exec(hub);
