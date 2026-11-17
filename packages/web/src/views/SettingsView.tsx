@@ -34,6 +34,7 @@ import {
   subscriptionOf,
   tableRows,
   type TableRow,
+  withChoice,
   ticketsRunningOn,
 } from "../live/settings.js";
 import { Icon, type IconName } from "../parts/icons.js";
@@ -294,18 +295,18 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
 }
 
 function TableRowControl({ row, settings, actions, title }: { readonly row: TableRow; readonly settings: SettingsSnapshot; readonly actions: SettingsActions; readonly title: string | null }) {
-  const options = pairOptions(machineChoices(settings.machines), row.engine, row.current);
   const currentKey = pairKey(row.current.model, row.current.effort);
-  const [chosen, setChosen] = useState(currentKey);
+  const [picked, setPicked] = useState(row.current);
   const [state, setState] = useState<"idle" | "sending" | "unsupported">("idle");
   useEffect(() => {
-    setChosen(currentKey);
+    setPicked(row.current);
   }, [currentKey]);
-  const picked = options.find((option) => pairKey(option.model, option.effort) === chosen) ?? options[0];
-  const dirty = chosen !== currentKey && picked !== undefined;
-  const label = text("models.choice", { name: title ?? text(`engine.${row.engine}`) });
+  const options = withChoice(pairOptions(machineChoices(settings.machines), row.engine, row.current), picked);
+  const chosen = pairKey(picked.model, picked.effort);
+  const dirty = chosen !== currentKey;
+  const label = text("models.choice", { name: title === null ? text(`engine.${row.engine}`) : `${text(`engine.${row.engine}`)} ${title}` });
   const save = () => {
-    if (!dirty || picked === undefined || state === "sending") {
+    if (!dirty || state === "sending") {
       return;
     }
     setState("sending");
@@ -325,8 +326,11 @@ function TableRowControl({ row, settings, actions, title }: { readonly row: Tabl
           value={chosen}
           disabled={options.length < 2}
           onChange={(event) => {
-            setChosen(event.target.value);
-            setState("idle");
+            const option = options.find((item) => pairKey(item.model, item.effort) === event.target.value);
+            if (option !== undefined) {
+              setPicked({ model: option.model, effort: option.effort });
+              setState("idle");
+            }
           }}
         >
           {options.map((option) => (
@@ -339,7 +343,7 @@ function TableRowControl({ row, settings, actions, title }: { readonly row: Tabl
           {text("models.save")}
         </button>
       </div>
-      {state === "unsupported" && picked !== undefined ? (
+      {state === "unsupported" ? (
         <p className="field-err srow-err" role="alert">
           {text("models.unoffered", { model: picked.model, effort: picked.effort })}
         </p>

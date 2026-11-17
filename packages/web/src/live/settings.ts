@@ -135,6 +135,11 @@ export function pairOptions(machines: readonly MachineChoice[], engine: TableEng
   return options;
 }
 
+export function withChoice(options: readonly PairOption[], chosen: { readonly model: string; readonly effort: string }): PairOption[] {
+  const key = pairKey(chosen.model, chosen.effort);
+  return options.some((option) => pairKey(option.model, option.effort) === key) ? [...options] : [{ model: chosen.model, effort: chosen.effort, offered: false }, ...options];
+}
+
 export interface TableRow {
   readonly engine: TableEngine;
   readonly difficulty: Difficulty | null;

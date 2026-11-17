@@ -1,7 +1,7 @@
 import { type MachineChoice, type MachineStatus, startingEngineTable, type Ticket } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import { ticket } from "./fixtures.js";
-import { availableNow, movedEarlier, nameProblem, pairOptions, providerRows, slotsOf, subscriptionOf, tableRows, ticketsRunningOn } from "./settings.js";
+import { availableNow, movedEarlier, nameProblem, pairOptions, providerRows, withChoice, slotsOf, subscriptionOf, tableRows, ticketsRunningOn } from "./settings.js";
 
 const report = {
   hostname: "pc",
@@ -85,6 +85,15 @@ describe("the model table", () => {
       { model: "gpt-6-luna", effort: "medium", offered: true },
     ]);
     expect(pairOptions(machines, "claude", { model: "claude-opus-5-5", effort: "high" })).toEqual([{ model: "claude-opus-5-5", effort: "high", offered: false }]);
+  });
+
+  it("keeps a pair the owner picked even after the machine offering it went away", () => {
+    const options = pairOptions([], "codex", { model: "gpt-6-luna", effort: "medium" });
+    expect(withChoice(options, { model: "gpt-6-luna", effort: "high" })).toEqual([
+      { model: "gpt-6-luna", effort: "high", offered: false },
+      { model: "gpt-6-luna", effort: "medium", offered: false },
+    ]);
+    expect(withChoice(options, { model: "gpt-6-luna", effort: "medium" })).toEqual(options);
   });
 
   it("has a row per difficulty for each code engine and one for Antigravity", () => {
