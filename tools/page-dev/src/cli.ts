@@ -277,6 +277,7 @@ process.stdout.write(
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
     `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort> files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND`,
+    `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a writing ticket through the brain's tools and states its defaults, to be started from its card on the page`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

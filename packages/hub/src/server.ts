@@ -54,6 +54,7 @@ import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import type { TicketFiles } from "./files.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
@@ -93,7 +94,9 @@ const startStatus: Readonly<Record<StartError, number>> = {
 
 const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
-const ticketWorkRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop)$/;
+const ticketFileRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/files\/([^/]{1,400})$/;
+
+const ticketWorkRoute =/^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop)$/;
 
 const maximumWorkEvents = 5_000;
 
@@ -124,6 +127,7 @@ export interface HubServerOptions {
   readonly push?: PushService;
   readonly runners?: Runners;
   readonly tickets?: TicketService;
+  readonly files?: TicketFiles;
   readonly work?: WorkService;
   readonly chains?: ChainStarter;
   readonly defaults?: StartDefaults;
@@ -796,6 +800,29 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return false;
   };
 
+  const serveTicketFile = (response: ServerResponse, ticket: number, encoded: string): boolean => {
+    let name: string;
+    try {
+      name = decodeURIComponent(encoded);
+    } catch {
+      return false;
+    }
+    const file = options.files?.get(ticket, name);
+    if (file === undefined) {
+      return false;
+    }
+    response.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "content-length": file.data.length,
+      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox",
+    });
+    response.end(file.data);
+    return true;
+  };
+
   const serveTickets = (request: IncomingMessage, response: ServerResponse, path: string, method: string): boolean => {
     const tickets = options.tickets;
     if (tickets === undefined || method !== "GET") {
@@ -810,6 +837,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       sendJson(response, 200, { tickets: tickets.list({ open: scope === "open", limit }) });
       return true;
+    }
+    const fileRoute = ticketFileRoute.exec(path);
+    if (fileRoute?.[1] !== undefined && fileRoute[2] !== undefined) {
+      return serveTicketFile(response, Number(fileRoute[1]), fileRoute[2]);
     }
     const id = ticketRoute.exec(path)?.[1];
     const detail = id === undefined ? undefined : tickets.detail(Number(id));

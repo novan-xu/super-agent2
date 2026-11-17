@@ -22,3 +22,4 @@ export * from "./handback.js";
 export * from "./identity.js";
 export * from "./workplace.js";
 export * from "./works.js";
+export * from "./writing.js";

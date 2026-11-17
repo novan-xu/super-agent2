@@ -23,6 +23,7 @@ import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js"
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
+import { createTicketFiles } from "./files.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -97,6 +98,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     reassign: (ticket) => work?.reassign(ticket),
   };
   const tickets = createTicketService({ database, clock, work: ticketWork });
+  const files = createTicketFiles(database);
   const credentials = options.credentials ?? environmentCredentials(environment);
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
@@ -127,8 +129,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         tickets,
         runners,
         credentials,
+        files,
         tell: (conversation, notice, prompt) => {
           told.tell(conversation, notice, prompt);
+        },
+        deliver: (conversation, delivery) => {
+          told.deliver(conversation, delivery);
         },
       });
     }
@@ -174,6 +180,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         },
       }),
       tickets,
+      files,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       defaults,

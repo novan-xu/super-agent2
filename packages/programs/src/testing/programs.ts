@@ -212,3 +212,37 @@ export class EventLog {
     );
   }
 }
+
+export const fakeAntigravitySource = `
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const log = process.env.FAKE_LOG;
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const record = (entry) => appendFileSync(log, JSON.stringify(entry) + "\\n");
+const args = process.argv.slice(2);
+record({ args, cwd: process.cwd() });
+const resumeAt = args.indexOf("--conversation");
+const requested = resumeAt >= 0 ? args[resumeAt + 1] : undefined;
+const conversation = requested === undefined || requested === "missing" ? "conv-" + process.pid : requested;
+send({ event: "init", conversation_id: conversation, init: { model: args[args.indexOf("--model") + 1], cwd: process.cwd(), tools: [] } });
+let index = 0;
+const step = (update) => send({ event: "step_update", step_update: { conversation_id: conversation, step_index: index, ...update } });
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  record(message);
+  const text = message.message.content;
+  const result = (extra) => send({ event: "result", result: { conversation_id: conversation, ...extra } });
+  step({ state: "DONE", step_type: "user_input" });
+  index += 1;
+  if (text === "wait") return step({ state: "ACTIVE", step_type: "agent_response", text_delta: "working" });
+  if (text === "quota") return result({ status: "ERROR", error: "resource exhausted: weekly quota reached", finished_reason: "error" });
+  if (text === "broken") return result({ status: "ERROR", error: "the model request failed", finished_reason: "error" });
+  step({ state: "ACTIVE", step_type: "tool", tool_name: "write_file", tool_info: { name: "write_file", parameters: { Path: "out.txt" } } });
+  step({ state: "DONE", step_type: "tool", tool_name: "write_file", tool_info: { name: "write_file", parameters: { Path: "out.txt" }, output: "1 lines" } });
+  index += 1;
+  step({ state: "ACTIVE", step_type: "agent_response", text_delta: "译文：" });
+  step({ state: "DONE", step_type: "agent_response", text_delta: text + "\\n" });
+  index += 1;
+  return result({ status: "SUCCESS", response: "译文：" + text + "\\n" });
+});
+`;

@@ -126,6 +126,7 @@ describe("the brain's ticket tools", () => {
       "stop_command",
       "file_issue",
       "open_ticket",
+      "open_writing_ticket",
       "list_tickets",
       "read_ticket",
       "message_worker",
@@ -195,6 +196,52 @@ describe("the brain's ticket tools", () => {
     expect(opened.isError).toBe(false);
     expect(opened.text).toContain("Used the existing issue");
     expect(running.tickets.get(1)).toMatchObject({ title: { en: "Fix the typo", zh: "修正错字" }, kind: "parameter" });
+  });
+});
+
+describe("the brain's tool for writing work", () => {
+  const writingArguments = {
+    title: { en: "Translate a notice", zh: "翻译一则通知" },
+    summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
+    task: "Translate the notice into English.",
+    material: [
+      { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+      { name: "terms", source: "https://example.com/terms" },
+    ],
+  };
+
+  it("opens a pending ticket with no repository and no issue, keeping the task and the material, and shows them on read", async () => {
+    const running = await start();
+    const conversation = running.conversations.create();
+    const opened = await callTool(running, "open_writing_ticket", writingArguments, conversation.id);
+    expect(opened.isError).toBe(false);
+    expect(opened.text).toContain("Opened writing ticket 1");
+    expect(github.jobs).toEqual([]);
+    expect(running.tickets.get(1)).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id, title: { zh: "翻译一则通知" } });
+    expect(running.tickets.writing(1)?.materials).toEqual([
+      { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+      { name: "terms", source: "https://example.com/terms", text: null },
+    ]);
+    const read = await callTool(running, "read_ticket", { ticket: 1 });
+    expect(read.text).toContain("Task: Translate the notice into English.");
+    expect(read.text).toContain("Material notice.txt, from pasted by the owner in the conversation (6 characters given)");
+    expect(read.text).toContain("Material terms, from https://example.com/terms (by its source only)");
+    expect((await callTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing in no repository: Translate a notice");
+  });
+
+  it("refuses a missing Chinese copy, an unsafe material name, repeated names and too much text, opening nothing", async () => {
+    const running = await start();
+    const refused = [
+      { ...writingArguments, title: { en: "Translate a notice", zh: "Translate a notice" } },
+      { ...writingArguments, material: [{ name: "../notice.txt", source: "pasted" }] },
+      { ...writingArguments, material: [{ name: "a.txt", source: "pasted" }, { name: "a.txt", source: "pasted again" }] },
+      { ...writingArguments, material: [{ name: "a.txt", source: "pasted", text: "x".repeat(200_000) }, { name: "b.txt", source: "pasted", text: "x".repeat(200_000) }, { name: "c.txt", source: "pasted", text: "x" }] },
+      { ...writingArguments, task: "  " },
+    ];
+    for (const args of refused) {
+      expect((await callTool(running, "open_writing_ticket", args)).isError).toBe(true);
+    }
+    expect(running.tickets.list({})).toEqual([]);
   });
 });
 

@@ -35,9 +35,13 @@ export interface ProgramHandle {
   processId?(): number | undefined;
 }
 
-export interface ProgramAdapter {
-  readonly provider: Provider;
+export type WorkerProgramName = Provider | "antigravity";
+
+export interface ProgramAdapter<Name extends WorkerProgramName = Provider> {
+  readonly provider: Name;
   readonly model: string;
   readonly effort: string;
   open(options: OpenOptions, listener: ProgramListener): ProgramHandle;
 }
+
+export type WorkerAdapter = ProgramAdapter<WorkerProgramName>;

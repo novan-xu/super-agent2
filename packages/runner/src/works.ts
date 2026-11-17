@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claudeAdapter, codexAdapter, dshAdapter, type ProgramAdapter, type ProgramEvent, type ProgramHandle, type ProgramSettings } from "@super-agent2/programs";
+import { antigravityAdapter, claudeAdapter, codexAdapter, dshAdapter, type ProgramEvent, type ProgramHandle, type ProgramSettings, type WorkerAdapter } from "@super-agent2/programs";
 import {
   type HubToRunner,
   type RunnerToHub,
@@ -11,9 +11,21 @@ import {
   WorkIssue,
   type WorkSender,
   type WorkTask,
+  type WritingTask,
 } from "@super-agent2/protocol";
 import { z } from "zod";
-import { brief, type BriefPlace, continueText, lostSessionNote, messageText, resumeText } from "./brief.js";
+import {
+  brief,
+  type BriefPlace,
+  continueText,
+  lostSessionNote,
+  messageText,
+  resumeText,
+  writingBrief,
+  writingContinueText,
+  writingLostSessionNote,
+  writingResumeText,
+} from "./brief.js";
 import { createGit, type Git, type ProcessRunner, runProcess } from "./git.js";
 import { type Identity, readIdentity, shimFolder, workerEnvironment, writeGhShims } from "./identity.js";
 import { checkHandback, type PullRequestReader, readPullRequestWith } from "./handback.js";
@@ -21,12 +33,13 @@ import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
+import { checkWritingHandback, clearOutput, prepareScratch, writingPaths, writingPlace } from "./writing.js";
 
-export type WorkMessage = Extract<HubToRunner, { readonly type: "work.start" | "work.sync" | "work.message" | "work.stop" }>;
+export type WorkMessage = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" }>;
 
-export type AdapterFactory = (engine: WorkEngine, settings: ProgramSettings) => ProgramAdapter;
+export type AdapterFactory = (engine: WorkEngine, settings: ProgramSettings) => WorkerAdapter;
 
-export const engineExecutables: Readonly<Record<WorkEngine, string>> = { codex: "codex", claude: "claude", dsh: "dsh" };
+export const engineExecutables: Readonly<Record<WorkEngine, string>> = { codex: "codex", claude: "claude", dsh: "dsh", antigravity: "agy" };
 
 export const defaultAdapters: AdapterFactory = (engine, settings) => {
   switch (engine) {
@@ -36,6 +49,8 @@ export const defaultAdapters: AdapterFactory = (engine, settings) => {
       return claudeAdapter(settings);
     case "dsh":
       return dshAdapter(settings);
+    case "antigravity":
+      return antigravityAdapter(settings);
   }
 };
 
@@ -70,6 +85,7 @@ export interface Works {
 }
 
 const WorkRecord = z.object({
+  kind: z.enum(["code", "writing"]).default("code"),
   ticket: z.number().int().positive(),
   attempt: z.number().int().positive(),
   repository: z.string(),
@@ -97,6 +113,7 @@ interface Work {
   seq: number;
   live: boolean;
   task: WorkTask | undefined;
+  writing: WritingTask | undefined;
   handle: ProgramHandle | undefined;
   turn: boolean;
   queue: string[];
@@ -170,7 +187,7 @@ export function createWorks(options: WorksOptions): Works {
     for (const name of readdirSync(folder)) {
       try {
         const record = WorkRecord.parse(JSON.parse(readFileSync(join(folder, name, "work.json"), "utf8")));
-        const paths = workPaths(options.home, record.repository, record.ticket);
+        const paths = record.kind === "writing" ? writingPaths(options.home, record.ticket) : workPaths(options.home, record.repository, record.ticket);
         works.set(record.ticket, blank(record, paths));
       } catch {
         continue;
@@ -184,6 +201,7 @@ export function createWorks(options: WorksOptions): Works {
     seq: lastSeq(paths, record.attempt),
     live: false,
     task: undefined,
+    writing: undefined,
     handle: undefined,
     turn: false,
     queue: [],
@@ -277,13 +295,17 @@ export function createWorks(options: WorksOptions): Works {
     emit(work, { kind: "ran", model: model ?? work.record.model, effort: effort ?? work.record.effort });
   };
 
-  const check = async (work: Work) => {
+  type Checked = { readonly ok: true; readonly event: WorkEvent } | { readonly ok: false; readonly problem: string };
+
+  const checked = async (work: Work): Promise<Checked | undefined> => {
+    if (work.writing !== undefined) {
+      const outcome = checkWritingHandback({ paths: work.paths });
+      return outcome.ok ? { ok: true, event: { kind: "delivered", text: outcome.text, files: [...outcome.files], report: outcome.report } } : outcome;
+    }
     const task = work.task;
     if (task === undefined) {
-      return;
+      return undefined;
     }
-    const generation = work.generation;
-    emit(work, { kind: "phase", phase: "checking", detail: "Checking the hand-back and the pull request" });
     const outcome = await checkHandback({
       path: work.paths.handback,
       repository: work.record.repository,
@@ -293,11 +315,25 @@ export function createWorks(options: WorksOptions): Works {
       cwd: work.paths.worktree,
       read: readPullRequest,
     });
-    if (generation !== work.generation || work.record.ended || work.stopping) {
+    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, report: outcome.report } } : outcome;
+  };
+
+  const check = async (work: Work) => {
+    if (work.task === undefined && work.writing === undefined) {
+      return;
+    }
+    const generation = work.generation;
+    emit(work, {
+      kind: "phase",
+      phase: "checking",
+      detail: work.writing === undefined ? "Checking the hand-back and the pull request" : "Checking the hand-back and the files to deliver",
+    });
+    const outcome = await checked(work);
+    if (outcome === undefined || generation !== work.generation || work.record.ended || work.stopping) {
       return;
     }
     if (outcome.ok) {
-      await end(work, { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, report: outcome.report });
+      await end(work, outcome.event);
       return;
     }
     if (work.corrections >= maximumCorrections) {
@@ -309,8 +345,8 @@ export function createWorks(options: WorksOptions): Works {
     startTurn(work, `[hub] ${outcome.problem}`);
   };
 
-  const openProgram = (work: Work, task: WorkTask, session: string | null): void => {
-    const environment = environmentOf(task);
+  const openProgram = (work: Work, task: WorkTask | WritingTask, session: string | null): void => {
+    const environment = "repository" in task ? environmentOf(task) : mergeEnvironment(options.environment, {});
     const program = find(engineExecutables[task.engine]);
     if (program === undefined) {
       throw new Error(`${engineExecutables[task.engine]} is not installed on this machine`);
@@ -379,16 +415,22 @@ export function createWorks(options: WorksOptions): Works {
         return;
       }
       case "failed":
-        if (event.lostSession && !work.freshTried && work.task !== undefined) {
+        if (event.lostSession && !work.freshTried && (work.task !== undefined || work.writing !== undefined)) {
           work.freshTried = true;
           const task = work.task;
+          const writing = work.writing;
           track(
             (async () => {
               await closeHandle(work);
               work.record = { ...work.record, session: null };
               save(work);
-              openProgram(work, task, null);
-              startTurn(work, brief({ ...task, note: lostSessionNote() }, place(work)));
+              if (writing !== undefined) {
+                openProgram(work, writing, null);
+                startTurn(work, writingBrief({ ...writing, note: writingLostSessionNote() }, writingPlace(work.paths)));
+              } else if (task !== undefined) {
+                openProgram(work, task, null);
+                startTurn(work, brief({ ...task, note: lostSessionNote() }, place(work)));
+              }
             })().catch((error: unknown) => end(work, { kind: "failed", failure: "program", reason: messageOf(error) })),
           );
           return;
@@ -441,7 +483,39 @@ export function createWorks(options: WorksOptions): Works {
     startTurn(work, withWaiting(task.note === null ? resumeText(task, where) : continueText(task, where, task.note)));
   };
 
-  const start = async (task: WorkTask) => {
+  const beginWriting = async (work: Work, task: WritingTask) => {
+    emit(work, { kind: "phase", phase: "preparing", detail: `Preparing the scratch folder ${work.paths.worktree}` });
+    try {
+      prepareScratch(work.paths, task.materials);
+    } catch (error) {
+      await end(work, { kind: "failed", failure: "prepare", reason: messageOf(error) });
+      return;
+    }
+    if (work.writing !== task || work.stopping) {
+      return;
+    }
+    emit(work, { kind: "phase", phase: "prepared", detail: `Prepared the scratch folder ${work.paths.worktree} with ${task.materials.length} material(s)` });
+    const session = task.session ?? work.record.session;
+    try {
+      openProgram(work, task, session);
+    } catch (error) {
+      await end(work, { kind: "failed", failure: "program", reason: messageOf(error) });
+      return;
+    }
+    const where = writingPlace(work.paths);
+    const waiting = work.queue.splice(0);
+    const withWaiting = (prompt: string) => [prompt, ...waiting].join("\n\n");
+    if (session === null) {
+      emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
+      startTurn(work, withWaiting(writingBrief(task, where)));
+      return;
+    }
+    emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
+    startTurn(work, withWaiting(task.note === null ? writingResumeText(task, where) : writingContinueText(where, task.note)));
+  };
+
+  const start = async (given: { readonly code: WorkTask } | { readonly writing: WritingTask }) => {
+    const task = "code" in given ? given.code : given.writing;
     const existing = works.get(task.ticket);
     if (existing !== undefined && existing.record.attempt === task.attempt && (existing.live || existing.record.ended)) {
       return;
@@ -452,7 +526,7 @@ export function createWorks(options: WorksOptions): Works {
       await closeHandle(existing);
       existing.live = false;
     }
-    const paths = workPaths(options.home, task.repository, task.ticket);
+    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket) : writingPaths(options.home, task.ticket);
     const sameAttempt = existing !== undefined && existing.record.attempt === task.attempt;
     if (existing !== undefined && !sameAttempt) {
       for (const name of existsSync(paths.folder) ? readdirSync(paths.folder) : []) {
@@ -461,14 +535,18 @@ export function createWorks(options: WorksOptions): Works {
         }
       }
       rmSync(paths.handback, { force: true });
+      if ("writing" in given) {
+        clearOutput(paths);
+      }
     }
     const record: WorkRecord = {
+      kind: "code" in given ? "code" : "writing",
       ticket: task.ticket,
       attempt: task.attempt,
-      repository: task.repository,
-      branch: task.branch,
+      repository: "code" in given ? given.code.repository : "",
+      branch: "code" in given ? given.code.branch : "",
       title: task.title,
-      issues: task.issues,
+      issues: "code" in given ? given.code.issues : [],
       engine: task.engine,
       model: task.model,
       effort: task.effort,
@@ -478,11 +556,19 @@ export function createWorks(options: WorksOptions): Works {
     };
     const work = blank(record, paths);
     work.live = true;
-    work.task = task;
+    if ("code" in given) {
+      work.task = given.code;
+    } else {
+      work.writing = given.writing;
+    }
     works.set(task.ticket, work);
     save(work);
     changed();
-    await begin(work, task);
+    if ("code" in given) {
+      await begin(work, given.code);
+    } else {
+      await beginWriting(work, given.writing);
+    }
   };
 
   const sync = (ticket: number, attempt: number, after: number) => {
@@ -558,7 +644,7 @@ export function createWorks(options: WorksOptions): Works {
     if (remove) {
       const git = task === undefined ? createGit(run, mergeEnvironment(options.environment, {}), find("git") ?? "git") : gitFor(task);
       await removeWorktree(git, work.record.branch, work.paths).catch((error: unknown) => log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`));
-      emit(work, { kind: "phase", phase: "removed", detail: `Removed the worktree ${work.paths.worktree}` });
+      emit(work, { kind: "phase", phase: "removed", detail: `Removed the ${work.record.kind === "writing" ? "scratch folder" : "worktree"} ${work.paths.worktree}` });
       rmSync(work.paths.folder, { recursive: true, force: true });
       if (works.get(ticket) === work) {
         works.delete(ticket);
@@ -585,7 +671,10 @@ export function createWorks(options: WorksOptions): Works {
       }
       switch (incoming.type) {
         case "work.start":
-          track(start(incoming.task));
+          track(start({ code: incoming.task }));
+          return;
+        case "work.write":
+          track(start({ writing: incoming.task }));
           return;
         case "work.sync":
           sync(incoming.ticket, incoming.attempt, incoming.after);

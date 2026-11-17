@@ -584,6 +584,57 @@ describe("start defaults", () => {
     expect(read.text).toContain("chosen by: machine default, engine default, model owner, effort owner");
   });
 
+  it("shows a writing ticket as a start card for a machine that has Antigravity, starts it from the card, and keeps Antigravity from code", async () => {
+    const running = await start();
+    const agy: MachineReport = {
+      ...machineReport("darwin"),
+      programs: [
+        {
+          id: "antigravity",
+          installed: true,
+          path: "agy",
+          version: "1.5.10",
+          models: [{ id: "gemini-3.8-flash", efforts: ["low", "medium", "high"] }],
+          source: "program",
+          problem: null,
+        },
+      ],
+    };
+    connect(running, "mac", agy);
+    const opened = await callTool(running, "open_writing_ticket", {
+      title: { en: "Translate a notice", zh: "翻译一则通知" },
+      summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
+      task: "Translate the notice into English.",
+      material: [{ name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" }],
+    });
+    expect(opened.isError, opened.text).toBe(false);
+    const before = await cardOf(running, 1);
+    expect(before.choice.missing).toEqual(["defaults"]);
+    const stated = await callTool(running, "choose_defaults", {
+      chains: [{ ticket: 1, kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
+    });
+    expect(stated.isError, stated.text).toBe(false);
+    const card = await cardOf(running, 1);
+    expect(card.ticket).toMatchObject({ kind: "writing", repository: null, issues: [], difficulty: "standard" });
+    expect(card.choice).toEqual({
+      machine: "mac",
+      engine: "antigravity",
+      model: "gemini-3.8-flash",
+      effort: "high",
+      by: { machine: "default", engine: "default", model: "default", effort: "default" },
+      missing: [],
+    });
+    expect(card.machines.find((machine) => machine.name === "pc")?.engines.some((engine) => engine.engine === "antigravity")).toBe(false);
+    expect(card.machines.find((machine) => machine.name === "mac")?.engines.map((engine) => engine.engine)).toEqual(["antigravity"]);
+    expect((await startCall(running, { body: JSON.stringify({ chains: [{ ticket: 1, fingerprint: card.fingerprint }] }) })).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({ state: "working", machine: "mac", engine: "antigravity", model: "gemini-3.8-flash", effort: "high" });
+    expect(begun).toEqual([1]);
+    await fileIssue(running, "Move the state", "搬动状态");
+    const refused = await ownerSend(running, chainChoicePath, { ticket: 2, engine: "antigravity" });
+    expect(refused.status).toBe(422);
+    expect(running.tickets.get(2)?.ownerChoice.engine).toBeNull();
+  });
+
   it("refuses a model and effort the machine does not offer, and a chain that is not complete, before the start", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");

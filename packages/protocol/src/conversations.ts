@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GeneratedText } from "./generated.js";
 
 export const providers = ["gpt", "claude", "deepseek"] as const;
 export const Provider = z.enum(providers);
@@ -52,6 +53,20 @@ export type OwnerEntry = z.infer<typeof OwnerEntry>;
 export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable() });
 export type NoticeEntry = z.infer<typeof NoticeEntry>;
 
+export const DeliveryFile = z.object({ name: z.string().min(1), size: z.number().int().nonnegative() });
+export type DeliveryFile = z.infer<typeof DeliveryFile>;
+
+export const DeliveryEntry = z.object({
+  ...entryBase,
+  kind: z.literal("delivery"),
+  turn: z.string().nullable(),
+  ticket: z.number().int().positive(),
+  title: GeneratedText,
+  text: z.string().nullable(),
+  files: z.array(DeliveryFile),
+});
+export type DeliveryEntry = z.infer<typeof DeliveryEntry>;
+
 export const TextEntry = z.object({ ...entryBase, kind: z.literal("text"), turn: z.string(), text: z.string() });
 export type TextEntry = z.infer<typeof TextEntry>;
 
@@ -66,7 +81,7 @@ export const ToolEntry = z.object({
 });
 export type ToolEntry = z.infer<typeof ToolEntry>;
 
-export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, TextEntry, ToolEntry]);
+export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, DeliveryEntry, TextEntry, ToolEntry]);
 export type ConversationEntry = z.infer<typeof ConversationEntry>;
 
 export const BrainStatus = z.object({

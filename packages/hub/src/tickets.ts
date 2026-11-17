@@ -16,12 +16,19 @@ import {
   type OwnerChoice,
   type ProgramId,
   WorkStatus,
+  WritingMaterial,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 
+export interface TicketWriting {
+  readonly task: string;
+  readonly materials: readonly WritingMaterial[];
+}
+
 export interface TicketToOpen {
+  readonly writing?: TicketWriting | undefined;
   readonly repository: string | null;
   readonly issues: readonly TicketIssue[];
   readonly title: GeneratedText;
@@ -99,6 +106,7 @@ export interface TicketWrites {
   ran(id: number, run: TicketRun): void;
   setBranch(id: number, branch: string): void;
   setPullRequest(id: number, pullRequest: number, report: GeneratedText): void;
+  setReport(id: number, report: GeneratedText): void;
 }
 
 export interface TicketService {
@@ -107,6 +115,7 @@ export interface TicketService {
   list(options?: ListOptions): Ticket[];
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
+  writing(id: number): TicketWriting | undefined;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
   move(id: number, to: TicketState, reason?: GeneratedText): MoveResult;
@@ -224,6 +233,8 @@ const MoveRow = z.object({
 
 const IdRow = z.object({ ticket_id: z.number().int() });
 
+const WritingRow = z.object({ task: z.string(), materials: z.string() });
+
 const SeqRow = z.object({ seq: z.number().int().nullable() });
 
 function pair(en: string | null, zh: string | null): GeneratedText | null {
@@ -258,6 +269,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
+  const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
+  const selectWriting = connection.prepare("SELECT task, materials FROM ticket_writing WHERE ticket_id = ?");
+  const insertWriting = connection.prepare("INSERT INTO ticket_writing (ticket_id, task, materials) VALUES (?, ?, ?)");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets ORDER BY created_at DESC, id DESC LIMIT ?");
   const selectOpen = connection.prepare(
@@ -391,9 +405,18 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   };
 
   const check = (request: TicketToOpen) => {
+    if (request.writing !== undefined && request.kind !== "writing") {
+      throw new TicketError("Only a writing ticket has a writing task");
+    }
     if (request.kind === "writing") {
       if (request.repository !== null || request.issues.length > 0) {
         throw new TicketError("A writing ticket has no repository and no issues");
+      }
+      if (request.writing !== undefined) {
+        z.array(WritingMaterial).parse(request.writing.materials);
+        if (request.writing.task.trim() === "") {
+          throw new TicketError("A writing ticket needs its task");
+        }
       }
     } else {
       if (request.repository === null || !RepositoryName.safeParse(request.repository).success) {
@@ -411,6 +434,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         throw new TicketError(`There is no ticket ${before} to wait for`);
       }
     }
+  };
+
+  const writingOf = (id: number): TicketWriting | undefined => {
+    const row = selectWriting.get(id);
+    if (row === undefined) {
+      return undefined;
+    }
+    const value = WritingRow.parse(row);
+    return { task: value.task, materials: z.array(WritingMaterial).parse(JSON.parse(value.materials)) };
   };
 
   const checkIssues = (repository: string | null, issues: readonly TicketIssue[]) => {
@@ -469,6 +501,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         );
         const id = Number(result.lastInsertRowid);
         insertIssues(id, request.issues);
+        if (request.writing !== undefined) {
+          insertWriting.run(id, request.writing.task.trim(), JSON.stringify(request.writing.materials));
+        }
         for (const before of new Set(request.waitsFor ?? [])) {
           insertWait.run(id, before, 0);
         }
@@ -582,6 +617,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         updatePullRequest.run(pullRequest, given.en, given.zh, id);
         touch(id);
       },
+      setReport: (id, report) => {
+        existing(id);
+        const given = GeneratedText.parse(report);
+        updateReport.run(given.en, given.zh, id);
+        touch(id);
+      },
     };
     inside = true;
     let result: T;
@@ -639,6 +680,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const ticket = get(id);
       return ticket === undefined ? undefined : { ticket, moves: movesOf(id) };
     },
+    writing: writingOf,
     forIssue: (repository, number) =>
       selectByIssue.all(repository, number).flatMap((row) => {
         const ticket = get(IdRow.parse(row).ticket_id);

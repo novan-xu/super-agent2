@@ -9,6 +9,9 @@ import {
   GeneratedText,
   gitHubAccounts,
   defaultGitHubAccount,
+  MaterialName,
+  maximumMaterialText,
+  maximumMaterials,
   Platform,
   platforms,
   RepositoryName,
@@ -79,6 +82,23 @@ const OpenArguments = z.object({
   platform: Platform.optional(),
   account: z.enum(gitHubAccounts).optional(),
 });
+
+const MaterialArgument = z.object({
+  name: MaterialName,
+  source: z.string().trim().min(1).max(500),
+  text: z.string().max(maximumMaterialText).optional(),
+});
+
+const WritingArguments = z.object({
+  title: GeneratedText,
+  summary: GeneratedText,
+  task: z.string().trim().min(1).max(20_000),
+  material: z.array(MaterialArgument).max(maximumMaterials).optional(),
+  difficulty: Difficulty.optional(),
+  platform: Platform.optional(),
+});
+
+const maximumMaterialTotal = 400_000;
 
 const ListArguments = z.object({
   all: z.boolean().optional(),
@@ -182,7 +202,7 @@ function defaultsDefinitions() {
       name: "choose_defaults",
       title: "State each chain's kind, difficulty, platform and engine",
       description: [
-        "For each chain you arranged (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the chain's card; its platform (macos, windows or any); and, for code work, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
+        "For each chain you arranged, and for each writing ticket you opened (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the chain's card; its platform (macos, windows or any); and, for code work, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
         "Difficulty: mechanical is a fixed procedure with a known result; standard is bounded implementation or diagnosis; complex is reasoning across modules, state or concurrency changes, or an open design decision.",
         "The hub then resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty. dsh is used only when both subscriptions are used up; writing goes to Antigravity.",
         "These are defaults: the owner can change the machine, engine, model and effort on the card, and the owner's choice wins. Rearranging a chain's issues clears what was stated for it; state it again.",
@@ -211,7 +231,7 @@ function defaultsDefinitions() {
                   },
                   description: "Every issue of the chain with its difficulty",
                 },
-                difficulty: { type: "string", enum: [...difficulties], description: "Only for a chain without issues (writing)" },
+                difficulty: { type: "string", enum: [...difficulties], description: "Only for a chain without issues (writing), where it does not change the model: standard when omitted" },
                 reason: generatedSchema("one-line reason for the chain's difficulty"),
                 platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
                 engine: { type: "string", enum: [...codeEngineChoices], description: "For code work: codex (GPT) or claude (Claude Code), by what is left on each subscription" },
@@ -379,6 +399,45 @@ function ticketDefinitions() {
           ...startChoices,
         },
         required: ["repository", "issue", "title_zh", "summary", "kind"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "open_writing_ticket",
+      title: "Open a ticket for writing work",
+      description: [
+        "Use this first whenever the owner asks you to produce a text for their own use, however short: an email, a letter, a message to someone, a translation, an article, a summary, a rewrite of a text. You never write such a text yourself in the conversation, not even as a draft; Antigravity writes it and it arrives in the conversation.",
+        "Open a pending ticket for writing work that is prose unrelated to code: a translation, an article, an email, a summary, a letter, or other text work. It has no repository, no issue, no branch and no pull request; Antigravity does it on a work machine in a scratch folder, and its result, the text and any files, is delivered to the owner in the conversation you opened it from, with no verification.",
+        "Decide by purpose and substance, never by file type. A README, developer documentation, code comments, a changelog or release notes for a repository, and the translation of engineering documents (specifications, design documents, API references) are code work: file an issue for them with file_issue and let a code engine do it. A text file is not code work just because it is a file, and a document is not writing work just because it is long.",
+        "Give the task in English, with a Chinese title and summary for the owner. State the language of the result and any requirement on tone, length or format. The worker knows only this task and the material, not this conversation.",
+        "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`: for example pasted by the owner in this conversation, a link, or a path on a machine), and its text when you have it, verbatim. A piece without `text` is described to the worker by its source only, and the worker gets it from there. Material the owner pasted in the conversation is passed on as `text`; you are the only way it reaches the worker.",
+        "Afterwards state its defaults with choose_defaults (kind writing), as for any ticket. The owner starts it with 开始 on its card; you cannot start it.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: generatedSchema("ticket title"),
+          summary: generatedSchema("one or two sentence summary"),
+          task: { type: "string", description: "What to do, in English: the work, the language and form of the result, tone, length, anything the owner said that matters" },
+          material: {
+            type: "array",
+            maxItems: maximumMaterials,
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "A plain file name for the piece, letters, digits, dots, hyphens and underscores, for example notice.txt" },
+                source: { type: "string", description: "Where it comes from, in English" },
+                text: { type: "string", description: "The text itself, verbatim, when you have it" },
+              },
+              required: ["name", "source"],
+              additionalProperties: false,
+            },
+            description: "The material to work from",
+          },
+          difficulty: startChoices.difficulty,
+          platform: startChoices.platform,
+        },
+        required: ["title", "summary", "task"],
         additionalProperties: false,
       },
     },
@@ -667,6 +726,41 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const { issue, title_zh, ...rest } = parsed.data;
         return filingText(await tools.filer.open({ ...rest, number: issue, titleZh: title_zh, conversation }));
       }
+      case "open_writing_ticket": {
+        const parsed = WritingArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        const material = parsed.data.material ?? [];
+        if (new Set(material.map((piece) => piece.name)).size !== material.length) {
+          return { text: "Nothing was opened: two pieces of material have the same name.", isError: true };
+        }
+        if (material.reduce((total, piece) => total + (piece.text?.length ?? 0), 0) > maximumMaterialTotal) {
+          return { text: `Nothing was opened: the material's text is more than ${maximumMaterialTotal} characters in all. Pass a long piece by its source instead of its text, or split the work.`, isError: true };
+        }
+        try {
+          const ticket = tools.tickets.open({
+            repository: null,
+            issues: [],
+            title: parsed.data.title,
+            summary: parsed.data.summary,
+            kind: "writing",
+            difficulty: parsed.data.difficulty,
+            platform: parsed.data.platform,
+            conversation,
+            writing: { task: parsed.data.task, materials: material.map((piece) => ({ name: piece.name, source: piece.source, text: piece.text ?? null })) },
+          });
+          return {
+            text: [
+              `Opened writing ticket ${ticket.id}.`,
+              ticketReport(ticket),
+              "Now state its defaults with choose_defaults (kind writing, its platform, a one-line reason). The owner starts it with 开始 on its card in 工作台; tell them in Chinese what it is and that it waits for their start.",
+            ].join("\n"),
+          };
+        } catch (error) {
+          return { text: `Nothing was opened: ${error instanceof Error ? error.message : String(error)}`, isError: true };
+        }
+      }
       case "list_tickets": {
         const parsed = ListArguments.safeParse(raw);
         if (!parsed.success) {
@@ -685,7 +779,17 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
         }
         const output = tools.work?.output(detail.ticket.id) ?? "";
-        return { text: output === "" ? ticketReport(detail.ticket, detail.moves) : [ticketReport(detail.ticket, detail.moves), "The latest worker's output ends with:", output].join("\n") };
+        const writing = detail.ticket.kind === "writing" ? tools.tickets.writing(detail.ticket.id) : undefined;
+        const report = [
+          ticketReport(detail.ticket, detail.moves),
+          ...(writing === undefined
+            ? []
+            : [
+                `Task: ${writing.task}`,
+                ...writing.materials.map((piece) => `Material ${piece.name}, from ${piece.source}${piece.text === null ? " (by its source only)" : ` (${piece.text.length} characters given)`}`),
+              ]),
+        ];
+        return { text: output === "" ? report.join("\n") : [...report, "The latest worker's output ends with:", output].join("\n") };
       }
       case "message_worker": {
         if (tools.work === undefined) {

@@ -1,4 +1,5 @@
 export * from "./adapters.js";
+export * from "./antigravity.js";
 export * from "./claude.js";
 export * from "./clock.js";
 export * from "./codex.js";

@@ -140,6 +140,7 @@ function unsettled(entry: ConversationEntry, finished: ReadonlySet<string>): boo
     case "text":
       return !finished.has(entry.turn);
     case "notice":
+    case "delivery":
       return false;
   }
 }

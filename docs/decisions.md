@@ -1287,3 +1287,110 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   another machine and engine carrying the work over. The Mac mini could not be reached, so macOS is not verified.
 - **Why:** The harness exercises the real front door, start and runner link without a bypass.
 - **Other options:** Driving the brain's tools by hand over MCP for each check.
+
+## 2026-11-17 — How Antigravity is driven
+
+- **Chosen:** `packages/programs/src/antigravity.ts` runs `agy --input-format stream-json --output-format stream-json
+  --model <model> --effort <effort> --disable-slash-commands [--conversation <id>] --print=` in the working folder, with
+  one process per worker kept open: each message is one line `{"event":"user","message":{"content":"…"}}` on standard
+  input and runs one turn, and each turn ends with a `result` event (`SUCCESS`, or `ERROR` with its text; a
+  `finished_reason` of `interrupted`, `print_timeout` or `error` says why it ended early). All of this was found from
+  `agy --help`, the changelog inside the program, and small runs here. The model is the id without its effort suffix
+  (`gemini-3.8-flash`) and the effort is its own flag, which is what the runner's probe already reports. The `init`
+  event gives the conversation id, which is the session; a resume passes `--conversation`, and because a conversation it
+  cannot find is only a warning on standard error followed by a silent new conversation, the adapter compares the id in
+  `init` with the one it asked for and reports a lost session when they differ. Text deltas, tool steps (`read_file`,
+  `write_file`, `run_command`…) and the model in `init` become the adapter's events. Where Antigravity cannot do what the
+  interface offers: a message cannot enter a running turn (it is read as the next turn), so `steer` answers `queued` and
+  the runner sends it as the next turn; there is no interrupt command, so `interrupt` stops the process tree and the
+  next message starts `agy` again on the same conversation; the effort it runs is not reported, so the model event
+  carries none. A failure whose text names a quota, a rate limit, credits or a sign-in is `unavailable`, any other is
+  `failed`. `--dangerously-skip-permissions` is not passed: in print mode the file and command tools ran without any
+  prompt here, and a writing worker has no need for more. The adapter refuses the hub's tools.
+- **Why:** The issue asks for a headless mode, the task and material in, the model and effort chosen, and a definite
+  result. One long-lived process per worker gives a session of its own, corrections as further turns, and the same
+  `ProgramAdapter` the other engines have.
+- **Other options:** One `agy -p` run per turn with `--conversation`; `--json-schema` for the result; passing
+  `--dangerously-skip-permissions` like the code engines.
+
+## 2026-11-17 — A writing ticket's task and material
+
+- **Chosen:** The brain opens one with `open_writing_ticket`: a title and summary with Chinese copies, the task in
+  English, and `material`, a list of pieces each with a plain file name, where it comes from, and its text when the brain
+  has it (verbatim; at most 20 pieces, 200000 characters each and 400000 together). It is stored beside the ticket
+  (`ticket_writing`, migration 11) in the same step that opens it. It is a pending ticket of kind `writing` with no
+  repository, no issue and no branch, and it shows as a start card like any other: the brain states its defaults with
+  `choose_defaults` (kind `writing`; the difficulty may be left out and is then `standard`, since Antigravity's model
+  does not depend on it), the hub resolves Antigravity, a machine that has `agy`, and the table's model and effort, and
+  the owner starts it with 开始. The card shows the Chinese title and summary where a code chain shows its issues. The
+  brain's guidance says to decide by purpose and substance, never by file type, and names README files, developer
+  documentation and translating engineering documents as code work.
+- **Why:** The issue says the brain opens it through a tool with the task, the material and where it comes from. The
+  worker knows only that, so the brain is the way pasted material reaches it. Reusing `choose_defaults` and the card
+  keeps one way to start work.
+- **Other options:** Arranging writing tickets with `arrange_chains`; a second start route; a required difficulty.
+
+## 2026-11-17 — The scratch folder and the hand-back of a writing worker
+
+- **Chosen:** The runner makes `~/.superagent2/work/t<ticket>/scratch` with `input/` (each piece of text material written
+  as a file; a piece without text is named in the task by its source, for the worker to fetch) and `output/`, runs the
+  program there with no GitHub token in its environment, and briefs it with `guidance/WRITER.md` and its task. The
+  worker hands back with a JSON file outside the scratch folder: `text` (the name of a UTF-8 file in `output/` that holds
+  the result), `files` (names of other files in `output/`) and `summary` (`GeneratedText`). The runner checks it as it
+  checks a pull request: the file is JSON of that shape, names something to deliver, every name is a regular file
+  directly in `output/`, no more than 20 files, 4 MB each, 8 MB together, and a text of at most 200000 characters that is
+  valid UTF-8 and not empty. Otherwise it tells the worker what is wrong in a new turn, at most twice, then the attempt
+  fails as `no-pull-request` with the last problem. Nothing reads the worker's prose. A new attempt clears `output/` and
+  the hand-back; the scratch folder is removed when the ticket is delivered or stopped.
+- **Why:** A file for the result, rather than the text inside the JSON, spares the worker from escaping a long text. The
+  definite checks are facts about the files, not a judgement of the work, so this adds no review.
+- **Other options:** Asking for the whole result in `--json-schema` output; the text inside the hand-back JSON; leaving
+  the checks to the hub.
+
+## 2026-11-17 — Delivering the text and files into the conversation
+
+- **Chosen:** The runner sends one new ending event, `delivered`, with the text, the files (name, size, media type and
+  their bytes in base64) and the summary. The hub stores the files in `ticket_files` (a blob each), keeps the event
+  without the bytes (so the page's socket and the event list never carry them), records the summary as the ticket's
+  report, moves the ticket from working to `delivered`, and adds a `delivery` entry to the conversation the ticket was
+  opened in (or the latest one): the ticket's Chinese title, the text, and the files. The page shows the text as written,
+  in plain pre-wrapped text and not as Markdown, and each file as a download chip; `GET /api/tickets/<n>/files/<name>`
+  serves a file to the owner only, always as an attachment with `Content-Security-Policy: sandbox`. The brain is told in
+  the same entry (the text up to 20000 characters, the file names, the worker's note) so that it can answer in a line and
+  open a new writing ticket if changes are wanted; another model that takes over gets it in the history. A failed writing
+  worker is recorded with its output and the brain is told, as for code, and the ticket stays working. The runner removes
+  the scratch folder when the ticket ends.
+- **Why:** The conversation is where the owner asked, so the result belongs there. Files go through the link the runner
+  already has, which is why they are limited in size.
+- **Other options:** Streaming files over a separate HTTP upload from the runner; keeping the files on the machine and
+  fetching them with a command; showing the text as Markdown.
+
+## 2026-11-17 — Which engine may run which ticket
+
+- **Chosen:** Antigravity is refused for code: the owner cannot choose it for a ticket of code work on the card or in 改派
+  (422 `unsupported`), and the hub refuses to begin such a ticket. A writing ticket may be run by another engine if the
+  owner chooses one, since the worker's brief and hand-back do not depend on the engine.
+- **Why:** Antigravity's own tools are not what the code workers' brief assumes (git, pull requests), and nothing has
+  tested it that way; writing with a code engine loses nothing.
+- **Other options:** Allowing any engine for anything.
+
+## 2026-11-17 — Where the brain is told to open writing tickets, and what was verified
+
+- **Chosen:** The rule is in three places: the "Writing work" section of the brain's guidance, a bullet under "How to
+  act", and the first lines of `open_writing_ticket`'s description ("use this first whenever the owner asks you to
+  produce a text for their own use, however short; you never write it yourself"). Verified on this PC with the
+  development harness, one local runner (its home in a scratch folder; `agy` 1.5.10 logged in) and the real Claude Code as
+  the brain: a translation opened as a writing ticket, started from its card on the page,
+  run by `agy` with `gemini-3.8-flash` at high, and delivered into the conversation with the ticket delivered and no
+  branch or pull request; a short email asked for in Chinese, which the brain opened as a writing ticket, stated the
+  defaults of, and told the owner about, and which arrived in the conversation after 开始, with the brain noting what the
+  worker had assumed; a worker that delivered a text and a file, the file downloaded from
+  `/api/tickets/<n>/files/<name>`; a README rewrite of a repository, which the brain filed as an issue of kind
+  `maintenance` (code work) and not as a writing ticket; and an `agy` run that failed with "No capacity available" (503),
+  which was recorded with its reason on the ticket and told to the brain, and then retried from the card's reassignment.
+  Not verified: macOS, and `agy` on a machine other than this PC.
+- **Why:** With the guidance alone the real brain wrote the email itself, and when asked it said it had no such section:
+  in this harness Claude Code did not take `AGENTS.md` from its folder, while it did read the tool descriptions. The
+  tool description is what is certain to reach it. Whether the deployed brain reads `AGENTS.md` is an earlier question
+  that this change does not settle.
+- **Other options:** Server instructions in the MCP handshake; a `CLAUDE.md` beside `AGENTS.md`.

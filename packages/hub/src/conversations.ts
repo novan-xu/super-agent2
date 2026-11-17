@@ -9,6 +9,9 @@ import {
   type ConversationDetail,
   ConversationEntry,
   type ConversationUpdate,
+  type DeliveryEntry,
+  type DeliveryFile,
+  type GeneratedText,
   type EntryDelta,
   type EntryUpdate,
   finishedStates,
@@ -51,10 +54,19 @@ export interface ConversationService {
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
   tell(conversation: string | null, notice: string, prompt: string): string;
+  deliver(conversation: string | null, delivery: Delivery): string;
   linked(): boolean;
   attach(connection: BrainConnection): BrainLink;
   subscribe(listener: ConversationListener): () => void;
   close(): void;
+}
+
+export interface Delivery {
+  readonly ticket: number;
+  readonly title: GeneratedText;
+  readonly text: string | null;
+  readonly files: readonly DeliveryFile[];
+  readonly prompt: string;
 }
 
 export interface ConversationServiceOptions {
@@ -105,7 +117,10 @@ const EntryRow = z.object({
 type EntryRow = z.infer<typeof EntryRow>;
 
 const Body = z.looseObject({
-  text: z.string().optional(),
+  text: z.string().nullable().optional(),
+  ticket: z.number().optional(),
+  title: z.unknown().optional(),
+  files: z.unknown().optional(),
   name: z.string().optional(),
   input: z.string().optional(),
   output: z.string().optional(),
@@ -152,6 +167,16 @@ function toEntry(row: EntryRow): ConversationEntry {
       return ConversationEntry.parse({ ...base, kind: "owner", text: body.text, taken: row.taken === 1 });
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id });
+    case "delivery":
+      return ConversationEntry.parse({
+        ...base,
+        kind: "delivery",
+        turn: row.turn_id,
+        ticket: body.ticket,
+        title: body.title,
+        text: body.text ?? null,
+        files: body.files,
+      });
     case "text":
       return ConversationEntry.parse({ ...base, kind: "text", turn: row.turn_id, text: body.text });
     default:
@@ -170,6 +195,11 @@ function toEntry(row: EntryRow): ConversationEntry {
 function titleOf(message: string): string {
   const line = message.trim().split(/\r?\n/)[0] ?? "";
   return [...line].length > titleLength ? `${[...line].slice(0, titleLength - 1).join("")}…` : line;
+}
+
+function deliveryHistory(entry: DeliveryEntry): string {
+  const files = entry.files.length === 0 ? "" : ` Files: ${entry.files.map((file) => file.name).join(", ")}.`;
+  return `[hub] The result of writing ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
 function heldPrompt(command: CommandRecord, output: string): string {
@@ -284,7 +314,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     readonly kind: ConversationEntry["kind"];
     readonly turn: string | null;
     readonly provider?: Provider | null;
-    readonly body: Readonly<Record<string, string>>;
+    readonly body: Readonly<Record<string, unknown>>;
     readonly prompt?: string;
   }
 
@@ -371,6 +401,8 @@ export function createConversationService(options: ConversationServiceOptions): 
             return { kind: "owner", text: entry.text };
           case "notice":
             return { kind: "notice", text: entry.text };
+          case "delivery":
+            return { kind: "notice", text: deliveryHistory(entry) };
           case "text":
             return { kind: "text", provider, text: entry.text };
           case "tool":
@@ -606,9 +638,27 @@ export function createConversationService(options: ConversationServiceOptions): 
     return target.id;
   };
 
+  const deliverResult = (conversation: string | null, delivery: Delivery): string => {
+    const target = (conversation === null ? undefined : get(conversation)) ?? selectConversations.all(1).map(toConversation)[0] ?? create();
+    const id = addEntry({
+      conversation: target.id,
+      kind: "delivery",
+      turn: null,
+      body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, files: delivery.files },
+      prompt: delivery.prompt,
+    });
+    const stored = selectEntry.get(id);
+    if (stored !== undefined) {
+      deliver(EntryRow.parse(stored));
+    }
+    updateConversation(target.id, {});
+    return target.id;
+  };
+
   return {
     create,
     tell,
+    deliver: deliverResult,
     get,
     list: (limit = 50) => selectConversations.all(limit).map(toConversation),
     detail: (id) => {

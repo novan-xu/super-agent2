@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MachineReport, RunnerWorkEvent, StoredWorkEvent, Ticket, WorkEvent, WorkHeld } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Delivery } from "./conversations.js";
 import { type HubDatabase, openDatabase } from "./database.js";
+import { createTicketFiles, type TicketFiles } from "./files.js";
 import type { WorkLink, WorkMessageToRunner } from "./runners.js";
 import { TestClock } from "./testing/access.js";
 import { testCredentials } from "./testing/commands.js";
@@ -70,13 +72,17 @@ let tickets: TicketService;
 let runners: FakeRunners;
 let work: WorkService;
 let told: { readonly conversation: string | null; readonly notice: string; readonly prompt: string }[];
+let delivered: { readonly conversation: string | null; readonly delivery: Delivery }[];
+let files: TicketFiles;
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "hub-work-"));
   clock = new TestClock();
   database = openDatabase({ dataDir, clock });
+  files = createTicketFiles(database);
   runners = new FakeRunners();
   told = [];
+  delivered = [];
   let bound: WorkService | undefined;
   tickets = createTicketService({
     database,
@@ -90,6 +96,7 @@ beforeEach(() => {
     runners,
     credentials: testCredentials,
     tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
+    deliver: (conversation, delivery) => delivered.push({ conversation, delivery }),
     branchSuffix: () => "beef",
   });
   bound = work;
@@ -376,5 +383,148 @@ describe("reassigning and trying again", () => {
     expect(current(ticket.id)).toMatchObject({ state: "working", work: { attempt: 2 } });
     expect(runners.of("work.start")[1]?.task).toMatchObject({ attempt: 2, session: "thread-1", note: "The pipeline failed in the lint step; fix it and push." });
     expect(work.again(ticket.id, "again")).toEqual({ ok: false, reason: `Ticket ${ticket.id} already has a worker` });
+  });
+});
+
+const byDefault = { machine: "default", engine: "default", model: "default", effort: "default" } as const;
+
+function writing(engine: "antigravity" | "codex" = "antigravity", machine = "pc"): Ticket {
+  const opened = tickets.open({
+    repository: null,
+    issues: [],
+    title: { en: "Translate a notice", zh: "翻译一则通知" },
+    summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
+    kind: "writing",
+    conversation: "c-1",
+    writing: {
+      task: "Translate input/notice.txt into English.",
+      materials: [
+        { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+        { name: "glossary", source: "https://example.com/glossary", text: null },
+      ],
+    },
+  });
+  tickets.change((writes) => {
+    writes.choose(opened.id, { machine, engine, model: "gemini-3.8-flash", effort: "high", by: byDefault });
+    writes.move(opened.id, "working");
+  });
+  return current(opened.id);
+}
+
+const deliveredEvent: WorkEvent = {
+  kind: "delivered",
+  text: "Hello, world.\n",
+  files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]).toString("base64") }],
+  report: { en: "Translated the notice", zh: "翻译了通知" },
+};
+
+describe("work for a writing ticket", () => {
+  it("starts the worker with the task and material, with no repository, branch or token", () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    expect(runners.of("work.start")).toEqual([]);
+    expect(runners.of("work.write")).toEqual([
+      {
+        type: "work.write",
+        task: {
+          ticket: ticket.id,
+          attempt: 1,
+          title: "Translate a notice",
+          task: "Translate input/notice.txt into English.",
+          materials: [
+            { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+            { name: "glossary", source: "https://example.com/glossary", text: null },
+          ],
+          engine: "antigravity",
+          model: "gemini-3.8-flash",
+          effort: "high",
+          session: null,
+          note: null,
+        },
+      },
+    ]);
+    expect(current(ticket.id)).toMatchObject({ branch: null, repository: null, pullRequest: null, work: { attempt: 1, state: "preparing", engine: "antigravity" } });
+    work.begin(current(ticket.id));
+    expect(runners.of("work.write")).toHaveLength(1);
+  });
+
+  it("delivers the text and files into the conversation, stores the files, and becomes delivered with no pull request", () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    const seen: StoredWorkEvent[] = [];
+    work.subscribe((event) => seen.push(event));
+    emit("pc", ticket.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
+    emit("pc", ticket.id, 1, 2, deliveredEvent);
+    expect(current(ticket.id)).toMatchObject({
+      state: "delivered",
+      pullRequest: null,
+      branch: null,
+      report: { en: "Translated the notice", zh: "翻译了通知" },
+      work: { state: "finished" },
+    });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.conversation).toBe("c-1");
+    expect(delivered[0]?.delivery).toMatchObject({
+      ticket: ticket.id,
+      title: { en: "Translate a notice", zh: "翻译一则通知" },
+      text: "Hello, world.\n",
+      files: [{ name: "notes.pdf", size: 4 }],
+    });
+    expect(delivered[0]?.delivery.prompt).toContain("Hello, world.");
+    expect(delivered[0]?.delivery.prompt).toContain("nothing was verified");
+    expect(files.list(ticket.id)).toEqual([{ name: "notes.pdf", size: 4 }]);
+    expect(files.get(ticket.id, "notes.pdf")).toMatchObject({ mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]) });
+    const stored = work.events(ticket.id).at(-1)?.event;
+    expect(stored).toMatchObject({ kind: "delivered", text: "Hello, world.\n", files: [{ name: "notes.pdf", size: 4, data: "" }] });
+    expect(JSON.stringify(seen)).not.toContain(Buffer.from([1, 2, 3, 4]).toString("base64"));
+    expect(runners.of("work.stop")).toEqual([{ type: "work.stop", ticket: ticket.id, save: false, remove: true }]);
+    expect(told).toEqual([]);
+  });
+
+  it("records a failure with its output and tells the brain, and keeps the ticket working", () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "text", block: "b", delta: "I could not read the glossary" });
+    emit("pc", ticket.id, 1, 2, { kind: "failed", failure: "program", reason: "resource exhausted" });
+    expect(current(ticket.id)).toMatchObject({ state: "working", work: { state: "failed", failure: "program", reason: "resource exhausted" } });
+    expect(delivered).toEqual([]);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.prompt).toContain("resource exhausted");
+    expect(told[0]?.prompt).toContain("I could not read the glossary");
+    expect(told[0]?.prompt).not.toContain("branch");
+  });
+
+  it("restarts the same attempt on a runner that came back without it, and lets the owner reassign it to another engine", () => {
+    const ticket = writing();
+    work.begin(ticket);
+    runners.connect("pc", 2);
+    emit("pc", ticket.id, 1, 1, { kind: "session", session: "agy-conversation" });
+    runners.drop("pc");
+    runners.connect("pc", 2, [{ ticket: ticket.id, attempt: 1, last: 1, live: false, ended: false }]);
+    expect(runners.of("work.write")).toHaveLength(2);
+    expect(runners.of("work.write")[1]?.task).toMatchObject({ attempt: 1, session: "agy-conversation" });
+    tickets.change((writes) => writes.choose(ticket.id, { machine: "pc", engine: "codex", model: "gpt-6-luna", effort: "low", by: byDefault }));
+    work.reassign(current(ticket.id));
+    expect(runners.of("work.write")[2]?.task).toMatchObject({ attempt: 2, engine: "codex", session: null });
+  });
+
+  it("refuses to run code work on Antigravity", () => {
+    const ticket = working([21], "pc", "dsh");
+    tickets.change((writes) => writes.choose(ticket.id, { machine: "pc", engine: "antigravity", model: "gemini-3.8-flash", effort: "high", by: byDefault }));
+    expect(() => work.begin(current(ticket.id))).toThrow(/Antigravity is for writing work/);
+    expect(runners.sent).toEqual([]);
+  });
+
+  it("ignores a delivery for a ticket that is not writing", () => {
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, deliveredEvent);
+    expect(current(ticket.id).state).toBe("working");
+    expect(delivered).toEqual([]);
+    expect(files.list(ticket.id)).toEqual([]);
   });
 });

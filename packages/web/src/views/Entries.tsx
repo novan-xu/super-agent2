@@ -1,6 +1,8 @@
 import { text } from "@super-agent2/catalog";
-import type { ConversationEntry, NoticeEntry, OwnerEntry, TextEntry, ToolEntry, Turn } from "@super-agent2/protocol";
+import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, ToolEntry, Turn } from "@super-agent2/protocol";
 import { memo } from "react";
+import { ticketFilePath } from "../hub/api.js";
+import { sizeOf } from "../live/size.js";
 import type { Day, StreamItem } from "../live/stream.js";
 import { toolName, toolSummary } from "../live/tool.js";
 import { Icon, Logo } from "../parts/icons.js";
@@ -95,6 +97,30 @@ const ToolCall = memo(function ToolCall({ entry, lead, live }: { readonly entry:
   );
 });
 
+const Delivery = memo(function Delivery({ entry }: { readonly entry: DeliveryEntry }) {
+  return (
+    <div className="msg delivery">
+      <div className="msg-who">
+        <Icon name="doc" />
+        <strong>{entry.title.zh}</strong>
+        <span className="num">{clockOf(entry.at)}</span>
+      </div>
+      {entry.text === null ? null : <div className="msg-text msg-plain delivery-text">{entry.text}</div>}
+      {entry.files.length === 0 ? null : (
+        <div className="msg-files">
+          {entry.files.map((file) => (
+            <a key={file.name} className="chip" href={ticketFilePath(entry.ticket, file.name)} download={file.name}>
+              <Icon name="clip" />
+              {file.name}
+              <span className="num">{sizeOf(file.size)}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 function Notice({ entry }: { readonly entry: NoticeEntry }) {
   return (
     <div className="sysline sysline--note">
@@ -139,6 +165,8 @@ export function StreamEntry({ item, thisYear }: { readonly item: StreamItem; rea
           return <ToolCall entry={entry} lead={item.lead} live={item.live} />;
         case "notice":
           return <Notice entry={entry} />;
+        case "delivery":
+          return <Delivery entry={entry} />;
       }
     }
   }

@@ -68,3 +68,7 @@ export const hubApi = {
 };
 
 export type HubApi = typeof hubApi;
+
+export function ticketFilePath(ticket: number, name: string): string {
+  return `/api/tickets/${ticket}/files/${encodeURIComponent(name)}`;
+}
