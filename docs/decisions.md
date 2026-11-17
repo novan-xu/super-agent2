@@ -1423,11 +1423,27 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   as before, and when Windows refuses that rename with `EPERM`, `EBUSY` or `EACCES` the content is written into the
   existing file instead and the temporary file removed. It is used for the runner's settings file, its process ledger and
   each work's record. Any other error is still raised.
-- **Why:** Two tests failed now and then in the full run: `setup.test.ts` with `EPERM` on `runner.env.new` to
-  `runner.env`, and a writing worker's test in `works.test.ts`. On this PC a plain loop of write, read, write a
+- **Why:** `setup.test.ts` failed now and then in the full run with `EPERM` on `runner.env.new` to `runner.env`. (The
+  `works.test.ts` failure seen in review was not this: see the next entry.) On this PC a plain loop of write, read, write a
   temporary file, rename over the first failed with `EPERM` in about 1 of every 60 renames; a second rename straight
   after failed in most of those cases (something, most likely the scanner or indexer, keeps the freshly written file
   open for a while), and writing into the file never failed. So a wait or a retry would be a guess, and writing into
   the file is certain.
 - **Other options:** Retrying the rename after a wait; writing the files in place always, which loses the atomic
   replacement where Windows allows it.
+
+## 2026-11-17 — A worker never inherits the runner's credentials
+
+- **Chosen:** The environment of every worker, code or writing, is built from the runner's own environment with these
+  removed first (whatever the case of the name): `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`,
+  `GITHUB_ENTERPRISE_TOKEN`, `SUPERAGENT2_GITHUB_AUTH`, the runner's own `RUNNER_TOKEN`, `ACCESS_CLIENT_ID` and
+  `ACCESS_CLIENT_SECRET`, and `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>` and `GIT_CONFIG_VALUE_<n>` (which Git applies
+  after the credential helper the runner sets and could replace it). A writing worker then has no GitHub token at all. A
+  code worker has only what the hub sent for the repository's owner: `GH_TOKEN`, `GITHUB_TOKEN`,
+  `SUPERAGENT2_GITHUB_AUTH` and the helper in `GIT_CONFIG_PARAMETERS`. The tests give the runner's environment a value
+  for each of these, so they pass with or without `GH_TOKEN` and `GITHUB_TOKEN` set in the shell, and fail if one
+  reaches a worker.
+- **Why:** The `works.test.ts` failure in review was not a race and not the rename: a runner started from a shell
+  holding `GH_TOKEN` handed it to a writing worker. For a code worker the hub's value already replaced the inherited
+  `GH_TOKEN` and `GITHUB_TOKEN`, but the other variables `gh` and Git read were inherited.
+- **Other options:** Removing only the two common names.

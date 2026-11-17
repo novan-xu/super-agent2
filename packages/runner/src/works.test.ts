@@ -141,6 +141,26 @@ let pulls: Map<number, PullRequestState>;
 let ghCalls: string[][];
 let opened: Works[];
 
+const inheritedCredentials: Record<string, string> = {
+  GH_TOKEN: "inherited-gh-token",
+  GITHUB_TOKEN: "inherited-github-token",
+  GH_ENTERPRISE_TOKEN: "inherited-gh-enterprise-token",
+  GITHUB_ENTERPRISE_TOKEN: "inherited-github-enterprise-token",
+  SUPERAGENT2_GITHUB_AUTH: "inherited-auth",
+  RUNNER_TOKEN: "inherited-runner-token",
+  ACCESS_CLIENT_ID: "inherited-client-id",
+  ACCESS_CLIENT_SECRET: "inherited-client-secret",
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "credential.helper",
+  GIT_CONFIG_VALUE_0: "inherited-helper",
+};
+
+function carried(environment: Readonly<Record<string, string | undefined>>): string[] {
+  return Object.entries(environment)
+    .filter(([name, value]) => inheritedCredentials[name] === value)
+    .map(([name]) => name);
+}
+
 const git = (cwd: string) => createGit(runProcess, { ...(process.env as Record<string, string>), ...identity });
 
 const run: ProcessRunner = (command, args, options) => {
@@ -182,7 +202,7 @@ afterEach(async () => {
 function start(overrides: Partial<WorksOptions> = {}): Works {
   const works = createWorks({
     home,
-    environment: { ...process.env, ...identity },
+    environment: { ...process.env, ...inheritedCredentials, ...identity },
     send: (message) => sent.push(message),
     now: () => 1_000,
     adapters: programs.factory,
@@ -254,7 +274,12 @@ describe("a worker on the runner", () => {
     expect(handle.options).toEqual({ session: null, tools: null, workspace: paths.worktree });
     expect(handle.settings).toMatchObject({ program: "/programs/codex", model: "gpt-6-luna", effort: "low", client: "super-agent2-worker", processTree: true });
     expect(handle.settings.environment["GH_TOKEN"]).toBe(token);
+    expect(handle.settings.environment["GITHUB_TOKEN"]).toBe(token);
     expect(handle.settings.environment[tokenVariable]).toBe(token);
+    expect(carried(handle.settings.environment)).toEqual([]);
+    for (const name of ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "RUNNER_TOKEN", "ACCESS_CLIENT_ID", "ACCESS_CLIENT_SECRET", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]) {
+      expect(handle.settings.environment[name], name).toBeUndefined();
+    }
     expect(handle.settings.environment["GIT_CONFIG_PARAMETERS"]).toContain("credential.https://github.com.helper=");
     const prompt = handle.prompts[0] ?? "";
     expect(prompt).toContain("# Guidance for a worker");
@@ -455,7 +480,10 @@ describe("a writing worker on the runner", () => {
     expect(handle.engine).toBe("antigravity");
     expect(handle.options).toEqual({ session: null, tools: null, workspace: paths.worktree });
     expect(handle.settings).toMatchObject({ program: "/programs/agy", model: "gemini-3.8-flash", effort: "high", processTree: true });
-    expect(handle.settings.environment["GH_TOKEN"]).toBeUndefined();
+    expect(carried(handle.settings.environment)).toEqual([]);
+    for (const name of Object.keys(inheritedCredentials)) {
+      expect(handle.settings.environment[name], name).toBeUndefined();
+    }
     expect(handle.settings.environment[tokenVariable]).toBeUndefined();
     expect(readFileSync(join(paths.worktree, "input", "notice.txt"), "utf8")).toBe("你好，世界。");
     expect(existsSync(join(paths.worktree, "input", "glossary"))).toBe(false);

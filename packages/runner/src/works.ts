@@ -27,7 +27,7 @@ import {
   writingResumeText,
 } from "./brief.js";
 import { createGit, type Git, type ProcessRunner, runProcess } from "./git.js";
-import { type Identity, readIdentity, shimFolder, workerEnvironment, writeGhShims } from "./identity.js";
+import { type Identity, readIdentity, shimFolder, withoutCredentials, workerEnvironment, writeGhShims } from "./identity.js";
 import { checkHandback, type PullRequestReader, readPullRequestWith } from "./handback.js";
 import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
@@ -135,6 +135,7 @@ export function createWorks(options: WorksOptions): Works {
   const remote = options.remote ?? gitHubRemote;
   const gh = find("gh") ?? "gh";
   const shims = shimFolder(options.home);
+  const clean = withoutCredentials(options.environment);
   const identities = new Map<string, Identity | undefined>();
   try {
     writeGhShims(shims, gh);
@@ -234,7 +235,7 @@ export function createWorks(options: WorksOptions): Works {
   const tokenOf = (task: WorkTask): string => task.environment["GH_TOKEN"] ?? task.environment["GITHUB_TOKEN"] ?? "";
 
   const environmentOf = (task: WorkTask): Record<string, string> =>
-    mergeEnvironment(options.environment, { ...task.environment, ...workerEnvironment(options.environment, tokenOf(task), shims, identities.get(task.account)) });
+    mergeEnvironment(clean, { ...task.environment, ...workerEnvironment(options.environment, tokenOf(task), shims, identities.get(task.account)) });
 
   const learnIdentity = async (task: WorkTask) => {
     if (identities.get(task.account) !== undefined) {
@@ -348,7 +349,7 @@ export function createWorks(options: WorksOptions): Works {
   };
 
   const openProgram = (work: Work, task: WorkTask | WritingTask, session: string | null): void => {
-    const environment = "repository" in task ? environmentOf(task) : mergeEnvironment(options.environment, {});
+    const environment = "repository" in task ? environmentOf(task) : mergeEnvironment(clean, {});
     const program = find(engineExecutables[task.engine]);
     if (program === undefined) {
       throw new Error(`${engineExecutables[task.engine]} is not installed on this machine`);
@@ -644,7 +645,7 @@ export function createWorks(options: WorksOptions): Works {
       emit(work, { kind: "stopped", saved: saved.saved, detail: saved.detail });
     }
     if (remove) {
-      const git = task === undefined ? createGit(run, mergeEnvironment(options.environment, {}), find("git") ?? "git") : gitFor(task);
+      const git = task === undefined ? createGit(run, mergeEnvironment(clean, {}), find("git") ?? "git") : gitFor(task);
       await removeWorktree(git, work.record.branch, work.paths).catch((error: unknown) => log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`));
       emit(work, { kind: "phase", phase: "removed", detail: `Removed the ${work.record.kind === "writing" ? "scratch folder" : "worktree"} ${work.paths.worktree}` });
       rmSync(work.paths.folder, { recursive: true, force: true });
