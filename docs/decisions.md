@@ -2190,3 +2190,33 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   cannot start; the short name keeps the paths under Windows' length limit (a 40-character folder failed there).
 - **Other options:** Stopping new work on a runner with an update pending; updating the checkout the runner was
   installed from; a Windows scheduled task to restart it.
+
+## 2026-11-17 — What the rehearsal of #18 showed
+
+- **Chosen:** On the NAS, in the Compose project `superagent2-rehearsal` under `/share/Container/superagent2-rehearsal`,
+  hub on `127.0.0.1:18190`, no tunnel, with `ACCESS_TEAM`, `ACCESS_AUD`, `OWNER_EMAIL` and `GITHUB_TOKEN_NOVAN_XU`
+  copied file to file from the live `hub.env`, an empty `brain.env`, a new SSH key authorized from Docker's networks for
+  the rehearsal only, and internal tokens made by the rehearsal hub. `deploy.sh release` of main (`342e96c`) built and
+  started it, with this branch's `deploy.sh` and `compose.yaml` (main's Compose file names the live containers). Through
+  its brain tools endpoint, `deploy_repository` at this branch's `ba0f488` started deployment 1: the release ran as its
+  own session (parent process 1), stopped the main hub during the health check, backed up the database at migration 14
+  and switched; the new hub took up deployment 1 ("The hub restarted during the health check"), read the outcome line
+  and recorded it succeeded, and the notice "novan-xu/super-agent2 已部署到 ba0f488，健康检查通过" landed in the
+  conversation the call named and was taken by the new brain's first turn. Deployment 2 of `4757011`, a throwaway branch
+  whose hub applies a migration 15 and then refuses to start: after three minutes without an answer the release went
+  back, restored the database from migration 15 to the backup at 14, and started `ba0f488` again, whose `/health` named
+  it and whose database opened at 14; that hub recorded deployment 2 as rolled back to `ba0f488` with the release's
+  reason, and "novan-xu/super-agent2 部署 4757011 没有成功，已回滚到 ba0f488，旧版本恢复正常" landed in the same
+  conversation. With the hub stopped, `release` and then `rollback` by hand moved it to `a1817e8` and back. The
+  rehearsal brain had no provider login, so its turns failed after taking the notices; a brain turn answering them was
+  not shown. On this PC, a runner in a scratch home, supervised as on Windows, against the development harness
+  announcing another commit: it fetched, built and switched in seconds and reconnected at that version; with a 90-second
+  command running it reported the version ready and switched in the millisecond the command ended with 0; a commit
+  GitHub does not have failed with the hub's 503, and the runner went on and ran the next command. Everything was
+  removed afterwards: the rehearsal's containers, volumes, network, images, folder and key, the throwaway branch, the
+  scratch runner and the harness. macOS and a runner with a worker running were not exercised live; the tests cover
+  them.
+- **Why:** The live system was not to be touched, and the rehearsal had to deploy itself through the same file and
+  script that the live system uses.
+- **Other options:** Copying the brain's Claude token so that a brain turn answers the notice, which the brief did not
+  allow for the rehearsal.
