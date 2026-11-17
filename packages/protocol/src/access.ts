@@ -25,4 +25,3 @@ export const AccessClaims = z.looseObject({
 });
 
 export type AccessClaims = z.infer<typeof AccessClaims>;
-// Throwaway comment that the zero-comment check must refuse.
