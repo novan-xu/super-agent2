@@ -1,4 +1,23 @@
-import type { MachineChoice, StartChoice, StoredWorkEvent, Ticket, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
+import type { MachineChoice, StartChoice, StoredWorkEvent, Ticket, TicketVerification, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
+
+export function verification(overrides: Partial<TicketVerification> = {}): TicketVerification {
+  return {
+    head: "abcdef1234567890",
+    level: "code",
+    rule: "workflows",
+    state: "waiting",
+    waiting: "pipeline",
+    reason: null,
+    pipeline: null,
+    workflows: [],
+    failures: [],
+    mergeCommit: null,
+    deployment: null,
+    skipReason: null,
+    checkedAt: 10_000,
+    ...overrides,
+  };
+}
 
 export function workStatus(overrides: Partial<WorkStatus> = {}): WorkStatus {
   return {
@@ -57,6 +76,7 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     beginFailure: null,
     report: null,
     work: null,
+    verification: null,
     stopReason: null,
     conversation: null,
     createdAt: id * 1000,

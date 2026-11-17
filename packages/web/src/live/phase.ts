@@ -1,4 +1,4 @@
-import { activeWorkStates, type Ticket, unmetWaits, type WorkFailure } from "@super-agent2/protocol";
+import { activeWorkStates, type FailedStep, type Ticket, unmetWaits, type VerificationWait, type WorkFailure } from "@super-agent2/protocol";
 
 export const ticketPhases = [
   "pending",
@@ -12,6 +12,8 @@ export const ticketPhases = [
   "failed",
   "halted",
   "verifying",
+  "verifyFailed",
+  "conflicted",
   "merged",
   "delivered",
   "stopped",
@@ -32,6 +34,8 @@ export const phaseLooks: Readonly<Record<TicketPhase, { readonly tone: Tone; rea
   failed: { tone: "bad", live: false },
   halted: { tone: "mute", live: false },
   verifying: { tone: "info", live: false },
+  verifyFailed: { tone: "bad", live: false },
+  conflicted: { tone: "warn", live: false },
   merged: { tone: "ok", live: false },
   delivered: { tone: "info", live: false },
   stopped: { tone: "mute", live: false },
@@ -39,9 +43,10 @@ export const phaseLooks: Readonly<Record<TicketPhase, { readonly tone: Tone; rea
 
 export function ticketPhase(ticket: Ticket): TicketPhase {
   switch (ticket.state) {
+    case "verifying":
+      return ticket.verification?.state === "failed" ? "verifyFailed" : ticket.verification?.state === "conflict" ? "conflicted" : "verifying";
     case "pending":
     case "waiting":
-    case "verifying":
     case "merged":
     case "delivered":
     case "stopped":
@@ -78,7 +83,10 @@ export type TicketProblem =
   | { readonly kind: "queued"; readonly machine: string }
   | { readonly kind: "unreachable"; readonly machine: string; readonly since: number }
   | { readonly kind: "failed"; readonly failure: WorkFailure; readonly reason: string }
-  | { readonly kind: "stopped"; readonly reason: string };
+  | { readonly kind: "stopped"; readonly reason: string }
+  | { readonly kind: "verifyWaiting"; readonly wait: VerificationWait; readonly commit: string; readonly reason: string | null }
+  | { readonly kind: "verifyFailed"; readonly failures: readonly FailedStep[]; readonly reason: string | null }
+  | { readonly kind: "conflicted"; readonly reason: string | null };
 
 export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>): TicketProblem | null {
   const phase = ticketPhase(ticket);
@@ -101,6 +109,17 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
       return work === null ? null : { kind: "failed", failure: work.failure ?? "program", reason: work.reason ?? "" };
     case "stopped":
       return ticket.stopReason === null ? null : { kind: "stopped", reason: ticket.stopReason.zh };
+    case "verifyFailed":
+      return { kind: "verifyFailed", failures: ticket.verification?.failures ?? [], reason: ticket.verification?.reason ?? null };
+    case "conflicted":
+      return { kind: "conflicted", reason: ticket.verification?.reason ?? null };
+    case "verifying": {
+      const verification = ticket.verification;
+      if (verification === null || verification.waiting === null) {
+        return null;
+      }
+      return { kind: "verifyWaiting", wait: verification.waiting, commit: (verification.head ?? "").slice(0, 7), reason: verification.reason };
+    }
     default:
       return null;
   }

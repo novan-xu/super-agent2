@@ -21,6 +21,7 @@ import {
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
+import { verificationOf } from "./verification-record.js";
 
 export interface TicketWriting {
   readonly task: string;
@@ -268,6 +269,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectMoves = connection.prepare("SELECT * FROM ticket_moves WHERE ticket_id = ? ORDER BY seq");
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
   const selectAttempts = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt");
+  const selectVerification = connection.prepare("SELECT * FROM ticket_verifications WHERE ticket_id = ?");
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
@@ -336,6 +338,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     });
     const begin = selectBegin.get(value.id);
     const attempt = selectAttempt.get(value.id);
+    const verification = selectVerification.get(value.id);
     return Ticket.parse({
       id: value.id,
       repository: value.repository,
@@ -360,6 +363,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       pullRequest: value.pull_request,
       report: pair(value.report_en, value.report_zh),
       work: attempt === undefined ? null : workStatusOf(attempt),
+      verification: verification === undefined ? null : verificationOf(verification),
       round: value.round,
       waitsFor: waits.map((wait) => wait.ticket),
       waits,

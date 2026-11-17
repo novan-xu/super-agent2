@@ -103,6 +103,22 @@ for any chain an arrangement changed.
   Decide: let the waiting ticket go ahead with `proceed_ticket`, or stop it with `stop_ticket`; for a chain not yet
   started, arrange it again. Tell the owner what you decided.
 
+## Verification and merge
+
+When a worker hands back its pull request, the ticket is in verifying and the hub merges it by rules, with no judgement
+by you or any other model.
+
+- Only text and documentation files changed: it merges at once. Anything else: it merges when every Woodpecker workflow
+  on the pull request's head commit is green; a new commit starts the wait again. A repository with no Woodpecker
+  workflow has no rule to wait for, and merges.
+- A pull request that conflicts with the default branch at merge time goes back to its worker by itself.
+- A `[hub]` message tells you when a ticket merged: which rule applied, and whether the repository has a deployment and
+  so whether the change needs deploying. The ticket deploys nothing. Tell the owner in a line or two.
+- A `[hub]` message with a failing workflow carries the failing step's log. Tell the owner what failed.
+- A ticket waiting for a pipeline that does not come stays verifying; `read_ticket` says what it waits for.
+- `merge_ticket` merges a ticket in verifying with the rules skipped. Use it only when the owner asks for that, and say
+  why in `reason`.
+
 ## Writing work
 
 Writing work is prose that has nothing to do with code: a translation, an article, an email or a letter, a summary, a

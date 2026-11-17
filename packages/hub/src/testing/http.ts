@@ -9,9 +9,11 @@ export const fetchBlockedPorts: ReadonlySet<number> = new Set([
   6668, 6669, 6679, 6697, 10080,
 ]);
 
+export const noForge: typeof fetch = (input) => Promise.reject(new Error(`No forge in this test: ${String(input instanceof Request ? input.url : input)}`));
+
 export async function startTestHub(options: HubOptions): Promise<Hub> {
   for (;;) {
-    const hub = await startHub(options);
+    const hub = await startHub({ forgeFetch: noForge, verificationTicker: () => () => undefined, ...options });
     if (!fetchBlockedPorts.has(hub.address.port)) {
       return hub;
     }

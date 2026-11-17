@@ -26,6 +26,7 @@ import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
 
 export const supportedMcpVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -128,6 +129,8 @@ const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1).max(10
 
 const TicketArgument = z.object({ ticket: z.number().int().positive() });
 
+const MergeArguments = z.object({ ticket: z.number().int().positive(), reason: z.string().trim().min(1).max(2_000) });
+
 const DefaultsArgument = z.object({
   ticket: z.number().int().positive(),
   kind: TicketKind,
@@ -187,6 +190,46 @@ export interface TicketTools {
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
   readonly work?: WorkService;
+  readonly verification?: VerificationService;
+}
+
+function verificationDefinitions() {
+  return [
+    {
+      name: "merge_ticket",
+      title: "Merge a ticket with the verification rules skipped",
+      description: [
+        "Merge the pull request of a ticket in verifying now, skipping the verification rules. Use it only when the owner asked for the rules to be skipped.",
+        "The pull request's current head is merged once, as an ordinary merge: its issues are closed, its worktree is removed, the tickets that wait for it begin, and you are told whether the change needs deploying.",
+        "A conflict with the default branch still goes back to the worker; once it hands back again the rules apply, and you call this again if the owner still wants them skipped.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: { type: "integer", minimum: 1, description: "The ticket in verifying" },
+          reason: { type: "string", description: "Why the rules are skipped: what the owner asked, in English" },
+        },
+        required: ["ticket", "reason"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function mergedText(outcome: SkipOutcome): ToolResult {
+  if (!outcome.ok) {
+    return { text: `Nothing was merged: ${outcome.reason}`, isError: true };
+  }
+  const ticket = outcome.ticket;
+  const reason = ticket.verification?.reason ?? null;
+  const commit = ticket.verification?.mergeCommit ?? null;
+  if (ticket.state === "merged") {
+    return { text: `Merged ticket ${ticket.id} with the rules skipped${commit === null ? "" : ` as commit ${commit}`}.\n${ticketLine(ticket)}\nYou are told separately what was closed and whether it needs deploying.` };
+  }
+  if (ticket.state === "working") {
+    return { text: `Ticket ${ticket.id} was not merged: ${reason ?? "it went back to its worker"}. When the worker hands back the pull request again, the rules apply again.\n${ticketLine(ticket)}` };
+  }
+  return { text: `Ticket ${ticket.id} is not merged yet: ${reason ?? "it is still being checked"}. The hub keeps trying.\n${ticketLine(ticket)}`, isError: ticket.verification?.state === "conflict" };
 }
 
 function defaultsDefinitions() {
@@ -612,6 +655,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
+      ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
     ];
   };
 
@@ -779,8 +823,10 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const output = tools.work?.output(detail.ticket.id) ?? "";
         const writing = detail.ticket.kind === "writing" ? tools.tickets.writing(detail.ticket.id) : undefined;
+        const logs = tools.verification?.logs(detail.ticket.id) ?? [];
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...logs.flatMap((log) => [`The log of the failing workflow ${log.workflow}, step ${log.step}, ends with:`, clip(log.log || "(empty)", 8_000)]),
           ...(writing === undefined
             ? []
             : [
@@ -831,6 +877,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         return statedText(tools.chains.state(parsed.data.chains), tools.defaults);
+      }
+      case "merge_ticket": {
+        if (tools.verification === undefined) {
+          return undefined;
+        }
+        const parsed = MergeArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return mergedText(await tools.verification.skip(parsed.data.ticket, parsed.data.reason));
       }
       default:
         return chainCall(tools.chains, name, raw);

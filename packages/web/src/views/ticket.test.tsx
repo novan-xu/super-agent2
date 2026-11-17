@@ -2,7 +2,7 @@ import type { Ticket, TicketMove } from "@super-agent2/protocol";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { type DetailState, openDetail, receiveDetail, receiveDetailWork } from "../live/detail.js";
-import { ticket, workEvent, workStatus } from "../live/fixtures.js";
+import { ticket, verification, workEvent, workStatus } from "../live/fixtures.js";
 import { type TicketActions, TicketView } from "./TicketView.js";
 
 const actions: TicketActions = {
@@ -104,6 +104,27 @@ describe("a ticket's detail", () => {
     expect(html).toContain("写好了");
     expect(html).not.toContain("分支");
     expect(text(html)).not.toContain("|停止|");
+  });
+
+  it("shows which verification rule applied, the pipeline, and what verification waits for", () => {
+    const merged = { ...running, state: "merged" as const, pullRequest: 12, work: workStatus({ state: "finished" }), verification: verification({ rule: "documentation", state: "merged", waiting: null, level: "documentation" }) };
+    expect(text(render(detailOf(merged)))).toContain("|验证|只改了文本和文档|");
+    const waiting = {
+      ...running,
+      state: "verifying" as const,
+      pullRequest: 12,
+      work: workStatus({ state: "finished" }),
+      verification: verification({ waiting: "workflows", pipeline: { number: 7, url: "https://ci.example/repos/6/pipeline/7" }, reason: "Pipeline #7 on abcdef1 is running" }),
+    };
+    const html = render(detailOf(waiting));
+    expect(text(html)).toContain("|验证|Woodpecker 工作流全部通过|");
+    expect(html).toContain('href="https://ci.example/repos/6/pipeline/7"');
+    expect(html).toContain("Woodpecker 正在验证 abcdef1");
+    const failed = { ...waiting, verification: verification({ state: "failed", waiting: null, failures: [{ workflow: "check-windows", step: "check", exitCode: 1 }] }) };
+    const red = render(detailOf(failed));
+    expect(text(red)).toContain("|验证没通过|");
+    expect(red).toContain("check-windows 的 check 没通过");
+    expect(text(render(detailOf(running)))).not.toContain("|验证|");
   });
 
   it("shows the guided round when there is one, and none when there is not", () => {

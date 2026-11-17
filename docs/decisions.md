@@ -1614,3 +1614,182 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   this PC alone had never shown. The earlier entry "How the issues are built" said the local check was the only one
   until then.
 - **Other options:** Keep merging on the local check alone.
+
+## 2026-11-17 — How the hub reads GitHub and Woodpecker to verify and merge
+
+- **Chosen:** The verification service (`packages/hub/src/verification.ts`) calls GitHub's REST API and Woodpecker's API
+  itself with `fetch` (`github-api.ts`, `woodpecker.ts`), not through the command channel. GitHub is called with the
+  token of the account that owns the repository (`accountFor`, as for filing and workers), Woodpecker with
+  `WOODPECKER_SERVER` and `WOODPECKER_TOKEN` from the same credential source. Each request has a 60-second limit of its
+  own; a request that fails or times out is recorded on the ticket as what it waits for and is tried again at the next
+  check, and never fails the ticket.
+- **Why:** The hub checks every ticket in verifying every 30 seconds; through the command channel each check would be
+  several stored commands in the owner's command list, and its answers would have to be parsed back out of output. The
+  merge itself is the owner's token doing what the design says it may (no GitHub rule it cannot bypass), and it is
+  recorded on the ticket, which is where the owner looks. A request without a limit could hang one ticket's checks for
+  ever; its limit is network hygiene, not a deadline for the pipeline.
+- **Other options:** `gh api` on the `hub` target through the command service, as `file_issue` does; reading only
+  GitHub's commit statuses, which carry no logs and do not say which workflows to expect.
+
+## 2026-11-17 — Which files are text and documentation
+
+- **Chosen:** Data in `packages/protocol/src/verification.ts`: the extensions `.md .markdown .mdown .rst .adoc .asciidoc
+  .txt .text`, and the names `README`, `LICENSE`, `LICENCE`, `COPYING`, `NOTICE`, `AUTHORS`, `CONTRIBUTORS`,
+  `CHANGELOG`, `CHANGES` and `HISTORY` without an extension, in any case; except `requirements*.txt`,
+  `constraints*.txt` and `CMakeLists.txt`, which are build inputs. A pull request is documentation only when every
+  file it changes, and the old name of every file it renames, is one of these; a pull request with no files is code.
+  The files are GitHub's list for the pull request (up to 3000, paged).
+- **Why:** These are the formats people write prose in. `.mdx` is JSX and `.svg` is markup a build can use, so both are
+  code. A rename from `app.ts` to `app.md` removes code. In this repository a Markdown file can still fail `pnpm check`
+  (a comment in it), and the design accepts that a documentation-only change merges without CI.
+- **Other options:** Treating `docs/` folders as documentation whatever the type; including images and `.mdx`; leaving
+  `.txt` out entirely.
+
+## 2026-11-17 — Which workflows the hub expects, and "not reported yet" against "none"
+
+- **Chosen:** For a code pull request the hub first asks Woodpecker for the repository (`/api/repos/lookup/<owner>/<name>`).
+  Unknown (404) or not active: the repository has no Woodpecker workflow, and it merges by the rule `none`. Active: the
+  hub reads the configuration at the pull request's head commit from GitHub, at the repository's `config_file` when it
+  is set and otherwise at `.woodpecker/` (its `.yml` and `.yaml` files), `.woodpecker.yaml`, then `.woodpecker.yml`, the
+  order Woodpecker uses. No configuration at the head: rule `none`, merge. Otherwise each file is an expected workflow,
+  named as Woodpecker names it (the file name without its extension and leading dot). When the hub has no
+  `WOODPECKER_SERVER` and `WOODPECKER_TOKEN` (the development harness on this PC), it reads the same default paths from
+  GitHub: none means `none`; some means the ticket waits, saying the hub cannot read their results.
+- **Why:** "Not reported yet" and "this repository has none" look the same from Woodpecker's pipeline list alone; the
+  configuration at the head is what says whether a pipeline is coming. Reading it at the head, not the default branch,
+  makes a pull request that adds or removes a workflow judged by what it will run.
+- **Other options:** Expecting the contexts GitHub showed on earlier commits; a list of expected workflows per
+  repository kept in the hub; treating a repository unknown to Woodpecker as waiting.
+
+## 2026-11-17 — What counts as green, and what never does
+
+- **Chosen:** The pipeline is the newest one Woodpecker lists for the pull request (`event=pull_request`,
+  `ref=refs/pull/<n>/`, filtered again in the hub) whose `commit` is the head's SHA; it is read in full, with its
+  configuration (`/pipelines/<n>/config`). Green is: the pipeline's own commit is the head; every configuration file
+  the head defines is in the pipeline's configuration; the pipeline has at least one workflow; every workflow's state
+  is `success`; and the pipeline's status is `success`. A configuration whose workflow is absent from the pipeline is
+  one Woodpecker filtered out by its own `when` (seen on the server: `super-agent`'s path-filtered workflows), and does
+  not apply. Not green, and the ticket waits, saying why: no pipeline for the head yet (a pipeline for an older commit,
+  another pull request or a push does not count); `pending`, `running` or `created`; `killed`, `skipped`, `declined`,
+  `blocked` or anything else not `success`; a configuration the head defines that the pipeline was not built from. A
+  new head starts the wait again, and a restarted pipeline (a higher number for the same commit) replaces the old one.
+  Red is a workflow in `failure` or `error`, or a pipeline in either state.
+- **Why:** The issue asks never to merge on the wrong evidence. Woodpecker evaluates `when` itself; the hub does not
+  re-implement it, but it does check that the pipeline came from the head's own configuration.
+- **Other options:** GitHub commit statuses; accepting a green push pipeline of the same commit; counting a cancelled
+  pipeline as red.
+
+## 2026-11-17 — When the hub checks, and what it never does
+
+- **Chosen:** A ticket is checked when it moves into verifying, at the hub's start (every ticket in verifying, and every
+  merged ticket whose report was not told), and every 30 seconds while it is in verifying (10 in the development
+  harness). A check reads the pull request first; a ticket whose verification failed or whose conflict was not
+  resolved costs that one request until its head changes. Checks of one ticket run one at a time, and at most one more
+  waits behind a running one. Nothing is decided from time: a pipeline that never reports leaves the ticket in
+  verifying, waiting, with what it waits for on the page; no check fails a ticket.
+- **Why:** The hub is behind Cloudflare Access, so neither GitHub nor Woodpecker can call it. Thirty seconds keeps a
+  ticket's cost near 2 requests a minute while it waits, well inside GitHub's 5000 an hour.
+- **Other options:** Webhooks through a public endpoint; backing off the interval over time; a time limit after which
+  the brain is told.
+
+## 2026-11-17 — How the merge is done, exactly once
+
+- **Chosen:** The pull request is re-read immediately before merging; it merges only when it is still open, its head is
+  the commit that was judged, and GitHub says it merges cleanly (`mergeable` true; while GitHub has not worked it out
+  the ticket waits for the next check). The merge is `PUT /pulls/<n>/merge` with `sha` set to that head, so a push in
+  between is refused by GitHub (409) and the rules apply again to the new head. The method is squash when the
+  repository allows it, otherwise a merge commit, otherwise rebase. Before calling it the hub records the head and the
+  rule it is merging with; after it, it records the merge commit, closes each issue of the chain that is still open
+  (recording each), deletes the ticket's branch on GitHub when the pull request came from it, reads whether the
+  deployment file exists at the merge commit, and only then moves the ticket to merged and tells the brain, recording
+  that it told. A pull request found merged at a check (the answer to the merge was lost, the hub restarted, or the
+  owner merged it on GitHub, which is recorded as the rule `outside`) is finished the same way, and nothing merges
+  twice: every step is recorded and skipped once done, the move to merged is allowed once, and the chain service
+  begins a waiting ticket only in the transaction that moves it from waiting. A step that fails leaves the ticket in
+  verifying as "merged on GitHub, finishing", tried again at the next check.
+- **Why:** The issue asks that a repeated event, a restart or two triggers at once never merge, close or begin twice.
+  Squash keeps one commit per ticket on the default branch, as this repository's own pull requests are merged. The
+  branch is the hub's own `sa2/ticket-…` branch and is restorable from the pull request page; keeping it would leave
+  one stale branch per ticket.
+- **Other options:** A merge commit always; leaving the branch, or relying on the repository's "delete branch on merge"
+  setting; closing issues through `Closes #n` in the merge message alone, which GitHub does not do for every merge.
+
+## 2026-11-17 — A red workflow, and the place left for the failure loop
+
+- **Chosen:** A red pipeline is recorded on the ticket's verification as `failed`, with the pipeline, the state of each
+  workflow, every failing step (workflow, step, exit code) and each failing step's log from Woodpecker (the lines
+  decoded, at most 20000 characters, kept in `ticket_verifications.logs`). The ticket stays in verifying, the brain is
+  told once per head and pipeline with the reason and the end of each log, and `read_ticket` shows the logs. Nothing is
+  retried, no pipeline is run again, and the ticket is not sent back to its worker. A new head (a push to the branch, or
+  #16's guided round through `WorkService.again`, which moves it to working and back) starts the rules again.
+- **Why:** #16 owns the loop. Verifying with a recorded failure is where #16 will pick it up: `again` already moves a
+  verifying ticket back to working.
+- **Other options:** Moving the ticket to working with the failure, as a failed worker is; stopping it.
+
+## 2026-11-17 — A conflict at merge time
+
+- **Chosen:** When GitHub says the pull request does not merge cleanly (`mergeable` false, or 405 on the merge with
+  `mergeable` false), the hub calls `WorkService.again` with a note telling the worker to merge the latest base branch,
+  resolve, test, push and hand back the same pull request; the ticket moves to working with the reason "和 main
+  有冲突，交回工作者解决". When it hands back, the rules apply to the new head. The same conflict on the same head is sent
+  back only once: if the worker hands back without a new commit and it still conflicts, the verification is recorded as
+  `conflict` and the brain is told, which is #16's "a conflict the worker did not resolve". A skip in force is dropped
+  when the ticket goes back, so the rules apply again after the fix.
+- **Why:** The issue gives the conflict to the worker. Sending the same head back again would loop without a cap.
+- **Other options:** Telling the brain first; resolving conflicts in the hub.
+
+## 2026-11-17 — The brain's skip shortcut
+
+- **Chosen:** A tool, `merge_ticket`, with the ticket and a `reason` in English. It is refused unless the ticket is in
+  verifying. It records the skip on the ticket and runs a check at once that skips the rules: the head is re-read and
+  merged with its SHA, and everything a merge does follows, with the rule `skipped` and the reason in the brain's report.
+  The skip stays recorded until the merge or until the ticket goes back to its worker, so a check that cannot merge yet
+  (GitHub still working out whether it merges) merges at the next check. The tool answers with the outcome. The
+  brain's guidance says to use it only when the owner asks.
+- **Why:** The design gives skipping to the brain and does not list merging as irreversible.
+- **Other options:** A skip flag on a general merge tool; asking the owner on the page.
+
+## 2026-11-17 — Where a repository declares its deployment
+
+- **Chosen:** `.superagent2/deployment.json` at the root of the repository (`deploymentFile` in the protocol). This issue
+  only checks that it exists at the merge commit; the brain's report says the repository has a deployment and so the
+  change needs deploying, or that it has none and nothing needs deploying, and names the tickets that wait for that
+  deployment. #17 defines its contents (target, deploy command, health check, rollback command).
+- **Why:** JSON is read with zod and no new dependency, and it cannot carry comments, which the repository rule forbids
+  anyway. A folder named after the system keeps it apart from the repository's own files.
+- **Other options:** YAML; a root file such as `deploy.json`; a setting kept in the hub per repository.
+
+## 2026-11-17 — What the page shows of verification
+
+- **Chosen:** A ticket carries `verification` (head, level, rule, state, what it waits for, the reason as recorded, the
+  pipeline, the workflows, the failing steps, the merge commit, the deployment flag). The detail's panel shows 验证 with
+  the rule and 流水线 with a link to the pipeline. The ticket's state reads 验证中 while it is checked or waits, with
+  what it waits for under it (for example 等 Woodpecker 为 abc1234 建流水线, and the hub's English reason as raw text);
+  验证没通过, with the failing workflow and step, when it is red; 有冲突 when a conflict was not resolved. The move to
+  merged carries the rule in Chinese, which the timeline shows. `Woodpecker` is kept as it is in the catalog, like
+  GitHub.
+- **Why:** The design says a ticket shows which verification rule applied; what it waits for is what the owner needs
+  to see that nothing is stuck by mistake.
+- **Other options:** A separate verification section in the timeline; translating the hub's reasons.
+
+## 2026-11-17 — Verification in the development harness, and what was verified live
+
+- **Chosen:** `tools/page-dev` checks verifying tickets every ten seconds, reaches GitHub only with `--credentials
+  environment` (otherwise its forge refuses every request, so scripted tickets with placeholder tokens call nobody),
+  takes `after=<ticket>` on `/__harness/work` to start a chain behind a started ticket, and calls any brain tool with
+  `/__harness/tool?name=&args=`. Verified on this PC with the harness and one local runner (Claude Code,
+  `claude-haiku-5-5`, medium) against `novan-xu/super-agent-sandbox`, which has no Woodpecker workflow and is not on the
+  Woodpecker server: a documentation-only ticket merged by the rule `documentation` six seconds after it reached
+  verifying; a code ticket merged by the rule `none`; the ticket arranged after it began when it merged and merged in
+  turn; each merge closed its issue, deleted its branch, removed the worktree and told the brain with the deployment
+  flag (false). With a `.woodpecker/` file put on the sandbox's `main`, a code ticket waited honestly ("the hub has no
+  WOODPECKER_SERVER and WOODPECKER_TOKEN"); a conflicting commit was then pushed to `main`, and `merge_ticket` found the
+  conflict and sent it back to the worker, which merged `main`, resolved it and handed back a new head; the ticket
+  waited again, and `merge_ticket` merged it at once. The hub was restarted between the third and the fourth ticket and
+  kept its state, and the runner reconnected by itself. Found
+  live and fixed: GitHub refused to close an issue (422) that its own `Closes #n` handling was closing at the same
+  moment; a failed close is now taken as done when the issue reads closed. Not verified live: the `workflows` rule
+  against the real Woodpecker (this PC has no Woodpecker token), a red pipeline, and a repository with a deployment
+  file; the tests cover them with a fake Woodpecker.
+- **Why:** The harness exercises the real front door, start, runner link and GitHub; only Woodpecker is out of reach here.
+- **Other options:** A local fake Woodpecker in the harness, which would have been a second fake rather than the server.

@@ -298,4 +298,36 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE ticket_verifications (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets (id),
+        entry INTEGER NOT NULL DEFAULT 0,
+        head TEXT,
+        level TEXT,
+        rule TEXT,
+        state TEXT NOT NULL,
+        waiting TEXT,
+        reason TEXT,
+        pipeline TEXT,
+        workflows TEXT NOT NULL DEFAULT '[]',
+        failures TEXT NOT NULL DEFAULT '[]',
+        logs TEXT NOT NULL DEFAULT '[]',
+        told TEXT,
+        skip_reason TEXT,
+        skip_at INTEGER,
+        conflict_head TEXT,
+        merging_head TEXT,
+        merging_rule TEXT,
+        merge_commit TEXT,
+        merged_at INTEGER,
+        closed_issues TEXT NOT NULL DEFAULT '[]',
+        branch_done INTEGER NOT NULL DEFAULT 0,
+        deployment INTEGER,
+        reported_at INTEGER,
+        checked_at INTEGER
+      ) STRICT;
+    `,
+  },
 ];

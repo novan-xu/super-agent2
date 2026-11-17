@@ -136,6 +136,7 @@ describe("the brain's ticket tools", () => {
       "proceed_ticket",
       "read_allowance",
       "choose_defaults",
+      "merge_ticket",
     ]);
   });
 
