@@ -13,7 +13,7 @@ const actions: TicketActions = {
 };
 
 function render(detail: DetailState | null, known: ReadonlyMap<number, Ticket> = new Map()): string {
-  return renderToString(<TicketView detail={detail} known={known} actions={actions} backHref="/workbench" back={() => undefined} now={20_000} />);
+  return renderToString(<TicketView detail={detail} known={known} actions={actions} origin="workbench" backHref="/workbench" back={() => undefined} now={20_000} />);
 }
 
 function text(html: string): string {
@@ -58,6 +58,16 @@ describe("a ticket's detail", () => {
     expect(text(html)).toContain("|开始|");
     expect(html).toContain("Reading the issue");
     expect(html).toContain('aria-label="时间线"');
+  });
+
+  it("goes back to the list it was opened from, named as that list is named in the navigation", () => {
+    const back = (origin: "workbench" | "history", href: string) =>
+      text(renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin={origin} backHref={href} back={() => undefined} now={20_000} />));
+    const fromHistory = renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin="history" backHref="/history" back={() => undefined} now={20_000} />);
+    expect(fromHistory).toContain('<a class="back" href="/history">');
+    expect(back("history", "/history")).toContain("|历史|");
+    expect(back("workbench", "/workbench")).toContain("|工作台|");
+    expect(back("history", "/history")).not.toContain("|工作台|");
   });
 
   it("marks what the owner chose and says what actually ran", () => {

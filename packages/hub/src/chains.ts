@@ -855,7 +855,7 @@ export function createChains(options: ChainsOptions): Chains {
             continue;
           }
           const into = targets(source).map(actual)[0] ?? 0;
-          writes.move(source.id, "stopped", { en: `Joined ticket ${into} by an arrangement`, zh: text("ticket.reason.joined", { ticket: into }) });
+          writes.join(source.id, into, { en: `Joined ticket ${into} by an arrangement`, zh: text("ticket.reason.joined", { ticket: into }) });
           joined.push(source.id);
         }
         return { chains: real, joined };

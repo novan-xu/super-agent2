@@ -2,6 +2,12 @@ import {
   canMoveTicket,
   capReached,
   countsAsRound,
+  cursorAt,
+  finishedTicketStates,
+  type HistoryCursor,
+  type HistoryPosition,
+  historyPageSize,
+  searchTerms,
   LoopFailure,
   LoopFailureKind,
   roundCap,
@@ -87,6 +93,17 @@ export interface ListOptions {
   readonly limit?: number;
 }
 
+export interface HistoryOptions {
+  readonly query?: string;
+  readonly before?: HistoryPosition;
+  readonly limit?: number;
+}
+
+export interface HistoryPage {
+  readonly tickets: Ticket[];
+  readonly next: HistoryCursor | null;
+}
+
 export type TicketListener = (ticket: Ticket) => void;
 
 export interface TicketWork {
@@ -113,6 +130,7 @@ export interface TicketWrites {
   waive(id: number, before: number): boolean;
   deployed(id: number): void;
   move(id: number, to: TicketState, reason?: GeneratedText): Ticket;
+  join(id: number, into: number, reason: GeneratedText): Ticket;
   touched(id: number): void;
   state(id: number, statement: DefaultsStatement): void;
   forgetDefaults(id: number): void;
@@ -132,6 +150,7 @@ export interface TicketService {
   open(request: TicketToOpen): Ticket;
   get(id: number): Ticket | undefined;
   list(options?: ListOptions): Ticket[];
+  history(options?: HistoryOptions): HistoryPage;
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
   rounds(id: number): TicketRound[];
@@ -192,6 +211,8 @@ const TicketRow = z.object({
   stuck_where_zh: z.string().nullable(),
   stop_reason_en: z.string().nullable(),
   stop_reason_zh: z.string().nullable(),
+  joined_into: z.number().int().nullable(),
+  ended_at: z.number().int().nullable(),
   conversation_id: z.string().nullable(),
   deployed_at: z.number().int().nullable(),
   created_at: z.number().int(),
@@ -261,6 +282,8 @@ const MoveRow = z.object({
 
 const IdRow = z.object({ ticket_id: z.number().int() });
 
+const FoundRow = z.object({ id: z.number().int() });
+
 const WritingRow = z.object({ task: z.string(), materials: z.string() });
 
 const SeqRow = z.object({ seq: z.number().int().nullable() });
@@ -318,6 +341,16 @@ function parsedJson(text: string | null): unknown {
 
 const defaultLimit = 200;
 
+const issueTexts = "i.title_en || char(10) || i.title_zh || char(10) || i.summary_en || char(10) || i.summary_zh";
+
+const searchedText = `t.title_en || char(10) || t.title_zh || char(10) || t.summary_en || char(10) || t.summary_zh || char(10) || COALESCE(t.repository, '') || char(10) || COALESCE((SELECT w.task FROM ticket_writing w WHERE w.ticket_id = t.id), '') || char(10) || COALESCE((SELECT group_concat(${issueTexts}, char(10)) FROM ticket_issues i WHERE i.ticket_id = t.id), '')`;
+
+const escapeCharacter = "\\";
+
+function likePattern(term: string): string {
+  return `%${term.replace(/[\\%_]/g, (character) => `${escapeCharacter}${character}`)}%`;
+}
+
 export function createTicketService(options: TicketServiceOptions): TicketService {
   const { connection } = options.database;
   const { clock } = options;
@@ -372,6 +405,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     "INSERT INTO ticket_moves (ticket_id, seq, from_state, to_state, reason_en, reason_zh, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const updateState = connection.prepare("UPDATE tickets SET state = ?, updated_at = ? WHERE id = ? AND state = ?");
+  const updateEnded = connection.prepare("UPDATE tickets SET ended_at = ? WHERE id = ?");
+  const updateJoined = connection.prepare("UPDATE tickets SET joined_into = ? WHERE id = ?");
   const updateStopReason = connection.prepare("UPDATE tickets SET stop_reason_en = ?, stop_reason_zh = ? WHERE id = ?");
   const updateStatement = connection.prepare(
     "UPDATE tickets SET kind = ?, difficulty = ?, difficulty_reason_en = ?, difficulty_reason_zh = ?, platform = ?, brain_engine = ? WHERE id = ?",
@@ -448,9 +483,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       deployedAt: value.deployed_at,
       beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
+      joinedInto: value.joined_into,
       conversation: value.conversation_id,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
+      endedAt: value.ended_at,
     });
   };
 
@@ -656,8 +693,20 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (to === "stopped" && reason !== undefined) {
           updateStopReason.run(reason.en, reason.zh, id);
         }
+        if (finishedTicketStates.includes(to)) {
+          updateEnded.run(now, id);
+        }
         touched.add(id);
         return existing(id);
+      },
+      join: (id, into, reason) => {
+        existing(into);
+        if (into === id) {
+          throw new TicketError(`Ticket ${id} cannot join itself`);
+        }
+        const ticket = writes.move(id, "stopped", reason);
+        updateJoined.run(into, id);
+        return ticket;
       },
       touched: (id) => touch(id),
       state: (id, statement) => {
@@ -816,6 +865,25 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const limit = listing.limit ?? defaultLimit;
       const rows = listing.open === true ? selectOpen.all(...openTicketStates, limit) : selectAll.all(limit);
       return rows.map(toTicket);
+    },
+    history: (listing = {}) => {
+      const limit = Math.max(1, listing.limit ?? historyPageSize);
+      const terms = searchTerms(listing.query ?? "");
+      const before = listing.before;
+      const states = finishedTicketStates.map(() => "?").join(", ");
+      const older = before === undefined ? "" : " AND (t.ended_at < ? OR (t.ended_at = ? AND t.id < ?))";
+      const matching = terms.map(() => ` AND (${searchedText}) LIKE ? ESCAPE '${escapeCharacter}'`).join("");
+      const rows = connection
+        .prepare(`SELECT t.id AS id FROM tickets t WHERE t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${states})${older}${matching} ORDER BY t.ended_at DESC, t.id DESC LIMIT ?`)
+        .all(...finishedTicketStates, ...(before === undefined ? [] : [before.endedAt, before.endedAt, before.id]), ...terms.map(likePattern), limit + 1);
+      const found = rows.flatMap((row) => {
+        const ticket = get(FoundRow.parse(row).id);
+        return ticket === undefined ? [] : [ticket];
+      });
+      const page = found.slice(0, limit);
+      const last = page.at(-1);
+      const next = found.length > limit && last !== undefined && last.endedAt !== null ? cursorAt({ endedAt: last.endedAt, id: last.id }) : null;
+      return { tickets: page, next };
     },
     moves: movesOf,
     detail: (id) => {

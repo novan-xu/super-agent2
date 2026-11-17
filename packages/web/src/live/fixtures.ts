@@ -1,3 +1,4 @@
+import { finishedTicketStates } from "@super-agent2/protocol";
 import type { MachineChoice, StartChoice, StoredWorkEvent, Ticket, TicketVerification, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
 
 export function verification(overrides: Partial<TicketVerification> = {}): TicketVerification {
@@ -45,6 +46,7 @@ export function workEvent(id: number, event: WorkEvent, overrides: Partial<Omit<
 
 export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   const repository = "novan-xu/super-agent-sandbox";
+  const finished = overrides.state !== undefined && finishedTicketStates.includes(overrides.state);
   const title = { en: `Work ${id}`, zh: `工作 ${id}` };
   const summary = { en: "Do it", zh: "做这件事" };
   return {
@@ -80,9 +82,11 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     work: null,
     verification: null,
     stopReason: null,
+    joinedInto: null,
     conversation: null,
     createdAt: id * 1000,
     updatedAt: id * 1000,
+    endedAt: finished ? (overrides.updatedAt ?? id * 1000) : null,
     ...overrides,
   };
 }

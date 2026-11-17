@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, ServerMessage, TicketDetail, TicketList } from "@super-agent2/protocol";
+import { brainToolsPath, conversationHeader, ServerMessage, TicketDetail, TicketHistory, TicketList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
@@ -267,6 +267,50 @@ describe("tickets for the page", () => {
     expect((await owner(running, "/api/tickets/abc")).status).toBe(404);
     expect((await owner(running, "/api/tickets?scope=some")).status).toBe(404);
     expect((await fetch(`${base(running)}/api/tickets`)).status).toBe(403);
+  });
+
+  it("reads the history a page at a time, searches it, and refuses what it does not understand", async () => {
+    const running = await start();
+    for (let number = 1; number <= 5; number += 1) {
+      const title = { en: `Piece ${number}`, zh: `第${number}件` };
+      const summary = { en: number === 4 ? "Mentions the watering can" : "Plain work", zh: number === 4 ? "提到了浇水壶" : "普通工作" };
+      const ticket = running.tickets.open({ repository: sandbox, issues: [{ repository: sandbox, number, url: `https://github.com/${sandbox}/issues/${number}`, title, summary }], title, summary, kind: "fix" });
+      clock.advance(1000);
+      running.tickets.stop(ticket.id, { en: "Not needed", zh: "不需要了" });
+    }
+    running.tickets.open({ repository: null, issues: [], title: { en: "Still open", zh: "还开着" }, summary: { en: "Open", zh: "开着" }, kind: "writing" });
+    const read = async (query: string) => TicketHistory.parse(await (await owner(running, `/api/tickets?scope=ended${query}`)).json());
+    const first = await read("&limit=2");
+    expect(first.tickets.map((ticket) => ticket.id)).toEqual([5, 4]);
+    expect(first.next).not.toBeNull();
+    const second = await read(`&limit=2&before=${first.next}`);
+    expect(second.tickets.map((ticket) => ticket.id)).toEqual([3, 2]);
+    const last = await read(`&limit=2&before=${second.next}`);
+    expect(last).toMatchObject({ next: null });
+    expect(last.tickets.map((ticket) => ticket.id)).toEqual([1]);
+    expect((await read("")).tickets.map((ticket) => ticket.id)).toEqual([5, 4, 3, 2, 1]);
+    expect((await read(`&q=${encodeURIComponent("浇水壶")}`)).tickets.map((ticket) => ticket.id)).toEqual([4]);
+    expect((await read(`&q=${encodeURIComponent("WATERING")}`)).tickets.map((ticket) => ticket.id)).toEqual([4]);
+    expect((await read(`&q=${encodeURIComponent("super-agent-sandbox 第3")}`)).tickets.map((ticket) => ticket.id)).toEqual([3]);
+    expect((await read(`&q=${encodeURIComponent("没有这个")}`)).tickets).toEqual([]);
+    for (const bad of ["&limit=0", "&limit=x", "&before=abc", "&before=1.2.3", `&q=${"x".repeat(201)}`]) {
+      expect((await owner(running, `/api/tickets?scope=ended${bad}`)).status).toBe(404);
+    }
+    expect((await fetch(`${base(running)}/api/tickets?scope=ended`)).status).toBe(403);
+  });
+
+  it("tells the page which tickets ended and when, so that it can place them in the history", async () => {
+    const running = await start();
+    await callTool(running, "file_issue", fileArguments);
+    const page = await pageSocket(running);
+    const socket = sockets[0]!;
+    running.tickets.move(1, "working");
+    clock.advance(5000);
+    running.tickets.move(1, "verifying");
+    running.tickets.move(1, "merged");
+    await until(socket, () => page.some((message) => message.type === "ticket" && message.ticket.state === "merged"));
+    const ended = page.flatMap((message) => (message.type === "ticket" && message.ticket.state === "merged" ? [message.ticket] : []))[0];
+    expect(ended).toMatchObject({ endedAt: clock.now(), joinedInto: null });
   });
 
   it("keeps a ticket and its state across a restart of the hub", async () => {

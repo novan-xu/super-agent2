@@ -1,4 +1,4 @@
-import type { CommandRecord, Conversation, OwnerEntry } from "@super-agent2/protocol";
+import type { CommandRecord, Conversation, OwnerEntry, Ticket, TicketHistory } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
 import { holdCard, startCard, ticket, workEvent } from "../live/fixtures.js";
@@ -30,6 +30,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),
     refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
     tickets: (scope) => answer(`tickets ${scope ?? "open"}`, { tickets: [] }),
+    history: (page) => answer(`history ${page.query} ${page.before ?? ""}`, { tickets: [], next: null }),
     ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [], attempts: [], rounds: [] }),
     work: (id, after) => answer(`work ${id} ${after}`, { events: [] }),
     messageWorker: (id, text) => answer(`message ${id} ${text}`, { id: "m1" }),
@@ -340,5 +341,201 @@ describe("PageController", () => {
       expect(await page.messageTicket(1, "hi")).toBe(false);
       expect(failures).toEqual(["conflict"]);
     });
+  });
+});
+
+describe("PageController and the history", () => {
+  function ended(id: number, at: number, overrides: Partial<Ticket> = {}): Ticket {
+    return ticket(id, { state: "merged", updatedAt: at, endedAt: at, ...overrides });
+  }
+
+  function pagesOf(given: Readonly<Record<string, TicketHistory>>): HubApi["history"] {
+    return (request) => Promise.resolve({ ok: true, value: given[`${request.query}|${request.before ?? ""}`] ?? { tickets: [], next: null } });
+  }
+
+  function open(hub: HubApi) {
+    let events: SocketEvents | undefined;
+    const page = new PageController({
+      api: hub,
+      socket: {
+        url: "ws://hub/ws",
+        create: (_url, given) => {
+          events = given;
+          return { isOpen: () => true, send: () => undefined, close: () => undefined };
+        },
+        schedule: () => () => undefined,
+      },
+      onFailure: () => undefined,
+    });
+    page.start();
+    const deliver = (message: unknown) => events?.message(JSON.stringify(message));
+    return { page, deliver };
+  }
+
+  const ids = (page: PageController) => page.store.getState().history.tickets.map((entry) => entry.id);
+
+  it("reads the first page when the view is opened, and not again while it is known", async () => {
+    const asked: string[] = [];
+    const read = pagesOf({ "|": { tickets: [ended(2, 2000), ended(1, 1000)], next: null } });
+    const page = controller(
+      api({
+        history: (request) => {
+          asked.push(`${request.query}|${request.before ?? ""}`);
+          return read(request);
+        },
+      }),
+    );
+    await page.openHistory();
+    await page.openHistory();
+    expect(ids(page)).toEqual([2, 1]);
+    expect(page.store.getState().history.status).toBe("ready");
+    expect(asked).toEqual(["|"]);
+  });
+
+  it("says it failed, and reads again when asked", async () => {
+    let answers = 0;
+    const page = controller(
+      api({
+        history: () => {
+          answers += 1;
+          return Promise.resolve(answers === 1 ? { ok: false, error: "network" } : { ok: true, value: { tickets: [ended(1, 1000)], next: null } });
+        },
+      }),
+    );
+    await page.openHistory();
+    expect(page.store.getState().history.status).toBe("failed");
+    await page.openHistory();
+    expect(page.store.getState().history.status).toBe("ready");
+    expect(ids(page)).toEqual([1]);
+  });
+
+  it("searches in the hub with the words as the owner typed them, and shows the answer", async () => {
+    const page = controller(
+      api({
+        history: pagesOf({ "|": { tickets: [ended(2, 2000), ended(1, 1000)], next: null }, "日期|": { tickets: [ended(1, 1000)], next: null } }),
+      }),
+    );
+    await page.openHistory();
+    await page.searchHistory("  日期 ");
+    expect(page.store.getState().history).toMatchObject({ query: "  日期 ", applied: "日期", status: "ready" });
+    expect(ids(page)).toEqual([1]);
+    await page.searchHistory("日期  ");
+    expect(ids(page)).toEqual([1]);
+    await page.searchHistory("");
+    expect(ids(page)).toEqual([2, 1]);
+  });
+
+  it("drops the answer to a search that is no longer in the box", async () => {
+    const waiting = new Map<string, (answer: Answer<TicketHistory>) => void>();
+    const page = controller(api({ history: (request) => new Promise((resolve) => waiting.set(request.query, resolve)) }));
+    const first = page.openHistory();
+    const slow = page.searchHistory("a");
+    const fast = page.searchHistory("ab");
+    waiting.get("ab")?.({ ok: true, value: { tickets: [ended(2, 2000)], next: null } });
+    await fast;
+    waiting.get("a")?.({ ok: true, value: { tickets: [ended(1, 1000)], next: null } });
+    waiting.get("")?.({ ok: true, value: { tickets: [ended(3, 3000)], next: null } });
+    await Promise.all([first, slow]);
+    expect(page.store.getState().history).toMatchObject({ applied: "ab", status: "ready" });
+    expect(ids(page)).toEqual([2]);
+  });
+
+  it("reads the next page after the last one read, and only while there is one", async () => {
+    const page = controller(
+      api({
+        history: pagesOf({ "|": { tickets: [ended(3, 3000), ended(2, 2000)], next: "2000.2" }, "|2000.2": { tickets: [ended(1, 1000)], next: null } }),
+      }),
+    );
+    await page.openHistory();
+    await page.moreHistory();
+    expect(ids(page)).toEqual([3, 2, 1]);
+    expect(page.store.getState().history.next).toBeNull();
+    await page.moreHistory();
+    expect(ids(page)).toEqual([3, 2, 1]);
+  });
+
+  it("keeps the list and offers the next page again when it could not be read", async () => {
+    let more = 0;
+    const page = controller(
+      api({
+        history: (request) => {
+          if (request.before === null) {
+            return Promise.resolve({ ok: true, value: { tickets: [ended(3, 3000)], next: "3000.3" } });
+          }
+          more += 1;
+          return Promise.resolve(more === 1 ? { ok: false, error: "network" } : { ok: true, value: { tickets: [ended(2, 2000)], next: null } });
+        },
+      }),
+    );
+    await page.openHistory();
+    await page.moreHistory();
+    expect(page.store.getState().history.more).toBe("failed");
+    expect(ids(page)).toEqual([3]);
+    await page.moreHistory();
+    expect(ids(page)).toEqual([3, 2]);
+  });
+
+  it("puts a ticket that ends while the view is open at the top of the list and takes it off the open tickets, without asking the hub", async () => {
+    const asked: string[] = [];
+    const read = pagesOf({ "|": { tickets: [ended(1, 1000)], next: null } });
+    const { page, deliver } = open(
+      api({
+        history: (request) => {
+          asked.push(request.query);
+          return read(request);
+        },
+      }),
+    );
+    await page.openHistory();
+    deliver({ type: "tickets", tickets: [ticket(2, { state: "verifying" })] });
+    expect(page.store.getState().tickets.open.map((entry) => entry.id)).toEqual([2]);
+    deliver({ type: "ticket", ticket: ended(2, 2000) });
+    expect(ids(page)).toEqual([2, 1]);
+    expect(page.store.getState().tickets.open).toEqual([]);
+    expect(asked).toEqual([""]);
+  });
+
+  it("asks the hub for the first page again when a ticket ends while a search is shown, and ignores one that was joined into another", async () => {
+    const asked: string[] = [];
+    let answers = 0;
+    const { page, deliver } = open(
+      api({
+        history: (request) => {
+          asked.push(`${request.query}|${request.before ?? ""}`);
+          answers += 1;
+          return Promise.resolve({ ok: true, value: { tickets: answers < 3 ? [ended(1, 1000)] : [ended(2, 2000), ended(1, 1000)], next: null } });
+        },
+      }),
+    );
+    await page.openHistory();
+    await page.searchHistory("日期");
+    const changed = new Promise<void>((resolve) => {
+      const off = page.store.subscribe(() => {
+        if (ids(page).includes(2)) {
+          off();
+          resolve();
+        }
+      });
+    });
+    deliver({ type: "ticket", ticket: ended(3, 3000, { state: "stopped", joinedInto: 1 }) });
+    deliver({ type: "ticket", ticket: ended(2, 2000) });
+    await changed;
+    expect(ids(page)).toEqual([2, 1]);
+    expect(asked).toEqual(["|", "日期|", "日期|"]);
+  });
+
+  it("reads the first page again when the connection comes back, to take what ended meanwhile", async () => {
+    let round = 0;
+    const { page } = open(
+      api({
+        history: () => {
+          round += 1;
+          return Promise.resolve({ ok: true, value: { tickets: round === 1 ? [ended(1, 1000)] : [ended(2, 2000), ended(1, 1000)], next: null } });
+        },
+      }),
+    );
+    await page.openHistory();
+    await page.refresh();
+    expect(ids(page)).toEqual([2, 1]);
   });
 });

@@ -36,6 +36,14 @@ describe("Shell", () => {
     expect(current).toEqual(["记忆", "记忆"]);
   });
 
+  it("keeps the destination a ticket was opened from marked while the ticket is shown", () => {
+    const marked = (overrides: Partial<ShellProps>) =>
+      [...render({ route: { view: "ticket", ticket: 4 }, ...overrides }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
+    expect(marked({})).toEqual(["工作台", "工作台"]);
+    expect(marked({ ticketFrom: "history" })).toEqual(["历史", "历史"]);
+    expect(render({ route: { view: "ticket", ticket: 4 }, ticketFrom: "history" })).toContain("<h1>历史</h1>");
+  });
+
   it("shows whether the hub and the brain are reachable", () => {
     expect(render()).toContain("在线");
     expect(render()).toContain("claude-opus-5-5");

@@ -186,7 +186,8 @@ describe("arranging", () => {
     const open = tickets.list({ open: true });
     expect(open.map((ticket) => ticket.id).sort()).toEqual([1, 3]);
     expect(tickets.get(1)).toMatchObject({ title: pairTitle.title, issues: [{ number: 1 }, { number: 2 }], state: "pending" });
-    expect(tickets.get(2)).toMatchObject({ state: "stopped", stopReason: { en: "Joined ticket 1 by an arrangement", zh: "按新的安排并入了工单 1" } });
+    expect(tickets.get(2)).toMatchObject({ state: "stopped", joinedInto: 1, stopReason: { en: "Joined ticket 1 by an arrangement", zh: "按新的安排并入了工单 1" } });
+    expect(tickets.history().tickets.map((ticket) => ticket.id)).toEqual([]);
     expect(tickets.get(3)).toMatchObject({ issues: [{ number: 3 }], title: { zh: "问题 3" } });
     expect(chains.cards().map((entry) => [entry.ticket.id, entry.before.length, entry.startable])).toEqual([
       [3, 0, true],

@@ -1,6 +1,7 @@
-import type { Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, StoredWorkEvent, TicketDetail } from "@super-agent2/protocol";
+import type { Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
+import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
 import { mergeConversations, upsertConversation } from "./list.js";
 import { type DetailState, openDetail, receiveDetail as receiveTicketDetail, receiveDetailWork, receiveMissing, receiveTicketChange } from "./detail.js";
 import { initialTickets, receiveTicket, receiveTickets, type TicketsState } from "./tickets.js";
@@ -15,6 +16,7 @@ export interface PageState {
   readonly waiting: WaitingState;
   readonly tickets: TicketsState;
   readonly detail: DetailState | null;
+  readonly history: HistoryState;
 }
 
 export type PageAction =
@@ -29,12 +31,23 @@ export type PageAction =
   | { readonly type: "ticket.open"; readonly ticket: number | null }
   | { readonly type: "ticket.detail"; readonly detail: TicketDetail }
   | { readonly type: "ticket.missing"; readonly ticket: number }
-  | { readonly type: "ticket.work"; readonly events: readonly StoredWorkEvent[] };
+  | { readonly type: "ticket.work"; readonly events: readonly StoredWorkEvent[] }
+  | { readonly type: "history.query"; readonly query: string }
+  | { readonly type: "history.loading" }
+  | { readonly type: "history.page"; readonly applied: string; readonly page: TicketHistory }
+  | { readonly type: "history.failed"; readonly applied: string }
+  | { readonly type: "history.more"; readonly applied: string; readonly before: string; readonly page: TicketHistory }
+  | { readonly type: "history.more.started" }
+  | { readonly type: "history.more.failed"; readonly applied: string };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null };
+export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
+}
+
+function withHistory(state: PageState, history: HistoryState): PageState {
+  return history === state.history ? state : { ...state, history };
 }
 
 function withCurrent(state: PageState, current: ConversationState | null): PageState {
@@ -76,6 +89,20 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return withDetail(state, state.detail?.id === action.ticket ? receiveMissing(state.detail) : state.detail);
     case "ticket.work":
       return withDetail(state, state.detail === null ? null : receiveDetailWork(state.detail, action.events));
+    case "history.query":
+      return withHistory(state, typeQuery(state.history, action.query));
+    case "history.loading":
+      return withHistory(state, startLoading(state.history));
+    case "history.page":
+      return withHistory(state, receivePage(state.history, action.applied, action.page));
+    case "history.failed":
+      return withHistory(state, pageFailed(state.history, action.applied));
+    case "history.more":
+      return withHistory(state, receiveMore(state.history, action.applied, action.before, action.page));
+    case "history.more.started":
+      return withHistory(state, moreStarted(state.history));
+    case "history.more.failed":
+      return withHistory(state, moreFailed(state.history, action.applied));
     case "server": {
       const { message } = action;
       if (message.type === "work") {
@@ -92,7 +119,8 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       }
       if (message.type === "ticket") {
         const tickets = receiveTicket(state.tickets, message.ticket);
-        const next = tickets === state.tickets ? state : { ...state, tickets };
+        const history = receiveEnded(state.history, message.ticket);
+        const next = tickets === state.tickets && history === state.history ? state : { ...state, tickets, history };
         return withDetail(next, state.detail === null ? null : receiveTicketChange(state.detail, message.ticket));
       }
       if (message.type === "brain") {
