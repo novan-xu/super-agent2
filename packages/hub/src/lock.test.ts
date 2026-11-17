@@ -86,7 +86,7 @@ describe("the confirmation lock", () => {
     const { running, lock, nas } = create();
     const { id } = running.start({ target: "nas", command: "docker volume rm superagent-data" });
     const held = await waitForState(running, id, "held");
-    expect(held.reason).toBe("Held until the owner confirms it: deletes a database or a data volume (docker volume rm superagent-data)");
+    expect(held.reason).toBe("等你确认：删除数据库或数据卷（docker volume rm superagent-data）");
     expect(nas.jobs).toEqual([]);
     expect(lock.waiting().map((hold) => hold.command)).toEqual([id]);
     expect(lock.get(id)).toMatchObject({

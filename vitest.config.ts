@@ -11,10 +11,12 @@ export default defineConfig({
     testTimeout: 0,
     hookTimeout: 0,
     projects: [
+      { extends: true, test: { name: "catalog", root: "packages/catalog" } },
       { extends: true, test: { name: "protocol", root: "packages/protocol" } },
       { extends: true, test: { name: "hub", root: "packages/hub" } },
       { extends: true, test: { name: "runner", root: "packages/runner" } },
       { extends: true, plugins: [react()], test: { name: "web", root: "packages/web" } },
+      { extends: true, test: { name: "markup-text", root: "tools/markup-text" } },
       { extends: true, test: { name: "zero-comment", root: "tools/zero-comment" } },
     ],
   },

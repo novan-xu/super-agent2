@@ -197,6 +197,7 @@ Everything the software shows the owner is Chinese, and only Chinese. Proper nou
 are.
 
 - The interface's own text comes from one Chinese catalog.
+- The page's markup holds no literal text: every label comes from the catalog, and `pnpm check` fails otherwise.
 - Text an LLM generates for the owner to see is kept twice: the English original, which goes to GitHub and to other
   LLMs, and a Chinese copy written at the same time by whoever generated it. That covers a ticket's title and summary,
   a worker's report, the brain's guidance, the reason a ticket stopped, and notices. The page shows the Chinese copy.

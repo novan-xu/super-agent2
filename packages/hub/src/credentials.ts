@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import type { Environment } from "./targets.js";
 
@@ -25,7 +26,7 @@ export function environmentCredentials(environment: Environment): CredentialSour
     const variable = accountTokenVariable[account];
     const token = environment[variable];
     if (token === undefined || token === "") {
-      return { ok: false, reason: `${variable} is not set, so the hub has no GitHub token for ${account}` };
+      return { ok: false, reason: text("command.reason.noToken", { variable, account }) };
     }
     const credentials: Record<string, string> = { GH_TOKEN: token, GITHUB_TOKEN: token };
     for (const name of forwardedVariables) {
