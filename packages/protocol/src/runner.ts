@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AllowanceReading } from "./allowance.js";
 import { OutputStream, TargetName } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
 
@@ -46,6 +47,7 @@ export const MachineReport = z.object({
   user: z.string(),
   slots: z.object({ total: z.number().int().nonnegative(), free: z.number().int().nonnegative() }),
   programs: z.array(ProgramReport),
+  allowances: z.array(AllowanceReading).default([]),
 });
 export type MachineReport = z.infer<typeof MachineReport>;
 

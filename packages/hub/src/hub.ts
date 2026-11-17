@@ -21,6 +21,7 @@ import { combinedTargets, type Environment, fixedTargets, localTarget, sshTarget
 import { createToolServer } from "./tools.js";
 import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
+import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -35,6 +36,7 @@ export interface HubOptions {
   readonly heartbeatMilliseconds?: number;
   readonly issueHost?: IssueHost;
   readonly ticketWork?: TicketWork;
+  readonly adjustSubscriptions?: SubscriptionAdjustment;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -56,6 +58,7 @@ export interface Hub {
   readonly runners: Runners;
   readonly tickets: TicketService;
   readonly chains: Chains;
+  readonly defaults: StartDefaults;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -78,6 +81,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const runners = createRunners({
     machines,
     ...(options.machinePollMilliseconds === undefined ? {} : { pollMilliseconds: options.machinePollMilliseconds }),
+  });
+  const defaults = createStartDefaults({
+    database,
+    clock,
+    statuses: () => runners.statuses(),
+    ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
   const tickets = createTicketService({ database, clock, ...(options.ticketWork === undefined ? {} : { work: options.ticketWork }) });
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
@@ -108,6 +117,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tickets,
       verify,
       ownerEmail: config.ownerEmail,
+      defaults,
       tell: (conversation, notice, prompt) => {
         told.tell(conversation, notice, prompt);
       },
@@ -115,6 +125,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     });
     const listed = chains;
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards() });
+    const refreshed = waiting;
+    runners.subscribe(() => refreshed.refresh());
+    defaults.subscribe(() => refreshed.refresh());
     push =
       config.vapid === undefined
         ? undefined
@@ -135,10 +148,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           tickets,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
           chains: chains.arranger,
+          defaults,
         },
       }),
       tickets,
       chains: chains.starter,
+      defaults,
       brainToken,
       runners,
       ...(options.heartbeatMilliseconds === undefined ? {} : { heartbeatMilliseconds: options.heartbeatMilliseconds }),
@@ -165,6 +180,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       runners,
       tickets,
       chains,
+      defaults,
       address,
       close: async () => {
         try {

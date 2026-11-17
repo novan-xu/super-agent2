@@ -1,10 +1,18 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { StartCard, Ticket } from "@super-agent2/protocol";
+import {
+  type AllowanceStates,
+  type MachineChoice,
+  type OwnerChoice,
+  resolveStart,
+  type StartCard,
+  startingEngineTable,
+  type Ticket,
+} from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AccessVerifier } from "./access.js";
-import { type Chains, type ChainSpec, chainFingerprint, createChains } from "./chains.js";
+import { type ChainDefaults, type Chains, type ChainSpec, chainFingerprint, createChains } from "./chains.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { TestClock } from "./testing/access.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
@@ -22,6 +30,7 @@ const made: Chains[] = [];
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "hub-chains-"));
   clock = new TestClock();
+  allowance = { codex: "available", claude: "available" };
 });
 
 afterEach(async () => {
@@ -48,6 +57,50 @@ const verify: AccessVerifier = async (assertion) => {
   return { ok: false, reason: "no assertion" };
 };
 
+const testMachines: MachineChoice[] = [
+  {
+    name: "pc",
+    platform: "win32",
+    free: 2,
+    engines: [
+      { engine: "codex", models: [{ id: "gpt-6.1-sol", efforts: ["medium", "high"] }, { id: "gpt-6.1-terra", efforts: ["high"] }, { id: "gpt-6-luna", efforts: ["medium"] }] },
+      { engine: "claude", models: [{ id: "claude-opus-5-5", efforts: ["high", "max"] }, { id: "claude-sonnet-5-5", efforts: ["high"] }] },
+    ],
+  },
+  { name: "mini", platform: "darwin", free: 1, engines: [{ engine: "codex", models: [{ id: "gpt-6.1-sol", efforts: ["high"] }] }] },
+];
+
+let allowance: AllowanceStates = { codex: "available", claude: "available" };
+
+function testDefaults(lenient: boolean): ChainDefaults {
+  return {
+    resolve: (ticket: Ticket, owner: OwnerChoice = ticket.ownerChoice) =>
+      resolveStart(
+        lenient
+          ? { kind: ticket.kind, difficulty: ticket.difficulty ?? "standard", platform: ticket.platform ?? "any", brainEngine: ticket.brainEngine ?? "codex", stated: true, owner }
+          : {
+              kind: ticket.kind,
+              difficulty: ticket.difficulty,
+              platform: ticket.platform,
+              brainEngine: ticket.brainEngine,
+              stated: ticket.difficultyReason !== null && ticket.difficulty !== null && ticket.platform !== null,
+              owner,
+            },
+        startingEngineTable,
+        testMachines,
+        allowance,
+      ),
+    machines: () => testMachines,
+    machinesFor: () => testMachines,
+  };
+}
+
+const lenientDefaults = testDefaults(true);
+
+function shown(...list: readonly (Ticket | undefined)[]) {
+  return list.flatMap((ticket) => (ticket === undefined ? [] : [{ ticket, choice: lenientDefaults.resolve(ticket) }]));
+}
+
 interface Told {
   readonly conversation: string | null;
   readonly notice: string;
@@ -61,7 +114,7 @@ interface Setup {
   readonly told: Told[];
 }
 
-function setup(work?: Partial<TicketWork>): Setup {
+function setup(work?: Partial<TicketWork>, strict = false): Setup {
   const database = openDatabase({ dataDir, clock });
   opened.push(database);
   const begun: number[] = [];
@@ -73,9 +126,11 @@ function setup(work?: Partial<TicketWork>): Setup {
     tickets,
     verify,
     ownerEmail,
+    defaults: strict ? testDefaults(false) : lenientDefaults,
     work: {
       begin: work?.begin ?? ((ticket) => void begun.push(ticket.id)),
       stop: work?.stop ?? (() => undefined),
+      ...(work?.reassign === undefined ? {} : { reassign: work.reassign }),
     },
     tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
   });
@@ -335,7 +390,7 @@ describe("starting", () => {
     expect(card(chains, 3)).toMatchObject({ startable: false, before: [{ id: 1 }, { id: 2 }] });
     await startOf(chains, 1);
     expect(state(tickets, 3)).toBe("pending");
-    expect(card(chains, 2).fingerprint).toBe(chainFingerprint([tickets.get(2), tickets.get(3)].flatMap((ticket) => (ticket === undefined ? [] : [ticket]))));
+    expect(card(chains, 2).fingerprint).toBe(chainFingerprint(shown(tickets.get(2), tickets.get(3))));
     await startOf(chains, 2);
     expect(state(tickets, 3)).toBe("waiting");
   });
@@ -395,8 +450,8 @@ describe("starting", () => {
     if (a === undefined || b === undefined) {
       throw new Error("missing");
     }
-    expect(card(chains, 1).fingerprint).toBe(chainFingerprint([a, b]));
-    expect(card(chains, 2).fingerprint).toBe(chainFingerprint([b]));
+    expect(card(chains, 1).fingerprint).toBe(chainFingerprint(shown(a, b)));
+    expect(card(chains, 2).fingerprint).toBe(chainFingerprint(shown(b)));
   });
 });
 

@@ -6,7 +6,7 @@ import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiti
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined };
+const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined, choose: () => undefined };
 
 function state(...cards: (ReturnType<typeof holdCard> | ReturnType<typeof startCard>)[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
@@ -229,6 +229,27 @@ describe("start cards in 工作台", () => {
     expect(render(sending)).toContain("is-busy");
     const failed = waitingReducer(state(startCard(1)), { type: "failed", key: "start:1", failure: "conflict" });
     expect(render(failed)).toContain("这一项已经处理过或已有变化，请刷新后再看");
+  });
+
+  it("shows a chain's difficulty, platform and reason in Chinese, with its machine, engine and model to change", () => {
+    const html = render(
+      state(startCard(1, { ticket: { difficulty: "complex", platform: "windows", difficultyReason: { en: "Across modules", zh: "跨模块的改动" } } })),
+    );
+    expect(html).toContain("复杂");
+    expect(html).toContain("Windows");
+    expect(html).toContain("跨模块的改动");
+    expect(html).not.toContain("Across modules");
+    expect(text(html)).toContain("|机器|");
+    expect(html).toContain('<option value="pc" selected="">pc</option>');
+    expect(html).toContain('<option value="codex" selected="">Codex</option>');
+    expect(html).toContain('<option value="gpt-6.1-sol high" selected="">gpt-6.1-sol · high</option>');
+    expect(html).toContain('<option value="gpt-6-luna low">gpt-6-luna · low</option>');
+  });
+
+  it("says what is missing and offers no 开始 until the choice is complete", () => {
+    const html = render(state(startCard(1, { choice: { machine: null, missing: ["machine"] } })));
+    expect(html).toContain("没有在线的机器适合它");
+    expect(text(html)).not.toContain("|开始|");
   });
 
   it("leaves pending tickets out of the ticket list, since they are start cards", () => {

@@ -1,5 +1,6 @@
 import {
   type ChainStartItem,
+  type ChoiceChange,
   CommandResponse,
   ConversationDetail,
   ConversationList,
@@ -59,6 +60,8 @@ export const hubApi = {
   tickets: (scope: "open" | "all" = "open") => call(`/api/tickets?scope=${scope}`, TicketList),
   ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
   startChains: (chains: readonly ChainStartItem[]) => call("/api/chains/start", TicketList, { chains }),
+  chooseChain: (ticket: number, change: ChoiceChange) => call("/api/chains/choice", TicketList, { ticket, ...change }),
+  reassign: (ticket: number, change: ChoiceChange) => call(`/api/tickets/${ticket}/reassign`, TicketList, change),
   pushKey: () => call("/api/push", PushKey),
   subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
   unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),

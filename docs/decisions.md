@@ -1028,3 +1028,102 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The design lists a chain to start among what waits for the owner. One notice per batch matches how the
   brain files several issues at once; the shared tag lets a device replace the previous notice.
 - **Other options:** A separate count for chains; a notice per chain; showing pending tickets twice.
+
+## 2026-11-17 — Where the allowance is read, and how
+
+- **Chosen:** Each runner reads what is left on the subscriptions logged in on its machine, when it starts (after
+  listing its programs) and every ten minutes, and sends the readings with its report (`allowances` in
+  `MachineReport`). Codex: `codex app-server`, `initialize`, then the request `account/rateLimits/read`, whose answer
+  gives each window's `usedPercent` and `resetsAt`, `rateLimitReachedType` and `ordinaryUsageAllowed` (found with
+  `codex app-server generate-json-schema` and tried on this PC). Claude Code: the control request `get_usage` to
+  `claude -p --input-format stream-json --output-format stream-json --verbose` after `initialize`, whose answer gives
+  `rate_limits.limits` (kind, percent, reset time, and a scope for limits of one model) and the five-hour and seven-day
+  windows with `locked_reason` (the subtype was found among the control requests the program accepts and tried on this
+  PC); no message is sent and the process is stopped once it has answered. What is left is 100 minus the most used
+  general window; a full window, a reached limit, a lock, or ordinary usage not allowed makes it used up. Limits scoped
+  to one model are left out. dsh and Antigravity are not read: neither has a way to say what is left (dsh's help and
+  profiles have no usage or balance command, Antigravity's help has none), and neither is part of the engine choice.
+  A reading that fails is reported as unknown with the reason. `node packages/runner/dist/main.js allowance` prints
+  the readings.
+- **Why:** Workers run on the runners with each machine's own logins, so the machine is where the reading means
+  something. Both programs say it themselves through the same channels the brain already drives.
+- **Other options:** Reading in the brain's container, whose logins are not the workers'; calling the vendors' usage
+  APIs directly with the programs' tokens; learning the allowance only from the error when a worker hits a limit.
+
+## 2026-11-17 — When a subscription counts as used up
+
+- **Chosen:** The hub takes, for each of `codex` and `claude`, the newest reading among every machine's report that is
+  not unknown, not older than 30 minutes by the hub's clock, and not a used-up reading whose reset time has passed.
+  Without one the subscription is unknown, and unknown is not used up. `dsh` becomes the default engine only when both
+  are used up by such a reading. `GET /api/allowance` lists both for #21, and the brain's `read_allowance` tool says the
+  same with the machines online, their systems, programs and free slots.
+- **Why:** The issue asks that an unknown or stale reading never counts as used up. Thirty minutes is three of a
+  runner's reading intervals. Machines normally share the owner's two accounts, so the newest reading speaks for the
+  subscription.
+- **Other options:** Per-machine engine choice from each machine's own reading; any machine's used-up reading winning;
+  no age limit.
+
+## 2026-11-17 — How a chain's defaults are stated and resolved
+
+- **Chosen:** The brain states, with the tool `choose_defaults`, for each pending ticket: its kind, every issue with its
+  difficulty (the chain takes the highest, `chainDifficulty`), a one-line reason as `GeneratedText`, its platform, and
+  for code its engine, `codex` or `claude`; writing takes Antigravity. It is refused, changing nothing, when an issue is
+  missing or extra, the engine is missing for code, or the reason has a line break. The ticket keeps them
+  (`difficultyReason`, `brainEngine`; migration 9). The rest is not stored but resolved whenever a card is made, by
+  `resolveStart` in `packages/protocol/src/defaults.ts`, from the stated values, the owner's changes, the table and the
+  runners online: engine = the owner's, else Antigravity for writing, else `dsh` when both subscriptions are used up,
+  else the brain's pick unless it is used up and the other is not; machine = the owner's, else the online runner fitting
+  the platform that has the engine, most free slots first, then by name (a full machine is still chosen when it is the
+  only one; #11 decides what a start on a full machine does); model and effort = the owner's, else the table's row.
+  What cannot be resolved is listed as missing (`defaults`, `machine`, `engine`, `model`) and shown on the card. The
+  card's fingerprint covers the resolved choice and the reason, so a card that changed, through the owner, a runner or
+  the allowance, cannot be started from an older view. A start refuses with 409 `incomplete` when any chain it would
+  start is incomplete, and otherwise writes each chain's machine, engine, model and effort with who chose each
+  (`chosenBy`: `default` or `owner`) and when. An arrangement that changes a ticket's issues, kind, difficulty or
+  platform forgets what was stated for it and the owner's changes.
+- **Why:** Runners come and go and the allowance changes; resolving when shown keeps the card true, and storing at the
+  start keeps the choice fixed for the ticket through its guided rounds. Per-issue difficulties make "the highest of
+  its issues" the hub's rule rather than the brain's arithmetic.
+- **Other options:** Resolving once at arrangement and storing it; the brain naming the machine and model; a chain-level
+  difficulty only; adding the fields to `arrange_chains`.
+
+## 2026-11-17 — The owner's changes on the card, and 改派
+
+- **Chosen:** `POST /api/chains/choice` with `{ ticket, machine?, engine?, model?, effort? }` changes a pending ticket's
+  card: a value sets the owner's choice, `null` returns that field to the default, a missing field stays. It has the
+  start's checks: same origin, JSON, and `ChainStarter` verifying again that the assertion is the owner's. What the
+  owner gives that the chosen machine's program does not offer (a machine not online, an engine not installed there, a
+  model and effort not offered together) is refused with 422 `unsupported` and nothing is stored; a default the owner
+  did not give that does not fit is shown as missing instead. `POST /api/tickets/<n>/reassign` with the same fields
+  chooses again for a waiting, working or verifying ticket: fields not given take today's defaults, the whole choice
+  must be complete and offered, it is written with who chose each, and `TicketWork.reassign` is called for #11 to restart
+  the worker; #13 puts the control on it. `Ticket.ran` holds what actually ran, written by #11 through `writes.ran`.
+  `GET /api/engine-table` reads the table and `PUT` replaces it, with the same checks; it is kept as JSON under
+  `engine_table` in a `hub_settings` table, starting from the design's values, and a change applies to every card not
+  yet started.
+- **Why:** One route per action, shaped like the start, so only the owner's page can change what a worker runs with.
+  Refusing only what the owner gave avoids a dead end where changing the engine is refused because the table's model
+  for it is not offered; the card then says the model is missing and the owner picks one.
+- **Other options:** Storing an unsupported choice and refusing only at the start; one route for every change of a
+  ticket; the table in the configuration file.
+
+## 2026-11-17 — The choice on the start card
+
+- **Chosen:** A start card shows the chain's difficulty and platform as chips, the Chinese reason, and three selects in
+  the prototype's `wcard-where` row: 机器 (the online runners fitting the platform), 引擎 (the programs on the chosen
+  machine) and 模型和推理强度 (each model with each of its efforts, as `model · effort`). A field the owner set has the
+  accent border. What is missing is listed under it, and 开始 appears only when the choice is complete and nothing
+  pending is before it. Changing the engine returns the model to the table's; changing the machine drops an owner's
+  engine or model the new machine does not offer. The cards carry the machines (`StartCard.machines`) so the selects
+  update with the runners.
+- **Why:** The prototype has separate model and effort selects; offering only pairs a machine offers means the page
+  never sends a model with an effort it does not have, which the hub would refuse.
+- **Other options:** Four selects as in the prototype; an edit form behind a button.
+
+## 2026-11-17 — Forcing the allowance in the development harness
+
+- **Chosen:** `tools/page-dev` passes the hub an adjustment of the subscriptions it read, and
+  `/__harness/allowance?codex=exhausted&claude=exhausted` (or `available`, `unknown`, `read` to use the runners' real
+  readings again) sets it.
+- **Why:** A used-up subscription cannot be produced on demand, and the hub's own rule is what needs seeing.
+- **Other options:** A runner setting that replaces its readings.

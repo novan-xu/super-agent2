@@ -7,6 +7,7 @@ export * from "./config.js";
 export * from "./conversations.js";
 export * from "./credentials.js";
 export * from "./database.js";
+export * from "./defaults.js";
 export * from "./hub.js";
 export * from "./irreversible.js";
 export * from "./keys.js";

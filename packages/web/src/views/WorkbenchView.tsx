@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type HoldCard as HoldCardData, type Ticket } from "@super-agent2/protocol";
+import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type Ticket } from "@super-agent2/protocol";
 import { type CSSProperties, useEffect, useMemo } from "react";
 import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
@@ -14,6 +14,7 @@ export interface CardActions {
   disarm(key: string): void;
   answer(key: string, verdict: Verdict): void;
   start(keys: readonly string[]): void;
+  choose(key: string, change: ChoiceChange): void;
 }
 
 export interface WorkbenchViewProps {
@@ -149,7 +150,7 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
             <Card key={card.key} card={card} waiting={waiting} actions={actions} focus={focus} />
           ))}
         </div>
-        <StartBlocks view={starts} waiting={waiting} focus={focus} start={actions.start} />
+        <StartBlocks view={starts} waiting={waiting} focus={focus} start={actions.start} choose={actions.choose} />
       </section>
       <Tickets tickets={tickets} />
     </div>

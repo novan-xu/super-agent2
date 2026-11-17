@@ -31,6 +31,8 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     tickets: (scope) => answer(`tickets ${scope ?? "open"}`, { tickets: [] }),
     ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [] }),
     startChains: (chains) => answer(`start ${chains.map((chain) => `${chain.ticket}:${chain.fingerprint.slice(0, 1)}`).join(" ")}`, { tickets: [] }),
+    chooseChain: (id, change) => answer(`choose ${id} ${JSON.stringify(change)}`, { tickets: [] }),
+    reassign: (id, change) => answer(`reassign ${id} ${JSON.stringify(change)}`, { tickets: [] }),
     pushKey: () => answer("pushKey", { publicKey: null }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
@@ -216,6 +218,21 @@ describe("PageController", () => {
       expect(await page.startChains(["start:9"])).toBe(false);
       expect(await page.startChains([])).toBe(false);
       expect(hub.calls).toEqual([]);
+    });
+
+    it("sends a change of the card for its ticket and keeps the card", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.chooseChain("start:1", { model: "gpt-6.1-sol", effort: "medium" })).toBe(true);
+      expect(hub.calls).toEqual(['choose 1 {"model":"gpt-6.1-sol","effort":"medium"}']);
+      expect(useOf(page.store.getState().waiting, "start:1")).toEqual({ step: "idle", verdict: null, failure: null });
+      expect(await page.chooseChain("hold:a1", { engine: "codex" })).toBe(false);
+    });
+
+    it("says why the hub refused a change of the card", async () => {
+      const page = shown(api({ chooseChain: () => Promise.resolve({ ok: false, error: "unsupported" }) }));
+      expect(await page.chooseChain("start:1", { model: "gpt-6.1-sol", effort: "max" })).toBe(false);
+      expect(useOf(page.store.getState().waiting, "start:1").failure).toBe("unsupported");
     });
 
     it("forgets a failure when the card's arrangement changes", () => {

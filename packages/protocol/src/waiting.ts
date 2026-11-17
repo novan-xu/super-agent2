@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CommandRecord } from "./commands.js";
+import { MachineChoice, StartChoice } from "./defaults.js";
 import { GeneratedText } from "./generated.js";
 import { Hold } from "./holds.js";
 import { RepositoryName, Ticket, TicketId, TicketState } from "./tickets.js";
@@ -39,6 +40,8 @@ export const StartCard = z.object({
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   before: z.array(ChainBefore),
   startable: z.boolean(),
+  choice: StartChoice,
+  machines: z.array(MachineChoice),
 });
 
 export type StartCard = z.infer<typeof StartCard>;

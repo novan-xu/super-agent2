@@ -8,7 +8,7 @@ import { defaultPageDir, generateVapidKeys, localTarget, startHub, type VapidKey
 import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
-import { createHarness, demoTarget } from "./harness.js";
+import { createAllowanceForcing, createHarness, demoTarget } from "./harness.js";
 
 const { values } = parseArgs({
   options: {
@@ -96,6 +96,7 @@ function vapidKeys(): VapidKeys | undefined {
 }
 
 const vapid = vapidKeys();
+const allowance = createAllowanceForcing();
 
 const hub = await startHub({
   config: {
@@ -114,6 +115,7 @@ const hub = await startHub({
   keySource: () => Promise.resolve(keys),
   targets: [localTarget({ environment: process.env }), demoTarget()],
   credentials: () => ({ ok: true, credentials: {} }),
+  adjustSubscriptions: allowance.adjust,
 });
 const hubPort = hub.address.port;
 const hubUrl = `http://127.0.0.1:${hubPort}`;
@@ -168,7 +170,7 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
   return headers;
 }
 
-const harness = createHarness({ hub, publicUrl: `http://127.0.0.1:${port}`, hubUrl, assertion: ownerAssertion });
+const harness = createHarness({ hub, publicUrl: `http://127.0.0.1:${port}`, hubUrl, assertion: ownerAssertion, allowance });
 
 const proxy = createServer((incoming, outgoing) => {
   const path = new URL(incoming.url ?? "/", "http://page-dev").pathname;
@@ -261,6 +263,7 @@ process.stdout.write(
     `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
+    `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
   ].join("\n"),

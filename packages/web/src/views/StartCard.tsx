@@ -1,6 +1,7 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type ChainBefore, type StartCard as Card } from "@super-agent2/protocol";
+import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
+import { canStartCard, changeOfEngine, changeOfMachine, changeOfModel, choiceOptions, modelLabel, modelValue } from "../live/choice.js";
 import { type CardUse, type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
@@ -10,9 +11,82 @@ export interface StartCardProps {
   readonly use: CardUse;
   readonly focused: boolean;
   readonly start: () => void;
+  readonly choose: (change: ChoiceChange) => void;
 }
 
-export function StartCard({ card, use, focused, start }: StartCardProps) {
+function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: boolean; readonly choose: (change: ChoiceChange) => void }) {
+  const options = choiceOptions(card);
+  const { choice } = card;
+  const id = `choice-${card.ticket.id}`;
+  const owned = (field: "machine" | "engine" | "model") => (choice.by[field] === "owner" ? "field field--sm field--owner" : "field field--sm");
+  return (
+    <div className="wcard-where">
+      <div className="form-row">
+        <label htmlFor={`${id}-machine`}>{text("chains.machine")}</label>
+        <select
+          className={owned("machine")}
+          id={`${id}-machine`}
+          value={choice.machine ?? ""}
+          disabled={busy || options.machines.length === 0}
+          onChange={(event) => choose(changeOfMachine(card, event.target.value))}
+        >
+          {choice.machine === null ? <option value="" /> : null}
+          {options.machines.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="form-row">
+        <label htmlFor={`${id}-engine`}>{text("chains.engine")}</label>
+        <select
+          className={owned("engine")}
+          id={`${id}-engine`}
+          value={choice.engine ?? ""}
+          disabled={busy || options.engines.length === 0}
+          onChange={(event) => {
+            const engine = options.engines.find((entry) => entry === event.target.value);
+            if (engine !== undefined) {
+              choose(changeOfEngine(engine));
+            }
+          }}
+        >
+          {choice.engine === null ? <option value="" /> : null}
+          {options.engines.map((engine) => (
+            <option key={engine} value={engine}>
+              {text(`engine.${engine}`)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="form-row">
+        <label htmlFor={`${id}-model`}>{text("chains.model")}</label>
+        <select
+          className={choice.by.model === "owner" || choice.by.effort === "owner" ? "field field--sm field--owner" : "field field--sm"}
+          id={`${id}-model`}
+          value={modelValue(choice.model, choice.effort)}
+          disabled={busy || options.models.length === 0}
+          onChange={(event) => {
+            const change = changeOfModel(event.target.value);
+            if (change !== undefined) {
+              choose(change);
+            }
+          }}
+        >
+          {choice.model === null || choice.effort === null ? <option value="" /> : null}
+          {options.models.map((option) => (
+            <option key={option.value} value={option.value}>
+              {modelLabel(option)}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+export function StartCard({ card, use, focused, start, choose }: StartCardProps) {
   const { ticket } = card;
   const sending = use.step === "sending";
   return (
@@ -25,7 +99,10 @@ export function StartCard({ card, use, focused, start }: StartCardProps) {
           </span>
         )}
         <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+        {ticket.difficulty === null ? null : <span className="chip">{text(`ticket.difficulty.${ticket.difficulty}`)}</span>}
+        {ticket.platform === null ? null : <span className="chip">{text(`ticket.platform.${ticket.platform}`)}</span>}
       </div>
+      {ticket.difficultyReason === null ? null : <p className="chain-reason">{chineseOf(ticket.difficultyReason)}</p>}
       <ol className="chain-issues" aria-label={text("chains.issues")}>
         {ticket.issues.map((issue) => (
           <li key={`${issue.repository}#${issue.number}`} className="chain-issue">
@@ -34,12 +111,20 @@ export function StartCard({ card, use, focused, start }: StartCardProps) {
           </li>
         ))}
       </ol>
+      <Choice card={card} busy={sending} choose={choose} />
+      {card.choice.missing.length === 0 ? null : (
+        <ul className="chain-missing">
+          {card.choice.missing.map((part) => (
+            <li key={part}>{text(`chains.missing.${part}`)}</li>
+          ))}
+        </ul>
+      )}
       {use.failure === null ? null : (
         <p className="field-err" role="alert">
           {failureText(use.failure)}
         </p>
       )}
-      {card.startable ? (
+      {canStartCard(card) ? (
         <div className="card-actions">
           <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="button" disabled={sending} aria-busy={sending} onClick={start}>
             <Icon name="check" />
@@ -69,9 +154,10 @@ export interface StartBlocksProps {
   readonly waiting: WaitingState;
   readonly focus: string | null;
   readonly start: (keys: readonly string[]) => void;
+  readonly choose: (key: string, change: ChoiceChange) => void;
 }
 
-export function StartBlocks({ view, waiting, focus, start }: StartBlocksProps) {
+export function StartBlocks({ view, waiting, focus, start, choose }: StartBlocksProps) {
   const total = view.all.length;
   const allIdle = view.all.every((key) => useOf(waiting, key).step === "idle");
   const startAll =
@@ -81,7 +167,16 @@ export function StartBlocks({ view, waiting, focus, start }: StartBlocksProps) {
         {text("chains.startAll")}
       </button>
     ) : null;
-  const one = (card: Card) => <StartCard key={card.key} card={card} use={useOf(waiting, card.key)} focused={focus === card.key} start={() => start([card.key])} />;
+  const one = (card: Card) => (
+    <StartCard
+      key={card.key}
+      card={card}
+      use={useOf(waiting, card.key)}
+      focused={focus === card.key}
+      start={() => start([card.key])}
+      choose={(change) => choose(card.key, change)}
+    />
+  );
   return (
     <>
       {view.now.length > 0 ? (

@@ -132,6 +132,8 @@ describe("the brain's ticket tools", () => {
       "arrange_chains",
       "report_deployment",
       "proceed_ticket",
+      "read_allowance",
+      "choose_defaults",
     ]);
   });
 

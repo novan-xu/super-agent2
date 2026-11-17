@@ -1,4 +1,4 @@
-import type { CommandRecord, Ticket, TicketMove, TicketWait } from "@super-agent2/protocol";
+import type { CommandRecord, MachineChoice, StartChoice, Subscription, Subscriptions, Ticket, TicketMove, TicketWait } from "@super-agent2/protocol";
 
 export const reportLimit = 40_000;
 
@@ -65,7 +65,13 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   }
   lines.push(
     `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}`,
-    `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}`,
+    `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}; engine you chose: ${chosen(ticket.brainEngine)}`,
+    `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}${
+      ticket.chosenBy === null
+        ? ""
+        : ` (chosen by: machine ${ticket.chosenBy.machine}, engine ${ticket.chosenBy.engine}, model ${ticket.chosenBy.model}, effort ${ticket.chosenBy.effort})`
+    }`,
+    `Actually ran: ${ticket.ran === null ? "nothing yet" : `${ticket.ran.machine}, ${ticket.ran.engine}, ${ticket.ran.model}, ${ticket.ran.effort}`}`,
     `Branch: ${chosen(ticket.branch)}; pull request: ${ticket.pullRequest === null ? "none" : `#${ticket.pullRequest}`}; guided round: ${ticket.round}`,
     `Waits for: ${ticket.waits.length === 0 ? "nothing" : ticket.waits.map(waitText).join(", ")}`,
   );
@@ -84,6 +90,39 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   for (const move of moves) {
     const reason = move.reason === null ? "" : `: ${move.reason.en}`;
     lines.push(`  ${new Date(move.at).toISOString()} ${move.from ?? "filed"} -> ${move.to}${reason}`);
+  }
+  return lines.join("\n");
+}
+
+export function choiceText(choice: StartChoice): string {
+  const what = `${chosen(choice.machine)}, ${chosen(choice.engine)}, ${chosen(choice.model)}, ${chosen(choice.effort)}`;
+  if (choice.missing.length === 0) {
+    return `It would run on ${what}.`;
+  }
+  return `It cannot start yet (missing: ${choice.missing.join(", ")}); so far: ${what}.`;
+}
+
+function subscriptionLine(name: string, subscription: Subscription): string {
+  if (subscription.state === "unknown") {
+    return `${name}: unknown (no current reading)`;
+  }
+  const left = subscription.remainingPercent === null ? "" : `, ${subscription.remainingPercent}% left`;
+  const resets = subscription.resetsAt === null ? "" : `, resets ${new Date(subscription.resetsAt).toISOString()}`;
+  const read = subscription.readAt === null ? "" : `, read ${new Date(subscription.readAt).toISOString()} on ${subscription.machine ?? "?"}`;
+  return `${name}: ${subscription.state === "exhausted" ? "used up" : "available"}${left}${resets}${read}`;
+}
+
+export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[]): string {
+  const lines = [
+    subscriptionLine("GPT subscription (codex)", subscriptions.codex),
+    subscriptionLine("Claude subscription (claude)", subscriptions.claude),
+    "An unknown reading is not used up. dsh is the default only when both are used up.",
+  ];
+  if (machines.length === 0) {
+    lines.push("No work machine is online.");
+  }
+  for (const machine of machines) {
+    lines.push(`Machine ${machine.name} (${machine.platform}), ${machine.free} free slot(s): ${machine.engines.map((offer) => offer.engine).join(", ") || "no programs"}`);
   }
   return lines.join("\n");
 }

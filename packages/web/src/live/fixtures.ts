@@ -1,4 +1,4 @@
-import type { Ticket, WaitingCard } from "@super-agent2/protocol";
+import type { MachineChoice, StartChoice, Ticket, WaitingCard } from "@super-agent2/protocol";
 
 export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   const repository = "novan-xu/super-agent-sandbox";
@@ -12,12 +12,18 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     summary,
     kind: "feature",
     difficulty: null,
+    difficultyReason: null,
     platform: null,
+    brainEngine: null,
+    ownerChoice: { machine: null, engine: null, model: null, effort: null },
     state: "pending",
     machine: null,
     engine: null,
     model: null,
     effort: null,
+    chosenBy: null,
+    chosenAt: null,
+    ran: null,
     branch: null,
     pullRequest: null,
     round: 0,
@@ -67,6 +73,31 @@ export function holdCard(id: string, overrides: { readonly at?: number; readonly
   };
 }
 
+export const fixtureMachines: MachineChoice[] = [
+  {
+    name: "pc",
+    platform: "win32",
+    free: 2,
+    engines: [
+      { engine: "codex", models: [{ id: "gpt-6.1-sol", efforts: ["medium", "high"] }, { id: "gpt-6-luna", efforts: ["low", "medium"] }] },
+      { engine: "claude", models: [{ id: "claude-opus-5-5", efforts: ["high", "max"] }] },
+    ],
+  },
+  { name: "mini", platform: "darwin", free: 1, engines: [{ engine: "codex", models: [{ id: "gpt-6.1-sol", efforts: ["high"] }] }] },
+];
+
+export function fixtureChoice(overrides: Partial<StartChoice> = {}): StartChoice {
+  return {
+    machine: "pc",
+    engine: "codex",
+    model: "gpt-6.1-sol",
+    effort: "high",
+    by: { machine: "default", engine: "default", model: "default", effort: "default" },
+    missing: [],
+    ...overrides,
+  };
+}
+
 export function startCard(
   id: number,
   overrides: {
@@ -74,6 +105,8 @@ export function startCard(
     readonly startable?: boolean;
     readonly ticket?: Partial<Ticket>;
     readonly fingerprint?: string;
+    readonly choice?: Partial<StartChoice>;
+    readonly machines?: readonly MachineChoice[];
   } = {},
 ): WaitingCard {
   return {
@@ -89,5 +122,7 @@ export function startCard(
       state: entry.state ?? "pending",
     })),
     startable: overrides.startable ?? true,
+    choice: fixtureChoice(overrides.choice),
+    machines: [...(overrides.machines ?? fixtureMachines)],
   };
 }

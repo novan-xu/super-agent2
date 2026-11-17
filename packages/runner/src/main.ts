@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { loadConfig, readSettingsFile, runnerFiles, runnerHome } from "./config.js";
 import { defaultInstallContext, install, isAlive, launchSupervisor, readSupervisorPid, supervise, uninstall } from "./install.js";
+import { readAllowances } from "./allowance.js";
 import { probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { startRunnerService } from "./service.js";
 import { runSetup } from "./setup.js";
@@ -15,6 +16,7 @@ const usage = [
   "  run          Run the runner in this terminal",
   "  status       Say whether the runner is set up and running",
   "  programs     List the command-line programs found here, with their models and efforts",
+  "  allowance    Read what is left on the Codex and Claude Code subscriptions logged in here",
 ];
 
 const files = runnerFiles(runnerHome(process.env));
@@ -109,6 +111,13 @@ async function main(argv: readonly string[]): Promise<number> {
       const loaded = loadConfig(readSettingsFile(files.settings) ?? {});
       const programs = await probePrograms(programDefinitions(loaded.ok ? loaded.config.models : {}),systemProber({ environment: process.env, cwd: files.probe }));
       say(JSON.stringify(programs, null, 2));
+      return 0;
+    }
+    case "allowance": {
+      const loaded = loadConfig(readSettingsFile(files.settings) ?? {});
+      const prober = systemProber({ environment: process.env, cwd: files.probe });
+      const programs = await probePrograms(programDefinitions(loaded.ok ? loaded.config.models : {}), prober);
+      say(JSON.stringify(await readAllowances(prober, programs, Date.now), null, 2));
       return 0;
     }
     default:

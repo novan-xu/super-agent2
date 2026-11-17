@@ -1,3 +1,4 @@
+import type { ChoiceChange } from "@super-agent2/protocol";
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { createPageStore, type PageStore } from "../live/page.js";
@@ -139,6 +140,21 @@ export class PageController {
     for (const key of keys) {
       this.store.dispatch({ type: "waiting", action: { type: "answered", key } });
     }
+    return true;
+  }
+
+  async chooseChain(key: string, change: ChoiceChange): Promise<boolean> {
+    const card = cardOf(this.store.getState().waiting, key);
+    if (card === undefined || card.kind !== "start") {
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "choosing", key } });
+    const answer = await this.options.api.chooseChain(card.ticket.id, change);
+    if (!answer.ok) {
+      this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "chosen", key } });
     return true;
   }
 

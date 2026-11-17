@@ -24,6 +24,8 @@ export type WaitingAction =
   | { readonly type: "disarm"; readonly key: string }
   | { readonly type: "sending"; readonly key: string; readonly verdict: Verdict }
   | { readonly type: "starting"; readonly keys: readonly string[] }
+  | { readonly type: "choosing"; readonly key: string }
+  | { readonly type: "chosen"; readonly key: string }
   | { readonly type: "failed"; readonly key: string; readonly failure: Failure }
   | { readonly type: "answered"; readonly key: string };
 
@@ -109,6 +111,12 @@ export function waitingReducer(state: WaitingState, action: WaitingAction): Wait
       return canStart(state, action.keys)
         ? { ...state, use: { ...state.use, ...Object.fromEntries(action.keys.map((key) => [key, { step: "sending", verdict: null, failure: null } satisfies CardUse])) } }
         : state;
+    case "choosing":
+      return cardOf(state, action.key)?.kind === "start" && useOf(state, action.key).step === "idle"
+        ? withUse(state, action.key, { step: "sending", verdict: null, failure: null })
+        : state;
+    case "chosen":
+      return useOf(state, action.key).step === "sending" ? withUse(state, action.key, untouched) : state;
     case "failed":
       return cardOf(state, action.key) === undefined ? state : withUse(state, action.key, { step: "idle", verdict: null, failure: action.failure });
     case "answered": {
