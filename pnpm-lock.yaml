@@ -250,10 +250,25 @@ importers:
       '@super-agent2/protocol':
         specifier: workspace:*
         version: link:../protocol
+      ws:
+        specifier: 8.23.0
+        version: 8.23.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
+      '@super-agent2/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@super-agent2/hub':
+        specifier: workspace:*
+        version: link:../hub
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
 
   packages/web:
     dependencies:

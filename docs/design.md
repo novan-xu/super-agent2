@@ -259,7 +259,7 @@ this repository, and `.gitignore` excludes the file types that hold them.
 | `BRAIN_CLAUDE_OAUTH_TOKEN` | NAS, `secrets/brain.env` | The brain on Claude |
 | The DeepSeek account login for `dsh` | On the runners; made once in the brain container | The brain on DeepSeek |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | NAS, `secrets/hub.env` | Push notifications |
-| `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET` | Each runner, `~/.superagent/runner.env` | A runner passing the front door |
+| `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET` | Each runner, `~/.superagent2/runner.env` | A runner passing the front door |
 
 Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. Workers use the
 logins of the command-line programs already present on each runner.

@@ -80,7 +80,8 @@ export function createHarness(options: HarnessOptions): Harness {
       return;
     }
     const cwd = url.searchParams.get("cwd");
-    const record = options.hub.commands.start({ target: demoTargetName, command, ...(cwd === null ? {} : { cwd }) });
+    const target = url.searchParams.get("target") ?? demoTargetName;
+    const record = options.hub.commands.start({ target, command, ...(cwd === null ? {} : { cwd }) });
     json(response, 200, { id: record.id, state: record.state, command });
   };
 

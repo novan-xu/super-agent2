@@ -14,7 +14,9 @@ import { pageFiles } from "./page.js";
 import { createPushService, type PushService } from "./push-service.js";
 import { createHubServer, type HubServer } from "./server.js";
 import { createWaiting, type Waiting } from "./waiting.js";
-import { type Environment, localTarget, sshTarget, type Target } from "./targets.js";
+import { createMachineStore, type MachineStore } from "./machines.js";
+import { createRunners, type Runners } from "./runners.js";
+import { combinedTargets, type Environment, fixedTargets, localTarget, sshTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
 
 export interface HubOptions {
@@ -26,6 +28,8 @@ export interface HubOptions {
   readonly credentials?: CredentialSource;
   readonly gate?: CommandGate;
   readonly pushFetch?: typeof fetch;
+  readonly machinePollMilliseconds?: number;
+  readonly heartbeatMilliseconds?: number;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -43,6 +47,8 @@ export interface Hub {
   readonly lock: ConfirmationLock | undefined;
   readonly waiting: Waiting;
   readonly push: PushService | undefined;
+  readonly machines: MachineStore;
+  readonly runners: Runners;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -60,7 +66,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let waiting: Waiting;
   let push: PushService | undefined;
   let server: HubServer;
-  const targets = options.targets ?? defaultTargets(config, environment);
+  const machines = createMachineStore(database, clock);
+  const runners = createRunners({
+    machines,
+    ...(options.machinePollMilliseconds === undefined ? {} : { pollMilliseconds: options.machinePollMilliseconds }),
+  });
+  const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
     const brainToken = brainTokenCheck(ensureBrainToken(config.brainTokenFile));
     lock =
@@ -93,13 +104,16 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,
-      tools: createToolServer({ commands, conversations, targets: () => targets.map((target) => target.name) }),
+      tools: createToolServer({ commands, conversations, targets: () => targets.names(), machines: () => runners.describe() }),
       brainToken,
+      runners,
+      ...(options.heartbeatMilliseconds === undefined ? {} : { heartbeatMilliseconds: options.heartbeatMilliseconds }),
       ...(push === undefined ? {} : { push }),
       ...(lock === undefined ? {} : { lock }),
       ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
   } catch (error) {
+    runners.close();
     database.close();
     throw error;
   }
@@ -112,9 +126,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       lock,
       waiting,
       push,
+      machines,
+      runners,
       address,
       close: async () => {
         try {
+          runners.close();
           await server.close();
         } finally {
           waiting.close();
@@ -126,6 +143,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    runners.close();
     waiting.close();
     await push?.close();
     conversations.close();

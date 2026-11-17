@@ -22,6 +22,8 @@ export const messages = {
   "command.reason.interrupted": "hub 在命令结束前停止了，命令被中断",
   "command.reason.noTarget": "没有名为 {target} 的执行目标",
   "command.reason.noToken": "没有设置 {variable}，hub 拿不到 {account} 的 GitHub 令牌",
+  "command.reason.offline": "机器 {target} 现在不在线",
+  "command.reason.machineLost": "与机器 {target} 的连接断开了，命令被中断；机器一发现断开就会结束它启动的进程",
 
   "hold.answer.released": "已放行",
   "hold.answer.refused": "已拒绝",

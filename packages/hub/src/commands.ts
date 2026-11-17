@@ -16,7 +16,7 @@ import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
-import type { Execution, ExecutionEnd, Target } from "./targets.js";
+import { type Execution, type ExecutionEnd, fixedTargets, isTargetDirectory, type Target, type TargetDirectory } from "./targets.js";
 
 export type GateDecision = { readonly kind: "allow" } | { readonly kind: "drop"; readonly reason: string };
 
@@ -47,7 +47,7 @@ export interface CommandService {
 export interface CommandServiceOptions {
   readonly database: HubDatabase;
   readonly clock: Clock;
-  readonly targets: readonly Target[];
+  readonly targets: readonly Target[] | TargetDirectory;
   readonly credentials: CredentialSource;
   readonly gate?: CommandGate;
 }
@@ -116,7 +116,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const { connection } = options.database;
   const { clock } = options;
   const gate = options.gate ?? allowEverything;
-  const targets = new Map(options.targets.map((target) => [target.name, target]));
+  const targets = isTargetDirectory(options.targets) ? options.targets : fixedTargets(options.targets);
   const listeners = new Set<CommandListener>();
   const active = new Map<string, Active>();
   let closing = false;
@@ -209,7 +209,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
       finish(entry.id, "dropped", { reason: decision.reason });
       return;
     }
-    const target = targets.get(initial.target);
+    const target = targets.find(initial.target);
     if (target === undefined) {
       finish(entry.id, "failed", { reason: text("command.reason.noTarget", { target: initial.target }) });
       return;
@@ -235,10 +235,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     for (const stream of ["stdout", "stderr"] as const) {
       record(entry, stream, entry.decoders[stream].end());
     }
-    finish(entry.id, entry.ending ?? "exited", {
+    const lost = entry.ending === undefined ? end.lost : undefined;
+    finish(entry.id, entry.ending ?? (lost === undefined ? "exited" : "interrupted"), {
       exit_code: end.exitCode,
       signal: end.signal,
-      reason: entry.ending === "interrupted" ? interruptedReason : null,
+      reason: entry.ending === "interrupted" ? interruptedReason : (lost ?? null),
     });
   };
 
