@@ -21,6 +21,8 @@ const { values } = parseArgs({
     push: { type: "string", default: "generated" },
     credentials: { type: "string", default: "none" },
     forge: { type: "string", default: "none" },
+    announce: { type: "string" },
+    source: { type: "string", default: "novan-xu/super-agent2" },
   },
 });
 
@@ -48,6 +50,11 @@ if (values.forge !== "none" && values.forge !== "fake") {
 
 if (values.forge === "fake" && values.credentials === "environment") {
   process.stderr.write("--forge fake gives the hub placeholder tokens; it cannot be used with --credentials environment\n");
+  process.exit(1);
+}
+
+if (values.announce !== undefined && !/^[0-9a-f]{40}$/.test(values.announce)) {
+  process.stderr.write("--announce must be a full commit id\n");
   process.exit(1);
 }
 
@@ -130,6 +137,7 @@ const hub = await startHub({
     brainTokenFile: join(hubDir, "brain.token"),
     pageDir: defaultPageDir,
     ...(vapid === undefined ? {} : { vapid }),
+    ...(values.announce === undefined ? {} : { version: values.announce, sourceRepository: values.source }),
   },
   keySource: () => Promise.resolve(keys),
   targets: [localTarget({ environment: process.env }), demoTarget()],
@@ -314,6 +322,7 @@ process.stdout.write(
     `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two writing tickets on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
     `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round) or worker (fails once), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
     `Deploy:   POST a deployment file to http://127.0.0.1:${port}/__harness/deployment?repository=<owner/name> (with --forge fake) and every scripted pull request of that repository carries it from then on, so its merge needs deploying; /__harness/loop?case=green&repository=<owner/name> starts such a ticket, which merges green; the demo brain deploys what a merge says needs deploying with deploy_repository, and reports the result`,
+    `Version:  ${values.announce === undefined ? "none announced (--announce <commit> makes the hub announce it to runners and hand them its release from --source, through GitHub with --credentials environment)" : `${values.announce} of ${values.source}, announced to runners`}`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
