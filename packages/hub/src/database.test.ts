@@ -73,6 +73,35 @@ describe("applyMigrations", () => {
     connection.close();
   });
 
+  it("gives tickets that ended before the history existed the time they ended, and marks those that were joined", () => {
+    const connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    applyMigrations(
+      connection,
+      migrations.filter((migration) => migration.version < 15),
+      clock,
+    );
+    const insert = connection.prepare(
+      "INSERT INTO tickets (id, repository, kind, title_en, title_zh, summary_en, summary_zh, state, stop_reason_en, created_at, updated_at) VALUES (?, 'novan-xu/a', 'fix', 't', 't', 's', 's', ?, ?, 1, ?)",
+    );
+    insert.run(1, "merged", null, 900);
+    insert.run(2, "stopped", "Joined ticket 1 by an arrangement", 900);
+    insert.run(3, "working", null, 900);
+    insert.run(4, "stopped", "Joined the ticket of a friend", 900);
+    const move = connection.prepare("INSERT INTO ticket_moves (ticket_id, seq, from_state, to_state, at) VALUES (?, ?, ?, ?, ?)");
+    move.run(1, 1, "verifying", "merged", 500);
+    move.run(2, 1, "pending", "stopped", 600);
+    applyMigrations(connection, migrations, clock);
+    const rows = connection.prepare("SELECT id, ended_at, joined_into FROM tickets ORDER BY id").all();
+    expect(rows.map((row) => ({ ...row }))).toEqual([
+      { id: 1, ended_at: 500, joined_into: null },
+      { id: 2, ended_at: 600, joined_into: 1 },
+      { id: 3, ended_at: null, joined_into: null },
+      { id: 4, ended_at: 900, joined_into: null },
+    ]);
+    connection.close();
+  });
+
   it("refuses migrations that are not numbered in sequence", () => {
     const connection = new DatabaseSync(":memory:");
     expect(() => applyMigrations(connection, [{ version: 2, sql: "SELECT 1;" }], new TestClock())).toThrow(/numbered/);

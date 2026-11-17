@@ -116,6 +116,9 @@ a.lrow { text-decoration: none; }
 a.lrow:hover { text-decoration: none; }
 .lrow-meta .chip .od-icon { --od-icon-size: 13px; }
 .lrow-note { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.lrow-note--match { color: var(--muted); }
+.list[aria-busy="true"] { opacity: 0.6; }
+.more { display: flex; justify-content: center; margin-top: var(--space-5); }
 .lrow-note--bad { color: var(--danger); }
 .lrow-note--warn { color: var(--warn); }
 

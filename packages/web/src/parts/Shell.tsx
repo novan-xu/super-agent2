@@ -20,11 +20,11 @@ const main: readonly Destination[] = [
 
 const foot: readonly Destination[] = [{ view: "settings", icon: "gear", label: text("navigation.settings") }];
 
-export function viewOf(route: PageRoute): PageView {
+export function viewOf(route: PageRoute, ticketFrom: PageView = "workbench"): PageView {
   if (route.view === "home") {
     return "conversations";
   }
-  return route.view === "ticket" ? "workbench" : route.view;
+  return route.view === "ticket" ? ticketFrom : route.view;
 }
 
 export function titleOf(view: PageView): string {
@@ -41,6 +41,7 @@ export function followLink(event: MouseEvent, go: () => void): void {
 
 export interface ShellProps {
   readonly route: PageRoute;
+  readonly ticketFrom?: PageView;
   readonly navigate: Navigate;
   readonly destinationOf: (view: PageView) => PageRoute;
   readonly hrefOf: (view: PageView) => string;
@@ -59,7 +60,7 @@ export function countOf(view: PageView, waiting: number): number {
 }
 
 export function Shell(props: ShellProps) {
-  const current = viewOf(props.route);
+  const current = viewOf(props.route, props.ticketFrom);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
     <a
       key={destination.view}

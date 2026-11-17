@@ -15,7 +15,8 @@ import { useRoute } from "./parts/route.js";
 import { followLink, Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
-import { type TicketActions, TicketView } from "./views/TicketView.js";
+import { HistoryView } from "./views/HistoryView.js";
+import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
 import { WorkbenchView } from "./views/WorkbenchView.js";
 
 const toastDuration = 4000;
@@ -42,6 +43,8 @@ export function App() {
   const now = useNow();
   const toastTimer = useRef<number | undefined>(undefined);
   const lastConversation = useRef<PageRoute>({ view: "home" });
+  const historyScroll = useRef(0);
+  const [origin, setOrigin] = useState<TicketOrigin>("workbench");
 
   const showFailure = useCallback((failure: Failure) => {
     setToast(failureText(failure));
@@ -88,6 +91,7 @@ export function App() {
     const received = (event: MessageEvent) => {
       const destination = destinationOfMessage(event.data, window.location.origin);
       if (destination !== undefined) {
+        setOrigin("workbench");
         navigate(destination.route);
         setFocus(destination.card);
       }
@@ -119,6 +123,12 @@ export function App() {
   useEffect(() => {
     void controller.openTicket(ticketId);
   }, [controller, ticketId]);
+
+  useEffect(() => {
+    if (route.view === "history") {
+      void controller.openHistory();
+    }
+  }, [controller, route.view]);
 
   useEffect(() => {
     if (route.view === "conversations") {
@@ -159,8 +169,27 @@ export function App() {
   );
   const togglePush = useCallback(() => void pushController.toggle(), [pushController]);
   const ticketHref = useCallback((ticket: number) => pagePath({ view: "ticket", ticket }), []);
-  const openTicket = useCallback((ticket: number) => navigate({ view: "ticket", ticket }), [navigate]);
-  const backToWorkbench = useCallback(() => navigate({ view: "workbench" }), [navigate]);
+  const openTicket = useCallback(
+    (ticket: number) => {
+      setOrigin("workbench");
+      navigate({ view: "ticket", ticket });
+    },
+    [navigate],
+  );
+  const openFromHistory = useCallback(
+    (ticket: number) => {
+      setOrigin("history");
+      navigate({ view: "ticket", ticket });
+    },
+    [navigate],
+  );
+  const backFromTicket = useCallback(() => navigate({ view: origin }), [navigate, origin]);
+  const searchHistory = useCallback((query: string) => void controller.searchHistory(query), [controller]);
+  const moreHistory = useCallback(() => void controller.moreHistory(), [controller]);
+  const retryHistory = useCallback(() => void controller.loadHistory(), [controller]);
+  const historyScrolled = useCallback((top: number) => {
+    historyScroll.current = top;
+  }, []);
   const ticketActions = useMemo<TicketActions>(
     () => ({
       stop: (ticket) => controller.stopTicket(ticket),
@@ -179,6 +208,7 @@ export function App() {
   return (
     <Shell
       route={route}
+      ticketFrom={origin}
       navigate={navigate}
       destinationOf={destinationOf}
       hrefOf={hrefOf}
@@ -223,8 +253,20 @@ export function App() {
           openTicket={openTicket}
           now={now}
         />
+      ) : route.view === "history" ? (
+        <HistoryView
+          history={page.history}
+          ticketHref={ticketHref}
+          openTicket={openFromHistory}
+          search={searchHistory}
+          more={moreHistory}
+          retry={retryHistory}
+          scroll={historyScroll.current}
+          scrolled={historyScrolled}
+          now={now}
+        />
       ) : route.view === "ticket" ? (
-        <TicketView detail={page.detail} known={known} actions={ticketActions} backHref={pagePath({ view: "workbench" })} back={backToWorkbench} now={now} />
+        <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} now={now} />
       ) : (
         <div className="page" />
       )}

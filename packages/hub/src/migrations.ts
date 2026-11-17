@@ -387,4 +387,18 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN ended_at INTEGER;
+      ALTER TABLE tickets ADD COLUMN joined_into INTEGER;
+      UPDATE tickets
+        SET ended_at = COALESCE((SELECT MAX(at) FROM ticket_moves WHERE ticket_moves.ticket_id = tickets.id AND ticket_moves.to_state IN ('merged', 'delivered', 'stopped')), updated_at)
+        WHERE state IN ('merged', 'delivered', 'stopped');
+      UPDATE tickets
+        SET joined_into = CAST(substr(stop_reason_en, 15) AS INTEGER)
+        WHERE state = 'stopped' AND stop_reason_en GLOB 'Joined ticket [0-9]* by an arrangement' AND CAST(substr(stop_reason_en, 15) AS INTEGER) > 0;
+      CREATE INDEX tickets_by_end ON tickets (ended_at, id);
+    `,
+  },
 ];

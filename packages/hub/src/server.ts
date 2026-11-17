@@ -40,6 +40,10 @@ import {
   type WorkEventList,
   type WorkerMessageResponse,
   WorkerMessage,
+  historyLargestPage,
+  historyPageSize,
+  historyQueryLength,
+  positionOfCursor,
   protocolVersion,
   releaseVersionHeader,
   runnerLinkPath,
@@ -865,6 +869,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return true;
   };
 
+  const serveHistory = (response: ServerResponse, url: URL, tickets: TicketService): boolean => {
+    const limit = integerParameter(url, "limit", historyPageSize, historyLargestPage);
+    const query = url.searchParams.get("q") ?? "";
+    const given = url.searchParams.get("before");
+    const before = given === null ? undefined : positionOfCursor(given);
+    if (limit === undefined || limit < 1 || query.length > historyQueryLength || (given !== null && before === undefined)) {
+      return false;
+    }
+    sendJson(response, 200, tickets.history({ query, limit, ...(before === undefined ? {} : { before }) }));
+    return true;
+  };
+
   const serveTickets = (request: IncomingMessage, response: ServerResponse, path: string, method: string): boolean => {
     const tickets = options.tickets;
     if (tickets === undefined || method !== "GET") {
@@ -872,8 +888,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     const url = new URL(request.url ?? "/", "http://hub");
     if (path === ticketsPath) {
-      const limit = integerParameter(url, "limit", maximumListLimit, maximumListLimit);
       const scope = url.searchParams.get("scope") ?? "open";
+      if (scope === "ended") {
+        return serveHistory(response, url, tickets);
+      }
+      const limit = integerParameter(url, "limit", maximumListLimit, maximumListLimit);
       if (limit === undefined || (scope !== "open" && scope !== "all")) {
         return false;
       }

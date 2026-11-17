@@ -2,6 +2,7 @@ import { type ChoiceChange, type MachineChoice, machineChoices, type StoredWorkE
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { needsMoves } from "../live/detail.js";
+import { canLoadMore, needsCatchUp } from "../live/history.js";
 import { createPageStore, type PageStore } from "../live/page.js";
 import { lastEventId } from "../live/work.js";
 import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
@@ -43,6 +44,9 @@ export class PageController {
         this.store.dispatch({ type: "server", message });
         if (message.type === "ticket" && before !== null && message.ticket.id === before.id && needsMoves(before, message.ticket)) {
           void this.readTicket(before.id);
+        }
+        if (message.type === "ticket" && needsCatchUp(this.store.getState().history, message.ticket)) {
+          void this.refreshHistory();
         }
       },
       onStatus: (status) => this.store.dispatch({ type: "status", status }),
@@ -98,6 +102,48 @@ export class PageController {
     if (this.openedTicket !== null) {
       await this.readTicket(this.openedTicket);
       await this.catchUp(this.openedTicket);
+    }
+    if (this.store.getState().history.status !== "idle") {
+      await this.refreshHistory();
+    }
+  }
+
+  openHistory(): Promise<void> {
+    const status = this.store.getState().history.status;
+    return status === "idle" || status === "failed" ? this.loadHistory() : Promise.resolve();
+  }
+
+  searchHistory(query: string): Promise<void> {
+    const before = this.store.getState().history.applied;
+    this.store.dispatch({ type: "history.query", query });
+    return this.store.getState().history.applied === before ? Promise.resolve() : this.loadHistory();
+  }
+
+  async loadHistory(): Promise<void> {
+    this.store.dispatch({ type: "history.loading" });
+    const applied = this.store.getState().history.applied;
+    const answer = await this.options.api.history({ query: applied, before: null });
+    this.store.dispatch(answer.ok ? { type: "history.page", applied, page: answer.value } : { type: "history.failed", applied });
+  }
+
+  async moreHistory(): Promise<void> {
+    const history = this.store.getState().history;
+    const before = history.next;
+    if (!canLoadMore(history) || before === null) {
+      return;
+    }
+    this.store.dispatch({ type: "history.more.started" });
+    const answer = await this.options.api.history({ query: history.applied, before });
+    this.store.dispatch(
+      answer.ok ? { type: "history.more", applied: history.applied, before, page: answer.value } : { type: "history.more.failed", applied: history.applied },
+    );
+  }
+
+  private async refreshHistory(): Promise<void> {
+    const applied = this.store.getState().history.applied;
+    const answer = await this.options.api.history({ query: applied, before: null });
+    if (answer.ok) {
+      this.store.dispatch({ type: "history.page", applied, page: answer.value });
     }
   }
 

@@ -160,6 +160,32 @@ const scenarioPlan: readonly Planned[] = [
   { name: "untasked", repository: null, title: ["Thank-you card", "写一张感谢卡"], titles: [], behaviour: "deliver", machine: "studio", engine: "antigravity" },
 ];
 
+const historyRepositories: readonly string[] = ["novan-xu/garden-notes", "nuofan-island/plant-log"];
+
+const historyTopics: readonly (readonly [string, string])[] = [
+  ["Parse relative dates", "解析相对日期"],
+  ["Export notes as Markdown", "把笔记导出成 Markdown"],
+  ["Sync the log across devices", "在设备间同步日志"],
+  ["Attach photos to entries", "给条目附上照片"],
+  ["Remind me to water", "提醒浇水"],
+  ["Search inside notes", "在笔记里搜索"],
+  ["Dark theme for the editor", "编辑器的深色主题"],
+  ["Back up to an external disk", "备份到外接硬盘"],
+  ["Count the days since watering", "数一数距离上次浇水过了几天"],
+  ["Group plants by room", "按房间给植物分组"],
+];
+
+const historyStopReasons: readonly GeneratedTextShape[] = [
+  { en: "The owner stopped it", zh: "你停止了它" },
+  { en: "The owner gave it up after its guided rounds reached the cap", zh: "引导到上限后，你放弃了它" },
+  { en: "Superseded by a newer ticket", zh: "被更新的工单取代了" },
+];
+
+interface GeneratedTextShape {
+  readonly en: string;
+  readonly zh: string;
+}
+
 interface Device {
   readonly id: string;
   readonly keys: PushDevice;
@@ -395,6 +421,89 @@ export function createHarness(options: HarnessOptions): Harness {
 
   const scenario = (response: ServerResponse): Promise<void> => startPlans(scenarioPlan, response);
 
+  const fillHistory = (url: URL, response: ServerResponse): void => {
+    const asked = Number(url.searchParams.get("count") ?? "70");
+    const count = Number.isInteger(asked) && asked >= 1 && asked <= 500 ? asked : undefined;
+    if (count === undefined) {
+      json(response, 400, { error: "give count= between 1 and 500: how many ended tickets to add, across two repositories, newest first, about a hundred minutes apart" });
+      return;
+    }
+    const { tickets, database } = options.hub;
+    const now = Date.now();
+    const backdate = database.connection.prepare("UPDATE tickets SET created_at = ?, updated_at = ?, ended_at = ? WHERE id = ?");
+    const backdateMoves = database.connection.prepare(
+      "UPDATE ticket_moves SET at = ? - ((SELECT MAX(seq) FROM ticket_moves AS last WHERE last.ticket_id = ticket_moves.ticket_id) - seq) * 60000 WHERE ticket_id = ?",
+    );
+    const kinds = ["fix", "feature", "parameter", "maintenance", "refactor"] as const;
+    const added: { readonly id: number; readonly state: string }[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const [en, zh] = historyTopics[index % historyTopics.length] ?? historyTopics[0] ?? ["", ""];
+      const round = Math.floor(index / historyTopics.length) + 1;
+      const label: readonly [string, string] = round === 1 ? [en, zh] : [`${en} (${round})`, `${zh}（${round}）`];
+      const repository = historyRepositories[index % historyRepositories.length] ?? historyRepositories[0] ?? "";
+      const writing = index % 7 === 3;
+      nextIssue += 1;
+      const issues = writing
+        ? []
+        : [
+            {
+              repository,
+              number: nextIssue,
+              url: `https://github.com/${repository}/issues/${nextIssue}`,
+              title: { en: label[0], zh: label[1] },
+              summary: { en: `${label[0]}, as the issue says`, zh: `${label[1]}，按问题里写的做` },
+            },
+          ];
+      const opened = tickets.open({
+        repository: writing ? null : repository,
+        issues,
+        title: { en: label[0], zh: label[1] },
+        summary: { en: `${label[0]}, a finished ticket made by the page harness`, zh: `${label[1]}：页面测试用的已结束工单` },
+        kind: writing ? "writing" : (kinds[index % kinds.length] ?? "fix"),
+        ...(writing ? { writing: { task: `Write a short note about: ${label[0]}`, materials: [] } } : {}),
+      });
+      const how = index % 6;
+      if (how === 4 || how === 5) {
+        tickets.stop(opened.id, historyStopReasons[(index + (how === 5 ? 1 : 0)) % historyStopReasons.length] ?? historyStopReasons[0] ?? { en: "Stopped", zh: "已停止" });
+      } else {
+        tickets.move(opened.id, "working");
+        if (writing) {
+          tickets.move(opened.id, "delivered");
+        } else {
+          tickets.move(opened.id, "verifying");
+          tickets.move(opened.id, "merged");
+          tickets.change((writes) => writes.setPullRequest(opened.id, 100 + index, { en: "The change is merged", zh: "改动已合并" }));
+        }
+      }
+      const endedAt = now - (index + 1) * 100 * 60_000;
+      backdate.run(endedAt - 3_600_000, endedAt, endedAt, opened.id);
+      backdateMoves.run(endedAt, opened.id);
+      added.push({ id: opened.id, state: tickets.get(opened.id)?.state ?? "" });
+    }
+    const first = added[0];
+    const second = added[1];
+    if (first !== undefined && second !== undefined) {
+      const noise = tickets.open({
+        repository: historyRepositories[0] ?? null,
+        issues: [
+          {
+            repository: historyRepositories[0] ?? "",
+            number: ++nextIssue,
+            url: `https://github.com/${historyRepositories[0] ?? ""}/issues/${nextIssue}`,
+            title: { en: "Joined into another ticket", zh: "并入了别的工单" },
+            summary: { en: "Joined by an arrangement", zh: "按安排并入" },
+          },
+        ],
+        title: { en: "Joined into another ticket", zh: "并入了别的工单" },
+        summary: { en: "Joined by an arrangement", zh: "按安排并入" },
+        kind: "fix",
+      });
+      tickets.change((writes) => writes.join(noise.id, first.id, { en: `Joined ticket ${first.id} by an arrangement`, zh: `按新的安排并入了工单 ${first.id}` }));
+      added.push({ id: noise.id, state: "stopped, joined, not listed" });
+    }
+    json(response, 200, { added: added.length, newest: added[0]?.id ?? null, tickets: added.slice(0, 12) });
+  };
+
   const declareDeployment = async (request: IncomingMessage, url: URL, response: ServerResponse): Promise<void> => {
     const repository = url.searchParams.get("repository");
     if (options.deployments === undefined || repository === null) {
@@ -561,6 +670,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/deployment") {
         await declareDeployment(request, url, response);
+        return true;
+      }
+      if (path === "/__harness/history") {
+        fillHistory(url, response);
         return true;
       }
       if (path === "/__harness/scenario") {

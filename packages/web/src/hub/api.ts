@@ -13,6 +13,7 @@ import {
   Refusal,
   type StuckAnswerRequest,
   TicketDetail,
+  TicketHistory,
   TicketList,
   TicketResponse,
   WorkerMessageResponse,
@@ -54,6 +55,22 @@ const commandPath = (id: string) => `/api/commands/${encodeURIComponent(id)}`;
 
 const conversationPath = (id: string) => `/api/conversations/${encodeURIComponent(id)}`;
 
+export interface HistoryRequest {
+  readonly query: string;
+  readonly before: string | null;
+}
+
+export function historyPath(page: HistoryRequest): string {
+  const parameters = new URLSearchParams({ scope: "ended" });
+  if (page.query !== "") {
+    parameters.set("q", page.query);
+  }
+  if (page.before !== null) {
+    parameters.set("before", page.before);
+  }
+  return `/api/tickets?${parameters.toString()}`;
+}
+
 export const hubApi = {
   conversations: () => call("/api/conversations", ConversationList),
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
@@ -63,6 +80,7 @@ export const hubApi = {
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
   tickets: (scope: "open" | "all" = "open") => call(`/api/tickets?scope=${scope}`, TicketList),
+  history: (page: HistoryRequest) => call(historyPath(page), TicketHistory),
   ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
   work: (id: number, after: number) => call(`/api/tickets/${id}/work?after=${after}`, WorkEventList),
   messageWorker: (id: number, text: string) => call(`/api/tickets/${id}/messages`, WorkerMessageResponse, { text }),

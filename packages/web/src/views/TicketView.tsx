@@ -14,6 +14,8 @@ import { engineName, momentOf, PhaseStatus, problemLines, problemTone } from "./
 
 const nearBottom = 48;
 
+export type TicketOrigin = "workbench" | "history";
+
 export interface TicketActions {
   stop(ticket: number): Promise<boolean>;
   reassign(ticket: number, change: ChoiceChange): Promise<boolean>;
@@ -25,6 +27,7 @@ export interface TicketViewProps {
   readonly detail: DetailState | null;
   readonly known: ReadonlyMap<number, Ticket>;
   readonly actions: TicketActions;
+  readonly origin: TicketOrigin;
   readonly backHref: string;
   readonly back: () => void;
   readonly now: number;
@@ -577,7 +580,7 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
   );
 }
 
-export function TicketView({ detail, known, actions, backHref, back, now }: TicketViewProps) {
+export function TicketView({ detail, known, actions, origin, backHref, back, now }: TicketViewProps) {
   const entries = useMemo(() => (detail === null ? [] : timeline(detail)), [detail]);
   const following = useRef(false);
   const list = useRef<HTMLOListElement>(null);
@@ -634,7 +637,7 @@ export function TicketView({ detail, known, actions, backHref, back, now }: Tick
   const backLink = (
     <a className="back" href={backHref} onClick={(event) => followLink(event, back)}>
       <Icon name="back" />
-      {text("navigation.workbench")}
+      {origin === "history" ? text("navigation.history") : text("navigation.workbench")}
     </a>
   );
 

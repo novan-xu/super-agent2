@@ -147,9 +147,11 @@ export const Ticket = z.object({
   deployedAt: z.number().int().nullable(),
   beginFailure: z.string().nullable(),
   stopReason: GeneratedText.nullable(),
+  joinedInto: TicketId.nullable(),
   conversation: ConversationId.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
+  endedAt: z.number().int().nullable(),
 });
 export type Ticket = z.infer<typeof Ticket>;
 

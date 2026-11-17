@@ -2220,3 +2220,66 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   script that the live system uses.
 - **Other options:** Copying the brain's Claude token so that a brain turn answers the notice, which the brief did not
   allow for the rehearsal.
+
+## 2026-11-17 — 历史: paging, and what "newest" means
+
+- **Chosen:** A ticket carries `endedAt`, the time of its move into merged, delivered or stopped, stored on the ticket
+  (migration 15, filled for existing tickets from their last such move, or their last change when there is none) and
+  never changed afterwards. 历史 lists tickets by `endedAt`, newest first, with the ticket number breaking ties. The hub
+  reads it with `GET /api/tickets?scope=ended&limit=<1..100, default 30>&before=<cursor>&q=<words>` and answers
+  `{ tickets, next }`. The cursor is `<endedAt>.<id>` of the last ticket sent, and the next page is the tickets strictly
+  older than it, so a page neither repeats nor skips a ticket however many end between two reads. `next` is null on the
+  last page. The page asks for a page when the view is opened, and the owner presses 更多 for each next one; the pages
+  already read stay in memory while the owner opens a ticket and comes back. A page read again (when the connection
+  returns, or when a ticket ends while a search is shown) is merged into the pages already read, and replaces them only
+  when so much ended meanwhile that the new first page no longer reaches them.
+- **Why:** `updatedAt` also moves when a merged ticket is marked deployed, and `createdAt` says nothing about when it
+  ended; either would reorder the list for reasons the owner cannot see. A cursor on a time and an id stays correct
+  while the list grows, which an offset does not. A button needs no scroll listener and cannot load pages the owner did
+  not ask for, on a phone with a metered connection.
+- **Other options:** Ordering by `updatedAt` or `createdAt`; page numbers or an offset; loading the next page when the
+  list is scrolled to its end.
+
+## 2026-11-17 — 历史: what the search matches
+
+- **Chosen:** The words typed are split on any white space (the wide space of Chinese input included), at most eight
+  of them, and a ticket is found when each word occurs, as a plain substring, in at least one of: the ticket's title
+  and summary in both languages, its repository (`owner/name`), each issue's title and summary in both languages, and a
+  writing ticket's task. The hub does this in SQLite with `LIKE` and an escape character, over only the tickets that
+  ended, so `%`, `_` and `\` in a word mean themselves. Letters A to Z match their lower case, and nothing else is
+  folded: it does not match full-width against half-width forms, accents, or Chinese variants; it does not split Chinese
+  into words, so 日期 finds 解析相对日期 but 日 期 with a space needs both characters somewhere, and a word is never
+  matched across the end of one text and the start of the next. It does not look at issue numbers, ticket numbers, the
+  worker's report, the stop reason, the materials of a writing ticket or what a worker wrote. It scans the ended tickets
+  on every search, without an index. The page sends the words as normalised (trimmed, single-spaced) and, while the
+  owner is composing with an input method, waits for the composition to end before asking. When a search found a ticket
+  by a word its title and repository do not hold, the row shows the part of the issue's text where the word is (a
+  writing ticket's task is not sent to the page, so a match on it shows none).
+- **Why:** Chinese has no spaces, so any scheme that splits text into words must guess where the words are; a substring
+  is what the owner means by typing a few characters of a word they remember, and it is correct for both languages. At a
+  few thousand tickets in a personal system a scan is milliseconds, and an index would have to be kept in step with
+  every edit of a ticket's texts. FTS5's trigram tokenizer was ruled out because it cannot find a one- or two-character
+  word, which is most of Chinese. Showing why a row matched keeps a result that does not show the word from looking
+  wrong.
+- **Other options:** SQLite FTS5 with the trigram or the unicode61 tokenizer; searching in the page over everything
+  loaded; a Chinese word splitter; searching issue numbers too.
+
+## 2026-11-17 — 历史: what is listed, what a row says, and what it does live
+
+- **Chosen:** A ticket that an arrangement joined into another (stopped with the reason "Joined ticket N by an
+  arrangement") is not listed; the hub records it as `joinedInto` on the ticket (migration 15 marks the existing ones
+  from that reason) and the page leaves it out of 历史 when it arrives live. The ticket is still there by its address.
+  A row has the state dot and word in the prototype's fixed hues (已合并 green, 已交付 blue, 已停止 a hollow grey ring),
+  the title, the kind, the repository (none for a writing ticket), the issue numbers, when it ended, the pull request
+  number, and, for a stopped ticket, the reason the hub recorded, in Chinese, which says who stopped it or why ("你停止了它",
+  "引导到上限后，你放弃了它", or what the brain wrote). A stopped ticket with no recorded reason says only 已停止. A ticket
+  that ends while the view is open is put into the list at once, in its place by time, in the same change of the page
+  that takes it off 工作台; when a search is shown the page asks the hub for the first page again, because it cannot
+  check a writing ticket's task. Opening a ticket from 历史 names 历史 on the way back and keeps 历史 marked in the
+  navigation; the list, the words in the box and the scroll position are kept by the page, so going back (the link or the
+  browser's back) shows the same place. A ticket opened from anywhere else, or by address, goes back to 工作台.
+- **Why:** A joined ticket was never worked and was never the owner's decision; its work went on in the ticket it joined,
+  which is listed. Listing it would show a stop the owner did not make and repeat the same issues in a search. The
+  hue and wording are the prototype's, so a row can be told apart at a glance.
+- **Other options:** Listing joined tickets with their own reason; hiding them by matching the reason's text; a filter
+  to show them; keeping the list in the address (`?q=`), which would put the words of a search into the browser's history.

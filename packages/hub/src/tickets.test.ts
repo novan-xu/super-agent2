@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { type Ticket, ticketKinds, ticketStates } from "@super-agent2/protocol";
+import { type HistoryPosition, positionOfCursor, type Ticket, ticketKinds, ticketStates } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { TestClock } from "./testing/access.js";
@@ -190,6 +190,194 @@ describe("tickets", () => {
     expect(after.get(ticket.id)).toEqual(snapshot);
     expect(after.get(other.id)).toMatchObject({ state: "stopped", waitsFor: [ticket.id], stopReason: { zh: "被替换了" } });
     expect(after.moves(ticket.id).map((move) => move.to)).toEqual(["pending", "working"]);
+  });
+});
+
+function end(tickets: ReturnType<typeof createTicketService>, id: number, to: "merged" | "stopped" | "delivered" = "merged"): void {
+  if (to === "stopped") {
+    tickets.stop(id, { en: "No longer needed", zh: "不再需要" });
+    return;
+  }
+  tickets.move(id, "working");
+  tickets.move(id, to === "merged" ? "verifying" : "delivered");
+  if (to === "merged") {
+    tickets.move(id, "merged");
+  }
+}
+
+function issued(number: number, title: { en: string; zh: string }, summary: { en: string; zh: string }, repo = repository): TicketToOpen {
+  return {
+    repository: repo,
+    issues: [{ repository: repo, number, url: `https://github.com/${repo}/issues/${number}`, title, summary }],
+    title: { en: `Ticket for ${title.en}`, zh: `${title.zh}的工单` },
+    summary: { en: "Do the work", zh: "做这件事" },
+    kind: "fix",
+  };
+}
+
+describe("the history", () => {
+  it("records when a ticket ended and keeps it when the ticket is touched later", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const ticket = tickets.open(request(1));
+    expect(ticket.endedAt).toBeNull();
+    clock.advance(1000);
+    tickets.move(ticket.id, "working");
+    expect(tickets.get(ticket.id)?.endedAt).toBeNull();
+    clock.advance(1000);
+    tickets.move(ticket.id, "verifying");
+    clock.advance(1000);
+    tickets.move(ticket.id, "merged");
+    const endedAt = clock.now();
+    expect(tickets.get(ticket.id)?.endedAt).toBe(endedAt);
+    clock.advance(5000);
+    tickets.change((writes) => writes.deployed(ticket.id));
+    expect(tickets.get(ticket.id)).toMatchObject({ endedAt, updatedAt: clock.now() });
+  });
+
+  it("lists merged, delivered and stopped tickets by when they ended, not when they were filed", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const first = tickets.open(request(1));
+    clock.advance(10);
+    const second = tickets.open(request(2));
+    clock.advance(10);
+    const third = tickets.open(request(3, { kind: "writing", repository: null, issues: [] }));
+    clock.advance(10);
+    const ongoing = tickets.open(request(4));
+    tickets.move(ongoing.id, "working");
+    clock.advance(10);
+    end(tickets, second.id, "merged");
+    clock.advance(10);
+    end(tickets, third.id, "delivered");
+    clock.advance(10);
+    end(tickets, first.id, "stopped");
+    expect(tickets.history().tickets.map((ticket) => [ticket.id, ticket.state])).toEqual([
+      [first.id, "stopped"],
+      [third.id, "delivered"],
+      [second.id, "merged"],
+    ]);
+    expect(tickets.history()).toMatchObject({ next: null });
+  });
+
+  it("reads in pages that neither repeat nor skip a ticket, including tickets that ended at the same moment", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const ids: number[] = [];
+    for (let number = 1; number <= 7; number += 1) {
+      ids.push(tickets.open(request(number)).id);
+    }
+    clock.advance(100);
+    for (const id of ids.slice(0, 4)) {
+      end(tickets, id, "stopped");
+    }
+    clock.advance(100);
+    for (const id of ids.slice(4)) {
+      end(tickets, id, "stopped");
+    }
+    const seen: number[] = [];
+    let before: HistoryPosition | undefined;
+    const sizes: number[] = [];
+    for (;;) {
+      const page = tickets.history({ limit: 3, ...(before === undefined ? {} : { before }) });
+      sizes.push(page.tickets.length);
+      seen.push(...page.tickets.map((ticket) => ticket.id));
+      if (page.next === null) {
+        break;
+      }
+      before = positionOfCursor(page.next);
+    }
+    expect(sizes).toEqual([3, 3, 1]);
+    expect(seen).toEqual([7, 6, 5, 4, 3, 2, 1]);
+  });
+
+  it("does not list a ticket that was joined into another by an arrangement, but still has it", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const kept = tickets.open(request(1));
+    const absorbed = tickets.open(request(2));
+    tickets.change((writes) => writes.join(absorbed.id, kept.id, { en: `Joined ticket ${kept.id} by an arrangement`, zh: "并入" }));
+    expect(tickets.get(absorbed.id)).toMatchObject({ state: "stopped", joinedInto: kept.id, stopReason: { zh: "并入" } });
+    expect(tickets.get(absorbed.id)?.endedAt).not.toBeNull();
+    expect(tickets.history().tickets).toEqual([]);
+    end(tickets, kept.id, "stopped");
+    expect(tickets.history().tickets.map((ticket) => ticket.id)).toEqual([kept.id]);
+    expect(() => tickets.change((writes) => writes.join(kept.id, kept.id, { en: "x", zh: "x" }))).toThrow(/cannot join itself/);
+  });
+
+  describe("search", () => {
+    function filled() {
+      const tickets = createTicketService({ database: open(), clock });
+      const entries = [
+        issued(1, { en: "Parse relative dates", zh: "解析相对日期" }, { en: "Words like tomorrow become dates", zh: "把明天这样的词变成日期" }),
+        issued(2, { en: "Export notes", zh: "导出笔记" }, { en: "Write every note to Markdown", zh: "把每条笔记写成 Markdown" }, "nuofan-island/plant-log"),
+        issued(3, { en: "Discount is 50% off", zh: "五折优惠" }, { en: "Show the sale_price", zh: "显示折后价" }),
+      ];
+      const ids = entries.map((entry) => {
+        const ticket = tickets.open(entry);
+        clock.advance(10);
+        end(tickets, ticket.id, "merged");
+        clock.advance(10);
+        return ticket.id;
+      });
+      const writing = tickets.open(request(9, { kind: "writing", repository: null, issues: [], title: { en: "Neighbour notice", zh: "给邻居的通知" }, writing: { task: "Write a short notice about the garden gate being repainted.", materials: [] } }));
+      end(tickets, writing.id, "delivered");
+      const stillOpen = tickets.open(issued(4, { en: "Parse times", zh: "解析时间" }, { en: "Hours and minutes", zh: "小时和分钟" }));
+      tickets.move(stillOpen.id, "working");
+      return { tickets, ids, writing: writing.id };
+    }
+
+    const found = (tickets: ReturnType<typeof createTicketService>, query: string) => tickets.history({ query }).tickets.map((ticket) => ticket.id);
+
+    it("finds a ticket by a word from an issue's Chinese text, with no spaces to split on", () => {
+      const { tickets, ids } = filled();
+      expect(found(tickets, "日期")).toEqual([ids[0]]);
+      expect(found(tickets, "明天")).toEqual([ids[0]]);
+      expect(found(tickets, "笔")).toEqual([ids[1]]);
+      expect(found(tickets, "相对日")).toEqual([ids[0]]);
+      expect(found(tickets, "没有这个词")).toEqual([]);
+    });
+
+    it("finds a ticket by a word from an issue's English text, ignoring the case of ASCII letters", () => {
+      const { tickets, ids } = filled();
+      expect(found(tickets, "TOMORROW")).toEqual([ids[0]]);
+      expect(found(tickets, "markdown")).toEqual([ids[1]]);
+      expect(found(tickets, "relative")).toEqual([ids[0]]);
+    });
+
+    it("finds a ticket by its title, its summary, its repository and a writing ticket's task", () => {
+      const { tickets, ids, writing } = filled();
+      expect(found(tickets, "plant-log")).toEqual([ids[1]]);
+      expect(found(tickets, "nuofan-island")).toEqual([ids[1]]);
+      expect(found(tickets, "邻居")).toEqual([writing]);
+      expect(found(tickets, "repainted")).toEqual([writing]);
+      expect(found(tickets, "做这件事")).toEqual([ids[2], ids[1], ids[0]]);
+    });
+
+    it("wants every word, each in any of the ticket's texts, and ignores the order and spacing of words", () => {
+      const { tickets, ids } = filled();
+      expect(found(tickets, "date 解析")).toEqual([ids[0]]);
+      expect(found(tickets, "  解析　DATES  ")).toEqual([ids[0]]);
+      expect(found(tickets, "notes 日期")).toEqual([]);
+      expect(found(tickets, "   ")).toEqual(found(tickets, ""));
+    });
+
+    it("takes percent signs, underscores and backslashes as themselves", () => {
+      const { tickets, ids } = filled();
+      expect(found(tickets, "50%")).toEqual([ids[2]]);
+      expect(found(tickets, "sale_price")).toEqual([ids[2]]);
+      expect(found(tickets, "sa_e")).toEqual([]);
+      expect(found(tickets, "5%f")).toEqual([]);
+      expect(found(tickets, "%")).toEqual([ids[2]]);
+      expect(found(tickets, "_")).toEqual([ids[2]]);
+      expect(found(tickets, "\\")).toEqual([]);
+      expect(found(tickets, "'; DROP TABLE tickets; --")).toEqual([]);
+    });
+
+    it("searches only tickets that ended, and pages through the matches", () => {
+      const { tickets, ids } = filled();
+      expect(found(tickets, "解析")).toEqual([ids[0]]);
+      expect(found(tickets, "Parse times")).toEqual([]);
+      const page = tickets.history({ query: "做这件事", limit: 2 });
+      expect(page.tickets).toHaveLength(2);
+      expect(page.next).not.toBeNull();
+    });
   });
 });
 
