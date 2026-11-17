@@ -175,6 +175,20 @@ This is the complete list.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
 
+## Tests
+
+No test fails because something took longer than expected.
+
+- No test asserts how long something took, and no test has a time limit of its own. The test runner's per-test timeout
+  is off; only the pipeline's overall limit ends a run that hangs.
+- Logic that depends on time is tested with a clock the test controls.
+- A test waits for an event, never for a duration.
+
+## Decisions
+
+A choice that would have been the owner's, made without the owner so that work does not stop, is recorded in
+[decisions.md](decisions.md): what was chosen, why, and what the other options were.
+
 ## Language
 
 Everything written is English: code, issues, pull requests, commits, documents, and what workers are told.
