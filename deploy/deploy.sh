@@ -23,6 +23,11 @@ docker_cli() {
     docker_bin=$(command -v docker || true)
     [ -n "$docker_bin" ] || fail "no docker client found"
   fi
+  if [ -z "${DOCKER_CONFIG:-}" ]; then
+    export DOCKER_CONFIG="$root/.docker"
+    mkdir -p "$DOCKER_CONFIG"
+    chmod 0700 "$DOCKER_CONFIG"
+  fi
   "$docker_bin" "$@"
 }
 
@@ -199,11 +204,9 @@ step_codex_login() {
   own_name superagent2-brain-codex
   say "about to copy the Codex login (auth.json only) from volume $old_codex_volume, mounted read-only, into volume superagent2-brain-codex"
   docker_cli volume inspect "$old_codex_volume" > /dev/null || fail "volume $old_codex_volume does not exist"
-  docker_cli volume create superagent2-brain-codex > /dev/null
-  docker_cli run --rm --name superagent2-codex-login-copy --network none --user node \
+  compose run --rm --no-deps --name superagent2-codex-login-copy \
     --volume "$old_codex_volume:/old:ro" \
-    --volume superagent2-brain-codex:/home/node/.codex \
-    --entrypoint bash superagent2-brain:current -c '
+    --entrypoint bash brain -c '
       set -eu
       if [ -e /home/node/.codex/auth.json ]; then
         echo "superagent2 deploy: superagent2-brain-codex already holds auth.json; it is kept" >&2
@@ -271,7 +274,7 @@ step_authorize() {
     say "authorized the hub's key; the previous file is in $root/backups"
   fi
   if docker_cli inspect -f '{{.State.Running}}' superagent2-hub 2> /dev/null | grep -q true; then
-    compose exec -T hub ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i /run/superagent2/ssh/nas_ed25519 "$nas_user@host.docker.internal" true
+    compose exec -T hub ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i /run/superagent2/ssh/nas_ed25519 "$nas_user@host.docker.internal" true < /dev/null
     say "the hub signs in to the NAS host"
   fi
 }

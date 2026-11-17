@@ -653,3 +653,119 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   there before anything the owner relies on is stopped, and the one step that affects what is live is taken by the
   session that answers to the owner.
 - **Other options:** One step by a child agent; leaving the deployment until every other issue is built.
+
+## 2026-11-17 — Images for the hub and the brain
+
+- **Chosen:** One `deploy/Dockerfile` with three stages on `node:24.14.1-bookworm-slim`, the Node version of this PC. The
+  `build` stage installs the workspace with pnpm 12.18.0, builds the hub, the brain and the page with their workspace
+  dependencies, and then installs again with `--prod` to drop development dependencies. The `hub` stage adds `bash`,
+  `git`, `gh` 2.102.0 (the release tarball, the version on this PC), an SSH client, `curl`, `jq`, `rsync`, `sudo`,
+  `procps`, `less`, `unzip` and `xz-utils`, and sets `gh auth git-credential` as Git's credential helper for
+  `github.com`, so `git` uses the command's `GH_TOKEN`. The `brain` stage adds `git`, `ripgrep`, an SSH client and the
+  three programs from npm at pinned versions: `@openai/codex@0.163.0`, `@anthropic-ai/claude-code@2.1.326` and
+  `@deepseek-ai/dsh@0.2.1-rc.2`, with Claude Code's own updater turned off. Both images copy the whole built workspace.
+  The base image is named by its exact version, which was not on the NAS, so no image already there is retagged.
+- **Why:** One build stage shared by both images builds the code once. A pinned version tag keeps the build from moving
+  a tag that other projects on the NAS use.
+- **Other options:** One Dockerfile per image; `pnpm deploy` per package, which leaves out the `dist` folders because
+  `.gitignore` lists them; the vendors' install scripts instead of npm; Alpine, which Claude Code and Codex support less
+  well.
+
+## 2026-11-17 — Who the containers run as
+
+- **Chosen:** Both containers run as `node`, uid 1000, which is also `novanxu`'s uid on the NAS. The hub's `node` has
+  passwordless `sudo`. Claude Code, Codex and `dsh` all run in full-access mode as a non-root user, so the brain has no
+  `sudo` and does not need `IS_SANDBOX`.
+- **Why:** The brain must read the token file the hub writes with mode 0600, and the hub must read the SSH key and write
+  the project folder that the deploy script creates on the NAS as `novanxu`; one uid makes all three work without
+  changing ownership. `sudo` in the hub keeps the brain able to install a tool there, so running as `node` does not
+  harden the hub against operations.
+- **Other options:** The hub as root, which needs the token file made readable for the brain some other way; the brain
+  as root with `IS_SANDBOX=1`.
+
+## 2026-11-17 — Volumes and the brain's token
+
+- **Chosen:** Named volumes: `superagent2-hub-data` (the database), `superagent2-hub-home` (the hub's home folder, with
+  `known_hosts` and any `gh` or `git` settings), `superagent2-brain-link` (the brain's token, written by the hub at
+  `/var/lib/superagent2/link/brain.token` and mounted read-only in the brain), and one per program for the brain:
+  `superagent2-brain-codex` (`~/.codex`), `superagent2-brain-claude` (`~/.claude`, with `CLAUDE_CONFIG_DIR` pointing
+  there so `.claude.json` is kept too), `superagent2-brain-dsh` (`~/.dsh`) and `superagent2-brain-workspace`. Every
+  container, volume and network has an explicit name starting with `superagent2`.
+- **Why:** The hub makes the token at its first start, so a volume of its own lets the brain read it without seeing the
+  hub's database. Claude Code finds a session by its working folder, so the workspace path and the session files must
+  both survive a restart.
+- **Other options:** Mounting the hub's data volume in the brain; the token in a secrets file written by the deploy
+  script; one volume for the brain's whole home folder.
+
+## 2026-11-17 — How the hub reaches the NAS host
+
+- **Chosen:** The hub resolves `host.docker.internal` to Docker's host gateway (`extra_hosts: host-gateway`) and signs
+  in as `novanxu@host.docker.internal` on port 22, where the NAS's `sshd` listens on every address and already allows
+  `novanxu`. The key is `secrets/ssh/nas_ed25519`, generated on the NAS by the `secrets` step and mounted read-only. The
+  `authorize` step adds the public key to `novanxu`'s own `~/.ssh/authorized_keys` with
+  `from="10.0.0.0/8,172.16.0.0/12",no-agent-forwarding,no-X11-forwarding`, after copying the file to
+  `/share/Container/superagent2/backups`; `deauthorize` removes it. The rehearsal ran `authorize`, because it changes no
+  `sshd` setting and no other user's access.
+- **Why:** The host gateway is the documented way for a container to reach its host and does not depend on the subnet
+  Docker hands the project. Limiting the key to Docker's private ranges means a copy of it is useless from the LAN or
+  Tailscale.
+- **Other options:** The project network's own gateway address, which changes if the network is recreated; host
+  networking for the hub; a key without a source restriction; an `sshd` setting such as `AllowUsers`, which would
+  change SSH for everyone.
+
+## 2026-11-17 — Project folders and credential paths in the deployment
+
+- **Chosen:** `HUB_PROJECT_FOLDERS=/share/Container/superagent2/projects`, a folder on the NAS mounted at the same
+  path inside the hub, so one path means the same folder on the `hub` and `nas` targets. `HUB_CREDENTIAL_PATHS` names
+  the new secrets folder and the first Super-agent's (`/share/Container/superagent2/secrets`,
+  `/share/Container/superagent/secrets`, each also with `/**`), the token volume's folder `/var/lib/superagent2/link/**`
+  and the mounted key's folder `/run/superagent2/ssh/**`.
+- **Why:** A folder that exists on both targets at one path keeps the lock's view of a path true whichever target runs
+  the command. Naming the old secrets folder keeps it protected while it is the way back.
+- **Other options:** A named volume for projects, which the `nas` target could not see; also listing the brain's
+  workspace, which lives in another container.
+
+## 2026-11-17 — The deploy script
+
+- **Chosen:** `deploy/deploy.sh`, run on the NAS with bash 3.2 (QNAP's), installed by its own `source` step as
+  `/share/Container/superagent2/deploy.sh`. A commit reaches the NAS as `incoming/<commit>.tar` made by `git archive`;
+  `source` unpacks it into `src.new` and swaps it in, keeping the old tree as `src.previous`. `build` keeps the replaced
+  images as `superagent2-hub:previous` and `superagent2-brain:previous` and tags new ones with the commit; `rollback`
+  swaps both back. The other steps are `secrets`, `codex-login`, `up`, `health`, `authorize`, `deauthorize`, `stop`,
+  `status`, `release` (source, build, up, health), `takeover` and `giveback`. Every path it deletes or moves is checked
+  to be under `/share/Container/superagent2`, every image it tags to be a `superagent2` name, and every Compose call
+  carries `-p superagent2` and the file; the only commands naming other containers are the `docker stop` and
+  `docker start` of `superagent-tunnel`, `superagent-brain` and `superagent-hub` in `takeover` and `giveback`. The
+  Docker client's settings go in `/share/Container/superagent2/.docker`, because Container Station's client otherwise
+  tries to create a folder `novanxu` may not write. The hub is published on `127.0.0.1:18180`, a port nothing on the
+  NAS uses.
+- **Why:** The NAS has no `git`, so an archive is what can reach it; keeping one previous tree and image is enough to go
+  back from a bad deployment. Health is checked from the hub's `/health` and from the brain's own last link message,
+  since the brain's link state is otherwise only visible behind the front door.
+- **Other options:** Cloning on the NAS; a symbolic link `src` to a folder per release; keeping every release.
+
+## 2026-11-17 — Copying credentials from the first Super-agent
+
+- **Chosen:** The `secrets` step copies whole `NAME=value` lines, selected by name, from the first file in a fixed list
+  that has a non-empty value: the hub's values from `hub.env` (then `access.env` or `cloudflare.env`) and `github.env`,
+  `CLOUDFLARE_API_TOKEN` from `cloudflare.env`, `BRAIN_CLAUDE_OAUTH_TOKEN` from `brain.env` and `TUNNEL_TOKEN` from
+  `tunnel.env`, into `hub.env`, `brain.env` and `tunnel.env` of mode 600 in a folder of mode 700. Nothing is printed but
+  names. A file that exists is kept, so a later run never overwrites a value changed by hand. The VAPID keys are reused,
+  as the design's table says. `codex-login` copies only `auth.json` from `superagent-brain-codex-home`, through a
+  one-off container of the brain service that mounts the old volume read-only, and keeps an `auth.json` already there.
+- **Why:** The old Codex volume also holds the old system's sessions, databases and files of its own, which the new
+  brain should not inherit. Copying lines keeps the quoting Compose already reads.
+- **Other options:** Copying the whole Codex volume; reading values from the old containers' environment; overwriting
+  the new files on every run.
+
+## 2026-11-17 — What the rehearsal exercised
+
+- **Chosen:** The conversation turn through the brain link was run against a second hub process started for the
+  rehearsal inside `superagent2-hub`, on port 8181 with its database in `/tmp` and an Access key made for the occasion,
+  linked to a second brain process inside `superagent2-brain` that used the container's programs, logins and network,
+  with `BRAIN_PROVIDERS=claude`. The script stayed outside the repository and both processes were stopped afterwards.
+  Codex's login was checked with `codex login status` only, and no Codex turn was run.
+- **Why:** The deployed hub admits only an assertion signed by Cloudflare for the owner, which cannot be made before the
+  take-over, and must gain no bypass. The ChatGPT login is shared with the first Super-agent's running brain, and a
+  refresh by the new brain could sign the old one out while the owner is away.
+- **Other options:** A development flag in the hub; skipping the conversation turn; running a Codex turn.
