@@ -1,4 +1,4 @@
-import { isOpenTicket, type Ticket, type TicketState } from "@super-agent2/protocol";
+import { isOpenTicket, type Ticket } from "@super-agent2/protocol";
 
 export interface TicketsState {
   readonly known: boolean;
@@ -6,18 +6,6 @@ export interface TicketsState {
 }
 
 export const initialTickets: TicketsState = { known: false, open: [] };
-
-export type TicketTone = "mute" | "ok" | "info";
-
-export const ticketTones: Readonly<Record<TicketState, { readonly tone: TicketTone; readonly live: boolean }>> = {
-  pending: { tone: "mute", live: false },
-  waiting: { tone: "mute", live: false },
-  working: { tone: "ok", live: true },
-  verifying: { tone: "info", live: true },
-  merged: { tone: "ok", live: false },
-  delivered: { tone: "info", live: false },
-  stopped: { tone: "mute", live: false },
-};
 
 function ordered(tickets: readonly Ticket[]): Ticket[] {
   const byId = new Map<number, Ticket>();

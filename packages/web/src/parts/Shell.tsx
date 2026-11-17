@@ -21,7 +21,10 @@ const main: readonly Destination[] = [
 const foot: readonly Destination[] = [{ view: "settings", icon: "gear", label: text("navigation.settings") }];
 
 export function viewOf(route: PageRoute): PageView {
-  return route.view === "home" ? "conversations" : route.view;
+  if (route.view === "home") {
+    return "conversations";
+  }
+  return route.view === "ticket" ? "workbench" : route.view;
 }
 
 export function titleOf(view: PageView): string {

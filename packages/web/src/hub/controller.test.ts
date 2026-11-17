@@ -1,9 +1,10 @@
 import type { CommandRecord, Conversation, OwnerEntry } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
-import { holdCard, startCard, ticket } from "../live/fixtures.js";
+import { holdCard, startCard, ticket, workEvent } from "../live/fixtures.js";
 import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
+import type { SocketEvents } from "./socket.js";
 
 const conversation: Conversation = { id: "c9", title: "", state: "idle", provider: null, createdAt: 1, updatedAt: 1 };
 const entry: OwnerEntry = { id: "o1", conversation: "c9", seq: 1, at: 2, kind: "owner", text: "你好", taken: false };
@@ -29,7 +30,11 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),
     refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
     tickets: (scope) => answer(`tickets ${scope ?? "open"}`, { tickets: [] }),
-    ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [] }),
+    ticket: (id) => answer(`ticket ${id}`, { ticket: ticket(id), moves: [], attempts: [] }),
+    work: (id, after) => answer(`work ${id} ${after}`, { events: [] }),
+    messageWorker: (id, text) => answer(`message ${id} ${text}`, { id: "m1" }),
+    stopTicket: (id) => answer(`stop ${id}`, { ticket: ticket(id, { state: "stopped", updatedAt: 99_000 }) }),
+    machines: () => answer("machines", { machines: [] }),
     startChains: (chains) => answer(`start ${chains.map((chain) => `${chain.ticket}:${chain.fingerprint.slice(0, 1)}`).join(" ")}`, { tickets: [] }),
     chooseChain: (id, change) => answer(`choose ${id} ${JSON.stringify(change)}`, { tickets: [] }),
     reassign: (id, change) => answer(`reassign ${id} ${JSON.stringify(change)}`, { tickets: [] }),
@@ -243,6 +248,96 @@ describe("PageController", () => {
       expect(useOf(page.store.getState().waiting, "start:1").failure).toBe("conflict");
       page.store.dispatch({ type: "server", message: { type: "waiting", cards: [startCard(1, { fingerprint: "e".repeat(64) })] } });
       expect(useOf(page.store.getState().waiting, "start:1").failure).toBeNull();
+    });
+  });
+
+  describe("a ticket's detail", () => {
+    function open(hub: HubApi, frame?: (run: () => void) => void) {
+      const sent: unknown[] = [];
+      let events: SocketEvents | undefined;
+      const page = new PageController({
+        api: hub,
+        socket: {
+          url: "ws://hub/ws",
+          create: (_url, given) => {
+            events = given;
+            return { isOpen: () => true, send: (data) => void sent.push(JSON.parse(data)), close: () => undefined };
+          },
+          schedule: () => () => undefined,
+        },
+        onFailure: () => undefined,
+        ...(frame === undefined ? {} : { frame }),
+      });
+      page.start();
+      events?.open();
+      const deliver = (message: unknown) => events?.message(JSON.stringify(message));
+      return { page, sent, deliver };
+    }
+
+    it("reads the ticket and its history, then watches for what comes next", async () => {
+      const event = workEvent(41, { kind: "text", block: "a", delta: "hello" });
+      let pages = 0;
+      const hub = api({ work: () => Promise.resolve({ ok: true, value: { events: pages++ === 0 ? [event] : [] } }) });
+      const { page, sent } = open(hub);
+      await page.openTicket(1);
+      expect(page.store.getState().detail?.ticket?.id).toBe(1);
+      expect(page.store.getState().detail?.log.events.map((entry) => entry.id)).toEqual([41]);
+      expect(sent.at(-1)).toEqual({ type: "watch.ticket", ticket: 1, after: 41 });
+      expect(pages).toBeGreaterThanOrEqual(2);
+    });
+
+    it("takes the worker's output from the socket, once each", async () => {
+      const { page, deliver } = open(api());
+      await page.openTicket(1);
+      const event = workEvent(5, { kind: "text", block: "a", delta: "x" });
+      deliver({ type: "work", event });
+      deliver({ type: "work", event });
+      expect(page.store.getState().detail?.log.attempts[0]?.items).toMatchObject([{ text: "x" }]);
+    });
+
+    it("gathers a burst of output into one change of the page", async () => {
+      const queued: (() => void)[] = [];
+      const { page, deliver } = open(api(), (run) => void queued.push(run));
+      await page.openTicket(1);
+      let changes = 0;
+      page.store.subscribe(() => {
+        changes += 1;
+      });
+      for (let id = 1; id <= 50; id += 1) {
+        deliver({ type: "work", event: workEvent(id, { kind: "text", block: "a", delta: "y" }) });
+      }
+      expect(queued).toHaveLength(1);
+      queued[0]?.();
+      expect(changes).toBe(1);
+      expect(page.store.getState().detail?.log.attempts[0]?.items).toMatchObject([{ text: "y".repeat(50) }]);
+    });
+
+    it("says a ticket the hub does not have is missing, and stops watching the last one", async () => {
+      const { page, sent } = open(api({ ticket: () => Promise.resolve({ ok: false, error: "not_found" }) }));
+      await page.openTicket(1);
+      await page.openTicket(2);
+      expect(page.store.getState().detail?.missing).toBe(true);
+      expect(sent).toContainEqual({ type: "unwatch.ticket", ticket: 1 });
+    });
+
+    it("sends the owner's message, 停止 and 改派 to the hub", async () => {
+      const hub = api();
+      const { page } = open(hub);
+      await page.openTicket(1);
+      expect(await page.messageTicket(1, "use tabs")).toBe(true);
+      expect(await page.stopTicket(1)).toBe(true);
+      expect(page.store.getState().detail?.ticket?.state).toBe("stopped");
+      expect(await page.reassignTicket(1, { machine: "pc", engine: "claude" })).toBe(true);
+      expect(hub.calls).toContain("message 1 use tabs");
+      expect(hub.calls).toContain("stop 1");
+      expect(hub.calls).toContain('reassign 1 {"machine":"pc","engine":"claude"}');
+    });
+
+    it("says why the hub refused a message", async () => {
+      const failures: Failure[] = [];
+      const page = controller(api({ messageWorker: () => Promise.resolve({ ok: false, error: "conflict" }) }), failures);
+      expect(await page.messageTicket(1, "hi")).toBe(false);
+      expect(failures).toEqual(["conflict"]);
     });
   });
 });

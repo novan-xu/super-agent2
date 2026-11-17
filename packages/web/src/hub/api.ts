@@ -6,12 +6,16 @@ import {
   ConversationList,
   ConversationResponse,
   EntryResponse,
+  MachineList,
   PushKey,
   type PushSubscriptionRequest,
   PushState,
   Refusal,
   TicketDetail,
   TicketList,
+  TicketResponse,
+  WorkerMessageResponse,
+  WorkEventList,
 } from "@super-agent2/protocol";
 import type { z } from "zod";
 
@@ -59,6 +63,10 @@ export const hubApi = {
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
   tickets: (scope: "open" | "all" = "open") => call(`/api/tickets?scope=${scope}`, TicketList),
   ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
+  work: (id: number, after: number) => call(`/api/tickets/${id}/work?after=${after}`, WorkEventList),
+  messageWorker: (id: number, text: string) => call(`/api/tickets/${id}/messages`, WorkerMessageResponse, { text }),
+  stopTicket: (id: number) => call(`/api/tickets/${id}/stop`, TicketResponse, {}),
+  machines: () => call("/api/machines", MachineList),
   startChains: (chains: readonly ChainStartItem[]) => call("/api/chains/start", TicketList, { chains }),
   chooseChain: (ticket: number, change: ChoiceChange) => call("/api/chains/choice", TicketList, { ticket, ...change }),
   reassign: (ticket: number, change: ChoiceChange) => call(`/api/tickets/${ticket}/reassign`, TicketList, change),

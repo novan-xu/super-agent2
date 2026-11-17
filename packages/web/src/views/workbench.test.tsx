@@ -1,6 +1,6 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { holdCard, startCard, ticket } from "../live/fixtures.js";
+import { holdCard, startCard, ticket, workStatus } from "../live/fixtures.js";
 import { initialTickets, receiveTickets, type TicketsState } from "../live/tickets.js";
 import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiting.js";
 import type { PushPhase } from "../live/push.js";
@@ -14,7 +14,7 @@ function state(...cards: (ReturnType<typeof holdCard> | ReturnType<typeof startC
 
 function render(waiting: WaitingState, push: PushPhase = "hidden", focus: string | null = null, tickets: TicketsState = initialTickets): string {
   return renderToString(
-    <WorkbenchView waiting={waiting} actions={actions} focus={focus} focused={() => undefined} push={push} togglePush={() => undefined} tickets={tickets} />,
+    <WorkbenchView waiting={waiting} actions={actions} focus={focus} focused={() => undefined} push={push} togglePush={() => undefined} tickets={tickets} ticketHref={(id) => `/tickets/${id}`} openTicket={() => undefined} now={0} />,
   );
 }
 
@@ -153,7 +153,7 @@ describe("the open tickets in 工作台", () => {
       state(),
       "hidden",
       null,
-      receiveTickets([ticket(1, { state: "waiting", title: { en: "Print a greeting", zh: "启动时打印问候" } }), ticket(2, { state: "working", kind: "fix" })]),
+      receiveTickets([ticket(1, { state: "waiting", title: { en: "Print a greeting", zh: "启动时打印问候" } }), ticket(2, { state: "working", kind: "fix", work: workStatus() })]),
     );
     expect(html.match(/class="lrow"/g)).toHaveLength(2);
     expect(html).toContain("启动时打印问候");
@@ -165,6 +165,64 @@ describe("the open tickets in 工作台", () => {
     expect(text(html)).toContain("|修复|");
     expect(html).toContain("dot dot--ok dot--live");
     expect(html.indexOf("工作 2")).toBeLessThan(html.indexOf("启动时打印问候"));
+  });
+
+  it("groups the tickets by repository, with writing tickets in a group of their own, last", () => {
+    const html = render(
+      state(),
+      "hidden",
+      null,
+      receiveTickets([
+        ticket(1, { state: "working", repository: "novan-xu/zeta", work: workStatus() }),
+        ticket(2, { state: "working", repository: "nuofan-island/alpha", work: workStatus() }),
+        ticket(3, { state: "working", kind: "writing", repository: null, issues: [], title: { en: "Write", zh: "写一封信" }, work: workStatus({ engine: "antigravity" }) }),
+        ticket(4, { state: "working", repository: "novan-xu/zeta", work: workStatus() }),
+      ]),
+    );
+    const order = ["novan-xu/zeta", "nuofan-island/alpha", "写作", "写一封信"].map((part) => html.indexOf(part));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html.match(/class="ticket-group"/g)).toHaveLength(3);
+  });
+
+  it("links each row to the ticket's own address", () => {
+    const html = render(state(), "hidden", null, receiveTickets([ticket(7, { state: "working", work: workStatus() })]));
+    expect(html).toContain('href="/tickets/7"');
+  });
+
+  it("says plainly when a ticket failed, could not begin, or cannot be reached, with what the hub recorded", () => {
+    const html = render(
+      state(),
+      "hidden",
+      null,
+      receiveTickets([
+        ticket(1, { state: "working", work: workStatus({ state: "failed", failure: "program", reason: "exit code 3" }) }),
+        ticket(2, { state: "working", beginFailure: "Ticket 2 has no writing task" }),
+        ticket(3, { state: "working", work: workStatus({ unreachableSince: 50_000, machine: "mini" }) }),
+      ]),
+    );
+    expect(text(html)).toContain("|执行失败|");
+    expect(html).toContain("程序出错或额度用完：exit code 3");
+    expect(text(html)).toContain("|没能开始|");
+    expect(html).toContain("Ticket 2 has no writing task");
+    expect(text(html)).toContain("|联系不上|");
+    expect(html).toContain("联系不上 mini");
+    expect(html.match(/dot--live/g)).toBeNull();
+  });
+
+  it("says what a waiting ticket waits for", () => {
+    const html = render(
+      state(),
+      "hidden",
+      null,
+      receiveTickets([
+        ticket(1, { state: "working", title: { en: "First", zh: "先做的事" }, work: workStatus() }),
+        ticket(2, { state: "waiting", waits: [{ ticket: 1, deployment: false, waived: false }], waitsFor: [1] }),
+      ]),
+    );
+    const row = html.slice(html.indexOf('id="ticket-2"'), html.indexOf('id="ticket-1"'));
+    expect(row).toContain("等前序");
+    expect(row).toContain("先做的事");
   });
 
   it("comes below the 等你 row", () => {

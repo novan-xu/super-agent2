@@ -6,6 +6,7 @@ export type PageView = (typeof pageViews)[number];
 export type PageRoute =
   | { readonly view: "home" }
   | { readonly view: "conversations"; readonly conversation: string | null }
+  | { readonly view: "ticket"; readonly ticket: number }
   | { readonly view: Exclude<PageView, "conversations"> };
 
 export const pageAssetsPath = "/assets/";
@@ -17,6 +18,12 @@ export const serviceWorkerPath = "/sw.js";
 export const manifestPath = "/manifest.webmanifest";
 
 export const cardParameter = "card";
+
+export const ticketsPathSegment = "tickets";
+
+export function ticketAddress(ticket: number): string {
+  return `/${ticketsPathSegment}/${ticket}`;
+}
 
 export function cardAddress(key: string): string {
   return `/workbench?${cardParameter}=${encodeURIComponent(key)}`;
@@ -33,6 +40,9 @@ export function pageRoute(path: string): PageRoute | undefined {
   }
   const parts = trimmed.split("/").slice(1);
   const [view, conversation, ...rest] = parts;
+  if (view === ticketsPathSegment) {
+    return conversation !== undefined && rest.length === 0 && /^[1-9][0-9]{0,15}$/.test(conversation) ? { view: "ticket", ticket: Number(conversation) } : undefined;
+  }
   if (view === undefined || !isView(view) || rest.length > 0) {
     return undefined;
   }
@@ -51,6 +61,8 @@ export function pagePath(route: PageRoute): string {
       return "/";
     case "conversations":
       return route.conversation === null ? "/conversations" : `/conversations/${route.conversation}`;
+    case "ticket":
+      return ticketAddress(route.ticket);
     default:
       return `/${route.view}`;
   }

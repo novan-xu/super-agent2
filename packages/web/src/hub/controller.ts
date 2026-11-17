@@ -1,7 +1,9 @@
-import type { ChoiceChange } from "@super-agent2/protocol";
+import { type ChoiceChange, type MachineChoice, machineChoices, type StoredWorkEvent } from "@super-agent2/protocol";
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
+import { needsMoves } from "../live/detail.js";
 import { createPageStore, type PageStore } from "../live/page.js";
+import { lastEventId } from "../live/work.js";
 import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
 import type { Failure, HubApi } from "./api.js";
 import { HubSocket, type HubSocketOptions } from "./socket.js";
@@ -10,12 +12,16 @@ export interface ControllerOptions {
   readonly api: HubApi;
   readonly socket: Pick<HubSocketOptions, "url" | "create" | "schedule">;
   readonly onFailure: (failure: Failure) => void;
+  readonly frame?: (run: () => void) => void;
 }
 
 export class PageController {
   readonly store: PageStore = createPageStore();
   private readonly socket: HubSocket;
   private opened: string | null = null;
+  private openedTicket: number | null = null;
+  private pendingWork: StoredWorkEvent[] = [];
+  private flushing = false;
 
   constructor(private readonly options: ControllerOptions) {
     this.socket = new HubSocket({
@@ -24,7 +30,21 @@ export class PageController {
         const current = this.store.getState().current;
         return current?.id === conversation ? resumeAfter(current) : 0;
       },
-      onMessage: (message) => this.store.dispatch({ type: "server", message }),
+      resumeTicket: (ticket) => {
+        const detail = this.store.getState().detail;
+        return detail?.id === ticket ? lastEventId(detail.log) : 0;
+      },
+      onMessage: (message) => {
+        if (message.type === "work") {
+          this.queueWork(message.event);
+          return;
+        }
+        const before = this.store.getState().detail;
+        this.store.dispatch({ type: "server", message });
+        if (message.type === "ticket" && before !== null && message.ticket.id === before.id && needsMoves(before, message.ticket)) {
+          void this.readTicket(before.id);
+        }
+      },
       onStatus: (status) => this.store.dispatch({ type: "status", status }),
       onOpen: () => {
         void this.refresh();
@@ -56,6 +76,17 @@ export class PageController {
     }
   }
 
+  openTicket(ticket: number | null): Promise<void> {
+    if (ticket === this.openedTicket) {
+      return Promise.resolve();
+    }
+    this.openedTicket = ticket;
+    this.pendingWork = [];
+    this.socket.watchTicket(null);
+    this.store.dispatch({ type: "ticket.open", ticket });
+    return ticket === null ? Promise.resolve() : this.loadTicket(ticket);
+  }
+
   async refresh(): Promise<void> {
     const list = await this.options.api.conversations();
     if (list.ok) {
@@ -63,6 +94,111 @@ export class PageController {
     }
     if (this.opened !== null) {
       await this.readDetail(this.opened);
+    }
+    if (this.openedTicket !== null) {
+      await this.readTicket(this.openedTicket);
+      await this.catchUp(this.openedTicket);
+    }
+  }
+
+  async messageTicket(ticket: number, text: string): Promise<boolean> {
+    const sent = await this.options.api.messageWorker(ticket, text);
+    if (!sent.ok) {
+      this.options.onFailure(sent.error);
+      return false;
+    }
+    return true;
+  }
+
+  async stopTicket(ticket: number): Promise<boolean> {
+    const stopped = await this.options.api.stopTicket(ticket);
+    if (!stopped.ok) {
+      this.options.onFailure(stopped.error);
+      return false;
+    }
+    this.store.dispatch({ type: "server", message: { type: "ticket", ticket: stopped.value.ticket } });
+    void this.readTicket(ticket);
+    return true;
+  }
+
+  async reassignTicket(ticket: number, change: ChoiceChange): Promise<boolean> {
+    const answer = await this.options.api.reassign(ticket, change);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    for (const changed of answer.value.tickets) {
+      this.store.dispatch({ type: "server", message: { type: "ticket", ticket: changed } });
+    }
+    void this.readTicket(ticket);
+    return true;
+  }
+
+  async machines(): Promise<MachineChoice[] | undefined> {
+    const answer = await this.options.api.machines();
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return undefined;
+    }
+    return machineChoices(answer.value.machines);
+  }
+
+  private queueWork(event: StoredWorkEvent): void {
+    if (this.options.frame === undefined) {
+      this.store.dispatch({ type: "ticket.work", events: [event] });
+      return;
+    }
+    this.pendingWork.push(event);
+    if (this.flushing) {
+      return;
+    }
+    this.flushing = true;
+    this.options.frame(() => {
+      this.flushing = false;
+      const events = this.pendingWork;
+      this.pendingWork = [];
+      if (events.length > 0) {
+        this.store.dispatch({ type: "ticket.work", events });
+      }
+    });
+  }
+
+  private async loadTicket(ticket: number): Promise<void> {
+    await this.readTicket(ticket);
+    await this.catchUp(ticket);
+    if (this.openedTicket === ticket) {
+      this.socket.watchTicket(ticket);
+    }
+  }
+
+  private async readTicket(ticket: number): Promise<void> {
+    const detail = await this.options.api.ticket(ticket);
+    if (this.openedTicket !== ticket) {
+      return;
+    }
+    if (detail.ok) {
+      this.store.dispatch({ type: "ticket.detail", detail: detail.value });
+    } else if (detail.error === "not_found") {
+      this.store.dispatch({ type: "ticket.missing", ticket });
+    }
+  }
+
+  private async catchUp(ticket: number): Promise<void> {
+    for (;;) {
+      const detail = this.store.getState().detail;
+      if (this.openedTicket !== ticket || detail?.id !== ticket) {
+        return;
+      }
+      const page = await this.options.api.work(ticket, lastEventId(detail.log));
+      if (!page.ok || page.value.events.length === 0 || this.openedTicket !== ticket) {
+        return;
+      }
+      const before = lastEventId(detail.log);
+      this.store.dispatch({ type: "ticket.work", events: page.value.events });
+      const after = this.store.getState().detail;
+      if (after === null || lastEventId(after.log) === before) {
+        return;
+      }
     }
   }
 

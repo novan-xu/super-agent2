@@ -170,6 +170,7 @@ export type TicketList = z.infer<typeof TicketList>;
 export const TicketDetail = z.object({
   ticket: Ticket,
   moves: z.array(TicketMove),
+  attempts: z.array(WorkStatus),
 });
 export type TicketDetail = z.infer<typeof TicketDetail>;
 

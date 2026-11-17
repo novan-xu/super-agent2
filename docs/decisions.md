@@ -1447,3 +1447,80 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   holding `GH_TOKEN` handed it to a writing worker. For a code worker the hub's value already replaced the inherited
   `GH_TOKEN` and `GITHUB_TOKEN`, but the other variables `gh` and Git read were inherited.
 - **Other options:** Removing only the two common names.
+
+## 2026-11-17 — A ticket's address and what its detail reads
+
+- **Chosen:** A ticket has its own address, `/tickets/<n>` (`ticketAddress` in `packages/protocol/src/page.ts`), which the
+  hub serves as the page like every other route, so a link, a notification or a reload lands on the same ticket; 工作台
+  stays marked in the navigation while it is open, and the detail's back link returns to 工作台. `GET /api/tickets/<n>`
+  now also gives `attempts`, every attempt of the ticket (machine, engine, model, effort, state, failure and reason), so
+  the timeline can name each worker, including those replaced by 改派. The page reads the ticket and pages through
+  `GET /api/tickets/<n>/work` until a page comes back empty, then sends `watch.ticket` from the last event it holds; after
+  a reconnection it watches again from there and pages again. Events are kept by their id, once each and in id order,
+  whichever way they came; a late older event rebuilds the fold. Live events are gathered for 40 ms and applied as one
+  change of the page. A `ticket` message for the open ticket whose state is not its last move reads the moves again.
+- **Why:** The watch replays at most 5000 events, which a long worker exceeds; paging first and watching from the end
+  loses nothing and does not render thousands of messages one by one. A timer rather than an animation frame because a
+  background tab never runs animation frames, and the output then piled up unseen (found while verifying).
+- **Other options:** `/workbench/tickets/<n>`; watching from 0 and relying on the replay; deriving earlier attempts
+  from the English phase lines; flushing on every message.
+
+## 2026-11-17 — What 工作台 says about each ticket
+
+- **Chosen:** Open tickets are grouped by repository in name order, writing tickets last under 写作; pending tickets stay
+  start cards. A row is a link to the ticket and shows a state that describes the worker, not only the ticket: 等前序
+  (with the titles of what it still waits for), 没能开始 (the hub's begin failure as recorded), 还没开始执行, 排队中 (the
+  machine it waits for), 准备中, 进行中, 联系不上 (since when, and which machine), 执行失败 (the failure in Chinese and the
+  hub's reason as written), 没有在执行, 验证中, then the final states. Only 准备中 and 进行中 pulse; 验证中 does not, since
+  nothing verifies until #15. The derivations are `packages/web/src/live/phase.ts` with tests; reasons the hub recorded
+  in English are shown as raw text in monospace, as the design does for logs.
+- **Why:** The issue asks that nothing look like it is progressing when it is not. A ticket in `working` whose worker
+  failed or cannot be reached is the common case where the ticket's own state would mislead.
+- **Other options:** Grouping by state; showing failures only in the detail; translating the hub's English reasons.
+
+## 2026-11-17 — The ticket's detail, its panel and its controls
+
+- **Chosen:** The prototype's detail: a header (state, 工单 n, repository, kind, title), the timeline and the panel beside
+  it, which on a phone comes first with its summary (state, what went wrong, where it runs, the pull request, the guided
+  round when there is one, 改派 and 停止) and opens the rest on 详情: the issues in order by their Chinese titles linked to
+  GitHub, repository, branch and pull request linked to GitHub, and machine, engine, model and effort, each with a person
+  mark when the owner chose it, and 实际运行 with what the program reported. The timeline holds the filing with the
+  summary, every move in Chinese with its reason, and one entry per attempt (engine, model, effort, machine, and 第 n 次
+  after the first) whose log reuses 对话's parts: the worker's text as Markdown with the cursor while it streams, each
+  command folded with its output, messages from the owner, the brain or the hub, and the ending (the pull request, the
+  delivered text and files with the worker's note, the failure with its reason, or the stop). The verification rule is
+  left out until #15 gives the ticket one. 停止 takes two presses like 确认: the first turns the buttons into a red 停止 on
+  the left and 取消 where 停止 was, which takes the focus. 改派 opens the start card's three selects in the panel,
+  starting from the ticket's current choice, limited to machines fitting its platform and, for code, without
+  Antigravity; a changed engine sends no model, so the hub's table fills it. The reply box shows only while a reachable
+  worker runs. The page opens a ticket at its top and follows new output only when the owner has scrolled to the bottom
+  of a page longer than the screen; sending a message makes it follow.
+- **Why:** The look is the prototype's; the roles it showed (reviewer, repairer, CI panel) are gone. Moving the
+  confirming button is the guard already chosen for confirmation cards. Following only from the bottom keeps a long log
+  readable while it grows.
+- **Other options:** A dialog for 停止 or 改派 as in the prototype; a radio list of machine and engine; always following
+  the newest output; a separate scrolling box for the log.
+
+## 2026-11-17 — Scripted workers in the development harness
+
+- **Chosen:** `tools/page-dev` attaches two scripted machines, `studio` (Windows) and `mini` (macOS), to the hub's real
+  runner link in its own process, offering Codex, Claude Code, dsh and Antigravity with the design's models. A scripted
+  worker streams text, runs pretend commands with output line by line, takes the owner's messages into its turn and
+  answers them, stops when told, and ends as planned: endless work, a pull request, a failure (only on its first
+  attempt, so 改派 can succeed) or a delivered text and file. `/__harness/scenario` opens and starts seven tickets
+  through the hub's own services: a chain of three issues and a ticket waiting behind it in one repository, a failing
+  and a finishing ticket in another, a ticket on `mini`, a writing ticket that delivers and a writing ticket without a
+  task, whose begin fails. `/__harness/scripted?machine=&to=offline|online` cuts or restores a machine.
+  `--credentials placeholder` gives the hub a placeholder GitHub token, which code tickets need before the hub sends
+  them to a runner; nothing real accepts it.
+- **Why:** The detail needs every state and a live stream to be checked by looking, without spending a subscription or
+  filing anything on GitHub.
+- **Other options:** A real worker on the sandbox repository; a fake runner process connecting over the network; writing
+  events into the database directly.
+
+## 2026-11-17 — PR in the catalog
+
+- **Chosen:** `PR` is kept as it is in the interface's Chinese text, like GitHub and hub, and added to the terms the
+  catalog's test accepts.
+- **Why:** The prototype says PR, and it is the term the owner reads on GitHub.
+- **Other options:** 拉取请求; 合并请求.

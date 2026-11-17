@@ -3,11 +3,14 @@ import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type Ticke
 import { type CSSProperties, useEffect, useMemo } from "react";
 import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
-import { ticketTones, type TicketsState } from "../live/tickets.js";
+import { ticketGroups, ticketPhase, ticketProblem, whereOf } from "../live/phase.js";
+import type { TicketsState } from "../live/tickets.js";
 import { type Verdict, type WaitingState, useOf, waitingCount } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
+import { followLink } from "../parts/Shell.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
+import { engineName, momentOf, PhaseStatus, problemLines, problemTone } from "./TicketParts.js";
 
 export interface CardActions {
   arm(key: string): void;
@@ -25,6 +28,9 @@ export interface WorkbenchViewProps {
   readonly push: PushPhase;
   readonly togglePush: () => void;
   readonly tickets: TicketsState;
+  readonly ticketHref: (ticket: number) => string;
+  readonly openTicket: (ticket: number) => void;
+  readonly now: number;
 }
 
 function Card({ card, waiting, actions, focus }: { readonly card: HoldCardData; readonly waiting: WaitingState; readonly actions: CardActions; readonly focus: string | null }) {
@@ -63,51 +69,76 @@ function PushSwitch({ phase, toggle }: { readonly phase: PushPhase; readonly tog
   );
 }
 
-function TicketRow({ ticket }: { readonly ticket: Ticket }) {
-  const { tone, live } = ticketTones[ticket.state];
+function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Ticket; readonly known: ReadonlyMap<number, Ticket>; readonly hrefOf: (ticket: number) => string; readonly open: (ticket: number) => void; readonly now: number }) {
+  const phase = ticketPhase(ticket);
+  const problem = ticketProblem(ticket, known);
+  const where = whereOf(ticket);
   return (
-    <div className="lrow" id={`ticket-${ticket.id}`}>
-      <span className={`status status--${tone}`}>
-        <span className={live ? `dot dot--${tone} dot--live` : `dot dot--${tone}`} />
-        <span>{text(`ticket.state.${ticket.state}`)}</span>
-      </span>
+    <a className="lrow" id={`ticket-${ticket.id}`} href={hrefOf(ticket.id)} onClick={(event) => followLink(event, () => open(ticket.id))}>
+      <PhaseStatus phase={phase} />
       <span className="lrow-main">
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
-          {ticket.repository === null ? null : <span className="mono">{ticket.repository}</span>}
           <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+          {ticket.issues.length === 0 ? null : <span className="mono">{ticket.issues.map((issue) => `#${issue.number}`).join(" ")}</span>}
+          {where === null ? null : (
+            <span className="chip chip--mono">
+              <Icon name="machine" />
+              {`${where.machine} · ${engineName(where.engine)}`}
+            </span>
+          )}
         </span>
+        {problem === null ? null : <span className={`lrow-note lrow-note--${problemTone(problem)}`}>{problemLines(problem, now).join("：")}</span>}
       </span>
-    </div>
+      <span className="lrow-side">
+        {ticket.pullRequest === null ? null : <span className="mono">{`#${ticket.pullRequest}`}</span>}
+        <span className="num">{momentOf(ticket.updatedAt, now)}</span>
+      </span>
+    </a>
   );
 }
 
-function Tickets({ tickets }: { readonly tickets: TicketsState }) {
-  const shown = tickets.open.filter((ticket) => ticket.state !== "pending");
+function Tickets({ tickets, hrefOf, open, now }: { readonly tickets: TicketsState; readonly hrefOf: (ticket: number) => string; readonly open: (ticket: number) => void; readonly now: number }) {
+  const groups = useMemo(() => ticketGroups(tickets.open), [tickets.open]);
+  const known = useMemo(() => new Map(tickets.open.map((ticket) => [ticket.id, ticket])), [tickets.open]);
+  const shown = groups.reduce((total, group) => total + group.tickets.length, 0);
   return (
     <section className="section" aria-label={text("tickets.list")}>
       <div className="section-head">
         <h2>{text("tickets.title")}</h2>
-        {tickets.known ? <span className="count">{shown.length}</span> : null}
+        {tickets.known ? <span className="count">{shown}</span> : null}
       </div>
-      {tickets.known && shown.length === 0 ? (
+      {tickets.known && shown === 0 ? (
         <div className="empty">
           <Icon name="check" />
           <strong>{text("tickets.empty")}</strong>
         </div>
       ) : null}
-      {shown.length > 0 ? (
-        <div className="list">
-          {shown.map((ticket) => (
-            <TicketRow key={ticket.id} ticket={ticket} />
-          ))}
+      {groups.map((group) => (
+        <div key={group.key} className="ticket-group" aria-label={group.repository ?? text("tickets.writing")}>
+          <div className="chain-head">
+            {group.repository === null ? (
+              <h3>{text("tickets.writing")}</h3>
+            ) : (
+              <h3 className="mono">
+                <Icon name="repo" />
+                {group.repository}
+              </h3>
+            )}
+            <span className="count">{group.tickets.length}</span>
+          </div>
+          <div className="list">
+            {group.tickets.map((ticket) => (
+              <TicketRow key={ticket.id} ticket={ticket} known={known} hrefOf={hrefOf} open={open} now={now} />
+            ))}
+          </div>
         </div>
-      ) : null}
+      ))}
     </section>
   );
 }
 
-export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets }: WorkbenchViewProps) {
+export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets, ticketHref, openTicket, now }: WorkbenchViewProps) {
   const count = waitingCount(waiting);
   const holds = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "hold" ? [card] : [])), [waiting.cards]);
   const starts = useMemo(() => startView(waiting.cards), [waiting.cards]);
@@ -152,7 +183,7 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
         </div>
         <StartBlocks view={starts} waiting={waiting} focus={focus} start={actions.start} choose={actions.choose} />
       </section>
-      <Tickets tickets={tickets} />
+      <Tickets tickets={tickets} hrefOf={ticketHref} open={openTicket} now={now} />
     </div>
   );
 }
