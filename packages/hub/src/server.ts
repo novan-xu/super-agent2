@@ -36,6 +36,10 @@ import {
   type MachineList,
   type TicketDetail,
   type TicketList,
+  type TicketResponse,
+  type WorkEventList,
+  type WorkerMessageResponse,
+  WorkerMessage,
   protocolVersion,
   runnerLinkPath,
   RunnerToHub,
@@ -56,6 +60,8 @@ import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
+import type { WorkService } from "./work.js";
+import { text } from "@super-agent2/catalog";
 import type { ToolServer } from "./tools.js";
 import type { Waiting } from "./waiting.js";
 
@@ -87,6 +93,12 @@ const startStatus: Readonly<Record<StartError, number>> = {
 
 const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
+const ticketWorkRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop)$/;
+
+const maximumWorkEvents = 5_000;
+
+export const ownerStopReason = { en: "The owner stopped it", zh: text("ticket.reason.ownerStopped") };
+
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
 const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt)?$/;
@@ -112,6 +124,7 @@ export interface HubServerOptions {
   readonly push?: PushService;
   readonly runners?: Runners;
   readonly tickets?: TicketService;
+  readonly work?: WorkService;
   readonly chains?: ChainStarter;
   readonly defaults?: StartDefaults;
   readonly heartbeatMilliseconds?: number;
@@ -150,6 +163,9 @@ type Body =
   | MachineList
   | TicketList
   | TicketDetail
+  | TicketResponse
+  | WorkEventList
+  | WorkerMessageResponse
   | EngineTableBody
   | AllowanceList;
 
@@ -419,6 +435,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path.startsWith(ticketsPath) && serveTickets(request, response, path, method)) {
+      return;
+    }
+    if (path.startsWith(ticketsPath) && (await serveTicketWork(request, response, path, method))) {
       return;
     }
     if (path === chainStartPath && method === "POST") {
@@ -801,6 +820,65 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return true;
   };
 
+  const serveTicketWork = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
+    const tickets = options.tickets;
+    const work = options.work;
+    const route = ticketWorkRoute.exec(path);
+    if (tickets === undefined || route?.[1] === undefined) {
+      return false;
+    }
+    const id = Number(route[1]);
+    if (tickets.get(id) === undefined) {
+      return false;
+    }
+    if (route[2] === "work") {
+      if (method !== "GET" || work === undefined) {
+        return false;
+      }
+      const url = new URL(request.url ?? "/", "http://hub");
+      const after = integerParameter(url, "after", 0, Number.MAX_SAFE_INTEGER);
+      const limit = integerParameter(url, "limit", maximumWorkEvents, maximumWorkEvents);
+      if (after === undefined || limit === undefined) {
+        return false;
+      }
+      sendJson(response, 200, { events: work.events(id, after, limit) });
+      return true;
+    }
+    if (method !== "POST") {
+      return false;
+    }
+    if (!ownerAction(request, response)) {
+      return true;
+    }
+    if (route[2] === "stop") {
+      await readBody(request);
+      const result = tickets.stop(id, ownerStopReason);
+      if (!result.ok) {
+        sendJson(response, result.error === "not_found" ? 404 : 409, { error: result.error === "not_found" ? "not_found" : "conflict" });
+        return true;
+      }
+      sendJson(response, 202, { ticket: result.ticket });
+      return true;
+    }
+    if (work === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return true;
+    }
+    const given = parseJson(await readBody(request, 64 * 1024), WorkerMessage.strict());
+    if (given === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return true;
+    }
+    const sent = work.message(id, given.text, "owner");
+    if (!sent.ok) {
+      sendJson(response, 409, { error: "conflict" });
+      return true;
+    }
+    sendJson(response, 202, { id: sent.id });
+    return true;
+  };
+
   const serveBrain = (client: WebSocket): void => {
     const conversations = options.conversations;
     if (conversations === undefined) {
@@ -881,6 +959,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const serveSocket = (client: WebSocket, identity: Identity): void => {
     const followed = new Set<string>();
     const watched = new Set<string>();
+    const watchedTickets = new Set<number>();
     const send = (message: ServerMessage) => {
       if (client.readyState === client.OPEN) {
         client.send(JSON.stringify(message));
@@ -901,7 +980,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const unsubscribeWaiting =
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
     const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
+    const unsubscribeWork =
+      options.work?.subscribe((event) => {
+        if (watchedTickets.has(event.ticket)) {
+          send({ type: "work", event });
+        }
+      }) ?? (() => undefined);
     client.on("close", () => {
+      unsubscribeWork();
       unsubscribe();
       unsubscribeConversations();
       unsubscribeWaiting();
@@ -921,6 +1007,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       if (message.type === "unwatch") {
         watched.delete(message.conversation);
+        return;
+      }
+      if (message.type === "watch.ticket") {
+        watchedTickets.add(message.ticket);
+        for (const event of options.work?.events(message.ticket, message.after) ?? []) {
+          send({ type: "work", event });
+        }
+        return;
+      }
+      if (message.type === "unwatch.ticket") {
+        watchedTickets.delete(message.ticket);
         return;
       }
       if (message.type === "watch") {

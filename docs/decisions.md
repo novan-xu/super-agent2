@@ -1127,3 +1127,163 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   readings again) sets it.
 - **Why:** A used-up subscription cannot be produced on demand, and the hub's own rule is what needs seeing.
 - **Other options:** A runner setting that replaces its readings.
+
+## 2026-11-17 — One package of program adapters for the brain and the workers
+
+- **Chosen:** The adapters for Codex, Claude Code and `dsh` (`ProgramAdapter`, the three programs, the line process, the
+  JSON-RPC client and the clock) moved from `packages/brain` into an eighth workspace package, `packages/programs`
+  (`@super-agent2/programs`), with their tests and fake programs. The brain re-exports it and behaves as before. What
+  workers need was added as options the brain does not set: `tools` may be `null` (no hub MCP server: Codex gets no
+  `mcp_servers.hub`, Claude Code gets `--mcp-config {"mcpServers":{}} --strict-mcp-config`, `dsh` gets a patch that only
+  turns off the session log upload), `client` names the Codex client, `codexConfig` adds Codex configuration,
+  `processTree` starts the program in its own process group and stops it with its whole tree (`taskkill /T /F`, or
+  `SIGKILL` to the group and every descendant found with `ps`), and a handle may report its process id. A new event,
+  `model`, carries the model and effort the program says it runs: Codex's `thread/start` and `thread/resume` answers,
+  Claude Code's `init` message (its model only); the brain ignores it. A program given as an npm `.cmd` shim on Windows is
+  run as Node with the shim's script, since `spawn` cannot run a `.cmd` without a shell.
+- **Why:** The issue asks to share the code rather than write it twice. A package of its own keeps the runner from
+  depending on the brain's conversation code.
+- **Other options:** The runner depending on `@super-agent2/brain`; moving the adapters into `protocol`; a copy in the
+  runner.
+
+## 2026-11-17 — Where a worker works on a runner
+
+- **Chosen:** A runner keeps one clone per repository at `~/.superagent2/repos/<owner>/<name>` (`git clone
+  --no-checkout`, then `git fetch --prune` before each start), one worktree per ticket at
+  `~/.superagent2/worktrees/<name>-t<ticket>`, and the ticket's own files at `~/.superagent2/work/t<ticket>`
+  (`work.json` without any credential, the numbered events of the attempt, and the hand-back file). Preparing and
+  removing are serialised per clone, so two tickets of one repository never run Git on the clone at the same time; each
+  works only in its own worktree on its own branch. The branch is `sa2/ticket-<n>-<four hex digits>`, chosen by the hub
+  at the first start and kept on the ticket, so every later attempt, a reassignment and the rounds of #16 use the same
+  branch. A worktree is made from the branch when it exists locally or on `origin`, and otherwise from the default
+  branch, read from `origin/HEAD`. It is removed, with its local branch, when the ticket is merged, delivered or stopped;
+  the branch on GitHub stays with the pull request. The runner's free slots are its `RUNNER_SLOTS` minus the workers it
+  is running, reported whenever that changes; the hub also counts the workers it has started on a machine and starts no
+  more than the machine's slots, so a start on a full or offline machine waits in a queue until a slot is free.
+- **Why:** One clone per repository makes a second ticket cheap to start. The random part of the branch name keeps a hub
+  whose database was replaced from reusing an old branch of the same number.
+- **Other options:** A fresh clone per ticket; a branch named after the issue; refusing a start on a full machine.
+
+## 2026-11-17 — How a worker hands back its result
+
+- **Chosen:** The worker writes a JSON file at a path outside its worktree that its task names:
+  `{"pullRequest": <number>, "summary": {"en": …, "zh": …}}`, the summary being `GeneratedText`. When the worker's turn
+  ends, the runner reads the file (a UTF-8 byte order mark is ignored), and reads the pull request with
+  `gh pr view --json number,url,state,headRefName,closingIssuesReferences`; it is accepted when it is open (or already
+  merged), comes from the ticket's branch, and closes every issue of the chain. Otherwise the runner tells the worker in
+  a new turn exactly what is missing (recorded on the ticket as a message from the hub), at most twice; after that the
+  attempt fails as `no-pull-request` with the last problem. Nothing reads the worker's prose.
+- **Why:** The issue asks for a definite way to hand back that does not depend on parsing prose. A file needs no server
+  on the runner and works the same for the three programs; GitHub's own record of the pull request is what is checked.
+  The checks are facts about the pull request, not a judgement of the work, so this adds no review step.
+- **Other options:** An MCP tool served by the runner; a marker line in the worker's last message; finding the pull
+  request by branch without a hand-back.
+
+## 2026-11-17 — The worker's GitHub identity
+
+- **Chosen:** The hub sends the token of the account that owns the repository (`novan-xu` or `nuofan-island`, as for
+  filing) with each start over the runner's link; the runner keeps it in memory only and gives it to the worker's
+  program in its environment as `GH_TOKEN`, `GITHUB_TOKEN` and `SUPERAGENT2_GITHUB_AUTH`. A `gh` shim in
+  `~/.superagent2/bin`, first on the worker's `PATH`, sets `GH_TOKEN` from `SUPERAGENT2_GITHUB_AUTH` when it is missing
+  and runs the real `gh`. Git gets the token through `GIT_CONFIG_PARAMETERS`, which empties `credential.helper` and sets
+  a helper for `https://github.com` that prints `SUPERAGENT2_GITHUB_AUTH` as the password, so the machine's own
+  credential manager and `gh` login are not used. Codex is told to pass the whole environment to its commands
+  (`shell_environment_policy.inherit = all`, `ignore_default_excludes = true`). Commits are authored as the account,
+  with its name and `<id>+<login>@users.noreply.github.com`, read once per account with `gh api user`. The token never
+  appears in a command line, the runner's files, its log or the events sent to the hub.
+- **Why:** On this PC `dsh` removed every variable whose name contains `KEY`, `PASSWORD`, `SECRET` or `TOKEN` from its
+  shells, with no setting to keep one, so `GH_TOKEN` and `GIT_CONFIG_KEY_<n>` never reached it; its worker then fell
+  back to the machine's own `gh` login. A variable named without those words survives, and one mechanism serves all
+  three programs.
+- **Other options:** A `gh` configuration folder holding the token, which stores it on disk; `GIT_CONFIG_COUNT` with
+  `GIT_CONFIG_KEY_<n>`, which `dsh` removes; leaving the commit author to the machine's Git settings.
+
+## 2026-11-17 — Attempts, the worker's output, and what the page and the brain see
+
+- **Chosen:** Migration 10 adds `ticket_attempts` (one row per worker started for a ticket: machine, engine, model,
+  effort, state `queued`, `preparing`, `running`, `finished`, `failed`, `stopped` or `replaced`, the session, the failure
+  and its reason, when its machine stopped being reachable, the last event number) and `ticket_work_events` (every event
+  the runner sends, numbered per attempt and stored once), and the ticket's `report_en` and `report_zh`. `Ticket.work`
+  is the latest attempt and `Ticket.report` the worker's report; `Ticket.ran` is written from the program's own report
+  of its model and effort, or from what was asked when the program does not say (`dsh`, and Claude Code's effort).
+  `GET /api/tickets/<n>/work?after=&limit=` lists the events; on `/ws` a page sends `watch.ticket` with an optional
+  `after` and receives the stored events and then each new one as `work`, until `unwatch.ticket`.
+  `POST /api/tickets/<n>/messages` with `{"text": …}` sends the owner's message to the running worker and
+  `POST /api/tickets/<n>/stop` stops the ticket with the reason 你停止了它 / "The owner stopped it", both with the
+  same-origin and JSON checks of the other owner actions. The brain gets `message_worker`, and `read_ticket` shows the
+  worker's state and the end of its latest output.
+- **Why:** #13 needs the timeline, the panel's state, the reply box and 停止, and they are built on these.
+- **Other options:** Keeping only the last attempt; storing output as one growing text; sending every event to every
+  page.
+
+## 2026-11-17 — A second begin, restarts and lost connections
+
+- **Chosen:** `TicketWork.begin` makes the first attempt only when the ticket has none, so a second call (a restart of
+  the hub, a reconnecting runner) starts nothing new; a runner told to start an attempt it already runs or has ended
+  does nothing. A runner whose link drops keeps its workers running and keeps every event in the attempt's file; its
+  `hello` lists the work it holds (attempt, last event, whether it runs, whether it ended), and the hub answers with
+  `work.sync` from the last event it stored, so the output and an outcome reached meanwhile catch up. The hub marks the
+  running attempts of a machine `unreachableSince` when its link drops and every running attempt when the hub starts,
+  and clears it at the machine's `hello`. A runner that restarted (its old worker trees are stopped from its process
+  ledger at start) lists the work as not running, and the hub starts the same attempt again, which resumes the
+  program's session in the same worktree with a note that the turn was cut off; a session the program reports lost is
+  started afresh with the whole task and a note to continue from what is on the branch. A running attempt that the
+  machine no longer lists fails as `lost`; a start the runner never received is sent again; work a runner holds for a
+  ticket that ended, or that moved to another machine, is stopped and removed. Nothing is decided from how long
+  anything took: a machine that never comes back leaves its attempt running and unreachable since a known time.
+- **Why:** The issue asks for the truthful outcome in each case and forbids deciding from timing. Keeping workers alive
+  across a dropped link is the outcome that loses nothing; the event files make "catches up" exact.
+- **Other options:** Stopping workers when the link drops, as commands are; giving up on an attempt after a timeout.
+
+## 2026-11-17 — A worker that fails, and the place left for the failure loop
+
+- **Chosen:** An attempt fails as `prepare` (the worktree could not be made, or no token), `program` (the program
+  exited, refused or ran out of allowance), `no-pull-request` (the hand-back was still wrong after two corrections) or
+  `lost`. The hub records it with its reason, keeps the output, and tells the brain in the ticket's conversation with
+  the end of the output, under the notice 工单 {ticket} 的执行没有完成，大脑会决定怎么处理. The ticket stays working,
+  its `work` saying failed and that nothing runs. `WorkService.again(ticket, note)` starts a new attempt on the same
+  branch with the ticket's current choice, resuming the session when the machine and engine are the same, and moves a
+  verifying ticket back to working; nothing calls it yet. It is what #15 (a conflict back to the worker) and #16 (a
+  guided round) call.
+- **Why:** #16 owns the loop and its cap; a stopped ticket is final, so stopping on failure would close the door to it.
+- **Other options:** Moving a failed ticket to stopped; a retry tool for the brain now.
+
+## 2026-11-17 — Messages, stopping and reassigning
+
+- **Chosen:** A message from the owner or the brain goes into the running turn when the program can take it (Codex,
+  Claude Code) and is otherwise given as the worker's next turn (`dsh`, or between turns); either way it is recorded on
+  the ticket with how it was delivered. Stopping a ticket stops its worker with its whole process tree and removes the
+  worktree and the local branch; a machine that is offline does it when it is back. 改派 to the same machine starts a new
+  attempt in the same worktree, resuming the session when the engine is the same, with a note naming the new choice. 改派
+  to another machine first has the old machine commit what is uncommitted, push the branch and remove its worktree, and
+  starts the new attempt only after that, from the branch on GitHub; when the old machine is offline the new attempt
+  starts at once and the old work is discarded when that machine is back.
+- **Why:** The issue asks that reassigning begin again on the same branch; pushing first is what carries unpushed work
+  to another machine.
+- **Other options:** Always starting fresh; discarding unpushed work on a move.
+
+## 2026-11-17 — What a worker is told
+
+- **Chosen:** `packages/runner/guidance/WORKER.md`, in English, is the worker's guidance: it knows only its issues and the
+  repository, works through them in order, owns the result end to end (dependencies, tests, conflicts with the default
+  branch, pushing), opens one pull request that lists and closes every issue, and hands back as above. The first
+  message of a worker is that guidance followed by its task: the repository, folder, branch and its base, the chain's
+  issues in order with their English titles and links, and the hand-back path. Nothing of the brain's guidance is in it.
+- **Why:** The design gives the worker only its issues and the repository; a file outside the repository keeps it out of
+  the worker's commits.
+- **Other options:** Writing an `AGENTS.md` into the worktree; each program's own system prompt option.
+
+## 2026-11-17 — Workers in the development harness, and what was verified
+
+- **Chosen:** `tools/page-dev` takes `--credentials environment`, giving the hub `GITHUB_TOKEN_NOVAN_XU` and
+  `GITHUB_TOKEN_NUOFAN_ISLAND` from its environment, and `/__harness/work?repository=&issues=&machine=&engine=&model=&effort=`
+  opens tickets for existing issues, arranges them into one chain, states defaults through the brain's own tools,
+  applies the owner's choice and starts the chain through `ChainStarter`, as the owner's page would. Verified on this PC
+  with two local runners against `novan-xu/super-agent-sandbox`: one-issue tickets to pull requests with Codex
+  (`gpt-6-luna`), Claude Code (`claude-haiku-5-5`) and `dsh` (`deepseek-flash`); a chain of three issues to one pull
+  request closing all three; `npm install` and a push without a prompt; two tickets of the repository at once; an
+  owner's message taken into a running turn; a stop that ended the worker's processes and removed its worktree; a hub
+  killed and started again while a worker ran; a runner killed and started again while a worker ran; a reassignment to
+  another machine and engine carrying the work over. The Mac mini could not be reached, so macOS is not verified.
+- **Why:** The harness exercises the real front door, start and runner link without a bypass.
+- **Other options:** Driving the brain's tools by hand over MCP for each check.

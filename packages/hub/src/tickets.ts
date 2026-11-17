@@ -15,6 +15,7 @@ import {
   type TicketState,
   type OwnerChoice,
   type ProgramId,
+  WorkStatus,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
@@ -96,6 +97,8 @@ export interface TicketWrites {
   ownerChoice(id: number, choice: OwnerChoice): void;
   choose(id: number, chosen: ChosenRun): void;
   ran(id: number, run: TicketRun): void;
+  setBranch(id: number, branch: string): void;
+  setPullRequest(id: number, pullRequest: number, report: GeneratedText): void;
 }
 
 export interface TicketService {
@@ -147,6 +150,8 @@ const TicketRow = z.object({
   effort: z.string().nullable(),
   branch: z.string().nullable(),
   pull_request: z.number().int().nullable(),
+  report_en: z.string().nullable(),
+  report_zh: z.string().nullable(),
   round: z.number().int(),
   stop_reason_en: z.string().nullable(),
   stop_reason_zh: z.string().nullable(),
@@ -169,6 +174,43 @@ const IssueRow = z.object({
 const WaitRow = z.object({ waits_for: z.number().int(), deployment: z.number().int(), waived_at: z.number().int().nullable() });
 
 const BeginRow = z.object({ failure: z.string().nullable() });
+
+const AttemptRow = z.object({
+  attempt: z.number().int(),
+  state: z.string(),
+  machine: z.string(),
+  engine: z.string(),
+  model: z.string(),
+  effort: z.string(),
+  session: z.string().nullable(),
+  failure: z.string().nullable(),
+  reason: z.string().nullable(),
+  unreachable_since: z.number().int().nullable(),
+  last_seq: z.number().int(),
+  created_at: z.number().int(),
+  started_at: z.number().int().nullable(),
+  ended_at: z.number().int().nullable(),
+});
+
+export function workStatusOf(row: unknown): WorkStatus {
+  const value = AttemptRow.parse(row);
+  return WorkStatus.parse({
+    attempt: value.attempt,
+    state: value.state,
+    machine: value.machine,
+    engine: value.engine,
+    model: value.model,
+    effort: value.effort,
+    session: value.session,
+    failure: value.failure,
+    reason: value.reason,
+    unreachableSince: value.unreachable_since,
+    last: value.last_seq,
+    createdAt: value.created_at,
+    startedAt: value.started_at,
+    endedAt: value.ended_at,
+  });
+}
 
 const MoveRow = z.object({
   ticket_id: z.number().int(),
@@ -213,6 +255,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectWaits = connection.prepare("SELECT waits_for, deployment, waived_at FROM ticket_waits WHERE ticket_id = ? ORDER BY waits_for");
   const selectBegin = connection.prepare("SELECT failure FROM ticket_begins WHERE ticket_id = ? AND failed_at IS NOT NULL AND done_at IS NULL");
   const selectMoves = connection.prepare("SELECT * FROM ticket_moves WHERE ticket_id = ? ORDER BY seq");
+  const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
+  const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
+  const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets ORDER BY created_at DESC, id DESC LIMIT ?");
   const selectOpen = connection.prepare(
@@ -275,6 +320,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return { ticket: wait.waits_for, deployment: wait.deployment === 1, waived: wait.waived_at !== null };
     });
     const begin = selectBegin.get(value.id);
+    const attempt = selectAttempt.get(value.id);
     return Ticket.parse({
       id: value.id,
       repository: value.repository,
@@ -297,6 +343,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       ran: TicketRun.nullable().catch(null).parse(parsedJson(value.ran)),
       branch: value.branch,
       pullRequest: value.pull_request,
+      report: pair(value.report_en, value.report_zh),
+      work: attempt === undefined ? null : workStatusOf(attempt),
       round: value.round,
       waitsFor: waits.map((wait) => wait.ticket),
       waits,
@@ -521,6 +569,17 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       ran: (id, run) => {
         existing(id);
         updateRan.run(JSON.stringify(TicketRun.parse(run)), id);
+        touch(id);
+      },
+      setBranch: (id, branch) => {
+        existing(id);
+        updateBranch.run(branch, id);
+        touch(id);
+      },
+      setPullRequest: (id, pullRequest, report) => {
+        existing(id);
+        const given = GeneratedText.parse(report);
+        updatePullRequest.run(pullRequest, given.en, given.zh, id);
         touch(id);
       },
     };

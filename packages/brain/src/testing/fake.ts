@@ -1,5 +1,5 @@
 import type { Provider } from "@super-agent2/protocol";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "../program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "@super-agent2/programs";
 
 export class FakeHandle implements ProgramHandle {
   readonly prompts: string[] = [];

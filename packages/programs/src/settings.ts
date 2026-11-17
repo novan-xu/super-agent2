@@ -1,4 +1,4 @@
-import type { Clock } from "../clock.js";
+import type { Clock } from "./clock.js";
 
 export const toolTokenVariable = "SUPER_AGENT_HUB_TOKEN";
 
@@ -10,4 +10,7 @@ export interface ProgramSettings {
   readonly effort: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly clock: Clock;
+  readonly client?: string;
+  readonly codexConfig?: Readonly<Record<string, unknown>>;
+  readonly processTree?: boolean;
 }

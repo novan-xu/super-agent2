@@ -1,5 +1,5 @@
 import type { Provider } from "@super-agent2/protocol";
-import type { Clock } from "./clock.js";
+import type { Clock } from "@super-agent2/programs";
 
 export interface Unavailability {
   readonly reason: string;

@@ -15,7 +15,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Brain, createBrain } from "./brain.js";
 import { createHubLink, type HubLink, type Schedule } from "./link.js";
-import type { OpenOptions } from "./program.js";
+import type { OpenOptions } from "@super-agent2/programs";
 import { FakeProgram } from "./testing/fake.js";
 
 let dataDir: string;
@@ -189,14 +189,18 @@ async function say(conversation: string, text: string): Promise<void> {
   expect(response.status).toBe(202);
 }
 
-async function callTool(options: OpenOptions, name: string, args: Record<string, unknown>, bearer = options.tools.token): Promise<string> {
-  const response = await fetch(options.tools.url, {
+async function callTool(options: OpenOptions, name: string, args: Record<string, unknown>, bearer?: string): Promise<string> {
+  const tools = options.tools;
+  if (tools === null) {
+    throw new Error("The brain opened its program without the hub's tools");
+  }
+  const response = await fetch(tools.url, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${bearer}`,
+      authorization: `Bearer ${bearer ?? tools.token}`,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      [conversationHeader]: options.tools.conversation,
+      [conversationHeader]: tools.conversation,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
   });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { conversationHeader } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "../program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { type ProgramSettings, toolTokenVariable } from "./settings.js";
 
@@ -9,7 +9,7 @@ const keptVariables = new Set(["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "
 
 export const claudeTokenVariable = "BRAIN_CLAUDE_OAUTH_TOKEN";
 
-export function claudeEnvironment(environment: Readonly<Record<string, string | undefined>>, token: string): Record<string, string | undefined> {
+export function claudeEnvironment(environment: Readonly<Record<string, string | undefined>>, token: string | null): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
   for (const [name, value] of Object.entries(environment)) {
     if (/^(CLAUDE|ANTHROPIC|MCP_)/.test(name) && !keptVariables.has(name)) {
@@ -22,7 +22,9 @@ export function claudeEnvironment(environment: Readonly<Record<string, string | 
     result["CLAUDE_CODE_OAUTH_TOKEN"] = oauth;
   }
   delete result[claudeTokenVariable];
-  result[toolTokenVariable] = token;
+  if (token !== null) {
+    result[toolTokenVariable] = token;
+  }
   if (process.platform !== "win32" && process.getuid?.() === 0) {
     result["IS_SANDBOX"] = "1";
   }
@@ -59,7 +61,7 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     "--setting-sources",
     "project",
     "--mcp-config",
-    claudeToolConfig(options.tools.url, options.tools.conversation),
+    options.tools === null ? JSON.stringify({ mcpServers: {} }) : claudeToolConfig(options.tools.url, options.tools.conversation),
     "--strict-mcp-config",
     session.resume ? "--resume" : "--session-id",
     session.id,
@@ -81,6 +83,7 @@ const Output = z.looseObject({
   type: z.string(),
   subtype: z.string().optional(),
   session_id: z.string().optional(),
+  model: z.string().optional(),
   parent_tool_use_id: z.string().nullable().optional(),
   api_message_id: z.string().optional(),
   event: z
@@ -166,6 +169,7 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
   const outstanding = new Set<string>();
   const streamed = new Set<string>();
   let blocks = 0;
+  let reportedModel: string | undefined;
 
   const finish = (event: ProgramEvent) => {
     running = false;
@@ -183,6 +187,10 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
       if (fresh && !announced) {
         announced = true;
         listener({ type: "session", session });
+      }
+      if (output.model !== undefined && output.model !== reportedModel) {
+        reportedModel = output.model;
+        listener({ type: "model", model: output.model, effort: null });
       }
       return;
     }
@@ -260,8 +268,9 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
 
   const child: LineProcess = spawnLines(invocationOf(settings.program, claudeArguments(settings, options, { id: session, resume: !fresh })), {
     cwd: options.workspace,
-    env: claudeEnvironment(settings.environment, options.tools.token),
+    env: claudeEnvironment(settings.environment, options.tools?.token ?? null),
     onMessage: onOutput,
+    tree: settings.processTree === true,
   });
 
   void child.exited.then((exit) => {
@@ -309,5 +318,6 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
       child.kill();
       await child.exited;
     },
+    processId: () => child.pid,
   };
 }

@@ -22,6 +22,7 @@ import { createToolServer } from "./tools.js";
 import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
+import { createWorkService, type WorkService } from "./work.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -59,6 +60,7 @@ export interface Hub {
   readonly tickets: TicketService;
   readonly chains: Chains;
   readonly defaults: StartDefaults;
+  readonly work: WorkService | undefined;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -88,7 +90,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     statuses: () => runners.statuses(),
     ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
-  const tickets = createTicketService({ database, clock, ...(options.ticketWork === undefined ? {} : { work: options.ticketWork }) });
+  let work: WorkService | undefined;
+  const ticketWork: TicketWork = options.ticketWork ?? {
+    begin: (ticket) => work?.begin(ticket),
+    stop: (ticket) => work?.stop(ticket),
+    reassign: (ticket) => work?.reassign(ticket),
+  };
+  const tickets = createTicketService({ database, clock, work: ticketWork });
+  const credentials = options.credentials ?? environmentCredentials(environment);
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
     const brainToken = brainTokenCheck(ensureBrainToken(config.brainTokenFile));
@@ -106,11 +115,23 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       database,
       clock,
       targets,
-      credentials: options.credentials ?? environmentCredentials(environment),
+      credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
     conversations = createConversationService({ database, clock, commands });
     const told = conversations;
+    if (options.ticketWork === undefined) {
+      work = createWorkService({
+        database,
+        clock,
+        tickets,
+        runners,
+        credentials,
+        tell: (conversation, notice, prompt) => {
+          told.tell(conversation, notice, prompt);
+        },
+      });
+    }
     chains = createChains({
       database,
       clock,
@@ -121,7 +142,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tell: (conversation, notice, prompt) => {
         told.tell(conversation, notice, prompt);
       },
-      ...(options.ticketWork === undefined ? {} : { work: options.ticketWork }),
+      work: ticketWork,
     });
     const listed = chains;
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards() });
@@ -149,9 +170,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
           chains: chains.arranger,
           defaults,
+          ...(work === undefined ? {} : { work }),
         },
       }),
       tickets,
+      ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       defaults,
       brainToken,
@@ -167,6 +190,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     throw error;
   }
   try {
+    work?.resume();
     const address = await server.listen(config.port, config.host);
     chains.resume();
     return {
@@ -181,12 +205,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tickets,
       chains,
       defaults,
+      work,
       address,
       close: async () => {
         try {
           runners.close();
           await server.close();
         } finally {
+          work?.close();
           chains.close();
           await chains.idle();
           waiting.close();
@@ -199,6 +225,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
+    work?.close();
     chains.close();
     waiting.close();
     await push?.close();

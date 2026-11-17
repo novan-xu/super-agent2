@@ -1,4 +1,4 @@
-import { systemClock } from "./clock.js";
+import { systemClock } from "@super-agent2/programs";
 import { startFromEnvironment } from "./start.js";
 
 const running = startFromEnvironment(process.env, systemClock, (line) => process.stderr.write(`${line}\n`));

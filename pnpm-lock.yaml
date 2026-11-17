@@ -184,6 +184,9 @@ importers:
 
   packages/brain:
     dependencies:
+      '@super-agent2/programs':
+        specifier: workspace:*
+        version: link:../programs
       '@super-agent2/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -235,6 +238,19 @@ importers:
         specifier: 8.18.2
         version: 8.18.2
 
+  packages/programs:
+    dependencies:
+      '@super-agent2/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+
   packages/protocol:
     dependencies:
       zod:
@@ -247,6 +263,9 @@ importers:
 
   packages/runner:
     dependencies:
+      '@super-agent2/programs':
+        specifier: workspace:*
+        version: link:../programs
       '@super-agent2/protocol':
         specifier: workspace:*
         version: link:../protocol

@@ -13,6 +13,7 @@ export function machineReport(
   programs: readonly ProgramReport[],
   platform: NodeJS.Platform = process.platform,
   allowances: readonly AllowanceReading[] = [],
+  busy = 0,
 ): MachineReport {
   return {
     hostname: hostname(),
@@ -20,7 +21,7 @@ export function machineReport(
     release: release(),
     arch: arch(),
     user: userInfo().username,
-    slots: { total: slots, free: slots },
+    slots: { total: slots, free: Math.max(0, slots - busy) },
     programs: [...programs],
     allowances: [...allowances],
   };

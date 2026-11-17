@@ -4,7 +4,7 @@ import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
-import { defaultPageDir, generateVapidKeys, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
+import { defaultPageDir, environmentCredentials, generateVapidKeys, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
@@ -18,6 +18,7 @@ const { values } = parseArgs({
     model: { type: "string" },
     fresh: { type: "boolean", default: false },
     push: { type: "string", default: "generated" },
+    credentials: { type: "string", default: "none" },
   },
 });
 
@@ -30,6 +31,11 @@ const brainKind = values.brain;
 
 if (brainKind !== "demo" && brainKind !== "claude" && brainKind !== "none") {
   process.stderr.write("--brain must be demo, claude or none\n");
+  process.exit(1);
+}
+
+if (values.credentials !== "none" && values.credentials !== "environment") {
+  process.stderr.write("--credentials must be none or environment\n");
   process.exit(1);
 }
 
@@ -114,7 +120,7 @@ const hub = await startHub({
   },
   keySource: () => Promise.resolve(keys),
   targets: [localTarget({ environment: process.env }), demoTarget()],
-  credentials: () => ({ ok: true, credentials: {} }),
+  credentials: values.credentials === "environment" ? environmentCredentials(process.env) : () => ({ ok: true, credentials: {} }),
   adjustSubscriptions: allowance.adjust,
 });
 const hubPort = hub.address.port;
@@ -170,7 +176,14 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
   return headers;
 }
 
-const harness = createHarness({ hub, publicUrl: `http://127.0.0.1:${port}`, hubUrl, assertion: ownerAssertion, allowance });
+const harness = createHarness({
+  hub,
+  publicUrl: `http://127.0.0.1:${port}`,
+  hubUrl,
+  assertion: ownerAssertion,
+  allowance,
+  brainToken: () => readFileSync(join(hubDir, "brain.token"), "utf8").trim(),
+});
 
 const proxy = createServer((incoming, outgoing) => {
   const path = new URL(incoming.url ?? "/", "http://page-dev").pathname;
@@ -263,6 +276,7 @@ process.stdout.write(
     `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
+    `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort> files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

@@ -13,6 +13,7 @@ import WebSocket from "ws";
 import type { RunnerConfig } from "./config.js";
 import type { Ledger } from "./ledger.js";
 import type { ShellJob, ShellRun, ShellSink } from "./shell.js";
+import type { Works } from "./works.js";
 
 export interface LinkSocket {
   send(text: string): void;
@@ -51,6 +52,7 @@ export interface RunnerLinkOptions {
   readonly retryDelay?: (attempt: number) => number;
   readonly silenceMilliseconds?: number;
   readonly onEvent?: (event: LinkEvent) => void;
+  readonly works?: () => Works | undefined;
 }
 
 export interface RunnerLink {
@@ -58,6 +60,7 @@ export interface RunnerLink {
   update(): void;
   running(): string[];
   connected(): boolean;
+  send(message: RunnerToHub): void;
   close(): Promise<void>;
 }
 
@@ -207,7 +210,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
       open: () => {
         heard = Date.now();
         socket = current;
-        send({ type: "hello", protocol: protocolVersion, machine: options.report() });
+        send({ type: "hello", protocol: protocolVersion, machine: options.report(), works: options.works?.()?.held() ?? [] });
       },
       message: (text) => {
         heard = Date.now();
@@ -231,7 +234,11 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
           run(current, message.id, { command: message.command, cwd: message.cwd, environment: message.environment });
           return;
         }
-        stopOne(message.id);
+        if (message.type === "stop") {
+          stopOne(message.id);
+          return;
+        }
+        options.works?.()?.receive(message);
       },
       ping: () => {
         heard = Date.now();
@@ -284,6 +291,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
     },
     running: () => [...runs.keys()],
     connected: () => welcomed,
+    send,
     close: async () => {
       closing = true;
       if (retryTimer !== undefined) {

@@ -31,6 +31,8 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     waits: [],
     deployedAt: null,
     beginFailure: null,
+    report: null,
+    work: null,
     stopReason: null,
     conversation: null,
     createdAt: id * 1000,

@@ -75,6 +75,15 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     `Branch: ${chosen(ticket.branch)}; pull request: ${ticket.pullRequest === null ? "none" : `#${ticket.pullRequest}`}; guided round: ${ticket.round}`,
     `Waits for: ${ticket.waits.length === 0 ? "nothing" : ticket.waits.map(waitText).join(", ")}`,
   );
+  if (ticket.work !== null) {
+    const work = ticket.work;
+    const reach = work.unreachableSince === null ? "" : `; its machine has not been reachable since ${new Date(work.unreachableSince).toISOString()}`;
+    const why = work.reason === null ? "" : `: ${work.failure === null ? "" : `${work.failure}, `}${work.reason}`;
+    lines.push(`Worker: attempt ${work.attempt} on ${work.machine} with ${work.engine} ${work.model} ${work.effort} is ${work.state}${why}${reach}`);
+  }
+  if (ticket.report !== null) {
+    lines.push(`Worker's report: ${ticket.report.en}`, `Chinese report: ${ticket.report.zh}`);
+  }
   if (ticket.deployedAt !== null) {
     lines.push(`Deployed: reported at ${new Date(ticket.deployedAt).toISOString()}`);
   }
