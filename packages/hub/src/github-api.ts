@@ -47,6 +47,7 @@ export interface MergeMethods {
 export interface GitHubApi {
   pullRequest(repository: string, number: number): Promise<PullRequestState>;
   files(repository: string, number: number): Promise<ChangedFile[]>;
+  changedOn(repository: string, head: string, base: string): Promise<string[]>;
   contents(repository: string, path: string, ref: string): Promise<Contents | null>;
   mergeMethods(repository: string): Promise<MergeMethods>;
   merge(repository: string, number: number, sha: string, method: MergeMethod): Promise<MergeAnswer>;
@@ -77,6 +78,8 @@ const PullJson = z.looseObject({
 });
 
 const FileJson = z.looseObject({ filename: z.string(), previous_filename: z.string().optional() });
+
+const CompareJson = z.looseObject({ files: z.array(FileJson).optional() });
 
 const EntryJson = z.looseObject({ name: z.string(), type: z.string() });
 
@@ -180,6 +183,10 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
         }
       }
       return files;
+    },
+    changedOn: async (repository, head, base) => {
+      const compared = await read(`${repo(repository)}/compare/${encodeURIComponent(head)}...${encodeURIComponent(base)}?per_page=${pageSize}`, CompareJson);
+      return (compared.files ?? []).map((file) => file.filename);
     },
     contents: async (repository, path, ref) => {
       const address = `${repo(repository)}/contents/${pathOf(path)}?ref=${encodeURIComponent(ref)}`;

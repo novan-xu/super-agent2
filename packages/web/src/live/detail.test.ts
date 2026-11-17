@@ -9,7 +9,7 @@ function move(seq: number, from: TicketMove["from"], to: TicketMove["to"], at: n
 
 describe("a ticket's detail", () => {
   it("takes the hub's reading of the ticket, and a newer ticket from the socket", () => {
-    const read = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working", updatedAt: 5 }), moves: [move(1, null, "pending", 1)], attempts: [] });
+    const read = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working", updatedAt: 5 }), moves: [move(1, null, "pending", 1)], attempts: [], rounds: [] });
     expect(read.ticket?.state).toBe("working");
     const older = receiveTicketChange(read, ticket(1, { state: "pending", updatedAt: 4 }));
     expect(older).toBe(read);
@@ -23,7 +23,7 @@ describe("a ticket's detail", () => {
   });
 
   it("reads the moves again when the ticket's state is not the last move", () => {
-    const read = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working" }), moves: [move(1, null, "pending", 1), move(2, "pending", "working", 2)], attempts: [] });
+    const read = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working" }), moves: [move(1, null, "pending", 1), move(2, "pending", "working", 2)], attempts: [], rounds: [] });
     expect(needsMoves(read, ticket(1, { state: "working" }))).toBe(false);
     expect(needsMoves(read, ticket(1, { state: "stopped" }))).toBe(true);
     expect(needsMoves(read, ticket(2, { state: "stopped" }))).toBe(false);
@@ -35,6 +35,7 @@ describe("a ticket's detail", () => {
         ticket: ticket(1, { state: "stopped", createdAt: 1 }),
         moves: [move(1, null, "pending", 1), move(2, "pending", "working", 5), move(3, "working", "stopped", 50)],
         attempts: [workStatus({ attempt: 1, createdAt: 6, state: "replaced" }), workStatus({ attempt: 2, createdAt: 20, state: "stopped" })],
+        rounds: [],
       }),
       [workEvent(1, { kind: "text", block: "a", delta: "x" }), workEvent(2, { kind: "text", block: "b", delta: "y" }, { attempt: 2, seq: 1 })],
     );
@@ -44,7 +45,7 @@ describe("a ticket's detail", () => {
   });
 
   it("calls only the latest running, reachable, unended attempt live", () => {
-    const base = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working" }), moves: [], attempts: [workStatus({ attempt: 1, state: "running" })] });
+    const base = receiveDetail(openDetail(1), { ticket: ticket(1, { state: "working" }), moves: [], attempts: [workStatus({ attempt: 1, state: "running" })], rounds: [] });
     const entry = (state: typeof base) => {
       const found = timeline(state).find((item) => item.kind === "attempt");
       if (found?.kind !== "attempt") {

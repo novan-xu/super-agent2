@@ -15,6 +15,8 @@ import {
   Platform,
   platforms,
   RepositoryName,
+  roundCap,
+  type TicketRound,
   TicketKind,
   ticketKinds,
 } from "@super-agent2/protocol";
@@ -22,6 +24,7 @@ import { z } from "zod";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
+import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop.js";
 import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
@@ -129,6 +132,10 @@ const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1).max(10
 
 const TicketArgument = z.object({ ticket: z.number().int().positive() });
 
+const GuideArguments = z.object({ ticket: z.number().int().positive(), guidance: GeneratedText });
+
+const StuckArguments = z.object({ ticket: z.number().int().positive(), where: GeneratedText });
+
 const MergeArguments = z.object({ ticket: z.number().int().positive(), reason: z.string().trim().min(1).max(2_000) });
 
 const DefaultsArgument = z.object({
@@ -191,6 +198,59 @@ export interface TicketTools {
   readonly defaults?: StartDefaults;
   readonly work?: WorkService;
   readonly verification?: VerificationService;
+  readonly loop?: FailureLoop;
+}
+
+function loopDefinitions() {
+  return [
+    {
+      name: "guide_ticket",
+      title: "Guide a failed ticket's worker into another round",
+      description: [
+        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a conflict the worker did not resolve, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
+        "A failure of the machine (lost, prepare) starts a retry that is not counted, once in a row.",
+        "Refused for a ticket whose worker still runs (use message_worker), for a ticket with nothing failed, and for a ticket stopped for the owner.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: { type: "integer", minimum: 1, description: "The failed ticket" },
+          guidance: generatedSchema("guidance to the worker: what failed and why, and what to change; the worker gets the English, the owner sees the Chinese in the ticket's timeline"),
+        },
+        required: ["ticket", "guidance"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "describe_stuck",
+      title: "Say where a stopped ticket is stuck",
+      description:
+        "For a ticket the hub stopped for the owner at the retry cap: say in a few sentences where it is stuck, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the ticket's card in 等你. It does not resume the ticket; only the owner does, on the card.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: { type: "integer", minimum: 1, description: "The ticket stopped for the owner" },
+          where: generatedSchema("description of where the ticket is stuck"),
+        },
+        required: ["ticket", "where"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function roundLines(rounds: readonly TicketRound[]): string[] {
+  return rounds.map(
+    (round) =>
+      `${round.round === null ? "Retry not counted" : `Guided round ${round.round}`} (attempt ${round.attempt}, ${new Date(round.at).toISOString()}) after ${failureWords[round.failure.kind]}${round.failure.detail === "" ? "" : ` (${round.failure.detail})`}. Your guidance: ${round.guidance.en}`,
+  );
+}
+
+function loopText(outcome: LoopOutcome, done: (ticket: number) => string): ToolResult {
+  if (!outcome.ok) {
+    return { text: `Nothing was changed: ${outcome.reason}`, isError: true };
+  }
+  return { text: `${done(outcome.ticket.id)}\n${ticketLine(outcome.ticket)}` };
 }
 
 function verificationDefinitions() {
@@ -656,6 +716,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
+      ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
     ];
   };
 
@@ -824,8 +885,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const output = tools.work?.output(detail.ticket.id) ?? "";
         const writing = detail.ticket.kind === "writing" ? tools.tickets.writing(detail.ticket.id) : undefined;
         const logs = tools.verification?.logs(detail.ticket.id) ?? [];
+        const stuck = detail.ticket.stuck;
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...roundLines(detail.rounds),
+          ...(stuck === null
+            ? []
+            : [
+                `Stopped for the owner at the retry cap after ${stuck.round} guided rounds, on: ${failureWords[stuck.failure.kind]}${stuck.failure.detail === "" ? "" : ` (${stuck.failure.detail})`}. It waits for the owner's answer on its card.`,
+                stuck.where === null ? "You have not said where it is stuck yet; do it with describe_stuck." : `Where it is stuck, as you said: ${stuck.where.en}`,
+              ]),
           ...logs.flatMap((log) => [`The log of the failing workflow ${log.workflow}, step ${log.step}, ends with:`, clip(log.log || "(empty)", 8_000)]),
           ...(writing === undefined
             ? []
@@ -854,6 +923,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
+        if (tools.tickets.get(parsed.data.ticket)?.state === "stuck") {
+          return { text: `Ticket ${parsed.data.ticket} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你, whether to resume it or give it up. Tell the owner.`, isError: true };
+        }
         const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason);
         if (result.ok) {
           return { text: `Stopped ticket ${result.ticket.id}.\n${ticketLine(result.ticket)}` };
@@ -877,6 +949,33 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         return statedText(tools.chains.state(parsed.data.chains), tools.defaults);
+      }
+      case "guide_ticket": {
+        if (tools.loop === undefined) {
+          return undefined;
+        }
+        const parsed = GuideArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        const outcome = tools.loop.guide(parsed.data.ticket, parsed.data.guidance);
+        if (!outcome.ok) {
+          return { text: `No round was started: ${outcome.reason}`, isError: true };
+        }
+        const round = outcome.round;
+        return {
+          text: `${round === undefined || round.round === null ? `Ticket ${outcome.ticket.id} went back to its worker for a retry not counted as a guided round.` : `Ticket ${outcome.ticket.id} went back to its worker for guided round ${round.round} of ${roundCap}.`} You are told how it ends.\n${ticketLine(outcome.ticket)}`,
+        };
+      }
+      case "describe_stuck": {
+        if (tools.loop === undefined) {
+          return undefined;
+        }
+        const parsed = StuckArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        return loopText(tools.loop.describe(parsed.data.ticket, parsed.data.where), (ticket) => `The card of ticket ${ticket} now says where it is stuck. It waits for the owner.`);
       }
       case "merge_ticket": {
         if (tools.verification === undefined) {

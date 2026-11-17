@@ -12,6 +12,14 @@ export function clip(text: string, limit: number = reportLimit): string {
   return `${text.slice(0, head)}\n[... ${omitted} characters omitted ...]\n${text.slice(text.length - tail)}`;
 }
 
+export function tail(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+  const kept = text.slice(text.length - limit);
+  return `[the first ${text.length - limit} of ${text.length} characters are cut; this is the end, where the failure is]\n${kept}`;
+}
+
 export function commandSummary(command: CommandRecord): string {
   const parts = [`Command ${command.id} on target ${command.target} (account ${command.account}) is ${command.state}`];
   if (command.exitCode !== null) {

@@ -4,11 +4,11 @@ import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
-import { defaultPageDir, environmentCredentials, generateVapidKeys, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
+import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
-import { createAllowanceForcing, createHarness, demoTarget } from "./harness.js";
+import { createAllowanceForcing, createHarness, demoTarget, forgeHandBack } from "./harness.js";
 import { createScriptedRunners } from "./scripted.js";
 
 const { values } = parseArgs({
@@ -20,6 +20,7 @@ const { values } = parseArgs({
     fresh: { type: "boolean", default: false },
     push: { type: "string", default: "generated" },
     credentials: { type: "string", default: "none" },
+    forge: { type: "string", default: "none" },
   },
 });
 
@@ -37,6 +38,16 @@ if (brainKind !== "demo" && brainKind !== "claude" && brainKind !== "none") {
 
 if (values.credentials !== "none" && values.credentials !== "environment" && values.credentials !== "placeholder") {
   process.stderr.write("--credentials must be none, environment or placeholder\n");
+  process.exit(1);
+}
+
+if (values.forge !== "none" && values.forge !== "fake") {
+  process.stderr.write("--forge must be none or fake\n");
+  process.exit(1);
+}
+
+if (values.forge === "fake" && values.credentials === "environment") {
+  process.stderr.write("--forge fake gives the hub placeholder tokens; it cannot be used with --credentials environment\n");
   process.exit(1);
 }
 
@@ -104,6 +115,7 @@ function vapidKeys(): VapidKeys | undefined {
 
 const vapid = vapidKeys();
 const allowance = createAllowanceForcing();
+const forge = values.forge === "fake" ? fakeForge() : undefined;
 
 const hub = await startHub({
   config: {
@@ -122,14 +134,20 @@ const hub = await startHub({
   keySource: () => Promise.resolve(keys),
   targets: [localTarget({ environment: process.env }), demoTarget()],
   credentials:
-    values.credentials === "environment"
-      ? environmentCredentials(process.env)
-      : values.credentials === "placeholder"
-        ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
-        : () => ({ ok: true, credentials: {} }),
+    forge !== undefined
+      ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder", WOODPECKER_SERVER: fakeWoodpeckerServer, WOODPECKER_TOKEN: "page-dev-placeholder" } })
+      : values.credentials === "environment"
+        ? environmentCredentials(process.env)
+        : values.credentials === "placeholder"
+          ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
+          : () => ({ ok: true, credentials: {} }),
   adjustSubscriptions: allowance.adjust,
-  verificationPollMilliseconds: 10_000,
-  ...(values.credentials === "environment" ? {} : { forgeFetch: (input: string | URL | Request) => Promise.reject(new Error(`The harness reaches no forge without --credentials environment: ${String(input instanceof Request ? input.url : input)}`)) }),
+  verificationPollMilliseconds: forge === undefined ? 10_000 : 2_000,
+  ...(forge !== undefined
+    ? { forgeFetch: forge.fetch, gitHubBase: fakeGitHubBase }
+    : values.credentials === "environment"
+      ? {}
+      : { forgeFetch: (input: string | URL | Request) => Promise.reject(new Error(`The harness reaches no forge without --credentials environment: ${String(input instanceof Request ? input.url : input)}`)) }),
 });
 const hubPort = hub.address.port;
 const hubUrl = `http://127.0.0.1:${hubPort}`;
@@ -184,7 +202,8 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
   return headers;
 }
 
-const scripted = createScriptedRunners(hub);
+const running: Hub = hub;
+const scripted = createScriptedRunners(hub, forge === undefined ? undefined : forgeHandBack(forge, () => running));
 
 const harness = createHarness({
   scripted,
@@ -291,6 +310,7 @@ process.stdout.write(
     `Tool:     http://127.0.0.1:${port}/__harness/tool?name=<tool>&args=<JSON> calls one of the brain's tools, for example merge_ticket`,
     `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a writing ticket through the brain's tools and states its defaults, to be started from its card on the page`,
     `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two writing tickets on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
+    `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round) or worker (fails once), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

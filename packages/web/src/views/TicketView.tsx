@@ -110,6 +110,15 @@ function AttemptEntry({ entry, ticket, now }: { readonly entry: Extract<Timeline
           {entry.number > 1 && status !== null ? <span className="chip">{text("timeline.attempt", { attempt: entry.number })}</span> : null}
           <span className="muted">{momentOf(entry.at, now)}</span>
         </div>
+        {entry.round === null ? null : (
+          <div className="work-msg">
+            <span className="work-msg-who">
+              <strong>{entry.round.round === null ? text("timeline.retry") : text("timeline.round", { round: entry.round.round })}</strong>
+              <span className="muted">{text(`loop.failure.${entry.round.failure.kind}`)}</span>
+            </span>
+            <span className="work-msg-text">{chineseOf(entry.round.guidance)}</span>
+          </div>
+        )}
         <div className="work-log">
           {items.map((item, index) => (
             <WorkItem key={item.key} item={item} live={live} last={index === items.length - 1} ticket={ticket} />
@@ -129,7 +138,7 @@ function AttemptEntry({ entry, ticket, now }: { readonly entry: Extract<Timeline
 
 function MoveEntry({ entry, now }: { readonly entry: Extract<TimelineEntry, { readonly kind: "move" }>; readonly now: number }) {
   const label = moveLabel(entry.move);
-  const tone = label === "merged" || label === "delivered" ? " tl--ok" : label === "stopped" ? " tl--bad" : "";
+  const tone = label === "merged" || label === "delivered" ? " tl--ok" : label === "stopped" || label === "stuck" ? " tl--bad" : "";
   return (
     <li className={`tl${tone}`}>
       <span className="tl-rail">

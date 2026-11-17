@@ -1,7 +1,16 @@
 import type { Hub, RunnerLink } from "@super-agent2/hub";
 import { type HubToRunner, type MachinePlatform, type MachineReport, protocolVersion, type WorkEvent } from "@super-agent2/protocol";
 
-export type Behaviour = "long" | "finish" | "fail" | "deliver";
+export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "deliver";
+
+export interface HandBack {
+  readonly ticket: number;
+  readonly attempt: number;
+  readonly repository: string;
+  readonly branch: string;
+  readonly pullRequest: number;
+  readonly behaviour: Behaviour;
+}
 
 interface Running {
   readonly ticket: number;
@@ -9,6 +18,8 @@ interface Running {
   readonly machine: string;
   readonly behaviour: Behaviour;
   readonly repository: string | null;
+  readonly branch: string | null;
+  readonly planned: Behaviour;
   seq: number;
   step: number;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -71,7 +82,7 @@ const opening = words("我读完了这几个问题和相关的代码。改动涉
 
 const lines = (count: number, prefix: string): string[] => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}\n`);
 
-export function createScriptedRunners(hub: Hub): ScriptedRunners {
+export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => void): ScriptedRunners {
   const machines: ScriptedMachine[] = [
     { name: "studio", platform: "win32", link: undefined },
     { name: "mini", platform: "darwin", link: undefined },
@@ -79,6 +90,7 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
   const behaviours = new Map<number, Behaviour>();
   const running = new Map<number, Running>();
   const descriptions = new Map<number, string | null>();
+  const branches = new Map<number, string>();
 
   const machineOf = (name: string) => machines.find((machine) => machine.name === name);
 
@@ -162,6 +174,9 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
     tool(work, "test", "pnpm test", lines(8, "ok"), true, () =>
       stream(work, "done", words("测试全部通过。PR 已经开好，交回文件也写好了。"), () => {
         const number = 100 + work.ticket;
+        if (work.repository !== null && work.branch !== null) {
+          handBack?.({ ticket: work.ticket, attempt: work.attempt, repository: work.repository, branch: work.branch, pullRequest: number, behaviour: work.planned });
+        }
         emit(work, {
           kind: "finished",
           pullRequest: number,
@@ -174,6 +189,15 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
   };
 
   const fail = (work: Running) => {
+    if (work.planned === "fails") {
+      tool(work, "test", "pnpm test", [`FAIL src/parser.test.ts > parses relative dates (attempt ${work.attempt})\n`, "AssertionError: expected '2026-11-18' to be '2026-11-17'\n"], false, () => {
+        stream(work, "gave-up", words("测试还是不过，我没能交回 PR。"), () => {
+          emit(work, { kind: "failed", failure: "no-pull-request", reason: "The worker ended without handing back a pull request, after two corrections" });
+          end(work);
+        });
+      });
+      return;
+    }
     tool(work, "test", "pnpm test", ["FAIL src/parser.test.ts\n", "Error: rate limit reached for this account\n"], false, () => {
       emit(work, { kind: "failed", failure: "program", reason: "The program exited with code 1: rate limit reached for this account" });
       end(work);
@@ -198,7 +222,7 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
     );
   };
 
-  const begin = (machine: string, ticket: number, attempt: number, model: string, effort: string, resumed: boolean) => {
+  const begin = (machine: string, ticket: number, attempt: number, model: string, effort: string, resumed: boolean, note: string | null) => {
     const previous = running.get(ticket);
     if (previous !== undefined && !previous.ended && previous.attempt === attempt) {
       return;
@@ -207,13 +231,15 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
       end(previous);
     }
     const planned = behaviours.get(ticket) ?? "finish";
-    const work: Running = { ticket, attempt, machine, behaviour: planned === "fail" && attempt > 1 ? "finish" : planned, repository: descriptions.get(ticket) ?? null, seq: 0, step: 0, timer: undefined, ended: false };
+    const behaviour: Behaviour = planned === "fail" && attempt > 1 ? "finish" : planned === "fails" ? "fail" : planned === "red-once" || planned === "red-always" ? "finish" : planned;
+    const work: Running = { ticket, attempt, machine, behaviour, planned, repository: descriptions.get(ticket) ?? null, branch: branches.get(ticket) ?? null, seq: 0, step: 0, timer: undefined, ended: false };
     running.set(ticket, work);
     emit(work, { kind: "phase", phase: "preparing", detail: `Preparing ticket ${ticket}` });
     later(work, 400, () => {
       emit(work, { kind: "phase", phase: resumed ? "resumed" : "started", detail: `Started with ${model} at ${effort}` });
       emit(work, { kind: "ran", model, effort });
-      stream(work, "open", opening, () => {
+      const guided = note === null ? [] : words("收到了引导，先按它说的改，再从头检查一遍。");
+      stream(work, "open", [...guided, ...opening], () => {
         if (work.behaviour === "long") {
           loop(work);
         } else if (work.behaviour === "fail") {
@@ -231,11 +257,12 @@ export function createScriptedRunners(hub: Hub): ScriptedRunners {
     switch (message.type) {
       case "work.start":
         descriptions.set(message.task.ticket, message.task.repository);
-        begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null);
+        branches.set(message.task.ticket, message.task.branch);
+        begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);
         return;
       case "work.write":
         descriptions.set(message.task.ticket, null);
-        begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null);
+        begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);
         return;
       case "work.message": {
         const work = running.get(message.ticket);

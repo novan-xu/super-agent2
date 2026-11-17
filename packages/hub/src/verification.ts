@@ -17,7 +17,8 @@ import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi, type MergeMethod, type MergeMethods, type PullRequestState } from "./github-api.js";
-import { clip } from "./reports.js";
+import type { FailureReport } from "./failure-loop.js";
+import { clip, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import { closedIssuesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type WoodpeckerApi } from "./woodpecker.js";
@@ -39,6 +40,7 @@ export interface VerificationOptions {
   readonly tell?: Tell;
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
+  readonly report?: (report: FailureReport) => void;
 }
 
 export type SkipOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
@@ -196,7 +198,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
   const selectUnreported = connection.prepare(
     "SELECT v.ticket_id FROM ticket_verifications v JOIN tickets t ON t.id = v.ticket_id WHERE t.state = 'merged' AND v.merged_at IS NOT NULL AND v.reported_at IS NULL ORDER BY v.ticket_id",
   );
-  const selectEntry = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ? AND to_state = 'verifying'");
+  const selectEntry = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ? AND to_state = 'verifying' AND from_state = 'working'");
 
   const rowOf = (id: number): VerificationRow | undefined => {
     const row = selectRow.get(id);
@@ -239,6 +241,32 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
     save(ticket.id, { told: key });
     tell(ticket.conversation, notice, prompt);
+  };
+
+  const reportOnce = (ticket: Ticket, key: string, report: FailureReport, notice: string, prompt: string) => {
+    if (options.report === undefined) {
+      tellOnce(ticket, key, notice, prompt);
+      return;
+    }
+    if (closed || rowOf(ticket.id)?.told === key) {
+      return;
+    }
+    save(ticket.id, { told: key });
+    options.report(report);
+  };
+
+  const bothSides = async (gitHub: GitHubApi, ticket: Ticket, head: string, base: string): Promise<string> => {
+    const repository = ticket.repository ?? "";
+    try {
+      const ours = new Set((await gitHub.files(repository, ticket.pullRequest ?? 0)).map((file) => file.path));
+      const theirs = await gitHub.changedOn(repository, head, base);
+      const shared = theirs.filter((path) => ours.has(path));
+      return shared.length === 0
+        ? `no file is changed both by the pull request and on ${base} since it branched (${theirs.length} file(s) changed on ${base})`
+        : `files changed both by the pull request and on ${base} since it branched: ${shared.join(", ")}`;
+    } catch (error) {
+      return `the files changed on both sides could not be read: ${reasonOf(error)}`;
+    }
   };
 
   const entryOf = (id: number): number => SeqRow.parse(selectEntry.get(id)).seq ?? 0;
@@ -353,7 +381,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         let log = "";
         if (step.stepId !== null) {
           try {
-            log = clip(await woodpecker.log(known.id, pipeline.number, step.stepId), logLimit);
+            log = tail(await woodpecker.log(known.id, pipeline.number, step.stepId), logLimit);
           } catch (error) {
             log = `(the log could not be read: ${reasonOf(error)})`;
           }
@@ -453,13 +481,26 @@ export function createVerification(options: VerificationOptions): VerificationSe
     report(ticket.id);
   };
 
-  const conflict = (ticket: Ticket, head: string, base: string) => {
+  const conflict = async (ticket: Ticket, head: string, base: string, gitHub: GitHubApi): Promise<void> => {
     const row = rowOf(ticket.id);
     if (row?.conflict_head === head) {
-      save(ticket.id, { state: "conflict", waiting: null, reason: `The pull request still conflicts with ${base} at ${short(head)}, after it went back to the worker`, merging_head: null, merging_rule: null });
-      tellOnce(
+      const files = await bothSides(gitHub, ticket, head, base);
+      if (closed) {
+        return;
+      }
+      const reason = `The pull request still conflicts with ${base} at ${short(head)}, after it went back to the worker; ${files}`;
+      save(ticket.id, { state: "conflict", waiting: null, reason, merging_head: null, merging_rule: null });
+      reportOnce(
         ticket,
-        `conflict:${head}`,
+        `conflict:${entryOf(ticket.id)}:${head}`,
+        {
+          ticket: ticket.id,
+          failure: { kind: "conflict", detail: reason },
+          evidence: [
+            `The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} in ${ticket.repository ?? ""} still conflicts with ${base} at ${head}. It went back to its worker for this conflict, and the worker handed back without resolving it.`,
+            `Branch: ${ticket.branch ?? "(none)"}. ${files.charAt(0).toUpperCase()}${files.slice(1)}.`,
+          ].join("\n"),
+        },
         text("notice.verificationFailed", { ticket: ticket.id }),
         [
           `[hub] The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} still conflicts with ${base} at ${head}. It went back to its worker once for this conflict, and the worker handed back without resolving it.`,
@@ -519,7 +560,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     if (!fresh.mergeable) {
-      conflict(ticket, head, fresh.base);
+      await conflict(ticket, head, fresh.base, gitHub);
       return;
     }
     const method = methodOf(await gitHub.mergeMethods(repository));
@@ -542,7 +583,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     if (answer.kind === "unmergeable") {
       const again = await gitHub.pullRequest(repository, number);
       if (again.open && again.head === head && again.mergeable === false) {
-        conflict(ticket, head, again.base);
+        await conflict(ticket, head, again.base, gitHub);
         return;
       }
     }
@@ -663,9 +704,18 @@ export function createVerification(options: VerificationOptions): VerificationSe
             failures: JSON.stringify(outcome.failed),
             logs: JSON.stringify(outcome.logs),
           });
-          tellOnce(
+          reportOnce(
             ticket,
             `failed:${entry}:${pull.head}:${outcome.pipeline.number}`,
+            {
+              ticket: id,
+              failure: { kind: "workflow", detail: outcome.reason },
+              evidence: [
+                `The verification rules failed for ${described(ticket)}: ${outcome.reason}.`,
+                `Pull request #${number} in ${repository}, head ${pull.head}, branch ${ticket.branch ?? "(none)"}; pipeline ${outcome.pipeline.url}.`,
+                ...outcome.logs.flatMap((log) => [`The log of workflow ${log.workflow}, step ${log.step}${log.exitCode === null ? "" : ` (exit code ${log.exitCode})`}, ends with:`, tail(log.log || "(empty)", 8_000)]),
+              ].join("\n"),
+            },
             text("notice.verificationFailed", { ticket: id }),
             [
               `[hub] The verification rules failed for ${described(ticket)}: ${outcome.reason}.`,

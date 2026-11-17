@@ -27,6 +27,7 @@ import { createTicketFiles } from "./files.js";
 import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
 import { createVerification, type Ticker, type VerificationService } from "./verification.js";
+import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -70,6 +71,7 @@ export interface Hub {
   readonly defaults: StartDefaults;
   readonly work: WorkService | undefined;
   readonly verification: VerificationService;
+  readonly loop: FailureLoop;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -89,6 +91,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let server: HubServer;
   let chains: Chains;
   let verification: VerificationService;
+  let loop: FailureLoop | undefined;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -145,6 +148,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         deliver: (conversation, delivery) => {
           told.deliver(conversation, delivery);
         },
+        report: (report) => loop?.failed(report),
       });
     }
     chains = createChains({
@@ -172,6 +176,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tell: (conversation, notice, prompt) => {
         told.tell(conversation, notice, prompt);
       },
+      report: (report) => loop?.failed(report),
       ...(worker === undefined
         ? {}
         : {
@@ -182,7 +187,19 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           }),
     });
     const listed = chains;
-    waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards() });
+    const checked = verification;
+    const failures = createFailureLoop({
+      tickets,
+      work: () => worker,
+      verification: () => checked,
+      tell: (conversation, notice, prompt) => {
+        told.tell(conversation, notice, prompt);
+      },
+      verify,
+      ownerEmail: config.ownerEmail,
+    });
+    loop = failures;
+    waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards(), stuck: () => failures.cards() });
     const refreshed = waiting;
     runners.subscribe(() => refreshed.refresh());
     defaults.subscribe(() => refreshed.refresh());
@@ -208,6 +225,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           chains: chains.arranger,
           defaults,
           verification,
+          loop: failures,
           ...(work === undefined ? {} : { work }),
         },
       }),
@@ -215,6 +233,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       files,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
+      loop: failures,
       defaults,
       brainToken,
       runners,
@@ -229,6 +248,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     throw error;
   }
   try {
+    const failures = loop;
+    if (failures === undefined) {
+      throw new Error("The failure loop was not created");
+    }
     work?.resume();
     const address = await server.listen(config.port, config.host);
     chains.resume();
@@ -247,12 +270,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       defaults,
       work,
       verification,
+      loop: failures,
       address,
       close: async () => {
         try {
           runners.close();
           await server.close();
         } finally {
+          failures.close();
           verification.close();
           await verification.idle();
           work?.close();

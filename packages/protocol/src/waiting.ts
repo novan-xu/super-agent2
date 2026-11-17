@@ -5,7 +5,7 @@ import { GeneratedText } from "./generated.js";
 import { Hold } from "./holds.js";
 import { RepositoryName, Ticket, TicketId, TicketState } from "./tickets.js";
 
-export const cardKinds = ["hold", "start"] as const;
+export const cardKinds = ["hold", "start", "stuck"] as const;
 
 export type CardKind = (typeof cardKinds)[number];
 
@@ -46,7 +46,21 @@ export const StartCard = z.object({
 
 export type StartCard = z.infer<typeof StartCard>;
 
-export const WaitingCard = z.discriminatedUnion("kind", [HoldCard, StartCard]);
+export const StuckCard = z.object({
+  kind: z.literal("stuck"),
+  key: z.string().min(1),
+  at: z.number().int(),
+  ticket: Ticket,
+  guidance: GeneratedText.nullable(),
+});
+
+export type StuckCard = z.infer<typeof StuckCard>;
+
+export function stuckCardKey(ticket: number, at: number): string {
+  return cardKey("stuck", `${ticket}-${at}`);
+}
+
+export const WaitingCard = z.discriminatedUnion("kind", [HoldCard, StartCard, StuckCard]);
 
 export type WaitingCard = z.infer<typeof WaitingCard>;
 

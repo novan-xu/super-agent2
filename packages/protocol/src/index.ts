@@ -9,6 +9,7 @@ export * from "./generated.js";
 export * from "./holds.js";
 export * from "./hub.js";
 export * from "./page.js";
+export * from "./rounds.js";
 export * from "./runner.js";
 export * from "./tickets.js";
 export * from "./verification.js";

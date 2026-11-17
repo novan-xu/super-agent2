@@ -60,6 +60,8 @@ export function problemLines(problem: TicketProblem, now: number): readonly stri
     }
     case "conflicted":
       return withReason(text("verification.conflict"), problem.reason);
+    case "stuck":
+      return withReason(problem.where ?? text(`loop.failure.${problem.failure}`), problem.where === null ? problem.detail : null);
   }
 }
 
@@ -75,6 +77,7 @@ export function problemTone(problem: TicketProblem): "bad" | "warn" | "mute" {
       return "bad";
     case "unreachable":
     case "conflicted":
+    case "stuck":
       return "warn";
     default:
       return "mute";

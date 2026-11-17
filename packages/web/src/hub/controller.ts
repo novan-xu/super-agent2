@@ -1,4 +1,4 @@
-import { type ChoiceChange, type MachineChoice, machineChoices, type StoredWorkEvent } from "@super-agent2/protocol";
+import { type ChoiceChange, type MachineChoice, machineChoices, type StoredWorkEvent, type StuckAnswer } from "@super-agent2/protocol";
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { needsMoves } from "../live/detail.js";
@@ -251,6 +251,24 @@ export class PageController {
     this.store.dispatch({ type: "waiting", action: { type: "sending", key, verdict } });
     const send = verdict === "release" ? this.options.api.release : this.options.api.refuse;
     const answer = await send(card.command.id, card.hold.fingerprint);
+    if (!answer.ok) {
+      this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "answered", key } });
+    return true;
+  }
+
+  async answerStuck(key: string, verdict: StuckAnswer, words: string): Promise<boolean> {
+    const waiting = this.store.getState().waiting;
+    const card = cardOf(waiting, key);
+    const at = card?.kind === "stuck" ? card.ticket.stuck?.at : undefined;
+    if (card === undefined || card.kind !== "stuck" || at === undefined || !canAnswer(waiting, key, verdict)) {
+      return false;
+    }
+    this.store.dispatch({ type: "waiting", action: { type: "sending", key, verdict } });
+    const trimmed = words.trim();
+    const answer = await this.options.api.answerStuck(card.ticket.id, { at, answer: verdict, ...(trimmed === "" ? {} : { words: trimmed }) });
     if (!answer.ok) {
       this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });
       return false;

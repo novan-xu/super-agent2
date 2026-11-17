@@ -1,4 +1,4 @@
-import type { StoredWorkEvent, Ticket, TicketDetail, TicketMove, WorkStatus } from "@super-agent2/protocol";
+import type { StoredWorkEvent, Ticket, TicketDetail, TicketMove, TicketRound, WorkStatus } from "@super-agent2/protocol";
 import { type AttemptLog, emptyLog, receiveWork, type WorkLog } from "./work.js";
 
 export interface DetailState {
@@ -6,12 +6,13 @@ export interface DetailState {
   readonly ticket: Ticket | null;
   readonly moves: readonly TicketMove[];
   readonly attempts: readonly WorkStatus[];
+  readonly rounds: readonly TicketRound[];
   readonly missing: boolean;
   readonly log: WorkLog;
 }
 
 export function openDetail(id: number): DetailState {
-  return { id, ticket: null, moves: [], attempts: [], missing: false, log: emptyLog(id) };
+  return { id, ticket: null, moves: [], attempts: [], rounds: [], missing: false, log: emptyLog(id) };
 }
 
 function newer(before: Ticket | null, ticket: Ticket): boolean {
@@ -23,7 +24,7 @@ export function receiveDetail(state: DetailState, detail: TicketDetail): DetailS
     return state;
   }
   const ticket = newer(state.ticket, detail.ticket) ? detail.ticket : state.ticket;
-  return { ...state, ticket, moves: detail.moves, attempts: detail.attempts, missing: false };
+  return { ...state, ticket, moves: detail.moves, attempts: detail.attempts, rounds: detail.rounds, missing: false };
 }
 
 export function receiveMissing(state: DetailState): DetailState {
@@ -46,6 +47,10 @@ export function needsMoves(state: DetailState, ticket: Ticket): boolean {
   if (ticket.id !== state.id) {
     return false;
   }
+  const before = state.ticket;
+  if (before !== null && (before.round !== ticket.round || before.freeRetry !== ticket.freeRetry)) {
+    return true;
+  }
   const last = state.moves.at(-1);
   return last === undefined ? ticket.state !== "pending" : last.to !== ticket.state;
 }
@@ -58,7 +63,16 @@ export function receiveDetailWork(state: DetailState, events: readonly StoredWor
 export type TimelineEntry =
   | { readonly kind: "filed"; readonly key: string; readonly at: number }
   | { readonly kind: "move"; readonly key: string; readonly at: number; readonly move: TicketMove }
-  | { readonly kind: "attempt"; readonly key: string; readonly at: number; readonly number: number; readonly status: WorkStatus | null; readonly log: AttemptLog | null; readonly latest: boolean };
+  | {
+      readonly kind: "attempt";
+      readonly key: string;
+      readonly at: number;
+      readonly number: number;
+      readonly status: WorkStatus | null;
+      readonly log: AttemptLog | null;
+      readonly latest: boolean;
+      readonly round: TicketRound | null;
+    };
 
 const order: Readonly<Record<TimelineEntry["kind"], number>> = { filed: 0, move: 1, attempt: 2 };
 
@@ -79,7 +93,8 @@ export function timeline(state: DetailState): TimelineEntry[] {
     const status = state.attempts.find((attempt) => attempt.attempt === number) ?? null;
     const log = state.log.attempts.find((attempt) => attempt.attempt === number) ?? null;
     const at = status?.createdAt ?? log?.first ?? ticket.updatedAt;
-    entries.push({ kind: "attempt", key: `attempt-${number}`, at, number, status, log, latest: number === latest });
+    const round = state.rounds.find((entry) => entry.attempt === number) ?? null;
+    entries.push({ kind: "attempt", key: `attempt-${number}`, at, number, status, log, latest: number === latest, round });
   }
   return entries.sort((a, b) => {
     if (a.at !== b.at) {
@@ -98,16 +113,19 @@ export function timeline(state: DetailState): TimelineEntry[] {
   });
 }
 
-export type MoveLabel = "started" | "queuedBehind" | "began" | "verifying" | "returned" | "merged" | "delivered" | "stopped" | "moved";
+export type MoveLabel = "started" | "queuedBehind" | "began" | "verifying" | "returned" | "merged" | "delivered" | "stopped" | "stuck" | "resumed" | "moved";
 
 export function moveLabel(move: TicketMove): MoveLabel {
+  if (move.from === "stuck" && move.to !== "stopped") {
+    return "resumed";
+  }
   if (move.to === "working") {
     return move.from === "pending" ? "started" : move.from === "waiting" ? "began" : "returned";
   }
   if (move.to === "waiting") {
     return "queuedBehind";
   }
-  if (move.to === "verifying" || move.to === "merged" || move.to === "delivered" || move.to === "stopped") {
+  if (move.to === "verifying" || move.to === "merged" || move.to === "delivered" || move.to === "stopped" || move.to === "stuck") {
     return move.to;
   }
   return "moved";

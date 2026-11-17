@@ -43,7 +43,7 @@ const running = ticket(1, {
 });
 
 function detailOf(value: Ticket, events = [workEvent(1, { kind: "text", block: "a", delta: "Reading the issue" })]): DetailState {
-  return receiveDetailWork(receiveDetail(openDetail(value.id), { ticket: value, moves, attempts: value.work === null ? [] : [value.work] }), events);
+  return receiveDetailWork(receiveDetail(openDetail(value.id), { ticket: value, moves, attempts: value.work === null ? [] : [value.work], rounds: [] }), events);
 }
 
 describe("a ticket's detail", () => {

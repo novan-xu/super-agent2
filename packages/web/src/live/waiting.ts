@@ -1,7 +1,7 @@
 import type { WaitingCard } from "@super-agent2/protocol";
 import type { Failure } from "../hub/api.js";
 
-export type Verdict = "release" | "refuse";
+export type Verdict = "release" | "refuse" | "resume" | "give-up";
 
 export type CardStep = "idle" | "armed" | "sending";
 
@@ -53,7 +53,7 @@ export function canAnswer(state: WaitingState, key: string, verdict: Verdict): b
   if (step === "sending") {
     return false;
   }
-  return verdict === "release" ? step === "armed" : true;
+  return verdict === "release" || verdict === "give-up" ? step === "armed" : true;
 }
 
 function ordered(cards: readonly WaitingCard[]): WaitingCard[] {
@@ -68,7 +68,14 @@ function withUse(state: WaitingState, key: string, use: CardUse): WaitingState {
 }
 
 function fingerprintOf(card: WaitingCard): string {
-  return card.kind === "hold" ? card.hold.fingerprint : card.fingerprint;
+  switch (card.kind) {
+    case "hold":
+      return card.hold.fingerprint;
+    case "start":
+      return card.fingerprint;
+    case "stuck":
+      return String(card.ticket.stuck?.at ?? 0);
+  }
 }
 
 function shownCard(card: WaitingCard, before: WaitingCard | undefined): boolean {

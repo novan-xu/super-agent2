@@ -1,14 +1,15 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import type { WaitingCard } from "@super-agent2/protocol";
 import { holdCard, startCard, ticket, workStatus } from "../live/fixtures.js";
 import { initialTickets, receiveTickets, type TicketsState } from "../live/tickets.js";
 import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiting.js";
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined, choose: () => undefined };
+const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
 
-function state(...cards: (ReturnType<typeof holdCard> | ReturnType<typeof startCard>)[]): WaitingState {
+function state(...cards: WaitingCard[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
 }
 
