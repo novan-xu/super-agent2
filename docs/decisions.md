@@ -781,3 +781,14 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   that, so the step that cannot be taken back quietly is left for the owner's word.
 - **Other options:** Take over at once, as the issue says, and lose the queued tickets; wait for the queue to empty and
   take over then, without knowing whether the owner will queue more.
+
+## 2026-11-17 — The take-over was run on the owner's word
+
+- **Chosen:** After the owner said to take over, `deploy.sh takeover` was run on the NAS at 14:05 UTC. The first
+  Super-agent's hub, brain and tunnel are stopped and kept; its four queued tickets and the one awaiting merge were not
+  carried over. #8 stays open until the owner has signed in to the page and talked to the brain from a phone, which only
+  the owner can do.
+- **Why:** The owner decided, knowing about the queued tickets. What could be checked without the owner's sign-in was
+  checked: the new tunnel registered its connections, the host name redirects to the Cloudflare Access sign-in, a path
+  that Access lets through is answered by the new hub with its own refusal, the hub is healthy and the brain is linked.
+- **Other options:** Close #8 on those checks alone.
