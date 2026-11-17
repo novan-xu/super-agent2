@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { entryFiles, installEntry, readState, writeState } from "./entry.js";
-import { createUpdater, defaultRetryMilliseconds, mainIn, type Updater, type UpdateSteps } from "./update.js";
+import { createUpdater, defaultRetryMilliseconds, mainIn, readyFile, type Updater, type UpdateSteps, versionFolder } from "./update.js";
 import { checkoutOf, revisionFile } from "./version.js";
 
 const running = "1".repeat(40);
@@ -94,10 +94,11 @@ describe("a runner moving to the hub's version", () => {
     update.changed();
     update.changed();
     expect(restarts).toBe(1);
-    const target = mainIn(join(home, "versions", next));
+    const target = mainIn(versionFolder(join(home, "versions"), next));
     expect(readState(entryFiles(home))).toEqual({ current: target, currentVersion: next, previous: oldMain, previousVersion: running, trial: 0 });
-    expect(readFileSync(join(home, "versions", next, revisionFile), "utf8")).toBe(`${next}\n`);
-    expect(readdirSync(join(home, "versions"))).toEqual([next]);
+    expect(readFileSync(join(versionFolder(join(home, "versions"), next), revisionFile), "utf8")).toBe(`${next}\n`);
+    expect(readdirSync(join(home, "versions"))).toEqual([next.slice(0, 12)]);
+    expect(readFileSync(join(versionFolder(join(home, "versions"), next), readyFile), "utf8").trim()).toBe(next);
   });
 
   it("leaves its own version, an unknown one and an unsupervised runner alone", async () => {
@@ -138,7 +139,7 @@ describe("a runner moving to the hub's version", () => {
     await update.settled();
     expect(restarts).toBe(0);
     expect(readState(entryFiles(home))?.failed?.reason).toBe("the new runner says it is 3333333");
-    expect(existsSync(join(home, "versions", next))).toBe(false);
+    expect(existsSync(versionFolder(join(home, "versions"), next))).toBe(false);
   });
 
   it("never tries again a version that stopped before it reached the hub", async () => {
@@ -157,13 +158,13 @@ describe("a runner moving to the hub's version", () => {
   it("keeps a version once it reached the hub, and only the current and previous versions on disk", () => {
     const files = entryFiles(home);
     for (const version of [next, later, "4".repeat(40)]) {
-      mkdirSync(dirname(mainIn(join(files.versions, version))), { recursive: true });
+      mkdirSync(dirname(mainIn(versionFolder(files.versions, version))), { recursive: true });
     }
-    mkdirSync(join(files.versions, `${"5".repeat(40)}.part`));
-    writeState(files, { current: mainIn(join(files.versions, later)), currentVersion: later, previous: mainIn(join(files.versions, next)), previousVersion: next, trial: 2 });
+    writeFileSync(join(files.versions, `${"5".repeat(12)}.tar.gz`), "left over");
+    writeState(files, { current: mainIn(versionFolder(files.versions, later)), currentVersion: later, previous: mainIn(versionFolder(files.versions, next)), previousVersion: next, trial: 2 });
     updater().confirmed();
-    expect(readState(files)).toEqual({ current: mainIn(join(files.versions, later)), currentVersion: later, previous: mainIn(join(files.versions, next)), previousVersion: next });
-    expect(readdirSync(files.versions).sort()).toEqual([next, later]);
+    expect(readState(files)).toEqual({ current: mainIn(versionFolder(files.versions, later)), currentVersion: later, previous: mainIn(versionFolder(files.versions, next)), previousVersion: next });
+    expect(readdirSync(files.versions).sort()).toEqual([next.slice(0, 12), later.slice(0, 12)]);
     expect(lines).toEqual(["Version 3333333 reached the hub; it stays"]);
   });
 });

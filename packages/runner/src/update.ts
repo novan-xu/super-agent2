@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, renameSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -35,6 +35,12 @@ export interface Updater {
 }
 
 export const defaultRetryMilliseconds = 60 * 60 * 1000;
+
+export const readyFile = ".ready";
+
+export function versionFolder(versions: string, version: string): string {
+  return join(versions, version.slice(0, 12));
+}
 
 export function mainIn(folder: string): string {
   return join(folder, "packages", "runner", "dist", "main.js");
@@ -99,32 +105,29 @@ export function createUpdater(options: UpdaterOptions): Updater {
 
   const prepare = async (version: string) => {
     mkdirSync(files.versions, { recursive: true });
-    const final = join(files.versions, version);
-    const draft = `${final}.part`;
+    const final = versionFolder(files.versions, version);
     const archive = `${final}.tar.gz`;
     try {
-      if (!existsSync(mainIn(final))) {
+      if (!existsSync(join(final, readyFile))) {
         rmSync(final, { recursive: true, force: true });
-        rmSync(draft, { recursive: true, force: true });
         rmSync(archive, { force: true });
-        mkdirSync(draft, { recursive: true });
+        mkdirSync(final, { recursive: true });
         options.log(`The hub runs ${short(version)}; fetching it from the hub while this runner keeps working`);
         await options.steps.download(version, archive);
-        await options.steps.extract(archive, draft);
-        writeFileSync(join(draft, revisionFile), `${version}\n`);
-        options.log(`Installing and building ${short(version)} in ${final}`);
-        await options.steps.install(draft);
-        renameSync(draft, final);
+        await options.steps.extract(archive, final);
         rmSync(archive, { force: true });
-      }
-      const reported = await options.steps.check(mainIn(final));
-      if (reported !== version) {
-        throw new Error(`the new runner says it is ${reported === undefined ? "of no known version" : short(reported)}`);
+        writeFileSync(join(final, revisionFile), `${version}\n`);
+        options.log(`Installing and building ${short(version)} in ${final}`);
+        await options.steps.install(final);
+        const reported = await options.steps.check(mainIn(final));
+        if (reported !== version) {
+          throw new Error(`the new runner says it is ${reported === undefined ? "of no known version" : short(reported)}`);
+        }
+        writeFileSync(join(final, readyFile), `${version}\n`);
       }
       ready = { version, main: mainIn(final) };
       trySwitch();
     } catch (error) {
-      rmSync(draft, { recursive: true, force: true });
       rmSync(archive, { force: true });
       rmSync(final, { recursive: true, force: true });
       const reason = reasonOf(error);
