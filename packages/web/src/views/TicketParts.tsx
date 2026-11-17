@@ -41,15 +41,40 @@ export function problemLines(problem: TicketProblem, now: number): readonly stri
       return problem.reason === "" ? [text(`work.failure.${problem.failure}`)] : [text(`work.failure.${problem.failure}`), problem.reason];
     case "stopped":
       return [problem.reason];
+    case "verifyWaiting": {
+      const first =
+        problem.wait === "pipeline" || problem.wait === "workflows" || problem.wait === "halted"
+          ? text(`verification.wait.${problem.wait}`, { commit: problem.commit })
+          : text(`verification.wait.${problem.wait}`);
+      return withReason(first, problem.reason);
+    }
+    case "verifyFailed": {
+      const named = problem.failures.filter((failure) => failure.workflow !== "");
+      const first =
+        named.length === 0
+          ? text("ticket.phase.verifyFailed")
+          : named
+              .map((failure) => (failure.step === "" ? text("verification.failedWorkflow", { workflow: failure.workflow }) : text("verification.failedStep", { workflow: failure.workflow, step: failure.step })))
+              .join("，");
+      return withReason(first, problem.reason);
+    }
+    case "conflicted":
+      return withReason(text("verification.conflict"), problem.reason);
   }
+}
+
+function withReason(first: string, reason: string | null): readonly string[] {
+  return reason === null || reason === "" ? [first] : [first, reason];
 }
 
 export function problemTone(problem: TicketProblem): "bad" | "warn" | "mute" {
   switch (problem.kind) {
     case "beginFailed":
     case "failed":
+    case "verifyFailed":
       return "bad";
     case "unreachable":
+    case "conflicted":
       return "warn";
     default:
       return "mute";

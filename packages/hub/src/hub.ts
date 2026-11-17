@@ -24,6 +24,9 @@ import { createTicketService, type TicketService, type TicketWork } from "./tick
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
+import type { Fetch } from "./github-api.js";
+import type { GeneratedText } from "@super-agent2/protocol";
+import { createVerification, type Ticker, type VerificationService } from "./verification.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -39,6 +42,10 @@ export interface HubOptions {
   readonly issueHost?: IssueHost;
   readonly ticketWork?: TicketWork;
   readonly adjustSubscriptions?: SubscriptionAdjustment;
+  readonly forgeFetch?: Fetch;
+  readonly gitHubBase?: string;
+  readonly verificationTicker?: Ticker;
+  readonly verificationPollMilliseconds?: number;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -62,6 +69,7 @@ export interface Hub {
   readonly chains: Chains;
   readonly defaults: StartDefaults;
   readonly work: WorkService | undefined;
+  readonly verification: VerificationService;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -80,6 +88,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let push: PushService | undefined;
   let server: HubServer;
   let chains: Chains;
+  let verification: VerificationService;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -150,6 +159,28 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
       work: ticketWork,
     });
+    const worker = work;
+    verification = createVerification({
+      database,
+      clock,
+      tickets,
+      credentials,
+      fetch: options.forgeFetch ?? fetch,
+      ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
+      ...(options.verificationTicker === undefined ? {} : { ticker: options.verificationTicker }),
+      ...(options.verificationPollMilliseconds === undefined ? {} : { pollMilliseconds: options.verificationPollMilliseconds }),
+      tell: (conversation, notice, prompt) => {
+        told.tell(conversation, notice, prompt);
+      },
+      ...(worker === undefined
+        ? {}
+        : {
+            sendBack: (ticket: number, note: string, reason: GeneratedText) => {
+              const outcome = worker.again(ticket, note, reason);
+              return outcome.ok ? { ok: true as const } : { ok: false as const, reason: outcome.reason };
+            },
+          }),
+    });
     const listed = chains;
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards() });
     const refreshed = waiting;
@@ -176,6 +207,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
           chains: chains.arranger,
           defaults,
+          verification,
           ...(work === undefined ? {} : { work }),
         },
       }),
@@ -200,6 +232,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     work?.resume();
     const address = await server.listen(config.port, config.host);
     chains.resume();
+    verification.resume();
     return {
       database,
       commands,
@@ -213,12 +246,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       chains,
       defaults,
       work,
+      verification,
       address,
       close: async () => {
         try {
           runners.close();
           await server.close();
         } finally {
+          verification.close();
+          await verification.idle();
           work?.close();
           chains.close();
           await chains.idle();
@@ -232,6 +268,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
+    verification.close();
+    await verification.idle();
     work?.close();
     chains.close();
     waiting.close();

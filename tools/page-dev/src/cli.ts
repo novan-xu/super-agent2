@@ -128,6 +128,8 @@ const hub = await startHub({
         ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
         : () => ({ ok: true, credentials: {} }),
   adjustSubscriptions: allowance.adjust,
+  verificationPollMilliseconds: 10_000,
+  ...(values.credentials === "environment" ? {} : { forgeFetch: (input: string | URL | Request) => Promise.reject(new Error(`The harness reaches no forge without --credentials environment: ${String(input instanceof Request ? input.url : input)}`)) }),
 });
 const hubPort = hub.address.port;
 const hubUrl = `http://127.0.0.1:${hubPort}`;
@@ -285,7 +287,8 @@ process.stdout.write(
     `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
-    `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort> files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND`,
+    `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort>[&after=<ticket>] files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND, and verifying tickets are checked against GitHub every ten seconds`,
+    `Tool:     http://127.0.0.1:${port}/__harness/tool?name=<tool>&args=<JSON> calls one of the brain's tools, for example merge_ticket`,
     `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a writing ticket through the brain's tools and states its defaults, to be started from its card on the page`,
     `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two writing tickets on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,

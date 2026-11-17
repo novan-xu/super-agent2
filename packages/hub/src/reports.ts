@@ -84,6 +84,28 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   if (ticket.report !== null) {
     lines.push(`Worker's report: ${ticket.report.en}`, `Chinese report: ${ticket.report.zh}`);
   }
+  const verification = ticket.verification;
+  if (verification !== null) {
+    const parts = [
+      `Verification: ${verification.state}${verification.waiting === null ? "" : ` (waiting: ${verification.waiting})`}`,
+      `rule ${verification.rule ?? "not decided yet"}`,
+      `change ${verification.level ?? "not read yet"}`,
+      `head ${verification.head ?? "unknown"}`,
+    ];
+    if (verification.pipeline !== null) {
+      parts.push(`pipeline ${verification.pipeline.url}`);
+    }
+    if (verification.workflows.length > 0) {
+      parts.push(`workflows ${verification.workflows.map((workflow) => `${workflow.name} ${workflow.state}`).join(", ")}`);
+    }
+    if (verification.mergeCommit !== null) {
+      parts.push(`merged as ${verification.mergeCommit}`);
+    }
+    if (verification.deployment !== null) {
+      parts.push(verification.deployment ? "the repository has a deployment" : "the repository has no deployment");
+    }
+    lines.push(`${parts.join("; ")}${verification.reason === null ? "" : `. ${verification.reason}`}`);
+  }
   if (ticket.deployedAt !== null) {
     lines.push(`Deployed: reported at ${new Date(ticket.deployedAt).toISOString()}`);
   }

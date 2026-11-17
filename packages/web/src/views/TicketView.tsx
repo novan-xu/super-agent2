@@ -360,6 +360,7 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
   const work = ticket.work;
   const machine = work?.machine ?? ticket.machine;
   const engine = work?.engine ?? ticket.engine;
+  const verification = ticket.verification;
   const rest = `ticket-panel-${ticket.id}`;
   return (
     <aside className={open ? "panel" : "panel is-collapsed"} aria-label={text("ticket.panel")}>
@@ -385,6 +386,22 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
               <dd>
                 <a className="mono" href={`${githubRepository(ticket.repository)}/pull/${ticket.pullRequest}`} target="_blank" rel="noreferrer">
                   {`#${ticket.pullRequest}`}
+                </a>
+              </dd>
+            </>
+          )}
+          {verification === null || verification.rule === null ? null : (
+            <>
+              <dt>{text("ticket.rule")}</dt>
+              <dd>{text(`verification.rule.${verification.rule}`)}</dd>
+            </>
+          )}
+          {verification === null || verification.pipeline === null ? null : (
+            <>
+              <dt>{text("ticket.pipeline")}</dt>
+              <dd>
+                <a className="mono" href={verification.pipeline.url} target="_blank" rel="noreferrer">
+                  {`#${verification.pipeline.number}`}
                 </a>
               </dd>
             </>

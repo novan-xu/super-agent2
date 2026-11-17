@@ -226,15 +226,27 @@ export function createHarness(options: HarnessOptions): Harness {
       opened.push(Number(ticket));
     }
     let ticket = Math.min(...opened);
-    if (issues.length > 1) {
+    const after = Number(url.searchParams.get("after") ?? "0");
+    if (issues.length > 1 || after > 0) {
       const arranged = await call("arrange_chains", {
-        chains: [{ name: "test", repository, issues, title: { en: `Test chain of ${issues.length} issues`, zh: `${issues.length} 个问题的测试链` }, summary: { en: "A chain of small test issues", zh: "几个小测试问题组成的链" } }],
+        chains: [
+          {
+            name: "test",
+            repository,
+            issues,
+            ...(after > 0 ? { after: [after] } : {}),
+            ...(issues.length > 1 ? { title: { en: `Test chain of ${issues.length} issues`, zh: `${issues.length} 个问题的测试链` }, summary: { en: "A chain of small test issues", zh: "几个小测试问题组成的链" } } : {}),
+          },
+        ],
       });
       if (arranged === undefined) {
         json(response, 409, { error: "arrange_chains failed", steps });
         return;
       }
-      const pending = options.hub.tickets.list({ open: true }).find((entry) => entry.state === "pending" && entry.issues.length === issues.length && entry.repository === repository);
+      const wanted = new Set(issues);
+      const pending = options.hub.tickets
+        .list({ open: true })
+        .find((entry) => entry.state === "pending" && entry.repository === repository && entry.issues.length === issues.length && entry.issues.every((issue) => wanted.has(issue.number)));
       ticket = pending?.id ?? ticket;
     }
     const stated = await call("choose_defaults", {
@@ -423,6 +435,22 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/writing") {
         await openWriting(url, response);
+        return true;
+      }
+      if (path === "/__harness/tool") {
+        const name = url.searchParams.get("name");
+        let args: unknown;
+        try {
+          args = JSON.parse(url.searchParams.get("args") ?? "{}");
+        } catch {
+          args = undefined;
+        }
+        if (name === null || typeof args !== "object" || args === null || Array.isArray(args)) {
+          json(response, 400, { error: "give name=<tool> and args=<a JSON object>" });
+          return true;
+        }
+        const result = await callTool(name, args as Record<string, unknown>, url.searchParams.get("conversation") ?? undefined);
+        json(response, result.isError ? 409 : 200, result);
         return true;
       }
       if (path === "/__harness/scenario") {

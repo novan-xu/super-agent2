@@ -3,6 +3,7 @@ import { text } from "@super-agent2/catalog";
 import {
   activeWorkStates,
   finishedTicketStates,
+  type GeneratedText,
   type RunnerWorkEvent,
   StoredWorkEvent,
   type Ticket,
@@ -50,7 +51,7 @@ export interface WorkService extends TicketWork {
   begin(ticket: Ticket): void;
   stop(ticket: Ticket): void;
   reassign(ticket: Ticket): void;
-  again(ticket: number, note: string): WorkOutcome;
+  again(ticket: number, note: string, reason?: GeneratedText): WorkOutcome;
   message(ticket: number, text: string, from: WorkSender): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
@@ -639,7 +640,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         : `The owner moved this ticket here from ${latest.machine}, now with ${ticket.engine ?? "?"} ${ticket.model ?? "?"} at ${ticket.effort ?? "?"}. The earlier work was pushed to the branch where it could be; continue from there.`;
       nextAttempt(ticket, note, latest);
     },
-    again: (id, note) => {
+    again: (id, note, reason) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
         return { ok: false, reason: `There is no ticket ${id}` };
@@ -652,7 +653,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return { ok: false, reason: `Ticket ${id} already has a worker` };
       }
       if (ticket.state === "verifying") {
-        const moved = tickets.move(id, "working");
+        const moved = tickets.move(id, "working", reason);
         if (!moved.ok) {
           return { ok: false, reason: `Ticket ${id} could not go back to working` };
         }

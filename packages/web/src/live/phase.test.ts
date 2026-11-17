@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ticket, workStatus } from "./fixtures.js";
+import { ticket, verification, workStatus } from "./fixtures.js";
 import { panelOffers, phaseLooks, ticketGroups, ticketPhase, ticketProblem, whereOf } from "./phase.js";
 
 const none = new Map();
@@ -39,6 +39,20 @@ describe("what a ticket's row and panel say", () => {
     expect(ticketProblem(ticket(1, { state: "working", work: workStatus({ state: "queued", machine: "pc" }) }), none)).toEqual({ kind: "queued", machine: "pc" });
     expect(ticketProblem(ticket(1, { state: "stopped", stopReason: { en: "x", zh: "你停止了它" } }), none)).toEqual({ kind: "stopped", reason: "你停止了它" });
     expect(ticketProblem(ticket(1, { state: "working", work: workStatus() }), none)).toBeNull();
+  });
+
+  it("says what verification waits for, what failed, and a conflict", () => {
+    const waiting = ticket(1, { state: "verifying", verification: verification({ reason: "Woodpecker has no pipeline for the head abcdef1 yet" }) });
+    expect(ticketPhase(waiting)).toBe("verifying");
+    expect(ticketProblem(waiting, none)).toEqual({ kind: "verifyWaiting", wait: "pipeline", commit: "abcdef1", reason: "Woodpecker has no pipeline for the head abcdef1 yet" });
+    const failed = ticket(1, { state: "verifying", verification: verification({ state: "failed", waiting: null, failures: [{ workflow: "check-windows", step: "check", exitCode: 1 }] }) });
+    expect(ticketPhase(failed)).toBe("verifyFailed");
+    expect(phaseLooks.verifyFailed.tone).toBe("bad");
+    expect(ticketProblem(failed, none)).toEqual({ kind: "verifyFailed", failures: [{ workflow: "check-windows", step: "check", exitCode: 1 }], reason: null });
+    const conflicted = ticket(1, { state: "verifying", verification: verification({ state: "conflict", waiting: null, reason: "still conflicts" }) });
+    expect(ticketPhase(conflicted)).toBe("conflicted");
+    expect(ticketProblem(conflicted, none)).toEqual({ kind: "conflicted", reason: "still conflicts" });
+    expect(ticketProblem(ticket(1, { state: "verifying", verification: verification({ state: "checking", waiting: null }) }), none)).toBeNull();
   });
 
   it("lists what a waiting ticket still waits for, by title when it is known", () => {

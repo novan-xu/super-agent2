@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ConversationId } from "./conversations.js";
 import { GeneratedText } from "./generated.js";
 import { ProgramId } from "./runner.js";
+import { TicketVerification } from "./verification.js";
 import { WorkStatus } from "./work.js";
 
 export const ticketKinds = ["writing", "parameter", "fix", "feature", "refactor", "maintenance"] as const;
@@ -135,6 +136,7 @@ export const Ticket = z.object({
   pullRequest: IssueNumber.nullable(),
   report: GeneratedText.nullable(),
   work: WorkStatus.nullable(),
+  verification: TicketVerification.nullable(),
   round: z.number().int().nonnegative(),
   waitsFor: z.array(TicketId),
   waits: z.array(TicketWait),
