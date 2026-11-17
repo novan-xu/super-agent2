@@ -124,6 +124,21 @@ describe("running a command", () => {
     expect(nasTarget.jobs[0]?.credentials["GH_TOKEN"]).toBe(testTokens["nuofan-island"]);
   });
 
+  it("gives the command the environment it was started with, keeps it on the record, and refuses a credential's name", async () => {
+    const { service: running, nasTarget } = create();
+    const command = nodeScript(workDir, `console.log(JSON.stringify({ commit: process.env.SUPERAGENT2_COMMIT ?? null, gh: process.env.GH_TOKEN ?? null }));`);
+    const record = await finished(running, running.start({ target: "hub", command, environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
+    expect(record.environment).toEqual({ SUPERAGENT2_COMMIT: "abc1234" });
+    expect(JSON.parse(textOf(running.output(record.id)))).toEqual({ commit: "abc1234", gh: testTokens["novan-xu"] });
+    for (const name of ["GH_TOKEN", "github_token", "GITHUB_TOKEN_NUOFAN_ISLAND", "WOODPECKER_TOKEN", "Cloudflare_Api_Token"]) {
+      expect(() => running.start({ target: "hub", command, environment: { [name]: "not-a-token" } })).toThrow(/credentials are given by the hub alone/);
+    }
+    expect(running.list().every((entry) => Object.keys(entry.environment).every((name) => name.startsWith("SUPERAGENT2_")))).toBe(true);
+    await finished(running, running.start({ target: "nas", command: "true", environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
+    expect(nasTarget.jobs[0]?.credentials["SUPERAGENT2_COMMIT"]).toBe("abc1234");
+    expect(() => running.start({ target: "hub", command, environment: { "NOT A NAME": "x" } })).toThrow();
+  });
+
   it("streams output in order while the command is still running", async () => {
     const { service: running } = create();
     const first = join(workDir, "first");

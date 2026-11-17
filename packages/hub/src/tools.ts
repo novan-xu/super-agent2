@@ -9,6 +9,7 @@ import {
   GeneratedText,
   gitHubAccounts,
   defaultGitHubAccount,
+  deploymentFile,
   MaterialName,
   maximumMaterialText,
   maximumMaterials,
@@ -24,6 +25,7 @@ import { z } from "zod";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
+import { short, type DeploymentService } from "./deployments.js";
 import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop.js";
 import type { ConversationService } from "./conversations.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
@@ -150,6 +152,17 @@ const DefaultsArgument = z.object({
 
 const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1).max(100) });
 
+const DeployArguments = z.object({
+  repository: RepositoryName,
+  commit: z.string().trim().min(1).max(200),
+  previous: z.string().trim().min(1).max(200).optional(),
+});
+
+const ReadDeploymentArguments = z.object({
+  deployment: z.number().int().positive().optional(),
+  repository: RepositoryName.optional(),
+});
+
 const generatedSchema = (what: string) => ({
   type: "object",
   properties: {
@@ -189,6 +202,7 @@ export interface ToolServerOptions {
   readonly targets: () => readonly string[];
   readonly machines?: () => string;
   readonly tickets?: TicketTools;
+  readonly deployments?: DeploymentService;
 }
 
 export interface TicketTools {
@@ -270,6 +284,50 @@ function verificationDefinitions() {
           reason: { type: "string", description: "Why the rules are skipped: what the owner asked, in English" },
         },
         required: ["ticket", "reason"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function deploymentDefinitions() {
+  return [
+    {
+      name: "deploy_repository",
+      title: "Deploy a repository at a commit",
+      description: [
+        `Deploy a repository at a commit as its deployment file ${deploymentFile} at that commit declares, read from GitHub so that what runs is what was merged.`,
+        "The hub runs the file's deploy command on the file's target through the command channel, as any command (a command the confirmation lock holds waits for the owner, and the deployment waits with it), then runs its health check command every few seconds until it passes or the file's period is over.",
+        "When the service does not pass, or the deploy command fails, the hub runs the rollback command, which restores the previously deployed commit, and checks health again. A first deployment through the hub has no previous commit to restore and is not rolled back, unless you give `previous`.",
+        "The commands get SUPERAGENT2_REPOSITORY, SUPERAGENT2_COMMIT (the commit deployed), SUPERAGENT2_PREVIOUS_COMMIT (the commit deployed before, unset when there is none) and SUPERAGENT2_DEPLOYMENT in their environment, besides the owner's credentials.",
+        "It returns once the deployment has started; the result comes to this conversation as a [hub] message. read_deployment shows its state and each step's output meanwhile. One deployment per repository at a time.",
+        "A successful deployment marks every merged ticket of the repository whose merge commit it contains as deployed, so tickets waiting for that deployment begin, as report_deployment does. Only you deploy: no ticket and no merge deploys anything.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          repository: { type: "string", description: "The repository as owner/name" },
+          commit: { type: "string", description: "The commit to deploy: a SHA, or a branch such as main for its latest commit; the merge commit a [hub] message names after a merge" },
+          previous: {
+            type: "string",
+            description: "Only when the hub has never deployed this repository: the commit that runs now, deployed by other means, so a failure can be rolled back to it. Ignored once the hub has a successful deployment on record.",
+          },
+        },
+        required: ["repository", "commit"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "read_deployment",
+      title: "Read a deployment",
+      description:
+        "Read a deployment: its repository, commit, previous commit, state, result, and each step with its command's state and the end of its output. Give a deployment number, or a repository for its latest deployment; with neither, the recent deployments are listed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          deployment: { type: "integer", minimum: 1, description: "The deployment number" },
+          repository: { type: "string", description: "The repository as owner/name, for its latest deployment" },
+        },
         additionalProperties: false,
       },
     },
@@ -368,7 +426,7 @@ function chainDefinitions() {
       description: [
         "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: one worker, one branch, one pull request, its issues worked on in the order given.",
         "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
-        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once you report the deployment with report_deployment).",
+        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a deploy_repository that contains it succeeds, or you report the deployment with report_deployment).",
         "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again.",
         "Every issue of a pending ticket you touch must be named. A chain of several issues needs its own title and summary in English and Chinese; a chain that keeps one ticket's issues keeps that ticket's title. Tickets whose issues all went to other chains are closed as joined.",
         "The whole arrangement is checked first: one that has a cycle, or names an issue or ticket that does not exist, is refused and nothing changes. Calling it again with a new arrangement rearranges.",
@@ -410,7 +468,7 @@ function chainDefinitions() {
       name: "report_deployment",
       title: "Report merged work deployed",
       description:
-        "Report that you deployed the merged work of a ticket. Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
+        "Report that you deployed the merged work of a ticket by other means than deploy_repository (which marks what it deploys by itself). Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
       inputSchema: {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The merged ticket whose work is deployed" } },
@@ -717,7 +775,56 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
+      ...(options.deployments === undefined ? [] : deploymentDefinitions()),
     ];
+  };
+
+  const deploymentCall = async (name: string, raw: unknown, conversation: string | undefined): Promise<ToolResult | undefined> => {
+    const deployments = options.deployments;
+    if (deployments === undefined) {
+      return undefined;
+    }
+    if (name === "deploy_repository") {
+      const parsed = DeployArguments.safeParse(raw);
+      if (!parsed.success) {
+        return invalid(parsed.error);
+      }
+      const started = await deployments.start({ ...parsed.data, conversation: conversation ?? null });
+      if (!started.ok) {
+        return { text: started.reason, isError: true };
+      }
+      const deployment = started.deployment;
+      return {
+        text: [
+          `Started deployment ${deployment.id} of ${deployment.repository} at commit ${deployment.commit} on target ${deployment.target}.`,
+          `Previously deployed commit: ${deployment.previous ?? "none recorded, so a failure is not rolled back"}.`,
+          `Health check: every ${deployment.file.health.everySeconds} s for up to ${deployment.file.health.withinSeconds} s.`,
+          "The result comes to this conversation as a [hub] message; read_deployment shows its steps meanwhile. Tell the owner in a line that it is deploying.",
+        ].join("\n"),
+      };
+    }
+    if (name === "read_deployment") {
+      const parsed = ReadDeploymentArguments.safeParse(raw);
+      if (!parsed.success) {
+        return invalid(parsed.error);
+      }
+      if (parsed.data.deployment !== undefined) {
+        const found = deployments.get(parsed.data.deployment);
+        return found === undefined ? { text: `There is no deployment ${parsed.data.deployment}.`, isError: true } : { text: deployments.report(found) };
+      }
+      if (parsed.data.repository !== undefined) {
+        const found = deployments.latest(parsed.data.repository);
+        return found === undefined ? { text: `${parsed.data.repository} has never been deployed through the hub.` } : { text: deployments.report(found) };
+      }
+      const recent = deployments.list(20);
+      return {
+        text:
+          recent.length === 0
+            ? "There are no deployments."
+            : recent.map((entry) => `Deployment ${entry.id}: ${entry.repository} at ${short(entry.commit)} on ${entry.target}, ${entry.result ?? `running (${entry.phase})`}, started ${new Date(entry.startedAt).toISOString()}`).join("\n"),
+      };
+    }
+    return undefined;
   };
 
   const wait = (id: string, aborted: AbortSignal): Promise<CommandRecord | undefined> =>
@@ -1055,7 +1162,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         result = stop(parsed.data.arguments ?? {});
         break;
       default: {
-        const ticketResult = await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation);
+        const ticketResult =
+          (await deploymentCall(parsed.data.name, parsed.data.arguments ?? {}, conversation)) ?? (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
         if (ticketResult === undefined) {
           return { status: 200, body: errorBody(id, -32602, `Unknown tool: ${parsed.data.name}`) };
         }

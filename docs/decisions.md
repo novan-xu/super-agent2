@@ -1966,3 +1966,134 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   commit message; folding inside words only, which misses a look-alike separator joining a form; holding only when
   the folded word equals a listed word, which would need every form restated; the full Unicode confusables table,
   which maps CJK and other everyday characters and would be larger than the reader.
+
+## 2026-11-17 — What the deployment file holds
+
+- **Chosen:** `.superagent2/deployment.json`, read with zod as `DeploymentFile` in `packages/protocol/src/deployments.ts`,
+  strict (an unknown key is refused, so a typo or a credential written into it is caught): `target` (a target name:
+  `hub`, `nas` or a runner), `folder` (optional working folder on the target), `deploy` (a command), `health`
+  (`command`, `everySeconds` default 5, `withinSeconds` default 120), and `rollback` (a command). The health check is a
+  command on the target that exits with 0 when the service answers; there is no address for the hub to fetch.
+- **Why:** A command on the target reaches whatever the service listens on there (a port on the NAS, a runner's
+  localhost), which the hub's own container often cannot; `curl` covers an address. One kind keeps the file small.
+- **Other options:** An address fetched by the hub, or both; YAML; a per-repository setting kept in the hub.
+
+## 2026-11-17 — What the commands of a deployment receive
+
+- **Chosen:** A command can now carry environment variables (`environment` in `CommandRequest`, stored with the command,
+  so a held command keeps them across a restart). A deployment's commands get `SUPERAGENT2_REPOSITORY`,
+  `SUPERAGENT2_COMMIT` (the commit being deployed), `SUPERAGENT2_PREVIOUS_COMMIT` (the commit of the repository's last
+  successful deployment through the hub; unset when there is none) and `SUPERAGENT2_DEPLOYMENT` (its number), besides
+  the owner's credentials as every command has. A credential always wins over a variable of the same name. They run as
+  the account that owns the repository.
+- **Why:** Variables reach every target the same way (the hub's shell, the NAS through `bash -s`, a runner on Windows or
+  macOS), where text put in front of the command would need each shell's syntax, and they leave the command the lock
+  reads unchanged.
+- **Other options:** Prefixing the command with assignments; placeholders substituted into the command text.
+
+## 2026-11-17 — The previous version, and a first deployment
+
+- **Chosen:** "The previous version" is the commit of the repository's last deployment through the hub that succeeded,
+  taken from the hub's own record when the deployment starts. The rollback command receives it in
+  `SUPERAGENT2_PREVIOUS_COMMIT` and is expected to deploy it. A deployment with no such record (a first deployment) is
+  not rolled back when it fails: it ends `failed`, saying there was nothing to roll back to. The brain can name the
+  commit running now with `previous` on `deploy_repository`; it is used only while the hub has no successful deployment
+  on record.
+- **Why:** Only the hub's record is known to be true; a rollback to a guessed commit could be worse than the failure.
+  Super-agent2 itself (#18) was deployed by hand first, which `previous` covers.
+- **Other options:** Running the rollback with an empty previous commit; reading the running version from the target.
+
+## 2026-11-17 — How a deployment runs, and what ends it
+
+- **Chosen:** `packages/hub/src/deployments.ts`. The brain's `deploy_repository` resolves the commit (a SHA or a branch)
+  through GitHub, reads the file at that commit through GitHub, and refuses with the reason, running nothing, when there
+  is no such commit, no file, a file that does not parse, a target the hub does not know, or another deployment of the
+  same repository still running (the answer names it). Otherwise it records the deployment, starts the deploy command
+  through the command service and returns. Every command (deploy, each health check, rollback) goes through the same
+  service and the same lock as any other; a held one is waited for, as long as the owner takes. After the deploy command
+  exits with 0 the health check runs every `everySeconds` until it passes or `withinSeconds` have passed (the check that
+  runs at the end of the period counts, and a check still running then is stopped); time comes from the hub's clock and
+  an injected sleep, which the tests control. Results: `succeeded`; `rolled-back` (the deploy command failed or the
+  service never passed, the rollback command exited with 0, and the health check then passed again within a new
+  period); `unrecovered` (the rollback failed, did not run, or the service still did not pass); `failed` (no previous
+  version, nothing rolled back); `not-run` (the deploy command never started: refused by the owner, no such target, a
+  machine offline); `interrupted` (a command was cut off while it ran; its outcome is not known). A deploy command that
+  ran and failed is rolled back like an unhealthy service. Deployments and their steps (each command's id, so its
+  output and times) are kept in `deployments` and `deployment_steps`.
+- **Why:** The brain asks for minutes of work with one call and is told the outcome without the owner sending anything.
+  Rolling back after a failed deploy command restores a known state when the command left a half-done one.
+- **Other options:** A tool that waits for the end; leaving a failed deploy command without rollback.
+
+## 2026-11-17 — A restart of the hub during a deployment
+
+- **Chosen:** At start the hub takes up every deployment that has not ended. A deploy or rollback command still held is
+  waited for (held commands survive a restart). One that the restart cut off while it ran ends the deployment as
+  `interrupted`: the record says the command was interrupted and whether it finished is not known; nothing is run again
+  and nothing is rolled back. One that had not started yet ends it as `not-run`. A deployment that was in its health
+  check starts the check again with a full period and a note saying so, since checks change nothing and the deploy
+  command is known to have finished. A result recorded but not yet told to the brain is told once.
+- **Why:** The issue asks for a truthful record and forbids running the deploy command twice or rolling back blindly.
+  #18, where the deploy command restarts the hub itself, runs its own health check and rollback outside the hub and
+  can build on the health check being taken up again.
+- **Other options:** Running the health check after an interrupted deploy command and judging from it; rolling back
+  every interrupted deployment.
+
+## 2026-11-17 — What a successful deployment marks deployed
+
+- **Chosen:** On success the hub marks deployed every merged ticket of the repository, not yet marked, whose merge commit
+  is the deployed commit or one of its ancestors (GitHub's compare of the two answers `ahead` or `identical`), through
+  the same path as `report_deployment`, so tickets waiting for that deployment begin. A comparison that cannot be read
+  leaves the ticket unmarked with a note. `report_deployment` stays for work deployed by other means. The brain's merge
+  report now names `deploy_repository` and the merge commit.
+- **Why:** Deploying the default branch's head deploys every merge before it.
+- **Other options:** Only the ticket whose merge commit is the deployed commit; every merged ticket of the repository.
+
+## 2026-11-17 — Where the owner sees deployments
+
+- **Chosen:** In 对话, where the brain was asked: its `deploy_repository` call as a tool entry, then one notice when the
+  deployment ends, in Chinese from the catalog (for example "novan-xu/app 已部署到 abc1234，健康检查通过", or "… 没有成功，
+  已回滚到 …，旧版本恢复正常"), which is the turn the brain answers. A held deploy or rollback command appears in
+  工作台's 等你 like any held command. No deployment view and no new page code; the brain's `read_deployment` shows the
+  steps and their output.
+- **Why:** The owner asked the brain from 对话 and reads the answer there; the conversation is the smallest honest place.
+- **Other options:** A section in 工作台; deployments in a ticket's detail; a notice when a deployment starts.
+
+## 2026-11-17 — Deployments in the development harness, and what was verified
+
+- **Chosen:** With `--forge fake`, a deployment file POSTed to `/__harness/deployment?repository=` is put into every
+  later scripted pull request of that repository, so its merge needs deploying; `/__harness/loop?case=green&repository=`
+  starts a ticket that merges green; the demo brain answers a merge that needs deploying with `deploy_repository` at the
+  merge commit, and a deployment's result with a line in Chinese. Verified on this PC with a toy service in a scratch
+  folder (a Node server on 127.0.0.1:5291 started detached by `node deploy.mjs <good|broken>` on the `hub` target, a
+  health check `node check.mjs` that fetches it, and `node rollback.mjs`, which starts the release recorded for
+  `SUPERAGENT2_PREVIOUS_COMMIT`), every 2 seconds for 12. Without a brain, a ticket merged with the file declared: the
+  conversation showed 工单 1 已合并，这次改动需要部署, and no command ran, no deployment was recorded and nothing answered
+  on the toy's port. With the demo brain, unattended: the merge was reported, the brain called `deploy_repository`, the
+  toy answered with the merge commit, the conversation showed …已部署到…，健康检查通过, and the ticket was marked deployed;
+  a second ticket whose file deployed the broken variant merged, the brain deployed it, seven health checks found no
+  answer, the hub ran the rollback with the first commit as `SUPERAGENT2_PREVIOUS_COMMIT`, the toy answered with the
+  first commit again, the conversation showed …没有成功，已回滚到…，旧版本恢复正常, and the second ticket stayed
+  undeployed. Every process was stopped and the scratch folders removed. Nothing was put in the sandbox repository. Not
+  verified live: a held deploy command, a restart in the middle, and a runner or the NAS as the target; the tests cover
+  the first two with the real lock and a reopened database.
+- **Why:** The fake forge is smaller than a branch in the sandbox, and the toy exercises real processes and a real port.
+- **Other options:** The file on a branch of `novan-xu/super-agent-sandbox` with `--credentials environment`.
+
+## 2026-11-17 — A held command's environment is part of what the owner confirms
+
+- **Chosen:** A command's environment is on its record (`CommandRecord.environment`, `{}` when it has none) and in the
+  hold's fingerprint, as its entries sorted by name, appended only when there is at least one, so the fingerprint of a
+  command without environment is exactly what it was before. Holds stored before this change are of commands without
+  environment and stay releasable; a hold whose stored fingerprint does not cover the environment the command now has
+  no longer matches and the command is dropped as changed, as a changed command text already is. The confirmation card
+  shows the environment below the command, as raw text, `NAME=value` per line in order of name, only when there is one.
+  A command's environment can never name a credential (`GH_TOKEN`, `GITHUB_TOKEN`, the account token variables and the
+  forwarded Woodpecker and Cloudflare variables, in any case): the command service refuses such a request, since
+  credentials are merged in only at run time and would silently win, which the card would misrepresent. The lock reads
+  the command text alone; a variable it cannot know in a destructive position (a deletion of a path built from
+  `$SUPERAGENT2_PREVIOUS_COMMIT`, `$env:…`, `%…%`, a force-push of `$SUPERAGENT2_COMMIT`) is an unknown target and is
+  held, as `rm -rf $DIR` already was; examples are in the held table.
+- **Why:** What is confirmed must be exactly what was held and what the owner saw; a rollback's environment decides
+  which commit it goes back to. Keeping the old form for an empty environment keeps every hold already waiting valid.
+- **Other options:** Dropping every hold stored before the change; letting credential names through and hiding them on
+  the card; substituting the variables into the text the lock reads.

@@ -5,6 +5,7 @@ export * from "./chains.js";
 export * from "./commands.js";
 export * from "./conversations.js";
 export * from "./defaults.js";
+export * from "./deployments.js";
 export * from "./generated.js";
 export * from "./holds.js";
 export * from "./hub.js";

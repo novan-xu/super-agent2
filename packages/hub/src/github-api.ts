@@ -32,6 +32,8 @@ export interface ChangedFile {
 
 export type Contents = { readonly kind: "file" } | { readonly kind: "folder"; readonly files: readonly string[] };
 
+export type Comparison = "ahead" | "behind" | "identical" | "diverged" | "unknown";
+
 export type MergeMethod = "squash" | "merge" | "rebase";
 
 export type MergeAnswer =
@@ -49,6 +51,9 @@ export interface GitHubApi {
   files(repository: string, number: number): Promise<ChangedFile[]>;
   changedOn(repository: string, head: string, base: string): Promise<string[]>;
   contents(repository: string, path: string, ref: string): Promise<Contents | null>;
+  fileText(repository: string, path: string, ref: string): Promise<string | null>;
+  commit(repository: string, ref: string): Promise<string | null>;
+  compare(repository: string, base: string, head: string): Promise<Comparison>;
   mergeMethods(repository: string): Promise<MergeMethods>;
   merge(repository: string, number: number, sha: string, method: MergeMethod): Promise<MergeAnswer>;
   issueOpen(repository: string, number: number): Promise<boolean | null>;
@@ -80,6 +85,12 @@ const PullJson = z.looseObject({
 const FileJson = z.looseObject({ filename: z.string(), previous_filename: z.string().optional() });
 
 const CompareJson = z.looseObject({ files: z.array(FileJson).optional() });
+
+const StatusJson = z.looseObject({ status: z.string() });
+
+const FileContentJson = z.looseObject({ type: z.string(), content: z.string().optional(), encoding: z.string().optional() });
+
+const CommitJson = z.looseObject({ sha: z.string() });
 
 const EntryJson = z.looseObject({ name: z.string(), type: z.string() });
 
@@ -206,6 +217,50 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
         return { kind: "folder", files: entries.data.filter((entry) => entry.type === "file").map((entry) => entry.name) };
       }
       return { kind: "file" };
+    },
+    fileText: async (repository, path, ref) => {
+      const address = `${repo(repository)}/contents/${pathOf(path)}?ref=${encodeURIComponent(ref)}`;
+      const response = await send("GET", address);
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw await failure("GET", address, response);
+      }
+      const parsed = FileContentJson.safeParse(await response.json());
+      if (!parsed.success || parsed.data.type !== "file") {
+        throw new ForgeError(`GitHub answered GET ${address} with something that is not a file`, response.status);
+      }
+      const content = parsed.data.content ?? "";
+      return parsed.data.encoding === "base64" ? Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8") : content;
+    },
+    commit: async (repository, ref) => {
+      const address = `${repo(repository)}/commits/${encodeURIComponent(ref)}`;
+      const response = await send("GET", address);
+      if (response.status === 404 || response.status === 422) {
+        return null;
+      }
+      if (!response.ok) {
+        throw await failure("GET", address, response);
+      }
+      const parsed = CommitJson.safeParse(await response.json());
+      if (!parsed.success) {
+        throw new ForgeError(`GitHub answered GET ${address} in an unexpected shape`, response.status);
+      }
+      return parsed.data.sha;
+    },
+    compare: async (repository, base, head) => {
+      const address = `${repo(repository)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=1`;
+      const response = await send("GET", address);
+      if (response.status === 404) {
+        return "unknown";
+      }
+      if (!response.ok) {
+        throw await failure("GET", address, response);
+      }
+      const parsed = StatusJson.safeParse(await response.json());
+      const status = parsed.success ? parsed.data.status : "";
+      return status === "ahead" || status === "behind" || status === "identical" || status === "diverged" ? status : "unknown";
     },
     mergeMethods: async (repository) => {
       const found = await read(repo(repository), RepositoryJson);

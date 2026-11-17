@@ -15,6 +15,12 @@ export const forwardedVariables = [
   "CLOUDFLARE_ACCESS_API_TOKEN",
 ] as const;
 
+export const credentialVariables: readonly string[] = ["GH_TOKEN", "GITHUB_TOKEN", ...Object.values(accountTokenVariable), ...forwardedVariables];
+
+export function isCredentialVariable(name: string): boolean {
+  return credentialVariables.includes(name.toUpperCase());
+}
+
 export type CredentialResult =
   | { readonly ok: true; readonly credentials: Readonly<Record<string, string>> }
   | { readonly ok: false; readonly reason: string };

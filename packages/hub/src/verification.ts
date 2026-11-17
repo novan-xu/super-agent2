@@ -417,10 +417,10 @@ export function createVerification(options: VerificationOptions): VerificationSe
       `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: pull request #${ticket.pullRequest ?? 0} in ${ticket.repository ?? ""} was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
       deployed
-        ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying. The ticket deployed nothing; deploying is yours to do through the hub when the owner wants it.`
+        ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying. The ticket deployed nothing. Deploy it with deploy_repository at ${row.merge_commit ?? "the merge commit"} unless the owner said otherwise.`
         : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
       ...(deployed && waitingForDeployment.length > 0
-        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; report it with report_deployment once it is deployed.`]
+        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a deployment that contains this commit succeeds.`]
         : []),
       "Tell the owner in Chinese, in a line or two.",
     ];

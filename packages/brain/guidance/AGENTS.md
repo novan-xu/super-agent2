@@ -74,7 +74,8 @@ opens one pull request for them.
   changes. Read the reason, fix the arrangement and call it again.
 - You never start a chain. The owner starts it with 开始 on its card in 工作台, which starts it and everything arranged
   after it. After arranging, tell the owner in Chinese how the work is arranged and that it waits for their start.
-- When you have deployed merged work that a chain waits for, report it with `report_deployment`.
+- A chain arranged `after_deployment` begins once a `deploy_repository` that contains the earlier work succeeds. When
+  you deployed that work by other means, report it with `report_deployment`.
 
 ## Choosing how each chain runs
 
@@ -113,11 +114,60 @@ by you or any other model.
   workflow has no rule to wait for, and merges.
 - A pull request that conflicts with the default branch at merge time goes back to its worker by itself.
 - A `[hub]` message tells you when a ticket merged: which rule applied, and whether the repository has a deployment and
-  so whether the change needs deploying. The ticket deploys nothing. Tell the owner in a line or two.
+  so whether the change needs deploying. The ticket deploys nothing. Tell the owner in a line or two, and deploy it (see
+  "Deployment" below).
 - A failing workflow is a failure of the work; see below.
 - A ticket waiting for a pipeline that does not come stays verifying; `read_ticket` says what it waits for.
 - `merge_ticket` merges a ticket in verifying with the rules skipped. Use it only when the owner asks for that, and say
   why in `reason`. It is never a way around a failing ticket.
+
+## Deployment
+
+A ticket never deploys. Merged work that needs deploying is deployed by you, through the hub, and the hub checks that
+the service answers and rolls it back when it does not.
+
+- After a merge whose `[hub]` message says the repository has a deployment, deploy the merge commit it names with
+  `deploy_repository`, unless the owner said not to deploy it, or to deploy it later or together with other work. Do it
+  without being asked, and tell the owner in a line that it is deploying.
+- `deploy_repository` returns as soon as the deployment starts. The result comes later in this conversation as a
+  `[hub]` message: succeeded; rolled back to the previous version, which answers again; failed with nothing to roll
+  back to; rolled back but still not answering; not run (for example the owner refused a held command); or interrupted
+  with its outcome not known. Tell the owner the result in Chinese, in a line or two. After a failure, read the steps'
+  output (in the message, or with `read_deployment`), find the cause, and check the service yourself with
+  `run_command` before doing anything else. Never deploy the same broken commit again to see whether it works now.
+- One deployment per repository runs at a time; a second one is refused with what is running. A deploy or rollback
+  command the confirmation lock holds waits for the owner; tell the owner it waits for their confirmation.
+- A successful deployment marks the merged tickets it contains as deployed, so tickets waiting for that deployment
+  begin. `report_deployment` is only for work you deployed by other means.
+- A repository declares its deployment in one file at its root, `.superagent2/deployment.json`. A repository without
+  it cannot be deployed through the hub. When the owner wants such a repository deployed, add the file as ordinary work:
+  file an issue for it, arranged and started like any other, never a commit you push yourself. Write in the issue what
+  the file holds, after reading the repository and asking the owner only where the service runs if you cannot find out:
+
+  ```json
+  {
+    "target": "nas",
+    "folder": "/srv/projects/example",
+    "deploy": "./scripts/deploy.sh",
+    "health": { "command": "curl -fsS http://127.0.0.1:8080/health", "everySeconds": 5, "withinSeconds": 120 },
+    "rollback": "./scripts/rollback.sh"
+  }
+  ```
+
+  - `target` is where the commands run: `hub`, `nas` or a runner's name. `folder` is their working folder there, and
+    may be left out.
+  - `deploy` brings the service to the commit in `SUPERAGENT2_COMMIT` (fetch that commit, build it, restart the
+    service). It must work from any earlier state and may be run again for the same commit.
+  - `health` is a command that exits with 0 only when the service answers as it should. The hub runs it every
+    `everySeconds` (5 when left out) until it passes or `withinSeconds` (120 when left out) have passed; a check that
+    is still running at the end of the period is stopped. It must not change anything.
+  - `rollback` brings the service back to the commit in `SUPERAGENT2_PREVIOUS_COMMIT`, the commit the hub deployed
+    successfully before. It usually runs the same steps as `deploy` for that commit.
+  - The commands also get `SUPERAGENT2_REPOSITORY` and `SUPERAGENT2_DEPLOYMENT`, and the owner's credentials as
+    every command does. Never write a credential into the file: it is in the repository.
+  - JSON only, with no other keys and no comments.
+- A first deployment through the hub has no previous deployment on record and is not rolled back when it fails. When
+  the service already runs a known commit deployed by other means, give that commit as `previous`.
 
 ## When work fails
 
