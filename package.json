@@ -1,0 +1,23 @@
+{
+  "name": "super-agent2",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
+    "test": "vitest run",
+    "build": "pnpm -r build",
+    "comments": "node tools/zero-comment/dist/cli.js",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm comments"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-react": "6.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}
