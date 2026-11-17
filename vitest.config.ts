@@ -17,7 +17,7 @@ export default defineConfig({
       { extends: true, test: { name: "programs", root: "packages/programs" } },
       { extends: true, test: { name: "brain", root: "packages/brain" } },
       { extends: true, test: { name: "runner", root: "packages/runner" } },
-      { extends: true, plugins: [react()], test: { name: "web", root: "packages/web" } },
+      { extends: true, plugins: [react()], test: { name: "web", root: "packages/web", css: { include: [/page.css/] } } },
       { extends: true, test: { name: "markup-text", root: "tools/markup-text" } },
       { extends: true, test: { name: "zero-comment", root: "tools/zero-comment" } },
     ],

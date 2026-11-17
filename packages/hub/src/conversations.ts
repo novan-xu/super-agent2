@@ -3,6 +3,7 @@ import { text } from "@super-agent2/catalog";
 import {
   type BrainInput,
   type BrainMessage,
+  type BrainProviders,
   type BrainUpdate,
   type CommandRecord,
   Conversation,
@@ -57,6 +58,9 @@ export interface ConversationService {
   tell(conversation: string | null, notice: string, prompt: string): string;
   deliver(conversation: string | null, delivery: Delivery): string;
   linked(): boolean;
+  providers(): BrainProviders | undefined;
+  sendOrder(order: readonly Provider[]): void;
+  watchBrain(listener: () => void): () => void;
   attach(connection: BrainConnection): BrainLink;
   subscribe(listener: ConversationListener): () => void;
   close(): void;
@@ -75,6 +79,7 @@ export interface ConversationServiceOptions {
   readonly clock: Clock;
   readonly commands: CommandService;
   readonly memory?: MemoryBriefing;
+  readonly order?: () => readonly Provider[] | undefined;
 }
 
 export interface MemoryBriefing {
@@ -222,6 +227,17 @@ export function createConversationService(options: ConversationServiceOptions): 
   const { clock, commands } = options;
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
+  let brainProviders: BrainProviders | undefined;
+  const brainListeners = new Set<() => void>();
+  const brainChanged = () => {
+    for (const listener of brainListeners) {
+      try {
+        listener();
+      } catch {
+        continue;
+      }
+    }
+  };
 
   const insertConversation = connection.prepare(
     "INSERT INTO conversations (id, title, state, provider, created_at, updated_at) VALUES (?, '', 'idle', NULL, ?, ?)",
@@ -443,9 +459,18 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const receive = (message: BrainMessage) => {
     switch (message.type) {
+      case "providers": {
+        brainProviders = message;
+        brainChanged();
+        return;
+      }
       case "hello": {
         if (link !== undefined) {
           link.ready = true;
+        }
+        const order = options.order?.();
+        if (order !== undefined) {
+          sendToBrain({ type: "order", order: [...order] });
         }
         const running = new Set(message.running.map((item) => `${item.conversation}\n${item.turn}`));
         for (const turn of selectRunningTurns.all().map(toTurn)) {
@@ -728,6 +753,16 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
     },
     linked: () => link !== undefined,
+    providers: () => (link === undefined ? undefined : brainProviders),
+    sendOrder: (order) => {
+      sendToBrain({ type: "order", order: [...order] });
+    },
+    watchBrain: (listener) => {
+      brainListeners.add(listener);
+      return () => {
+        brainListeners.delete(listener);
+      };
+    },
     attach: (connection) => {
       const previous = link;
       const current = { connection, ready: false };
@@ -736,6 +771,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       if (previous === undefined) {
         emit({ type: "brain", brain: { linked: true } });
       }
+      brainChanged();
       connection.send({ type: "hello", protocol: protocolVersion });
       return {
         receive: (message) => {
@@ -746,7 +782,9 @@ export function createConversationService(options: ConversationServiceOptions): 
         detach: () => {
           if (link === current) {
             link = undefined;
+            brainProviders = undefined;
             emit({ type: "brain", brain: { linked: false } });
+            brainChanged();
           }
         },
       };
@@ -762,6 +800,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       link?.connection.close();
       link = undefined;
       listeners.clear();
+      brainListeners.clear();
     },
   };
 }

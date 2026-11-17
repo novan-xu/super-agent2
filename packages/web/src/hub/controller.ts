@@ -1,4 +1,16 @@
-import { type ChoiceChange, type MachineChoice, machineChoices, type StoredWorkEvent, type StuckAnswer } from "@super-agent2/protocol";
+import {
+  type ChoiceChange,
+  type EngineTable,
+  type GitHubAccount,
+  type MachineAdded,
+  type MachineChoice,
+  machineChoices,
+  type MachineRevoked,
+  type MachineSystem,
+  type Provider,
+  type StoredWorkEvent,
+  type StuckAnswer,
+} from "@super-agent2/protocol";
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { needsMoves } from "../live/detail.js";
@@ -163,6 +175,66 @@ export class PageController {
       return false;
     }
     return true;
+  }
+
+  async loadSettings(): Promise<void> {
+    const answer = await this.options.api.settings();
+    if (answer.ok) {
+      this.store.dispatch({ type: "settings", settings: answer.value });
+    }
+  }
+
+  async addMachine(name: string, system: MachineSystem): Promise<MachineAdded | undefined> {
+    const answer = await this.options.api.addMachine(name, system);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return undefined;
+    }
+    void this.loadSettings();
+    return answer.value;
+  }
+
+  async revokeMachine(name: string): Promise<MachineRevoked | undefined> {
+    const answer = await this.options.api.revokeMachine(name);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return undefined;
+    }
+    void this.loadSettings();
+    return answer.value;
+  }
+
+  async setOrder(order: readonly Provider[]): Promise<boolean> {
+    const answer = await this.options.api.setOrder(order);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    this.store.dispatch({ type: "settings", settings: answer.value });
+    return true;
+  }
+
+  async setAccount(repository: string, account: GitHubAccount): Promise<boolean> {
+    const answer = await this.options.api.setAccount(repository, account);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    this.store.dispatch({ type: "settings", settings: answer.value });
+    return true;
+  }
+
+  async setTable(table: EngineTable): Promise<"saved" | "unsupported" | "failed"> {
+    const answer = await this.options.api.setTable(table);
+    if (!answer.ok) {
+      if (answer.error === "unsupported") {
+        return "unsupported";
+      }
+      this.options.onFailure(answer.error);
+      return "failed";
+    }
+    void this.loadSettings();
+    return "saved";
   }
 
   async messageTicket(ticket: number, text: string): Promise<boolean> {

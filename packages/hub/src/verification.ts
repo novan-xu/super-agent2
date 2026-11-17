@@ -1,3 +1,4 @@
+import type { GitHubAccount } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
   changeLevel,
@@ -30,6 +31,7 @@ export type AgainOutcome = { readonly ok: true } | { readonly ok: false; readonl
 export type SendBack = (ticket: number, note: string, reason: GeneratedText) => AgainOutcome;
 
 export interface VerificationOptions {
+  readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly tickets: TicketService;
@@ -274,7 +276,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
   const described = (ticket: Ticket) => `ticket ${ticket.id} (${ticket.title.en})`;
 
   const gitHubFor = (repository: string): GitHubApi | string => {
-    const found = options.credentials(accountFor(repository));
+    const found = options.credentials((options.accountOf ?? accountFor)(repository));
     if (!found.ok) {
       return found.reason;
     }
@@ -286,7 +288,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
   };
 
   const woodpeckerFor = (repository: string): WoodpeckerApi | undefined => {
-    const found = options.credentials(accountFor(repository));
+    const found = options.credentials((options.accountOf ?? accountFor)(repository));
     if (!found.ok) {
       return undefined;
     }

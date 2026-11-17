@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BrainInput, BrainMessage, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
+import type { BrainInput, BrainMessage, BrainProviders, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
 import type { Clock } from "@super-agent2/programs";
 import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
 import { continuationPrompt, turnPrompt } from "./prompt.js";
@@ -31,6 +31,7 @@ export interface BrainOptions {
 export interface Brain {
   receive(message: HubToBrain): void;
   running(): RunningTurn[];
+  status(): BrainProviders;
   readonly providers: ProviderChoice;
   settled(): Promise<void>;
   close(): Promise<void>;
@@ -83,7 +84,46 @@ export function createBrain(options: BrainOptions): Brain {
   const { transport, adapters } = options;
   const newId = options.newId ?? randomUUID;
   const maximumOpen = options.maximumOpen ?? 4;
-  const providers = createProviderChoice(options.order, options.clock);
+  const choice = createProviderChoice(options.order.filter((provider) => adapters.has(provider)), options.clock);
+  const status = (): BrainProviders => ({
+    type: "providers",
+    order: choice.order(),
+    providers: choice.order().flatMap((provider) => {
+      const adapter = adapters.get(provider);
+      if (adapter === undefined) {
+        return [];
+      }
+      const state = choice.reasons().get(provider);
+      const now = options.clock.now();
+      const available = state === undefined || (state.until !== null && state.until <= now);
+      return [{ provider, model: adapter.model, effort: adapter.effort, available, until: available ? null : (state?.until ?? null) }];
+    }),
+  });
+  let told = "";
+  const tell = () => {
+    const current = status();
+    const key = JSON.stringify(current);
+    if (key !== told) {
+      told = key;
+      transport.send(current);
+    }
+  };
+  const providers: ProviderChoice = {
+    ...choice,
+    setOrder: (order) => {
+      const changed = choice.setOrder(order.filter((provider) => adapters.has(provider)));
+      tell();
+      return changed;
+    },
+    markUnavailable: (provider, reason, until) => {
+      choice.markUnavailable(provider, reason, until);
+      tell();
+    },
+    markAvailable: (provider) => {
+      choice.markAvailable(provider);
+      tell();
+    },
+  };
   const states = new Map<string, State>();
   const work = new Set<Promise<void>>();
   let uses = 0;
@@ -148,7 +188,8 @@ export function createBrain(options: BrainOptions): Brain {
   const nextProvider = (turn: TurnRun): Provider | undefined => providers.candidates().find((provider) => !turn.tried.has(provider));
 
   const unavailableSummary = (): string =>
-    options.order
+    providers
+      .order()
       .map((provider) => {
         const reason = providers.reasons().get(provider)?.reason;
         return reason === undefined ? undefined : `${provider}: ${reason}`;
@@ -344,7 +385,7 @@ export function createBrain(options: BrainOptions): Brain {
     }
     const inputs = state.queue.splice(0);
     const candidates = providers.candidates();
-    const provider = candidates[0] ?? options.order[0];
+    const provider = candidates[0] ?? providers.order()[0];
     if (provider === undefined) {
       return;
     }
@@ -401,8 +442,13 @@ export function createBrain(options: BrainOptions): Brain {
 
   return {
     providers,
+    status,
     receive: (message) => {
       if (closing) {
+        return;
+      }
+      if (message.type === "order") {
+        providers.setOrder(message.order);
         return;
       }
       if (message.type === "input") {

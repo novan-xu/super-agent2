@@ -3,6 +3,7 @@ import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./
 import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, TurnUpdate, UnwatchConversation, WatchConversation } from "./conversations.js";
 import { ProtocolVersion } from "./version.js";
 import { MemoriesUpdate } from "./memory.js";
+import { SettingsUpdate } from "./settings.js";
 import { TicketsUpdate, TicketUpdate } from "./tickets.js";
 import { WaitingUpdate } from "./waiting.js";
 import { UnwatchTicket, WatchTicket, WorkEventUpdate } from "./work.js";
@@ -34,7 +35,7 @@ export const Health = z.object({
 export type Health = z.infer<typeof Health>;
 
 export const Refusal = z.object({
-  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "credential", "duplicate"]),
+  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "credential", "duplicate", "cloudflare", "release"]),
 });
 
 export type Refusal = z.infer<typeof Refusal>;
@@ -68,6 +69,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   TicketUpdate,
   WorkEventUpdate,
   MemoriesUpdate,
+  SettingsUpdate,
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessage>;

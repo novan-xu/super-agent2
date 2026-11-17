@@ -1,3 +1,4 @@
+import type { GitHubAccount } from "@super-agent2/protocol";
 import { randomBytes, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
@@ -33,6 +34,7 @@ import type { TicketService, TicketWork } from "./tickets.js";
 export type WorkRunners = Pick<Runners, "bindWork" | "sendWork" | "report" | "subscribe">;
 
 export interface WorkServiceOptions {
+  readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly tickets: TicketService;
@@ -259,7 +261,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (ticket.repository === null) {
       return `Ticket ${ticket.id} has no repository`;
     }
-    const credentials = options.credentials(accountFor(ticket.repository));
+    const credentials = options.credentials((options.accountOf ?? accountFor)(ticket.repository));
     if (!credentials.ok) {
       return credentials.reason;
     }
@@ -271,7 +273,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       ticket: ticket.id,
       attempt: attempt.attempt,
       repository: ticket.repository,
-      account: accountFor(ticket.repository),
+      account: (options.accountOf ?? accountFor)(ticket.repository),
       branch: ticket.branch ?? branchFor(ticket.id, suffix()),
       title: ticket.title.en,
       issues: ticket.issues.map((issue) => ({ number: issue.number, title: issue.title.en, url: issue.url })),

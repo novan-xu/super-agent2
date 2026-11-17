@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type BrainMessage,
+  type BrainProviders,
   brainLinkPath,
   HubToBrain,
   type Prepared,
@@ -27,10 +28,16 @@ export interface LinkOptions {
 }
 
 export interface HubLink extends BrainTransport {
-  bind(handlers: { readonly receive: (message: HubToBrain) => void; readonly running: () => RunningTurn[] }): void;
+  bind(handlers: LinkHandlers): void;
   connect(): void;
   connected(): boolean;
   close(): Promise<void>;
+}
+
+export interface LinkHandlers {
+  readonly receive: (message: HubToBrain) => void;
+  readonly running: () => RunningTurn[];
+  readonly status?: () => BrainProviders;
 }
 
 export function linkUrl(hubUrl: string): string {
@@ -45,7 +52,7 @@ export function createHubLink(options: LinkOptions): HubLink {
   const report = options.report ?? (() => undefined);
   const outbox: BrainMessage[] = [];
   const pending = new Map<string, { readonly message: PrepareRequest; readonly resolve: (prepared: Prepared) => void }>();
-  let handlers: { readonly receive: (message: HubToBrain) => void; readonly running: () => RunningTurn[] } | undefined;
+  let handlers: LinkHandlers | undefined;
   let socket: WebSocket | undefined;
   let open = false;
   let closed = false;
@@ -92,6 +99,15 @@ export function createHubLink(options: LinkOptions): HubLink {
       open = true;
       report("Linked to the hub");
       current.send(JSON.stringify({ type: "hello", protocol: protocolVersion, running: runningForHello() } satisfies BrainMessage));
+      const status = handlers?.status?.();
+      if (status !== undefined) {
+        current.send(JSON.stringify(status));
+      }
+      for (let index = outbox.length - 1; index >= 0; index -= 1) {
+        if (outbox[index]?.type === "providers") {
+          outbox.splice(index, 1);
+        }
+      }
       while (outbox.length > 0) {
         const message = outbox[0];
         if (message === undefined || !write(message)) {

@@ -1,3 +1,4 @@
+import type { GitHubAccount } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
   type CommandEnvironment,
@@ -37,6 +38,7 @@ export type DeploymentStart = { readonly ok: true; readonly deployment: Deployme
 export type MarkDeployed = (ticket: number) => { readonly ok: boolean };
 
 export interface DeploymentOptions {
+  readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly commands: CommandService;
@@ -235,7 +237,7 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
   };
 
   const gitHubFor = (repository: string): GitHubApi | string => {
-    const found = options.credentials(accountFor(repository));
+    const found = options.credentials((options.accountOf ?? accountFor)(repository));
     if (!found.ok) {
       return found.reason;
     }
@@ -250,7 +252,7 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
     const started = commands.start({
       target: deployment.target,
       command,
-      account: accountFor(deployment.repository),
+      account: (options.accountOf ?? accountFor)(deployment.repository),
       ...(deployment.file.folder === undefined ? {} : { cwd: deployment.file.folder }),
       environment: deploymentEnvironment(deployment),
     });

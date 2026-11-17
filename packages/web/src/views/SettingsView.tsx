@@ -1,0 +1,632 @@
+import { text } from "@super-agent2/catalog";
+import {
+  type Enrollment,
+  gitHubAccounts,
+  type GitHubAccount,
+  machineChoices,
+  type MachineAdded,
+  type MachineRevoked,
+  type MachineStatus,
+  machineSystems,
+  type MachineSystem,
+  type PageRoute,
+  pagePath,
+  type Provider,
+  type SettingsSection,
+  type SettingsSnapshot,
+  type Ticket,
+  withCell,
+} from "@super-agent2/protocol";
+import { type FormEvent, useEffect, useState } from "react";
+import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
+import {
+  availableNow,
+  cellOf,
+  firstSection,
+  movedEarlier,
+  nameProblem,
+  onlineCount,
+  pairKey,
+  pairOptions,
+  providerRows,
+  settingsGroups,
+  slotsOf,
+  subscriptionOf,
+  tableRows,
+  type TableRow,
+  withChoice,
+  ticketsRunningOn,
+} from "../live/settings.js";
+import { Icon, type IconName } from "../parts/icons.js";
+import type { Navigate } from "../parts/route.js";
+import { followLink } from "../parts/Shell.js";
+import { momentOf } from "./TicketParts.js";
+
+export interface SettingsActions {
+  readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | undefined>;
+  readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
+  readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
+  readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
+  readonly setTable: (table: SettingsSnapshot["table"]) => Promise<"saved" | "unsupported" | "failed">;
+  readonly setAppearance: (change: Partial<Appearance>) => void;
+}
+
+export interface SettingsViewProps {
+  readonly section: SettingsSection | null;
+  readonly settings: SettingsSnapshot | null;
+  readonly tickets: readonly Ticket[];
+  readonly appearance: Appearance;
+  readonly actions: SettingsActions;
+  readonly navigate: Navigate;
+  readonly now: number;
+}
+
+const sectionIcons: Readonly<Record<SettingsSection, IconName>> = {
+  machines: "machine",
+  models: "hub",
+  repositories: "repo",
+  connections: "connect",
+  appearance: "sun",
+};
+
+function routeOf(section: SettingsSection | null): PageRoute {
+  return section === null ? { view: "settings" } : { view: "settings", section };
+}
+
+function MachineCard({ machine, running, revoke, now }: { readonly machine: MachineStatus; readonly running: number; readonly revoke: () => Promise<void>; readonly now: number }) {
+  const [step, setStep] = useState<"idle" | "armed" | "sending">("idle");
+  const slots = slotsOf(machine);
+  const system = machine.report === null ? null : machine.report.platform === "darwin" ? "macos" : machine.report.platform === "win32" ? "windows" : null;
+  const programs = (machine.report?.programs ?? []).filter((program) => program.installed);
+  const confirm = () => {
+    setStep("sending");
+    void revoke().finally(() => setStep("idle"));
+  };
+  return (
+    <article className={step === "idle" ? "mcard" : "mcard mcard--armed"}>
+      <div className="mcard-head">
+        <span className={`dot ${machine.online ? "dot--ok" : "dot--mute"}`} />
+        <span className="mcard-name od-fill od-truncate">{machine.name}</span>
+        {system === null ? null : <span className="chip">{text(`machine.system.${system}`)}</span>}
+      </div>
+      <p className="card-sub">
+        {machine.online ? text("machine.online") : machine.lastSeenAt === null ? text("machine.never") : text("machine.seen", { time: momentOf(machine.lastSeenAt, now) })}
+      </p>
+      {slots.total === 0 ? null : (
+        <div className="slots">
+          <div className="slot-bar" aria-hidden="true">
+            {Array.from({ length: slots.total }, (_, index) => (
+              <i key={index} className={index < slots.running ? "run" : undefined} />
+            ))}
+          </div>
+          <div className="slot-legend">
+            <span>{text("machine.running", { count: slots.running })}</span>
+            <span>{text("machine.free", { count: slots.free })}</span>
+          </div>
+        </div>
+      )}
+      {programs.length === 0 ? null : (
+        <div className="meta-row">
+          {programs.map((program) => (
+            <span key={program.id} className="chip">
+              {text(`engine.${program.id}`)}
+            </span>
+          ))}
+        </div>
+      )}
+      {step === "idle" ? (
+        <div className="card-actions" key="idle">
+          <span className="od-fill" />
+          <button className="btn btn-danger btn-sm" type="button" onClick={() => setStep("armed")}>
+            {text("machine.revoke")}
+          </button>
+        </div>
+      ) : (
+        <>
+          {running === 0 ? null : (
+            <p className="field-err" role="alert">
+              {text("machine.runningTickets", { count: running, name: machine.name })}
+            </p>
+          )}
+          <div className="card-actions" key="armed">
+            <span className="od-fill" />
+            <button className="btn btn-sm" type="button" autoFocus disabled={step === "sending"} onClick={() => setStep("idle")}>
+              {text("machine.cancel")}
+            </button>
+            <button className={`btn btn-danger-solid btn-sm${step === "sending" ? " is-busy" : ""}`} type="button" disabled={step === "sending"} aria-busy={step === "sending"} onClick={confirm}>
+              {text("machine.revoke")}
+            </button>
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+function PendingCard({ enrollment }: { readonly enrollment: Enrollment }) {
+  return (
+    <article className="mcard">
+      <div className="mcard-head">
+        <span className="dot dot--mute" />
+        <span className="mcard-name od-fill od-truncate">{enrollment.name}</span>
+        <span className="chip">{text(`machine.system.${enrollment.system}`)}</span>
+      </div>
+      <p className="card-sub">{text("machine.pending")}</p>
+    </article>
+  );
+}
+
+function AddMachine({ machines, add, now }: { readonly machines: readonly MachineStatus[]; readonly add: SettingsActions["addMachine"]; readonly now: number }) {
+  const [name, setName] = useState("");
+  const [system, setSystem] = useState<MachineSystem>("windows");
+  const [tried, setTried] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [added, setAdded] = useState<MachineAdded | null>(null);
+  const [copied, setCopied] = useState(false);
+  const trimmed = name.trim();
+  const problem = nameProblem(trimmed, machines);
+  const shown = tried && trimmed !== "" ? problem : null;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setTried(true);
+    if (problem !== null || sending) {
+      return;
+    }
+    setSending(true);
+    void add(trimmed, system).then((answer) => {
+      setSending(false);
+      if (answer !== undefined) {
+        setAdded(answer);
+        setCopied(false);
+        setName("");
+        setTried(false);
+      }
+    });
+  };
+  const copy = () => {
+    if (added === null) {
+      return;
+    }
+    void navigator.clipboard?.writeText(added.command).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      },
+      () => undefined,
+    );
+  };
+  return (
+    <section className="section">
+      <div className="section-head">
+        <h2>{text("machine.add")}</h2>
+      </div>
+      <form className="card card-pad od-stack add-machine" onSubmit={submit}>
+        <div className="mk-row">
+          <div className="form-row">
+            <label htmlFor="machine-name">{text("machine.name")}</label>
+            <input
+              className="field mono"
+              id="machine-name"
+              type="text"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={63}
+              value={name}
+              aria-invalid={shown === null ? undefined : true}
+              aria-describedby={shown === null ? undefined : "machine-name-problem"}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          <div className="form-row">
+            <span className="label" id="machine-system">
+              {text("machine.system")}
+            </span>
+            <div className="seg" role="group" aria-labelledby="machine-system">
+              {machineSystems.map((choice) => (
+                <button key={choice} type="button" aria-pressed={system === choice} onClick={() => setSystem(choice)}>
+                  {text(`machine.system.${choice}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {shown === null ? null : (
+          <p className="field-err" id="machine-name-problem" role="alert">
+            {text(`machine.problem.${shown}`)}
+          </p>
+        )}
+        <div className="card-actions">
+          <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="submit" disabled={sending || trimmed === ""} aria-busy={sending}>
+            {text("machine.make")}
+          </button>
+        </div>
+        {added === null ? null : (
+          <>
+            <div className="cmd">
+              <code>{added.command}</code>
+              <button className="icon-btn" type="button" aria-label={copied ? text("machine.copied") : text("machine.copy")} title={copied ? text("machine.copied") : text("machine.copy")} onClick={copy}>
+                <Icon name={copied ? "check" : "copy"} />
+              </button>
+            </div>
+            <p className="card-sub">{text("machine.runOnce", { time: momentOf(added.expiresAt, now) })}</p>
+          </>
+        )}
+      </form>
+    </section>
+  );
+}
+
+function MachinesSection({ settings, tickets, actions, now }: { readonly settings: SettingsSnapshot; readonly tickets: readonly Ticket[]; readonly actions: SettingsActions; readonly now: number }) {
+  const [note, setNote] = useState<string | null>(null);
+  const pending = settings.enrollments.filter((enrollment) => !settings.machines.some((machine) => machine.name === enrollment.name));
+  const revoke = async (name: string) => {
+    const answer = await actions.revokeMachine(name);
+    if (answer === undefined) {
+      return;
+    }
+    setNote(answer.accessToken === "kept" ? text("machine.revokedKept", { name }) : answer.accessToken === "none" ? text("machine.revokedNone", { name }) : null);
+  };
+  return (
+    <>
+      {note === null ? null : (
+        <p className="card-sub" role="status">
+          {note}
+        </p>
+      )}
+      {settings.machines.length === 0 && pending.length === 0 ? (
+        <div className="empty">
+          <Icon name="machine" />
+          <strong>{text("machine.empty")}</strong>
+        </div>
+      ) : (
+        <div className="machines">
+          {settings.machines.map((machine) => (
+            <MachineCard key={machine.name} machine={machine} running={ticketsRunningOn(tickets, machine.name)} revoke={() => revoke(machine.name)} now={now} />
+          ))}
+          {pending.map((enrollment) => (
+            <PendingCard key={`pending-${enrollment.name}`} enrollment={enrollment} />
+          ))}
+        </div>
+      )}
+      <AddMachine machines={settings.machines} add={actions.addMachine} now={now} />
+    </>
+  );
+}
+
+function TableRowControl({ row, settings, actions, title }: { readonly row: TableRow; readonly settings: SettingsSnapshot; readonly actions: SettingsActions; readonly title: string | null }) {
+  const currentKey = pairKey(row.current.model, row.current.effort);
+  const [picked, setPicked] = useState(row.current);
+  const [state, setState] = useState<"idle" | "sending" | "unsupported">("idle");
+  useEffect(() => {
+    setPicked(row.current);
+  }, [currentKey]);
+  const options = withChoice(pairOptions(machineChoices(settings.machines), row.engine, row.current), picked);
+  const chosen = pairKey(picked.model, picked.effort);
+  const dirty = chosen !== currentKey;
+  const label = text("models.choice", { name: title === null ? text(`engine.${row.engine}`) : `${text(`engine.${row.engine}`)} ${title}` });
+  const save = () => {
+    if (!dirty || state === "sending") {
+      return;
+    }
+    setState("sending");
+    void actions.setTable(withCell(settings.table, cellOf(row, picked.model, picked.effort))).then((outcome) => setState(outcome === "unsupported" ? "unsupported" : "idle"));
+  };
+  return (
+    <div className="srow">
+      {title === null ? null : (
+        <div className="srow-text">
+          <span className="srow-title">{title}</span>
+        </div>
+      )}
+      <div className={title === null ? "srow-ctl srow-ctl--wide" : "srow-ctl"}>
+        <select
+          className="field"
+          aria-label={label}
+          value={chosen}
+          disabled={options.length < 2}
+          onChange={(event) => {
+            const option = options.find((item) => pairKey(item.model, item.effort) === event.target.value);
+            if (option !== undefined) {
+              setPicked({ model: option.model, effort: option.effort });
+              setState("idle");
+            }
+          }}
+        >
+          {options.map((option) => (
+            <option key={pairKey(option.model, option.effort)} value={pairKey(option.model, option.effort)}>
+              {`${option.model} · ${option.effort}`}
+            </option>
+          ))}
+        </select>
+        <button className={`btn btn-sm${dirty ? " btn-primary" : ""}${state === "sending" ? " is-busy" : ""}`} type="button" disabled={!dirty || state === "sending"} aria-busy={state === "sending"} onClick={save}>
+          {text("models.save")}
+        </button>
+      </div>
+      {state === "unsupported" ? (
+        <p className="field-err srow-err" role="alert">
+          {text("models.unoffered", { model: picked.model, effort: picked.effort })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ModelsSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
+  const [moving, setMoving] = useState(false);
+  const move = (provider: Provider) => {
+    if (moving) {
+      return;
+    }
+    setMoving(true);
+    void actions.setOrder(movedEarlier(settings.brain.order, provider)).finally(() => setMoving(false));
+  };
+  return (
+    <>
+      <section className="section">
+        <div className="section-head">
+          <h2>{text("models.brain")}</h2>
+        </div>
+        <ol className="rows">
+          {providerRows(settings.brain).map((row, index) => (
+            <li className="srow" key={row.provider}>
+              <span className="order-num num">{index + 1}</span>
+              <div className="srow-text">
+                <span className="srow-title">{text(`provider.${row.provider}`)}</span>
+                {row.state === undefined ? null : <span className="srow-help mono">{`${row.state.model} · ${row.state.effort}`}</span>}
+              </div>
+              {row.movable ? (
+                <div className="srow-ctl srow-ctl--end">
+                  <button className="icon-btn" type="button" disabled={moving} aria-label={`${text(`provider.${row.provider}`)} ${text("models.earlier")}`} title={text("models.earlier")} onClick={() => move(row.provider)}>
+                    <Icon name="up" />
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </section>
+      {tableRows(settings.table).map((group) => (
+        <section className="section" key={group.engine}>
+          <div className="section-head">
+            <h2>{text(`engine.${group.engine}`)}</h2>
+          </div>
+          <div className="rows">
+            {group.rows.map((row) => (
+              <TableRowControl key={`${row.engine}-${row.difficulty ?? "all"}`} row={row} settings={settings} actions={actions} title={row.difficulty === null ? null : text(`ticket.difficulty.${row.difficulty}`)} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+function RepositoriesSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
+  const [sending, setSending] = useState<string | null>(null);
+  if (settings.repositories.length === 0) {
+    return (
+      <div className="empty">
+        <Icon name="repo" />
+        <strong>{text("repositories.empty")}</strong>
+      </div>
+    );
+  }
+  const choose = (repository: string, account: GitHubAccount) => {
+    setSending(repository);
+    void actions.setAccount(repository, account).finally(() => setSending(null));
+  };
+  return (
+    <div className="rows">
+      {settings.repositories.map((row) => (
+        <div className="srow" key={row.repository}>
+          <div className="srow-text">
+            <span className="srow-title mono od-truncate">{row.repository}</span>
+          </div>
+          <div className="srow-ctl">
+            <div className="seg" role="group" aria-label={text("repositories.account", { repository: row.repository })}>
+              {gitHubAccounts.map((account) => (
+                <button key={account} type="button" className="mono" aria-pressed={row.account === account} disabled={sending === row.repository} onClick={() => (row.account === account ? undefined : choose(row.repository, account))}>
+                  {account}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AppearanceSection({ appearance, choose }: { readonly appearance: Appearance; readonly choose: SettingsActions["setAppearance"] }) {
+  const swatch: Readonly<Record<ThemeChoice, string>> = { system: "auto", light: "light", dark: "dark" };
+  return (
+    <>
+      <section className="section">
+        <div className="section-head">
+          <h2 id="theme-title">{text("appearance.theme")}</h2>
+        </div>
+        <div className="theme-choices" role="radiogroup" aria-labelledby="theme-title">
+          {themeChoices.map((choice) => (
+            <button key={choice} className="theme-opt" type="button" role="radio" aria-checked={appearance.theme === choice} onClick={() => choose({ theme: choice })}>
+              <span className={`theme-swatch theme-swatch--${swatch[choice]}`} />
+              <span className="theme-name">{text(`appearance.theme.${choice}`)}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="section">
+        <div className="section-head">
+          <h2 id="accent-title">{text("appearance.accent")}</h2>
+        </div>
+        <div className="accents" role="radiogroup" aria-labelledby="accent-title">
+          {accentChoices.map((choice: AccentChoice) => (
+            <button
+              key={choice}
+              className={`accent-opt accent-opt--${choice}`}
+              type="button"
+              role="radio"
+              aria-checked={appearance.accent === choice}
+              aria-label={text(`appearance.accent.${choice}`)}
+              title={text(`appearance.accent.${choice}`)}
+              onClick={() => choose({ accent: choice })}
+            >
+              <i />
+            </button>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
+  return (
+    <>
+      <section className="section">
+        <div className="section-head">
+          <h2>{text("connections.github")}</h2>
+        </div>
+        <div className="rows">
+          {settings.accounts.map((account) => (
+            <div className="srow" key={account.account}>
+              <span className={`dot ${account.configured ? "dot--ok" : "dot--bad"}`} />
+              <div className="srow-text">
+                <span className="srow-title mono">{account.account}</span>
+                <span className="srow-help">{account.configured ? text("connections.configured") : text("connections.missing")}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="section">
+        <div className="section-head">
+          <h2>{text("connections.brain")}</h2>
+        </div>
+        <div className="rows">
+          {settings.brain.linked ? null : (
+            <div className="srow">
+              <span className="dot dot--bad" />
+              <div className="srow-text">
+                <span className="srow-title">{text("brain.offline")}</span>
+              </div>
+            </div>
+          )}
+          {providerRows(settings.brain).map((row) => {
+            const available = settings.brain.linked ? availableNow(row.state, now) : undefined;
+            const subscription = subscriptionOf(settings.subscriptions, row.provider);
+            const state = available === undefined ? null : available ? text("connections.available") : row.state?.until === null || row.state === undefined ? text("connections.unavailable") : `${text("connections.unavailable")} · ${text("connections.until", { time: momentOf(row.state.until, now) })}`;
+            const left =
+              subscription === undefined
+                ? null
+                : subscription.state === "exhausted"
+                  ? text("connections.exhausted")
+                  : subscription.remainingPercent === null
+                    ? text("connections.unknown")
+                    : text("connections.left", { percent: Math.round(subscription.remainingPercent) });
+            return (
+              <div className="srow" key={row.provider}>
+                <span className={`dot ${available === undefined ? "dot--mute" : available ? "dot--ok" : "dot--warn"}`} />
+                <div className="srow-text">
+                  <span className="srow-title">{text(`provider.${row.provider}`)}</span>
+                  {row.state === undefined ? null : <span className="srow-help mono">{`${row.state.model} · ${row.state.effort}`}</span>}
+                </div>
+                <div className="srow-ctl srow-ctl--end srow-facts">
+                  {state === null ? null : <span>{state}</span>}
+                  {left === null ? null : <span className={subscription?.state === "exhausted" ? "chip chip--bad" : "chip"}>{left}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      <section className="section">
+        <div className="section-head">
+          <h2>{text("connections.devices")}</h2>
+          <span className="count">{settings.devices.length}</span>
+        </div>
+        <div className="rows">
+          {settings.devices.length === 0 ? (
+            <div className="srow">
+              <span className="srow-help">{text("connections.noDevices")}</span>
+            </div>
+          ) : (
+            settings.devices.map((device) => (
+              <div className="srow" key={device.id}>
+                <span className="dot dot--ok" />
+                <div className="srow-text">
+                  <span className="srow-title">{text(`device.${device.service}`)}</span>
+                  <span className="srow-help">{text("connections.since", { time: momentOf(device.createdAt, now) })}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now }: SettingsViewProps) {
+  const active = section ?? firstSection;
+  const link = (target: SettingsSection | null) => {
+    const route = routeOf(target);
+    return { href: pagePath(route), onClick: (event: React.MouseEvent) => followLink(event, () => navigate(route)) };
+  };
+  const body = () => {
+    if (active === "appearance") {
+      return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
+    }
+    if (settings === null) {
+      return (
+        <div className="empty" role="status">
+          <strong>{text("settings.loading")}</strong>
+        </div>
+      );
+    }
+    switch (active) {
+      case "machines":
+        return <MachinesSection settings={settings} tickets={tickets} actions={actions} now={now} />;
+      case "models":
+        return <ModelsSection settings={settings} actions={actions} />;
+      case "repositories":
+        return <RepositoriesSection settings={settings} actions={actions} />;
+      case "connections":
+        return <ConnectionsSection settings={settings} now={now} />;
+    }
+  };
+  return (
+    <div className="page">
+      <div className={section === null ? "settings" : "settings is-section"}>
+        <nav className="set-nav" aria-label={text("settings.sections")}>
+          {settingsGroups.map((group) => (
+            <div className="set-group" key={group.group}>
+              <p className="set-group-title">{text(`settings.group.${group.group}`)}</p>
+              <ul className="nav">
+                {group.sections.map((item) => (
+                  <li key={item}>
+                    <a className="nav-btn" {...link(item)} aria-current={item === active ? "page" : undefined}>
+                      <Icon name={sectionIcons[item]} />
+                      <span className="nav-label">{text(`settings.section.${item}`)}</span>
+                      {item === "machines" && settings !== null && settings.machines.length > 0 ? <span className="count">{`${onlineCount(settings.machines)}/${settings.machines.length}`}</span> : null}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
+        <div className="set-body">
+          <div className="od-row">
+            <a className="back set-back" {...link(null)}>
+              <Icon name="back" />
+              {text("navigation.settings")}
+            </a>
+          </div>
+          <h2 className="set-title">{text(`settings.section.${active}`)}</h2>
+          {body()}
+        </div>
+      </div>
+    </div>
+  );
+}

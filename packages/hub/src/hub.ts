@@ -31,6 +31,10 @@ import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
 import { createVerification, type Ticker, type VerificationService } from "./verification.js";
 import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
+import type { AccessServiceTokens } from "./cloudflare.js";
+import { createMachineAdmin, type MachineAdmin } from "./enrollment.js";
+import { createRepositoryAccounts, type RepositoryAccounts } from "./repositories.js";
+import { createSettings, type Settings } from "./settings.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -51,6 +55,8 @@ export interface HubOptions {
   readonly verificationTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly deploymentSleep?: Sleep;
+  readonly serviceTokens?: AccessServiceTokens;
+  readonly report?: (line: string) => void;
 }
 
 export function defaultTargets(config: Config, environment: Environment): Target[] {
@@ -78,6 +84,9 @@ export interface Hub {
   readonly loop: FailureLoop;
   readonly deployments: DeploymentService;
   readonly memories: MemoryService;
+  readonly admin: MachineAdmin;
+  readonly repositories: RepositoryAccounts;
+  readonly settings: Settings;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -100,6 +109,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let loop: FailureLoop | undefined;
   let deployments: DeploymentService;
   let memories: MemoryService;
+  let settings: Settings;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -119,6 +129,21 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     reassign: (ticket) => work?.reassign(ticket),
   };
   const tickets = createTicketService({ database, clock, work: ticketWork });
+  const repositories = createRepositoryAccounts(database, clock, config.sourceRepository);
+  const accountOf = (repository: string) => repositories.accountOf(repository);
+  let settingsChanged = () => undefined as void;
+  const admin = createMachineAdmin({
+    database,
+    clock,
+    machines,
+    revoke: (name) => {
+      runners.revoke(name);
+    },
+    tokens: options.serviceTokens,
+    version: config.version !== undefined && config.sourceRepository !== undefined ? config.version : undefined,
+    report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
+    changed: () => settingsChanged(),
+  });
   const files = createTicketFiles(database);
   const credentials = options.credentials ?? environmentCredentials(environment);
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
@@ -144,7 +169,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    conversations = createConversationService({ database, clock, commands, memory: memories });
+    let storedOrder: () => ReturnType<Settings["order"]> = () => undefined;
+    conversations = createConversationService({ database, clock, commands, memory: memories, order: () => storedOrder() });
     const told = conversations;
     if (options.ticketWork === undefined) {
       work = createWorkService({
@@ -161,6 +187,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           told.deliver(conversation, delivery);
         },
         report: (report) => loop?.failed(report),
+        accountOf,
       });
     }
     chains = createChains({
@@ -189,6 +216,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         told.tell(conversation, notice, prompt);
       },
       report: (report) => loop?.failed(report),
+      accountOf,
       ...(worker === undefined
         ? {}
         : {
@@ -225,7 +253,23 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         told.tell(conversation, notice, prompt);
       },
       deployed: (ticket) => arranger.deployed(ticket),
+      accountOf,
     });
+    const linkedConversations = conversations;
+    settings = createSettings({
+      database,
+      clock,
+      runners,
+      admin,
+      repositories,
+      conversations: () => linkedConversations,
+      defaults,
+      credentials,
+      pushKey: config.vapid?.publicKey,
+    });
+    const current = settings;
+    storedOrder = () => current.order();
+    settingsChanged = () => current.changed();
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards(), stuck: () => failures.cards() });
     const refreshed = waiting;
     runners.subscribe(() => refreshed.refresh());
@@ -250,7 +294,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         memories,
         tickets: {
           tickets,
-          filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock }),
+          filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,
           verification,
@@ -261,6 +305,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tickets,
       files,
       memories,
+      settings,
+      admin,
+      repositories,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       loop: failures,
@@ -275,6 +322,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
               repository: config.sourceRepository,
               version: config.version,
               credentials,
+              accountOf,
               fetch: options.forgeFetch ?? fetch,
               ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }),
             }),
@@ -316,8 +364,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       loop: failures,
       deployments,
       memories,
+      admin,
+      repositories,
+      settings,
       address,
       close: async () => {
+        settings.close();
         try {
           runners.close();
           await server.close();

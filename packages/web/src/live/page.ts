@@ -1,4 +1,4 @@
-import type { Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
+import type { Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
@@ -19,6 +19,7 @@ export interface PageState {
   readonly detail: DetailState | null;
   readonly history: HistoryState;
   readonly memory: MemoryState;
+  readonly settings: SettingsSnapshot | null;
 }
 
 export type PageAction =
@@ -40,9 +41,10 @@ export type PageAction =
   | { readonly type: "history.failed"; readonly applied: string }
   | { readonly type: "history.more"; readonly applied: string; readonly before: string; readonly page: TicketHistory }
   | { readonly type: "history.more.started" }
-  | { readonly type: "history.more.failed"; readonly applied: string };
+  | { readonly type: "history.more.failed"; readonly applied: string }
+  | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory };
+export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -105,8 +107,13 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return withHistory(state, moreStarted(state.history));
     case "history.more.failed":
       return withHistory(state, moreFailed(state.history, action.applied));
+    case "settings":
+      return { ...state, settings: action.settings };
     case "server": {
       const { message } = action;
+      if (message.type === "settings") {
+        return { ...state, settings: message.settings };
+      }
       if (message.type === "work") {
         return withDetail(state, state.detail === null ? null : receiveDetailWork(state.detail, [message.event]));
       }

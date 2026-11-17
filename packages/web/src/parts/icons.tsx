@@ -90,6 +90,35 @@ const shapes = {
       <path d="M16 16l4 4" />
     </>
   ),
+  hub: (
+    <>
+      <circle cx="12" cy="12" r="2.5" />
+      <circle cx="5" cy="5" r="1.5" />
+      <circle cx="19" cy="5" r="1.5" />
+      <circle cx="5" cy="19" r="1.5" />
+      <circle cx="19" cy="19" r="1.5" />
+      <path d="M6.2 6.2l3.9 3.9M17.8 6.2l-3.9 3.9M6.2 17.8l3.9-3.9M17.8 17.8l-3.9-3.9" />
+    </>
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4" />
+    </>
+  ),
+  connect: (
+    <>
+      <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+      <path d="M15.5 8.5v-3a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" />
+    </>
+  ),
+  up: <path d="M6 14.5l6-6 6 6" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof shapes;

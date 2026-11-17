@@ -7,6 +7,8 @@ export interface Unavailability {
 }
 
 export interface ProviderChoice {
+  order(): Provider[];
+  setOrder(order: readonly Provider[]): boolean;
   candidates(): Provider[];
   markUnavailable(provider: Provider, reason: string, until: number | null): void;
   markAvailable(provider: Provider): void;
@@ -18,9 +20,19 @@ export function providerOrder(preferred: readonly Provider[], fallback: Provider
   return [...order, fallback];
 }
 
-export function createProviderChoice(order: readonly Provider[], clock: Clock): ProviderChoice {
+export function createProviderChoice(initial: readonly Provider[], clock: Clock): ProviderChoice {
   const unavailable = new Map<Provider, Unavailability>();
+  let order: readonly Provider[] = [...initial];
   return {
+    order: () => [...order],
+    setOrder: (next) => {
+      const unique = next.filter((provider, index) => next.indexOf(provider) === index);
+      if (unique.length === 0 || (unique.length === order.length && unique.every((provider, index) => order[index] === provider))) {
+        return false;
+      }
+      order = unique;
+      return true;
+    },
     candidates: () =>
       order.filter((provider) => {
         const state = unavailable.get(provider);

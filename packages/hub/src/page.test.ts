@@ -24,6 +24,7 @@ beforeEach(async () => {
   writeFileSync(join(pageDir, "assets", "index-abc123.css"), "body{}");
   writeFileSync(join(pageDir, "secret.txt"), "not served");
   writeFileSync(join(pageDir, "sw.js"), "self.addEventListener(\"push\", () => undefined);");
+  writeFileSync(join(pageDir, "theme.js"), "document.documentElement.dataset.theme = \"dark\";");
   mkdirSync(join(pageDir, "icons"));
   writeFileSync(join(pageDir, "icons", "icon-192.png"), Buffer.from([137, 80, 78, 71]));
   writeFileSync(join(pageDir, "icons", "notes.txt"), "not an icon");
@@ -89,6 +90,15 @@ describe("the page", () => {
     expect(response.headers.get("cache-control")).toBe("no-cache");
     expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
     expect(await response.text()).toContain("push");
+  });
+
+  it("serves the script that sets the theme before the first paint, fresh every time", async () => {
+    const running = await start();
+    const response = await call(running, "/theme.js");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(await response.text()).toContain("dataset.theme");
   });
 
   it("serves the icons and builds the manifest in Chinese from the catalog", async () => {

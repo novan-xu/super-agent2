@@ -5,10 +5,10 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
 import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
-import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/protocol";
+import { type AccessKeySet, brainToolsPath, enrollPath, type Provider } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
-import { createAllowanceForcing, createHarness, demoTarget, forgeHandBack } from "./harness.js";
+import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
 import { createScriptedRunners } from "./scripted.js";
 
 const { values } = parseArgs({
@@ -23,6 +23,7 @@ const { values } = parseArgs({
     forge: { type: "string", default: "none" },
     announce: { type: "string" },
     source: { type: "string", default: "novan-xu/super-agent2" },
+    cloudflare: { type: "string", default: "fake" },
   },
 });
 
@@ -55,6 +56,11 @@ if (values.forge === "fake" && values.credentials === "environment") {
 
 if (values.announce !== undefined && !/^[0-9a-f]{40}$/.test(values.announce)) {
   process.stderr.write("--announce must be a full commit id\n");
+  process.exit(1);
+}
+
+if (values.cloudflare !== "fake" && values.cloudflare !== "none") {
+  process.stderr.write("--cloudflare must be fake or none\n");
   process.exit(1);
 }
 
@@ -96,7 +102,10 @@ async function serviceAssertion(clientId: string): Promise<string> {
     .sign(pair.privateKey);
 }
 
-function assertionFor(incoming: IncomingMessage): Promise<string> {
+function assertionFor(incoming: IncomingMessage): Promise<string | undefined> {
+  if (new URL(incoming.url ?? "/", "http://page-dev").pathname.startsWith(enrollPath)) {
+    return Promise.resolve(undefined);
+  }
   const clientId = incoming.headers["cf-access-client-id"];
   const clientSecret = incoming.headers["cf-access-client-secret"];
   if (typeof clientId === "string" && clientId !== "" && typeof clientSecret === "string" && clientSecret !== "") {
@@ -121,6 +130,7 @@ function vapidKeys(): VapidKeys | undefined {
 }
 
 const vapid = vapidKeys();
+const cloudflare = values.cloudflare === "fake" ? fakeServiceTokens() : undefined;
 const allowance = createAllowanceForcing();
 const forge = values.forge === "fake" ? fakeForge() : undefined;
 
@@ -150,6 +160,7 @@ const hub = await startHub({
           ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
           : () => ({ ok: true, credentials: {} }),
   adjustSubscriptions: allowance.adjust,
+  ...(cloudflare === undefined ? {} : { serviceTokens: cloudflare.tokens }),
   verificationPollMilliseconds: forge === undefined ? 10_000 : 2_000,
   ...(forge !== undefined
     ? { forgeFetch: forge.fetch, gitHubBase: fakeGitHubBase }
@@ -166,27 +177,36 @@ async function startBrain(): Promise<(() => Promise<void>) | undefined> {
   }
   prepareWorkspace(workspace);
   const token = readFileSync(join(hubDir, "brain.token"), "utf8").trim();
-  const provider: Provider = "claude";
-  const adapter: ProgramAdapter =
+  const adapters = new Map<Provider, ProgramAdapter>(
     brainKind === "demo"
-      ? demoProgram()
-      : programAdapter("claude", {
-          program: startingModels.claude.program,
-          model: values.model ?? startingModels.claude.model,
-          effort: startingModels.claude.effort,
-          environment: process.env,
-          clock: systemClock,
-        });
+      ? [
+          ["gpt", demoProgram("gpt", "demo-gpt")],
+          ["claude", demoProgram("claude", "demo-claude")],
+          ["deepseek", demoProgram("deepseek", "demo-deepseek")],
+        ]
+      : [
+          [
+            "claude",
+            programAdapter("claude", {
+              program: startingModels.claude.program,
+              model: values.model ?? startingModels.claude.model,
+              effort: startingModels.claude.effort,
+              environment: process.env,
+              clock: systemClock,
+            }),
+          ],
+        ],
+  );
   const link = createHubLink({ hubUrl, token, report: (line) => process.stdout.write(`<link> ${line}\n`) });
   const brain = createBrain({
-    adapters: new Map([[provider, adapter]]),
-    order: [provider],
+    adapters,
+    order: brainKind === "demo" ? ["gpt", "claude", "deepseek"] : ["claude"],
     transport: link,
     clock: systemClock,
     tools: { url: `${hubUrl}${brainToolsPath}`, token },
     workspace,
   });
-  link.bind({ receive: (message) => brain.receive(message), running: () => brain.running() });
+  link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });
   link.connect();
   return async () => {
     await link.close();
@@ -199,14 +219,16 @@ const stopBrain = await startBrain();
 let offline = false;
 const open = new Set<Socket>();
 
-function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<string, string | string[]> {
+function forwardHeaders(incoming: IncomingMessage, assertion: string | undefined): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
   for (const [name, value] of Object.entries(incoming.headers)) {
     if (value !== undefined && !replacedHeaders.has(name)) {
       headers[name] = value;
     }
   }
-  headers["cf-access-jwt-assertion"] = assertion;
+  if (assertion !== undefined) {
+    headers["cf-access-jwt-assertion"] = assertion;
+  }
   return headers;
 }
 
@@ -221,6 +243,7 @@ const harness = createHarness({
   hubUrl,
   assertion: ownerAssertion,
   allowance,
+  ...(cloudflare === undefined ? {} : { cloudflare }),
   brainToken: () => readFileSync(join(hubDir, "brain.token"), "utf8").trim(),
   ...(forge === undefined ? {} : { deployments }),
 });
@@ -324,6 +347,7 @@ process.stdout.write(
     `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round) or worker (fails once), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
     `Deploy:   POST a deployment file to http://127.0.0.1:${port}/__harness/deployment?repository=<owner/name> (with --forge fake) and every scripted pull request of that repository carries it from then on, so its merge needs deploying; /__harness/loop?case=green&repository=<owner/name> starts such a ticket, which merges green; the demo brain deploys what a merge says needs deploying with deploy_repository, and reports the result`,
     `Version:  ${values.announce === undefined ? "none announced (--announce <commit> makes the hub announce it to runners and hand them its release from --source, through GitHub with --credentials environment)" : `${values.announce} of ${values.source}, announced to runners`}`,
+    `Machines: ${cloudflare === undefined ? "no Cloudflare credentials (--cloudflare none), so 添加机器 says so" : "添加机器 in 设置 makes Access service tokens in a fake Cloudflare in this process; /__harness/cloudflare?remove=fail makes revoking keep the token, ?remove=ok puts it back"}; ${enrollPath} reaches the hub with no assertion, as Cloudflare's Bypass rule would let it`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

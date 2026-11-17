@@ -19,6 +19,8 @@ import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
 import { WorkbenchView } from "./views/WorkbenchView.js";
+import { type SettingsActions, SettingsView } from "./views/SettingsView.js";
+import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
 const toastDuration = 4000;
 
@@ -38,6 +40,14 @@ function useNow(): number {
   return now;
 }
 
+function storageOf(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 export function App() {
   const [route, navigate] = useRoute();
   const [toast, setToast] = useState<string | null>(null);
@@ -46,6 +56,7 @@ export function App() {
   const lastConversation = useRef<PageRoute>({ view: "home" });
   const historyScroll = useRef(0);
   const [origin, setOrigin] = useState<TicketOrigin>("workbench");
+  const [appearance, setAppearance] = useState<Appearance>(() => readAppearance(storageOf()));
 
   const showFailure = useCallback((failure: Failure) => {
     setToast(failureText(failure));
@@ -124,6 +135,22 @@ export function App() {
   useEffect(() => {
     void controller.openTicket(ticketId);
   }, [controller, ticketId]);
+
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === themeKey || event.key === accentKey) {
+        setAppearance(readAppearance(storageOf()));
+      }
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
+
+  useEffect(() => {
+    if (route.view === "settings" && page.settings === null && page.status === "open") {
+      void controller.loadSettings();
+    }
+  }, [controller, route.view, page.settings, page.status]);
 
   useEffect(() => {
     if (route.view === "history") {
@@ -207,6 +234,21 @@ export function App() {
     }),
     [controller],
   );
+  const settingsActions = useMemo<SettingsActions>(
+    () => ({
+      addMachine: (name, system) => controller.addMachine(name, system),
+      revokeMachine: (name) => controller.revokeMachine(name),
+      setOrder: (order) => controller.setOrder(order),
+      setAccount: (repository, account) => controller.setAccount(repository, account),
+      setTable: (table) => controller.setTable(table),
+      setAppearance: (change) => {
+        writeAppearance(storageOf(), change);
+        setAppearance((current) => ({ ...current, ...change }));
+        window.dispatchEvent(new Event(appearanceEvent));
+      },
+    }),
+    [controller],
+  );
   const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
   const inConversation = route.view === "conversations" || route.view === "home";
@@ -224,6 +266,7 @@ export function App() {
       linked={page.linked}
       model={model}
       fill={inConversation}
+      subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
       toast={toast}
       waiting={page.waiting.cards.length}
       actions={
@@ -277,6 +320,16 @@ export function App() {
         <MemoryView memory={page.memory} actions={memoryActions} now={now} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} now={now} />
+      ) : route.view === "settings" ? (
+        <SettingsView
+          section={"section" in route ? route.section : null}
+          settings={page.settings}
+          tickets={page.tickets.open}
+          appearance={appearance}
+          actions={settingsActions}
+          navigate={navigate}
+          now={now}
+        />
       ) : (
         <div className="page" />
       )}
