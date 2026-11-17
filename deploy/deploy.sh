@@ -1,6 +1,6 @@
 set -euo pipefail
 
-script=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")
+script=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)/$(basename -- "${BASH_SOURCE[0]}")
 root=${SUPERAGENT2_ROOT:-$(dirname -- "$script")}
 instance=$(basename -- "$root")
 old=/share/Container/superagent
@@ -263,6 +263,22 @@ healthy() {
   say "the brain is linked to the hub"
 }
 
+start_services() {
+  local expected=$1
+  compose up -d --no-deps hub || return 1
+  if ! wait_for_hub "$expected"; then
+    say "the hub on 127.0.0.1:$hub_port did not answer its health check${expected:+ as $expected}"
+    return 1
+  fi
+  say "the hub answers its health check${expected:+ as $expected}"
+  compose up -d --no-deps brain || return 1
+  if ! wait_for_brain; then
+    say "the brain did not link to the hub"
+    return 1
+  fi
+  say "the brain is linked to the hub"
+}
+
 record_set() {
   local file="$1/state" key=$2 value
   value=$(printf '%s' "$3" | tr '\n\r\t' '   ')
@@ -348,7 +364,7 @@ prune() {
 }
 
 start_running() {
-  compose up -d hub brain || true
+  start_services "" || true
 }
 
 install_deploy_files() {
@@ -412,8 +428,7 @@ go_back() {
     remove_tree "$root/src.failed"
   fi
   restore_deploy_files
-  compose up -d hub brain || true
-  if healthy "$previous"; then
+  if start_services "$previous"; then
     finish "$dir" rolled-back "$why The previous version ${previous:+($previous) }was started again and answers its health check, and the brain is linked. $database"
   else
     finish "$dir" unrecovered "$why Going back did not help: the previous version ${previous:+($previous) }does not answer its health check with its brain linked. $database"
@@ -446,7 +461,9 @@ release() {
   else
     image="$project-hub:$commit"
   fi
-  if ! level=$(database_level "$image" "$dir" backup); then
+  if ! docker_cli volume inspect "$project-hub-data" > /dev/null 2>&1; then
+    level=none
+  elif ! level=$(database_level "$image" "$dir" backup); then
     say "the database could not be backed up; starting the running version again"
     start_running
     remove_tree "$root/src.next"
@@ -471,7 +488,7 @@ release() {
   install_deploy_files "$root/src"
   say "starting $project-hub and $project-brain at $commit"
   record_set "$dir" step health
-  if compose up -d hub brain && healthy "$commit"; then
+  if start_services "$commit"; then
     finish "$dir" succeeded "The hub at $commit answers its health check on 127.0.0.1:$hub_port and the brain is linked to it. The hub's database was backed up at migration $level before the switch."
     return 0
   fi
@@ -541,7 +558,7 @@ step_begin() {
   fi
   new_record "$dir" "$(basename -- "$dir")" "$1" "$2"
   install -m 0700 "$script" "$dir/deploy.sh"
-  SUPERAGENT2_ROOT=$root setsid nohup bash "$dir/deploy.sh" run-release "$dir" > "$dir/log" 2>&1 < /dev/null &
+  SUPERAGENT2_ROOT=$root setsid bash "$dir/deploy.sh" run-release "$dir" > "$dir/log" 2>&1 < /dev/null &
   local waited=0
   while [ -z "$(record_get "$dir" pid)" ] && [ "$waited" -lt 30 ]; do
     sleep 1
