@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Duplex } from "node:stream";
+import { type Duplex, Readable } from "node:stream";
 import {
   type AllowanceList,
   BrainMessage,
@@ -41,7 +41,9 @@ import {
   type WorkerMessageResponse,
   WorkerMessage,
   protocolVersion,
+  releaseVersionHeader,
   runnerLinkPath,
+  runnerReleasePath,
   RunnerToHub,
   runnerTokenHeader,
   StuckAnswerRequest,
@@ -61,6 +63,7 @@ import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
+import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
 import type { WorkService } from "./work.js";
@@ -141,6 +144,8 @@ export interface HubServerOptions {
   readonly loop?: FailureLoop;
   readonly defaults?: StartDefaults;
   readonly heartbeatMilliseconds?: number;
+  readonly version?: string;
+  readonly release?: ReleaseSource;
 }
 
 export interface HubServer {
@@ -386,12 +391,36 @@ export function createHubServer(options: HubServerOptions): HubServer {
     sendRaw(response, reply.status, reply.status === 202 ? undefined : reply.body);
   };
 
+  const serveRelease = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    request.resume();
+    const machine = await runnerMachine(request);
+    if (machine === undefined) {
+      sendJson(response, 403, { error: "forbidden" });
+      return;
+    }
+    const release = options.release;
+    if (release === undefined) {
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    const download = await release.open();
+    if (!download.ok) {
+      sendJson(response, 503, { error: "unavailable" });
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/gzip", "cache-control": "no-store", [releaseVersionHeader]: release.version });
+    const body = Readable.fromWeb(download.body as Parameters<typeof Readable.fromWeb>[0]);
+    body.on("error", () => response.destroy());
+    response.on("close", () => body.destroy());
+    body.pipe(response);
+  };
+
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const path = pathOf(request);
     const method = request.method ?? "GET";
     if (path === healthPath && (method === "GET" || method === "HEAD")) {
       const healthy = options.database.healthy();
-      sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable" }, method === "HEAD");
+      sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable", ...(options.version === undefined ? {} : { version: options.version }) }, method === "HEAD");
       return;
     }
     if (isBrainPath(path)) {
@@ -406,6 +435,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       request.resume();
       sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (path === runnerReleasePath && method === "GET") {
+      await serveRelease(request, response);
       return;
     }
     if (isRunnerPath(path)) {

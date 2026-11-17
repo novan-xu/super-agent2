@@ -1,4 +1,4 @@
-import type { AllowanceReading, ProgramReport } from "@super-agent2/protocol";
+import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
 import { readAllowances } from "./allowance.js";
 import { loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { createLedger } from "./ledger.js";
@@ -6,6 +6,7 @@ import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from 
 import { machineReport } from "./machine.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { runShell } from "./shell.js";
+import { createUpdater, systemSteps, type Updater, type UpdateSteps } from "./update.js";
 import { createWorks, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
@@ -19,11 +20,17 @@ export interface RunnerServiceOptions {
   readonly allowanceMilliseconds?: number;
   readonly now?: () => number;
   readonly work?: Partial<Pick<WorksOptions, "adapters" | "findProgram" | "run" | "remote" | "readPullRequest">>;
+  readonly mainPath?: string;
+  readonly version?: string;
+  readonly supervised?: boolean;
+  readonly restart?: () => void;
+  readonly updateSteps?: UpdateSteps;
 }
 
 export interface RunnerService {
   readonly link: RunnerLink;
   readonly works: Works;
+  readonly updater: Updater | undefined;
   readonly probed: Promise<void>;
   readonly allowanceRead: Promise<void>;
   close(): Promise<void>;
@@ -34,7 +41,7 @@ function describe(event: LinkEvent): string {
     case "connecting":
       return `Connecting to ${event.url}`;
     case "connected":
-      return `Connected to the hub as ${event.name}`;
+      return `Connected to the hub as ${event.name}${event.version === undefined ? "" : `, which runs ${event.version.slice(0, 7)}`}`;
     case "refused":
       return `The hub refused the connection (HTTP ${event.status})`;
     case "closed":
@@ -74,27 +81,61 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   let programs: ProgramReport[] = [];
   let allowances: AllowanceReading[] = [];
   let bound: RunnerLink | undefined;
+  let updater: Updater | undefined;
   const works = createWorks({
     home: files.home,
     environment: options.environment,
     send: (message) => bound?.send(message),
     ledger,
     log,
-    changed: () => bound?.update(),
+    changed: () => {
+      bound?.update();
+      updater?.changed();
+    },
     ...(options.now === undefined ? {} : { now: options.now }),
     ...options.work,
   });
   const link = createRunnerLink({
     config,
-    report: () => machineReport(config.slots, programs, process.platform, allowances, works.busy()),
+    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => works,
     execute: (job, sink) => runShell(job, sink, { environment: options.environment }),
     ledger,
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
-    onEvent: (event) => log(describe(event)),
+    onEvent: (event) => {
+      log(describe(event));
+      if (event.type === "connected") {
+        updater?.confirmed();
+        updater?.announced(event.version);
+      } else if (event.type === "ended" || event.type === "failed") {
+        updater?.changed();
+      }
+    },
   });
   bound = link;
+  const now = options.now ?? Date.now;
+  if (options.mainPath !== undefined) {
+    updater = createUpdater({
+      home: files.home,
+      mainPath: options.mainPath,
+      version: options.version,
+      supervised: options.supervised ?? false,
+      steps:
+        options.updateSteps ??
+        systemSteps({
+          hub: config.hub,
+          headers: { [accessClientIdHeader]: config.accessClientId, [accessClientSecretHeader]: config.accessClientSecret, [runnerTokenHeader]: config.runnerToken },
+          platform: process.platform,
+          environment: options.environment,
+          nodePath: process.execPath,
+        }),
+      busy: () => works.busy() + link.running().length,
+      restart: options.restart ?? (() => undefined),
+      log,
+      now,
+    });
+  }
   const prober = options.prober ?? systemProber({ environment: options.environment, cwd: files.probe });
   const definitions = programDefinitions(config.models);
   const probe = async () => {
@@ -112,7 +153,6 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     void probe().catch(() => undefined);
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
-  const now = options.now ?? Date.now;
   let reading = false;
   const readAllowance = async () => {
     if (reading) {
@@ -139,6 +179,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   return {
     link,
     works,
+    updater,
     probed,
     allowanceRead,
     close: async () => {

@@ -51,9 +51,40 @@ export const deploymentPhases = ["deploy", "health", "rollback", "recheck", "don
 export const DeploymentPhase = z.enum(deploymentPhases);
 export type DeploymentPhase = z.infer<typeof DeploymentPhase>;
 
-export const deploymentResults = ["succeeded", "rolled-back", "unrecovered", "failed", "not-run", "interrupted"] as const;
+export const deploymentResults = ["succeeded", "rolled-back", "unrecovered", "failed", "unchanged", "not-run", "interrupted"] as const;
 export const DeploymentResult = z.enum(deploymentResults);
 export type DeploymentResult = z.infer<typeof DeploymentResult>;
+
+export const deploymentOutcomeMarker = "superagent2-deployment-outcome";
+
+export const DeploymentOutcome = z.object({
+  result: DeploymentResult,
+  reason: z.string().trim().min(1).max(4_000),
+  previous: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/)
+    .optional(),
+});
+export type DeploymentOutcome = z.infer<typeof DeploymentOutcome>;
+
+export function readDeploymentOutcome(output: string): DeploymentOutcome | undefined {
+  const lines = output.split(/\r?\n/).reverse();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(`${deploymentOutcomeMarker} `)) {
+      continue;
+    }
+    try {
+      const parsed = DeploymentOutcome.safeParse(JSON.parse(trimmed.slice(deploymentOutcomeMarker.length + 1)));
+      if (parsed.success) {
+        return parsed.data;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
 
 export const deploymentStepKinds = ["deploy", "health", "rollback", "recheck"] as const;
 export const DeploymentStepKind = z.enum(deploymentStepKinds);

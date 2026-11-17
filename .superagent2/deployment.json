@@ -1,0 +1,10 @@
+{
+  "target": "hub",
+  "deploy": "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i \"$NAS_SSH_IDENTITY\" \"$NAS_SSH_DESTINATION\" bash \"/share/Container/${SUPERAGENT2_INSTANCE:?the hub names no instance}/deploy.sh\" begin \"$SUPERAGENT2_DEPLOYMENT\" \"$SUPERAGENT2_COMMIT\"",
+  "health": {
+    "command": "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i \"$NAS_SSH_IDENTITY\" \"$NAS_SSH_DESTINATION\" bash \"/share/Container/${SUPERAGENT2_INSTANCE:?the hub names no instance}/deploy.sh\" outcome \"$SUPERAGENT2_DEPLOYMENT\" \"$SUPERAGENT2_COMMIT\"",
+    "everySeconds": 10,
+    "withinSeconds": 3600
+  },
+  "rollback": "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i \"$NAS_SSH_IDENTITY\" \"$NAS_SSH_DESTINATION\" bash \"/share/Container/${SUPERAGENT2_INSTANCE:?the hub names no instance}/deploy.sh\" settle \"$SUPERAGENT2_DEPLOYMENT\" \"$SUPERAGENT2_COMMIT\""
+}

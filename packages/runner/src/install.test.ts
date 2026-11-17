@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatSettings, runnerFiles } from "./config.js";
+import { bootstrapSource, entryFiles, readState } from "./entry.js";
 import {
   type InstallContext,
   install,
   launchAgentPath,
   launchAgentPlist,
   macosLabel,
+  supervisedVariable,
   uninstall,
   windowsRunCommand,
   windowsRunKey,
@@ -48,6 +50,7 @@ function context(platform: NodeJS.Platform, settings = true) {
     platform,
     nodePath: "C:\\Program Files\\nodejs\\node.exe",
     mainPath: "C:\\work\\super-agent2\\packages\\runner\\dist\\main.js",
+    version: "c".repeat(40),
     environment: { PATH: "/usr/local/bin:/usr/bin:/bin", SUPERAGENT2_RUNNER_HOME: files.home },
     execute: (program, args) => {
       commands.push([program, ...args]);
@@ -67,7 +70,9 @@ describe("the Windows installer", () => {
   it("starts the runner at login through the user's Run key and now", () => {
     const { value, commands, started } = context("win32");
     expect(install(value)).toBe(true);
-    expect(windowsRunCommand(value)).toBe('"C:\\Program Files\\nodejs\\node.exe" "C:\\work\\super-agent2\\packages\\runner\\dist\\main.js" launch');
+    expect(windowsRunCommand(value)).toBe(`"C:\\Program Files\\nodejs\\node.exe" "${join(value.files.home, "start.mjs")}" launch`);
+    expect(readState(entryFiles(value.files.home))).toEqual({ current: value.mainPath, currentVersion: "c".repeat(40) });
+    expect(readFileSync(join(value.files.home, "start.mjs"), "utf8")).toBe(bootstrapSource(value.mainPath));
     expect(commands).toEqual([["reg", "add", windowsRunKey, "/v", windowsRunValue, "/t", "REG_SZ", "/d", windowsRunCommand(value), "/f"]]);
     expect(windowsRunKey.startsWith("HKCU\\")).toBe(true);
     expect(started).toEqual(["supervisor"]);
@@ -102,6 +107,9 @@ describe("the macOS installer", () => {
     expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(plist).toContain("<string>run</string>");
+    expect(plist).toContain(`<string>${join(value.files.home, "start.mjs")}</string>`);
+    expect(plist).toContain(`<key>${supervisedVariable}</key>\n    <string>1</string>`);
+    expect(readState(entryFiles(value.files.home))?.current).toBe(value.mainPath);
     expect(plist).toContain("<key>PATH</key>\n    <string>/usr/local/bin:/usr/bin:/bin</string>");
     expect(plist).not.toContain("secret");
     expect(commands).toEqual([
@@ -121,6 +129,6 @@ describe("the macOS installer", () => {
 
   it("escapes what it writes into the property list", () => {
     const { value } = context("darwin");
-    expect(launchAgentPlist({ ...value, mainPath: "/a & b/<main>.js" })).toContain("<string>/a &amp; b/&lt;main&gt;.js</string>");
+    expect(launchAgentPlist({ ...value, nodePath: "/a & b/<node>" })).toContain("<string>/a &amp; b/&lt;node&gt;</string>");
   });
 });

@@ -3,18 +3,22 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, r
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { homeVariable, loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
+import { ensureEntry, entryFiles, installEntry } from "./entry.js";
 import { type Execute, executeQuietly } from "./secret-file.js";
 import { killTree } from "./shell.js";
 
 export const windowsRunKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 export const windowsRunValue = "SuperAgent2Runner";
 export const macosLabel = "com.superagent2.runner";
+export const supervisedVariable = "SUPERAGENT2_RUNNER_SUPERVISED";
+export const restartCode = 75;
 
 export interface InstallContext {
   readonly files: RunnerFiles;
   readonly platform: NodeJS.Platform;
   readonly nodePath: string;
   readonly mainPath: string;
+  readonly version?: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly execute: Execute;
   readonly say: (line: string) => void;
@@ -23,12 +27,13 @@ export interface InstallContext {
   readonly startNow?: (context: InstallContext) => void;
 }
 
-export function defaultInstallContext(files: RunnerFiles, mainPath: string, say: (line: string) => void): InstallContext {
+export function defaultInstallContext(files: RunnerFiles, mainPath: string, say: (line: string) => void, version?: string): InstallContext {
   return {
     files,
     platform: process.platform,
     nodePath: process.execPath,
     mainPath,
+    ...(version === undefined ? {} : { version }),
     environment: process.env,
     execute: executeQuietly,
     say,
@@ -39,16 +44,20 @@ function quote(value: string): string {
   return `"${value}"`;
 }
 
-export function windowsRunCommand(context: Pick<InstallContext, "nodePath" | "mainPath">): string {
-  return `${quote(context.nodePath)} ${quote(context.mainPath)} launch`;
+export function entryPath(context: Pick<InstallContext, "files">): string {
+  return entryFiles(context.files.home).entry;
+}
+
+export function windowsRunCommand(context: Pick<InstallContext, "nodePath" | "files">): string {
+  return `${quote(context.nodePath)} ${quote(entryPath(context))} launch`;
 }
 
 function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-export function launchAgentPlist(context: Pick<InstallContext, "nodePath" | "mainPath" | "files" | "environment">): string {
-  const variables: Record<string, string> = {};
+export function launchAgentPlist(context: Pick<InstallContext, "nodePath" | "files" | "environment">): string {
+  const variables: Record<string, string> = { [supervisedVariable]: "1" };
   const path = context.environment["PATH"];
   if (path !== undefined && path !== "") {
     variables["PATH"] = path;
@@ -68,7 +77,7 @@ export function launchAgentPlist(context: Pick<InstallContext, "nodePath" | "mai
     "  <key>ProgramArguments</key>",
     "  <array>",
     `    ${string(context.nodePath)}`,
-    `    ${string(context.mainPath)}`,
+    `    ${string(entryPath(context))}`,
     `    ${string("run")}`,
     "  </array>",
     "  <key>EnvironmentVariables</key>",
@@ -154,7 +163,8 @@ export function launchSupervisor(context: InstallContext): boolean {
     return false;
   }
   mkdirSync(context.files.home, { recursive: true });
-  const child = spawn(context.nodePath, [context.mainPath, "supervise"], {
+  ensureEntry(context.files.home, context.mainPath, context.version);
+  const child = spawn(context.nodePath, [entryPath(context), "supervise"], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
@@ -167,6 +177,9 @@ export function launchSupervisor(context: InstallContext): boolean {
 export function install(context: InstallContext): boolean {
   if (!settingsReady(context)) {
     return false;
+  }
+  if (context.platform === "win32" || context.platform === "darwin") {
+    installEntry(context.files.home, context.mainPath, context.version);
   }
   if (context.platform === "win32") {
     context.execute("reg", ["add", windowsRunKey, "/v", windowsRunValue, "/t", "REG_SZ", "/d", windowsRunCommand(context), "/f"]);
@@ -245,15 +258,21 @@ export function supervise(options: SupervisorOptions): void {
     rotateLog(context.files.log);
     const log = openSync(context.files.log, "a");
     const started = Date.now();
-    child = spawn(context.nodePath, [context.mainPath, "run"], {
+    child = spawn(context.nodePath, [entryPath(context), "run"], {
       stdio: ["ignore", log, log],
       windowsHide: true,
-      env: { ...context.environment },
+      env: { ...context.environment, [supervisedVariable]: "1" },
     });
     closeSync(log);
     child.once("exit", (code, signal) => {
       child = undefined;
       if (stopping) {
+        return;
+      }
+      if (code === restartCode) {
+        quickExits = 0;
+        options.log("The runner restarted itself to change its version; starting it again now");
+        setTimeout(start, 500);
         return;
       }
       quickExits = Date.now() - started < 60000 ? quickExits + 1 : 0;
