@@ -9,6 +9,7 @@ import { type AccessKeySet, brainToolsPath, type Provider } from "@super-agent2/
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget } from "./harness.js";
+import { createScriptedRunners } from "./scripted.js";
 
 const { values } = parseArgs({
   options: {
@@ -34,8 +35,8 @@ if (brainKind !== "demo" && brainKind !== "claude" && brainKind !== "none") {
   process.exit(1);
 }
 
-if (values.credentials !== "none" && values.credentials !== "environment") {
-  process.stderr.write("--credentials must be none or environment\n");
+if (values.credentials !== "none" && values.credentials !== "environment" && values.credentials !== "placeholder") {
+  process.stderr.write("--credentials must be none, environment or placeholder\n");
   process.exit(1);
 }
 
@@ -120,7 +121,12 @@ const hub = await startHub({
   },
   keySource: () => Promise.resolve(keys),
   targets: [localTarget({ environment: process.env }), demoTarget()],
-  credentials: values.credentials === "environment" ? environmentCredentials(process.env) : () => ({ ok: true, credentials: {} }),
+  credentials:
+    values.credentials === "environment"
+      ? environmentCredentials(process.env)
+      : values.credentials === "placeholder"
+        ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
+        : () => ({ ok: true, credentials: {} }),
   adjustSubscriptions: allowance.adjust,
 });
 const hubPort = hub.address.port;
@@ -176,7 +182,10 @@ function forwardHeaders(incoming: IncomingMessage, assertion: string): Record<st
   return headers;
 }
 
+const scripted = createScriptedRunners(hub);
+
 const harness = createHarness({
+  scripted,
   hub,
   publicUrl: `http://127.0.0.1:${port}`,
   hubUrl,
@@ -278,6 +287,7 @@ process.stdout.write(
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
     `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort> files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND`,
     `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a writing ticket through the brain's tools and states its defaults, to be started from its card on the page`,
+    `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two writing tickets on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
@@ -291,6 +301,7 @@ const stop = () => {
   }
   stopping = true;
   proxy.close();
+  scripted.close();
   for (const socket of open) {
     socket.destroy();
   }

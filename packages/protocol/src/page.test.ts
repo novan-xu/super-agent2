@@ -10,16 +10,17 @@ describe("pageRoute", () => {
     expect(pageRoute("/settings/")).toEqual({ view: "settings" });
     expect(pageRoute("/conversations")).toEqual({ view: "conversations", conversation: null });
     expect(pageRoute("/conversations/abc-123")).toEqual({ view: "conversations", conversation: "abc-123" });
+    expect(pageRoute("/tickets/12")).toEqual({ view: "ticket", ticket: 12 });
   });
 
   it("refuses paths the page does not have", () => {
-    for (const path of ["", "/api", "/assets/index.js", "/ws", "/health", "/conversations/a/b", "/memory/x", "/conversations/a.b", "/Workbench"]) {
+    for (const path of ["", "/api", "/assets/index.js", "/ws", "/health", "/conversations/a/b", "/memory/x", "/conversations/a.b", "/Workbench", "/tickets", "/tickets/0", "/tickets/012", "/tickets/x", "/tickets/1/2", "/tickets/12345678901234567"]) {
       expect(pageRoute(path)).toBeUndefined();
     }
   });
 
   it("writes the path it reads", () => {
-    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/history", "/memory", "/settings"]) {
+    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/tickets/7", "/history", "/memory", "/settings"]) {
       const route = pageRoute(path);
       expect(route).toBeDefined();
       if (route !== undefined) {

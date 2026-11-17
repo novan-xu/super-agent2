@@ -15,9 +15,12 @@ import { useRoute } from "./parts/route.js";
 import { followLink, Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
+import { type TicketActions, TicketView } from "./views/TicketView.js";
 import { WorkbenchView } from "./views/WorkbenchView.js";
 
 const toastDuration = 4000;
+
+const workFlushDelay = 40;
 
 function socketUrl(): string {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -59,6 +62,9 @@ export function App() {
           },
         },
         onFailure: (failure) => showFailure(failure),
+        frame: (run) => {
+          window.setTimeout(run, workFlushDelay);
+        },
       }),
   );
 
@@ -108,6 +114,11 @@ export function App() {
   }, [controller]);
 
   const conversationId = route.view === "conversations" ? route.conversation : null;
+  const ticketId = route.view === "ticket" ? route.ticket : null;
+
+  useEffect(() => {
+    void controller.openTicket(ticketId);
+  }, [controller, ticketId]);
 
   useEffect(() => {
     if (route.view === "conversations") {
@@ -146,6 +157,19 @@ export function App() {
     [controller],
   );
   const togglePush = useCallback(() => void pushController.toggle(), [pushController]);
+  const ticketHref = useCallback((ticket: number) => pagePath({ view: "ticket", ticket }), []);
+  const openTicket = useCallback((ticket: number) => navigate({ view: "ticket", ticket }), [navigate]);
+  const backToWorkbench = useCallback(() => navigate({ view: "workbench" }), [navigate]);
+  const ticketActions = useMemo<TicketActions>(
+    () => ({
+      stop: (ticket) => controller.stopTicket(ticket),
+      reassign: (ticket, change) => controller.reassignTicket(ticket, change),
+      message: (ticket, message) => controller.messageTicket(ticket, message),
+      machines: () => controller.machines(),
+    }),
+    [controller],
+  );
+  const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
   const inConversation = route.view === "conversations" || route.view === "home";
   const model = page.current?.turns.at(-1)?.model ?? null;
@@ -194,7 +218,12 @@ export function App() {
           push={pushPhase(pushFacts)}
           togglePush={togglePush}
           tickets={page.tickets}
+          ticketHref={ticketHref}
+          openTicket={openTicket}
+          now={now}
         />
+      ) : route.view === "ticket" ? (
+        <TicketView detail={page.detail} known={known} actions={ticketActions} backHref={pagePath({ view: "workbench" })} back={backToWorkbench} now={now} />
       ) : (
         <div className="page" />
       )}

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createPushDevice, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
+import type { Behaviour, ScriptedRunners } from "./scripted.js";
 import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, ProgramId, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
 export const demoTargetName = "demo";
@@ -60,6 +61,53 @@ const heldCommands: Readonly<Record<string, string>> = {
   hidden: "gh repo delete novan-xu/old-experiments --yes # ​‮ done",
 };
 
+interface Planned {
+  readonly name: string;
+  readonly repository: string | null;
+  readonly titles: readonly (readonly [string, string])[];
+  readonly title: readonly [string, string];
+  readonly behaviour: Behaviour;
+  readonly machine: string;
+  readonly engine: ProgramId;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly after?: string;
+  readonly task?: string;
+}
+
+const scenarioPlan: readonly Planned[] = [
+  {
+    name: "parser",
+    repository: "novan-xu/garden-notes",
+    title: ["Parse dates in notes", "解析笔记里的日期"],
+    titles: [
+      ["Parse plain dates", "解析普通日期"],
+      ["Parse relative dates", "解析相对日期"],
+      ["Show parsed dates", "显示解析出的日期"],
+    ],
+    behaviour: "long",
+    machine: "studio",
+    engine: "codex",
+    model: "gpt-6-luna",
+    effort: "medium",
+  },
+  { name: "export", repository: "novan-xu/garden-notes", title: ["Export notes", "导出笔记"], titles: [["Export notes as Markdown", "把笔记导出成 Markdown"]], behaviour: "finish", machine: "studio", engine: "claude", after: "parser" },
+  { name: "sync", repository: "nuofan-island/plant-log", title: ["Sync the log", "同步植物日志"], titles: [["Sync the log across devices", "在设备间同步日志"]], behaviour: "fail", machine: "studio", engine: "claude" },
+  { name: "photos", repository: "nuofan-island/plant-log", title: ["Attach photos", "给日志加照片"], titles: [["Attach photos to entries", "给条目附上照片"]], behaviour: "finish", machine: "mini", engine: "codex" },
+  { name: "water", repository: "novan-xu/garden-notes", title: ["Watering reminders", "浇水提醒"], titles: [["Remind me to water", "提醒浇水"]], behaviour: "long", machine: "mini", engine: "claude" },
+  {
+    name: "notice",
+    repository: null,
+    title: ["Notice for neighbours", "给邻居的通知"],
+    titles: [],
+    behaviour: "deliver",
+    machine: "studio",
+    engine: "antigravity",
+    task: "Write a short notice for the neighbours that the garden gate is repainted on Saturday morning.",
+  },
+  { name: "untasked", repository: null, title: ["Thank-you card", "写一张感谢卡"], titles: [], behaviour: "deliver", machine: "studio", engine: "antigravity" },
+];
+
 interface Device {
   readonly id: string;
   readonly keys: PushDevice;
@@ -82,6 +130,7 @@ export interface HarnessOptions {
   readonly assertion: () => Promise<string>;
   readonly allowance: AllowanceForcing;
   readonly brainToken: () => string;
+  readonly scripted: ScriptedRunners;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -251,6 +300,75 @@ export function createHarness(options: HarnessOptions): Harness {
     json(response, stated.isError ? 409 : 200, { ticket: Number(ticket), steps });
   };
 
+  let nextIssue = 1000 + Math.floor(Math.random() * 8000);
+
+  const scenario = async (response: ServerResponse): Promise<void> => {
+    options.scripted.connect();
+    const ids = new Map<string, number>();
+    for (const plan of scenarioPlan) {
+      const issues =
+        plan.repository === null
+          ? []
+          : plan.titles.map(([en, zh]) => {
+              nextIssue += 1;
+              const repository = plan.repository ?? "";
+              return { repository, number: nextIssue, url: `https://github.com/${repository}/issues/${nextIssue}`, title: { en, zh }, summary: { en: `${en}, as the issue says`, zh: `${zh}，按问题里写的做` } };
+            });
+      const after = plan.after === undefined ? undefined : ids.get(plan.after);
+      const ticket = options.hub.tickets.open({
+        repository: plan.repository,
+        issues,
+        title: { en: plan.title[0], zh: plan.title[1] },
+        summary: { en: `${plan.title[0]}, a scripted ticket of the page harness`, zh: `${plan.title[1]}：页面测试用的脚本工单` },
+        kind: plan.repository === null ? "writing" : "feature",
+        ...(after === undefined ? {} : { waitsFor: [after] }),
+        ...(plan.task === undefined ? {} : { writing: { task: plan.task, materials: [] } }),
+      });
+      ids.set(plan.name, ticket.id);
+      options.scripted.behave(ticket.id, plan.behaviour);
+      const stated = options.hub.chains.arranger.state([
+        plan.repository === null
+          ? { ticket: ticket.id, kind: "writing", reason: { en: "Scripted writing", zh: "脚本写作" }, platform: "any" }
+          : {
+              ticket: ticket.id,
+              kind: "feature",
+              issues: issues.map((issue) => ({ number: issue.number, difficulty: "standard" as const })),
+              reason: { en: "Scripted work", zh: "脚本工作" },
+              platform: "any",
+              engine: plan.engine === "claude" ? "claude" : "codex",
+            },
+      ]);
+      if (!stated.ok) {
+        json(response, 409, { error: `defaults refused for ${plan.name}: ${stated.reason}` });
+        return;
+      }
+      const chosen = await options.hub.chains.starter.choose({
+        assertion: await options.assertion(),
+        ticket: ticket.id,
+        change: { machine: plan.machine, engine: plan.engine, ...(plan.model === undefined ? {} : { model: plan.model, effort: plan.effort ?? null }) },
+      });
+      if (!chosen.ok) {
+        json(response, 409, { error: `choice refused for ${plan.name}: ${chosen.error}` });
+        return;
+      }
+    }
+    const wanted = new Set(ids.values());
+    const cards = options.hub.chains.cards().filter((card) => wanted.has(card.ticket.id));
+    const started = await options.hub.chains.starter.start({ assertion: await options.assertion(), chains: cards.map((card) => ({ ticket: card.ticket.id, fingerprint: card.fingerprint })) });
+    json(response, started.ok ? 200 : 409, { tickets: Object.fromEntries(ids), started: started.ok ? started.tickets.map((entry) => ({ id: entry.id, state: entry.state })) : started.error });
+  };
+
+  const scriptedMachine = (url: URL, response: ServerResponse): void => {
+    const machine = url.searchParams.get("machine") ?? "";
+    const to = url.searchParams.get("to");
+    if (to !== "offline" && to !== "online") {
+      json(response, 400, { error: "give machine= (one of the scripted machines) and to=offline or to=online", machines: options.scripted.names });
+      return;
+    }
+    const done = to === "offline" ? options.scripted.offline(machine) : options.scripted.online(machine);
+    json(response, done ? 200 : 409, { machine, to, done });
+  };
+
   const forceAllowance = (url: URL, response: ServerResponse): void => {
     for (const program of allowancePrograms) {
       const given = url.searchParams.get(program);
@@ -305,6 +423,15 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/writing") {
         await openWriting(url, response);
+        return true;
+      }
+      if (path === "/__harness/scenario") {
+        await scenario(response);
+        return true;
+      }
+      if (path === "/__harness/scripted") {
+        options.scripted.connect();
+        scriptedMachine(url, response);
         return true;
       }
       if (path === "/__harness/allowance") {

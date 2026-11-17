@@ -55,6 +55,23 @@ const shapes = {
       <path d="M14 3.5v4h4M9 12h6M9 15.5h6" />
     </>
   ),
+  back: <path d="M15 5l-7 7 7 7" />,
+  ext: <path d="M8 16L16 8M9.5 8H16v6.5" />,
+  machine: (
+    <>
+      <rect x="3" y="4.5" width="18" height="12" rx="1.5" />
+      <path d="M8.5 20h7M12 16.5V20" />
+    </>
+  ),
+  pr: (
+    <>
+      <circle cx="6.5" cy="6" r="2" />
+      <circle cx="6.5" cy="18" r="2" />
+      <circle cx="17.5" cy="18" r="2" />
+      <path d="M6.5 8v8M17.5 16V10a3 3 0 0 0-3-3h-3" />
+      <path d="M13.5 4.5L11 7l2.5 2.5" />
+    </>
+  ),
   repo: (
     <>
       <path d="M5.5 18.5V5.5a2 2 0 0 1 2-2h11v14h-11a2 2 0 0 0-2 2 2 2 0 0 0 2 2h11" />

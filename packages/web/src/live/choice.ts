@@ -34,11 +34,16 @@ function withCurrent<T>(values: readonly T[], current: T | null): T[] {
   return current === null || values.includes(current) ? [...values] : [current, ...values];
 }
 
-function machineOf(card: StartCard): MachineChoice | undefined {
+export interface ChoiceSource {
+  readonly machines: readonly MachineChoice[];
+  readonly choice: { readonly machine: string | null; readonly engine: ProgramId | null; readonly model: string | null; readonly effort: string | null };
+}
+
+function machineOf(card: ChoiceSource): MachineChoice | undefined {
   return card.machines.find((machine) => machine.name === card.choice.machine);
 }
 
-export function choiceOptions(card: StartCard): ChoiceOptions {
+export function choiceOptions(card: ChoiceSource): ChoiceOptions {
   const { choice } = card;
   const machine = machineOf(card);
   const engines = machine?.engines.map((offer) => offer.engine) ?? [];

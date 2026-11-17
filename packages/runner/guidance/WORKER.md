@@ -29,6 +29,12 @@ a question, approve a command or fix something for you. You run with full access
 - If a message arrives while you work, it comes from the owner or from the brain (the agent that filed your issues).
   Take it into account at once.
 
+## Language
+
+The owner reads what you say as you work, live. Write your commentary, and anything else you say that is not a command,
+code, a commit, a pull request or an issue, in Simplified Chinese; keep names and technical terms as they are.
+Everything that goes into the repository or to GitHub stays in English.
+
 ## The pull request
 
 Open exactly one pull request for the whole chain, from your branch into the default branch, with `gh pr create`. If one

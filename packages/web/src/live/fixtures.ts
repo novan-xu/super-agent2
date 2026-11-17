@@ -1,4 +1,28 @@
-import type { MachineChoice, StartChoice, Ticket, WaitingCard } from "@super-agent2/protocol";
+import type { MachineChoice, StartChoice, StoredWorkEvent, Ticket, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
+
+export function workStatus(overrides: Partial<WorkStatus> = {}): WorkStatus {
+  return {
+    attempt: 1,
+    state: "running",
+    machine: "pc",
+    engine: "codex",
+    model: "gpt-6-luna",
+    effort: "medium",
+    session: null,
+    failure: null,
+    reason: null,
+    unreachableSince: null,
+    last: 0,
+    createdAt: 10_000,
+    startedAt: 10_000,
+    endedAt: null,
+    ...overrides,
+  };
+}
+
+export function workEvent(id: number, event: WorkEvent, overrides: Partial<Omit<StoredWorkEvent, "event">> = {}): StoredWorkEvent {
+  return { id, ticket: 1, attempt: 1, seq: id, at: 10_000 + id, event, ...overrides };
+}
 
 export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   const repository = "novan-xu/super-agent-sandbox";

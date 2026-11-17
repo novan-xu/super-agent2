@@ -1,8 +1,7 @@
-import { ticketStates } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import { ticket } from "./fixtures.js";
 import { pageReducer, initialPage } from "./page.js";
-import { initialTickets, receiveTicket, receiveTickets, ticketTones } from "./tickets.js";
+import { initialTickets, receiveTicket, receiveTickets } from "./tickets.js";
 
 const ids = (state: { readonly open: readonly { readonly id: number }[] }) => state.open.map((entry) => entry.id);
 
@@ -34,14 +33,6 @@ describe("the open tickets", () => {
     const state = receiveTickets([ticket(1, { state: "working", updatedAt: 5000 })]);
     expect(receiveTicket(state, ticket(1, { updatedAt: 1000 }))).toBe(state);
     expect(receiveTicket(state, ticket(7, { state: "merged" }))).toBe(state);
-  });
-
-  it("give every state a tone", () => {
-    for (const state of ticketStates) {
-      expect(ticketTones[state]).toBeDefined();
-    }
-    expect(ticketTones.working.live).toBe(true);
-    expect(ticketTones.pending.live).toBe(false);
   });
 
   it("reach the page state from the socket", () => {

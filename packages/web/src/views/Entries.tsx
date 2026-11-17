@@ -39,6 +39,14 @@ const OwnerMessage = memo(function OwnerMessage({ entry }: { readonly entry: Own
   );
 });
 
+export function TextBody({ text: body, live }: { readonly text: string; readonly live: boolean }) {
+  return (
+    <div className={live ? "msg-text cursor" : "msg-text"}>
+      <Markdown text={body} />
+    </div>
+  );
+}
+
 const BrainText = memo(function BrainText({
   entry,
   lead,
@@ -57,14 +65,41 @@ const BrainText = memo(function BrainText({
           <span className="num">{clockOf(entry.at)}</span>
         </div>
       ) : null}
-      <div className={live ? "msg-text cursor" : "msg-text"}>
-        <Markdown text={entry.text} />
-      </div>
+      <TextBody text={entry.text} live={live} />
     </div>
   );
 });
 
 const toolDots = { running: "dot dot--ok dot--live", done: "dot dot--ok", failed: "dot dot--bad" } as const;
+
+export interface ToolFoldProps {
+  readonly name: string;
+  readonly input: string;
+  readonly output: string;
+  readonly state: ToolEntry["state"];
+  readonly stopped: boolean;
+}
+
+export const ToolFold = memo(function ToolFold({ name, input, output, state, stopped }: ToolFoldProps) {
+  return (
+    <details className="tool">
+      <summary className="tool-head">
+        <span
+          className={stopped ? "dot dot--mute" : toolDots[state]}
+          role="img"
+          aria-label={stopped ? text("turn.state.interrupted") : text(`tool.state.${state}`)}
+        />
+        <span className="tool-name">{toolName(name)}</span>
+        <code className="tool-sum od-truncate">{toolSummary(input)}</code>
+        <Icon name="chev" />
+      </summary>
+      <div className="tool-body">
+        <pre className="tool-in">{input}</pre>
+        {output === "" ? null : <pre className="tool-out">{output}</pre>}
+      </div>
+    </details>
+  );
+});
 
 const ToolCall = memo(function ToolCall({ entry, lead, live }: { readonly entry: ToolEntry; readonly lead: boolean; readonly live: boolean }) {
   const stopped = entry.state === "running" && !live;
@@ -77,39 +112,32 @@ const ToolCall = memo(function ToolCall({ entry, lead, live }: { readonly entry:
           <span className="num">{clockOf(entry.at)}</span>
         </div>
       ) : null}
-      <details className="tool">
-        <summary className="tool-head">
-          <span
-            className={stopped ? "dot dot--mute" : toolDots[entry.state]}
-            role="img"
-            aria-label={stopped ? text("turn.state.interrupted") : text(`tool.state.${entry.state}`)}
-          />
-          <span className="tool-name">{toolName(entry.name)}</span>
-          <code className="tool-sum od-truncate">{toolSummary(entry.input)}</code>
-          <Icon name="chev" />
-        </summary>
-        <div className="tool-body">
-          <pre className="tool-in">{entry.input}</pre>
-          {entry.output === "" ? null : <pre className="tool-out">{entry.output}</pre>}
-        </div>
-      </details>
+      <ToolFold name={entry.name} input={entry.input} output={entry.output} state={entry.state} stopped={stopped} />
     </div>
   );
 });
 
-const Delivery = memo(function Delivery({ entry }: { readonly entry: DeliveryEntry }) {
+export interface DeliveryBodyProps {
+  readonly ticket: number;
+  readonly title: string;
+  readonly at: number;
+  readonly text: string | null;
+  readonly files: readonly { readonly name: string; readonly size: number }[];
+}
+
+export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, files }: DeliveryBodyProps) {
   return (
     <div className="msg delivery">
       <div className="msg-who">
         <Icon name="doc" />
-        <strong>{entry.title.zh}</strong>
-        <span className="num">{clockOf(entry.at)}</span>
+        <strong>{title}</strong>
+        <span className="num">{clockOf(at)}</span>
       </div>
-      {entry.text === null ? null : <div className="msg-text msg-plain delivery-text">{entry.text}</div>}
-      {entry.files.length === 0 ? null : (
+      {body === null ? null : <div className="msg-text msg-plain delivery-text">{body}</div>}
+      {files.length === 0 ? null : (
         <div className="msg-files">
-          {entry.files.map((file) => (
-            <a key={file.name} className="chip" href={ticketFilePath(entry.ticket, file.name)} download={file.name}>
+          {files.map((file) => (
+            <a key={file.name} className="chip" href={ticketFilePath(ticket, file.name)} download={file.name}>
               <Icon name="clip" />
               {file.name}
               <span className="num">{sizeOf(file.size)}</span>
@@ -120,6 +148,10 @@ const Delivery = memo(function Delivery({ entry }: { readonly entry: DeliveryEnt
     </div>
   );
 });
+
+function Delivery({ entry }: { readonly entry: DeliveryEntry }) {
+  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} files={entry.files} />;
+}
 
 function Notice({ entry }: { readonly entry: NoticeEntry }) {
   return (

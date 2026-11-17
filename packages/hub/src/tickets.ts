@@ -267,6 +267,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectBegin = connection.prepare("SELECT failure FROM ticket_begins WHERE ticket_id = ? AND failed_at IS NOT NULL AND done_at IS NULL");
   const selectMoves = connection.prepare("SELECT * FROM ticket_moves WHERE ticket_id = ? ORDER BY seq");
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
+  const selectAttempts = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt");
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
@@ -678,7 +679,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     moves: movesOf,
     detail: (id) => {
       const ticket = get(id);
-      return ticket === undefined ? undefined : { ticket, moves: movesOf(id) };
+      return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf) };
     },
     writing: writingOf,
     forIssue: (repository, number) =>

@@ -34,6 +34,7 @@ export interface HubSocketOptions {
   readonly create: (url: string, events: SocketEvents) => SocketLike;
   readonly schedule: Schedule;
   readonly resume: (conversation: string) => number;
+  readonly resumeTicket?: (ticket: number) => number;
   readonly onMessage: (message: ServerMessage) => void;
   readonly onStatus: (status: SocketStatus) => void;
   readonly onOpen: () => void;
@@ -44,6 +45,7 @@ export class HubSocket {
   private attempt = 0;
   private cancelRetry: (() => void) | undefined;
   private watching: string | null = null;
+  private watchingTicket: number | null = null;
   private running = false;
 
   constructor(private readonly options: HubSocketOptions) {}
@@ -75,6 +77,24 @@ export class HubSocket {
     if (conversation !== null) {
       this.send({ type: "watch", conversation, after: this.options.resume(conversation) });
     }
+  }
+
+  watchTicket(ticket: number | null): void {
+    if (ticket === this.watchingTicket) {
+      return;
+    }
+    const previous = this.watchingTicket;
+    this.watchingTicket = ticket;
+    if (previous !== null) {
+      this.send({ type: "unwatch.ticket", ticket: previous });
+    }
+    if (ticket !== null) {
+      this.send({ type: "watch.ticket", ticket, after: this.ticketAfter(ticket) });
+    }
+  }
+
+  private ticketAfter(ticket: number): number {
+    return this.options.resumeTicket?.(ticket) ?? 0;
   }
 
   reconnect(force: boolean): void {
@@ -118,6 +138,9 @@ export class HubSocket {
         this.options.onStatus("open");
         if (this.watching !== null) {
           this.send({ type: "watch", conversation: this.watching, after: this.options.resume(this.watching) });
+        }
+        if (this.watchingTicket !== null) {
+          this.send({ type: "watch.ticket", ticket: this.watchingTicket, after: this.ticketAfter(this.watchingTicket) });
         }
         this.options.onOpen();
       },

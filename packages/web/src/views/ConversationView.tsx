@@ -5,6 +5,7 @@ import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { streamItems } from "../live/stream.js";
 import { Icon } from "../parts/icons.js";
+import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { clockOf, dayLabel, StreamEntry } from "./Entries.js";
 
@@ -91,10 +92,7 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
   }, [draft, draftKey, send, sending]);
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.altKey || event.nativeEvent.isComposing || event.keyCode === 229) {
-      return;
-    }
-    if (window.matchMedia("(pointer: coarse)").matches && !(event.ctrlKey || event.metaKey)) {
+    if (!sendsOnEnter(event)) {
       return;
     }
     event.preventDefault();

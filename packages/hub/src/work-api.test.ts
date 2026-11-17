@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
+import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
@@ -123,6 +123,8 @@ describe("a ticket's worker for the page and the brain", () => {
     const after = WorkEventList.parse(await (await owner(running, `/api/tickets/${ticket.id}/work?after=${listed.events[0]?.id ?? 0}`)).json());
     expect(after.events.map((entry) => entry.seq)).toEqual([2]);
     expect((await owner(running, "/api/tickets/99/work")).status).toBe(404);
+    const detail = TicketDetail.parse(await (await owner(running, `/api/tickets/${ticket.id}`)).json());
+    expect(detail.attempts.map((attempt) => [attempt.attempt, attempt.machine, attempt.engine, attempt.model])).toEqual([[1, "pc", "claude", "claude-haiku-5-5"]]);
     const socket = new WebSocket(`ws://127.0.0.1:${running.address.port}/ws`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
     sockets.push(socket);
     const received: ServerMessage[] = [];
