@@ -769,3 +769,15 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   take-over, and must gain no bypass. The ChatGPT login is shared with the first Super-agent's running brain, and a
   refresh by the new brain could sign the old one out while the owner is away.
 - **Other options:** A development flag in the hub; skipping the conversation turn; running a Codex turn.
+
+## 2026-11-17 — The take-over waits for the owner
+
+- **Chosen:** The take-over of the host name is not run yet. Everything for it is in place and rehearsed: one command on
+  the NAS, `bash /share/Container/superagent2/deploy.sh takeover`, and its reverse, `giveback`. #8 stays open until it
+  has run. The remaining issues are built meanwhile; what they need from a live deployment is verified after it.
+- **Why:** Just before the take-over, the first Super-agent held four tickets queued within the last hour on other
+  projects, and one awaiting merge. Stopping its hub would drop work the owner had just started there. The owner asked
+  for the take-over on the understanding that the first Super-agent was no longer in use; what was found does not match
+  that, so the step that cannot be taken back quietly is left for the owner's word.
+- **Other options:** Take over at once, as the issue says, and lose the queued tickets; wait for the queue to empty and
+  take over then, without knowing whether the owner will queue more.
