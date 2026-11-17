@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname } from "node:path";
+import { replaceFile } from "./replace-file.js";
 
 export type Execute = (program: string, args: readonly string[]) => void;
 
@@ -24,7 +25,7 @@ export function writeSecretFile(path: string, content: string, platform: NodeJS.
   writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
   try {
     restrictToUser(temporary, platform, execute);
-    renameSync(temporary, path);
+    replaceFile(temporary, path, content);
   } catch (error) {
     rmSync(temporary, { force: true });
     throw error;

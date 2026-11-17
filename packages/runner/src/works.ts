@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { antigravityAdapter, claudeAdapter, codexAdapter, dshAdapter, type ProgramEvent, type ProgramHandle, type ProgramSettings, type WorkerAdapter } from "@super-agent2/programs";
 import {
@@ -32,6 +32,7 @@ import { checkHandback, type PullRequestReader, readPullRequestWith } from "./ha
 import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
+import { replaceFile } from "./replace-file.js";
 import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
 import { checkWritingHandback, clearOutput, prepareScratch, writingPaths, writingPlace } from "./writing.js";
 
@@ -156,8 +157,9 @@ export function createWorks(options: WorksOptions): Works {
   const save = (work: Work) => {
     mkdirSync(work.paths.folder, { recursive: true });
     const file = recordFile(work);
-    writeFileSync(`${file}.new`, JSON.stringify(work.record));
-    renameSync(`${file}.new`, file);
+    const content = JSON.stringify(work.record);
+    writeFileSync(`${file}.new`, content);
+    replaceFile(`${file}.new`, file, content);
   };
 
   const lastSeq = (paths: WorkPaths, attempt: number): number => {

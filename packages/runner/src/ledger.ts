@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { uptime } from "node:os";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { replaceFile } from "./replace-file.js";
 import { killTree } from "./shell.js";
 
 const LedgerFile = z.object({
@@ -34,8 +35,9 @@ export function createLedger(options: LedgerOptions): Ledger {
   const save = () => {
     mkdirSync(dirname(options.path), { recursive: true });
     const temporary = `${options.path}.new`;
-    writeFileSync(temporary, JSON.stringify({ boot: boot(), pids: [...pids] }));
-    renameSync(temporary, options.path);
+    const content = JSON.stringify({ boot: boot(), pids: [...pids] });
+    writeFileSync(temporary, content);
+    replaceFile(temporary, options.path, content);
   };
   const read = (): z.infer<typeof LedgerFile> | undefined => {
     try {

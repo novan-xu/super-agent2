@@ -1376,9 +1376,11 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 
 ## 2026-11-17 — Where the brain is told to open writing tickets, and what was verified
 
-- **Chosen:** The rule is in three places: the "Writing work" section of the brain's guidance, a bullet under "How to
-  act", and the first lines of `open_writing_ticket`'s description ("use this first whenever the owner asks you to
-  produce a text for their own use, however short; you never write it yourself"). Verified on this PC with the
+- **Chosen:** The rule is in the brain's guidance: the "Writing work" section, a sentence under "Turning a need into
+  issues" and a bullet under "How to act". `open_writing_ticket`'s description only says what the tool is for. (First the
+  rule was also at the start of the tool description, because the real Claude Code was not reading the guidance at all;
+  the cause is in the next entry, and with it fixed the tool description alone no longer needs the rule.) Verified on
+  this PC with the
   development harness, one local runner (its home in a scratch folder; `agy` 1.5.10 logged in) and the real Claude Code as
   the brain: a translation opened as a writing ticket, started from its card on the page,
   run by `agy` with `gemini-3.8-flash` at high, and delivered into the conversation with the ticket delivered and no
@@ -1389,8 +1391,43 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   `maintenance` (code work) and not as a writing ticket; and an `agy` run that failed with "No capacity available" (503),
   which was recorded with its reason on the ticket and told to the brain, and then retried from the card's reassignment.
   Not verified: macOS, and `agy` on a machine other than this PC.
-- **Why:** With the guidance alone the real brain wrote the email itself, and when asked it said it had no such section:
-  in this harness Claude Code did not take `AGENTS.md` from its folder, while it did read the tool descriptions. The
-  tool description is what is certain to reach it. Whether the deployed brain reads `AGENTS.md` is an earlier question
-  that this change does not settle.
-- **Other options:** Server instructions in the MCP handshake; a `CLAUDE.md` beside `AGENTS.md`.
+- **Why:** The guidance has to be what tells the brain; the tool description should not carry rules the guidance owns.
+  After the fix in the next entry the real Claude Code, with the tool description reduced to what the tool is for,
+  opened a writing ticket for the Chinese email request and filed the README rewrite as an issue.
+- **Other options:** Keeping the rule in the tool description as well; server instructions in the MCP handshake.
+
+## 2026-11-17 — Where each program reads the brain's guidance
+
+- **Chosen:** One source file, `packages/brain/guidance/AGENTS.md`. `prepareWorkspace` copies it into the workspace as
+  `AGENTS.md` and writes `CLAUDE.md` there containing only `@AGENTS.md`. What each program reads, each checked live: Codex
+  reads `AGENTS.md` from its working folder; Claude Code reads `CLAUDE.md` (and does not read `AGENTS.md` at all; a
+  `CLAUDE.md` with `@AGENTS.md` imports the file); `dsh`'s `dsh-agent-instructions` plugin takes the first of
+  `AGENTS.md` and `CLAUDE.md` it finds (its `instructionFileCandidates`, from `dsh --profile sdk
+  --dump-config-schema`). The check, run through the real adapters and the real `prepareWorkspace`: a random code word
+  was appended to the workspace's `AGENTS.md` at check time (never committed) and each program was asked, with no tool,
+  for the code word in its standing instructions. Codex, `dsh` and Claude Code answered the code word; with no guidance
+  files all three answered NONE; and with the old workspace, `AGENTS.md` alone, Claude Code answered NONE and `dsh`
+  answered the code word. The brain on Claude therefore ran without any of its guidance from #5 until now; the earlier
+  decision that said Claude Code reads `AGENTS.md` when there is no `CLAUDE.md` was wrong. A test now holds the two
+  files in place.
+- **Why:** `CLAUDE.md` with an import keeps one text; a second copy could drift, and `dsh` reading both files then
+  reads one line more, which costs nothing. Starting Claude Code with `--append-system-prompt-file` would have changed
+  the adapter that workers share.
+- **Other options:** A second copy of the guidance as `CLAUDE.md`; a symbolic link; a system prompt option for Claude
+  Code only. Workers are not affected: `guidance/WORKER.md` and `guidance/WRITER.md` are the first part of the
+  worker's first prompt, not files a program is expected to find.
+
+## 2026-11-17 — A rename over a file on Windows that fails with EPERM
+
+- **Chosen:** `replaceFile` in the runner: the new content is written to a temporary file and renamed over the old file,
+  as before, and when Windows refuses that rename with `EPERM`, `EBUSY` or `EACCES` the content is written into the
+  existing file instead and the temporary file removed. It is used for the runner's settings file, its process ledger and
+  each work's record. Any other error is still raised.
+- **Why:** Two tests failed now and then in the full run: `setup.test.ts` with `EPERM` on `runner.env.new` to
+  `runner.env`, and a writing worker's test in `works.test.ts`. On this PC a plain loop of write, read, write a
+  temporary file, rename over the first failed with `EPERM` in about 1 of every 60 renames; a second rename straight
+  after failed in most of those cases (something, most likely the scanner or indexer, keeps the freshly written file
+  open for a while), and writing into the file never failed. So a wait or a retry would be a guess, and writing into
+  the file is certain.
+- **Other options:** Retrying the rename after a wait; writing the files in place always, which loses the atomic
+  replacement where Windows allows it.
