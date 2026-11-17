@@ -40,6 +40,17 @@ export const messages = {
   "refusal.unsupported_media_type": "请求的格式不对",
   "refusal.bad_request": "请求有误",
   "refusal.conflict": "这一项已经处理过或已有变化，请刷新后再看",
+  "conversation.state.idle": "空闲",
+  "conversation.state.working": "工作中",
+  "turn.state.running": "进行中",
+  "turn.state.completed": "已完成",
+  "turn.state.interrupted": "已中断",
+  "turn.state.failed": "出错了",
+  "turn.reason.brainRestarted": "大脑在这一轮结束前重启了，这一轮被中断",
+  "turn.reason.brainAbsent": "大脑没有连接，这一轮被中断",
+  "turn.reason.noProvider": "没有可用的模型：{detail}",
+  "notice.providerChanged": "{from} 暂时不可用（{reason}），改由 {to} 接手",
+  "notice.heldOutcome": "等你确认的命令有了结果（{state}）：{command}",
 } as const;
 
 export type Messages = typeof messages;

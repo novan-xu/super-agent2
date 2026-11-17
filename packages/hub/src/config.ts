@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { z } from "zod";
+import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
 import type { SshDestination } from "./targets.js";
 
@@ -51,6 +53,7 @@ const Environment = z.object({
       error: "must be absolute folders separated by commas, such as /srv/projects,~/work",
     }),
   HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
+  HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
 });
 
 export interface Config {
@@ -63,6 +66,7 @@ export interface Config {
   readonly nas?: SshDestination;
   readonly projectFolders: readonly string[];
   readonly credentialPaths: readonly string[];
+  readonly brainTokenFile: string;
 }
 
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
@@ -85,6 +89,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       host: value.HUB_HOST,
       projectFolders: value.HUB_PROJECT_FOLDERS,
       credentialPaths: value.HUB_CREDENTIAL_PATHS,
+      brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       ...(value.NAS_SSH_DESTINATION === undefined
         ? {}
         : {

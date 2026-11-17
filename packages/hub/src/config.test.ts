@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 
@@ -29,8 +30,14 @@ describe("loadConfig", () => {
         host: "0.0.0.0",
         projectFolders: [],
         credentialPaths: [],
+        brainTokenFile: join("/data", "brain.token"),
       },
     });
+  });
+
+  it("keeps the brain's token in the data folder unless told otherwise", () => {
+    const result = loadConfig({ ...valid, HUB_BRAIN_TOKEN_FILE: "/run/secrets/brain.token" });
+    expect(result.ok && result.config.brainTokenFile).toBe("/run/secrets/brain.token");
   });
 
   it("reads the project folders and the extra credential paths", () => {

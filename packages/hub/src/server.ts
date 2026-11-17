@@ -2,7 +2,17 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import {
+  BrainMessage,
+  brainLinkPath,
+  brainToolsPath,
   ClientMessage,
+  conversationHeader,
+  ConversationId,
+  type ConversationDetail,
+  type ConversationList,
+  type ConversationResponse,
+  type EntryResponse,
+  OwnerMessage,
   type CommandList,
   type CommandResponse,
   type Health,
@@ -17,19 +27,27 @@ import {
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
+import type { BrainTokenCheck } from "./brain-token.js";
 import type { CommandService } from "./commands.js";
+import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
+import type { ToolServer } from "./tools.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
 export const socketPath = "/ws";
 export const commandsPath = "/api/commands";
 export const holdsPath = "/api/holds";
+export const conversationsPath = "/api/conversations";
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
+const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt)?$/;
+
 const maximumBodyBytes = 16 * 1024;
+
+const maximumMessageBytes = 1024 * 1024;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -40,6 +58,9 @@ export interface HubServerOptions {
   readonly verify: AccessVerifier;
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
+  readonly conversations?: ConversationService;
+  readonly tools?: ToolServer;
+  readonly brainToken?: BrainTokenCheck;
 }
 
 export interface HubServer {
@@ -57,7 +78,18 @@ function pathOf(request: IncomingMessage): string {
   return new URL(request.url ?? "/", "http://hub").pathname;
 }
 
-type Body = Health | Refusal | Session | CommandList | CommandResponse | OutputResponse | HoldList;
+type Body =
+  | Health
+  | Refusal
+  | Session
+  | CommandList
+  | CommandResponse
+  | OutputResponse
+  | HoldList
+  | ConversationList
+  | ConversationResponse
+  | ConversationDetail
+  | EntryResponse;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -104,17 +136,17 @@ function isSameOrigin(request: IncomingMessage): boolean {
   }
 }
 
-function readBody(request: IncomingMessage): Promise<string | undefined> {
+function readBody(request: IncomingMessage, limit: number = maximumBodyBytes): Promise<string | undefined> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     request.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= maximumBodyBytes) {
+      if (size <= limit) {
         chunks.push(chunk);
       }
     });
-    request.on("end", () => resolve(size > maximumBodyBytes ? undefined : Buffer.concat(chunks).toString("utf8")));
+    request.on("end", () => resolve(size > limit ? undefined : Buffer.concat(chunks).toString("utf8")));
     request.on("error", () => resolve(undefined));
   });
 }
@@ -132,6 +164,42 @@ function parseDecision(text: string | undefined): HoldDecision | undefined {
 }
 
 const answerStatus: Readonly<Record<AnswerError, 403 | 404 | 409>> = { forbidden: 403, not_found: 404, conflict: 409 };
+
+function parseOwnerMessage(text: string | undefined): OwnerMessage | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = OwnerMessage.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sendRaw(response: ServerResponse, status: number, body?: Readonly<Record<string, unknown>>): void {
+  if (body === undefined) {
+    response.writeHead(status, { "content-length": 0, "cache-control": "no-store" });
+    response.end();
+    return;
+  }
+  const text = JSON.stringify(body);
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(text),
+    "cache-control": "no-store",
+  });
+  response.end(text);
+}
+
+function brainAuthorization(request: IncomingMessage): string | undefined {
+  const value = request.headers.authorization;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isBrainPath(path: string): boolean {
+  return path.startsWith("/brain/");
+}
 
 function refuseSocket(socket: Duplex, status: 403 | 404): void {
   const reason = status === 403 ? "Forbidden" : "Not Found";
@@ -153,12 +221,66 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
   };
 
+  const isBrain = (request: IncomingMessage): boolean => options.brainToken?.(brainAuthorization(request)) ?? false;
+
+  const serveTools = async (request: IncomingMessage, response: ServerResponse, method: string): Promise<void> => {
+    const tools = options.tools;
+    if (tools === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (method !== "POST") {
+      request.resume();
+      response.writeHead(405, { allow: "POST", "content-length": 0 });
+      response.end();
+      return;
+    }
+    if (!isJson(request)) {
+      request.resume();
+      sendJson(response, 415, { error: "unsupported_media_type" });
+      return;
+    }
+    const body = await readBody(request, maximumMessageBytes);
+    if (body === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    const header = request.headers[conversationHeader];
+    const conversation = typeof header === "string" && ConversationId.safeParse(header).success ? header : undefined;
+    const aborted = new AbortController();
+    response.on("close", () => {
+      if (!response.writableFinished) {
+        aborted.abort();
+      }
+    });
+    const reply = await tools.handle({ body, conversation, aborted: aborted.signal });
+    if (aborted.signal.aborted) {
+      return;
+    }
+    sendRaw(response, reply.status, reply.status === 202 ? undefined : reply.body);
+  };
+
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const path = pathOf(request);
     const method = request.method ?? "GET";
     if (path === healthPath && (method === "GET" || method === "HEAD")) {
       const healthy = options.database.healthy();
       sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable" }, method === "HEAD");
+      return;
+    }
+    if (isBrainPath(path)) {
+      if (!isBrain(request)) {
+        request.resume();
+        sendJson(response, 403, { error: "forbidden" });
+        return;
+      }
+      if (path === brainToolsPath) {
+        await serveTools(request, response, method);
+        return;
+      }
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
       return;
     }
     const identity = await authenticate(request);
@@ -179,6 +301,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path.startsWith(commandsPath) && (await serveCommands(request, response, path, method))) {
+      return;
+    }
+    if (path.startsWith(conversationsPath) && (await serveConversations(request, response, path, method))) {
       return;
     }
     sendJson(response, 404, { error: "not_found" });
@@ -269,8 +394,107 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return false;
   };
 
+  const serveConversations = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
+    const conversations = options.conversations;
+    if (conversations === undefined) {
+      return false;
+    }
+    const url = new URL(request.url ?? "/", "http://hub");
+    if (path === conversationsPath && method === "GET") {
+      const limit = integerParameter(url, "limit", defaultListLimit, maximumListLimit);
+      if (limit === undefined) {
+        return false;
+      }
+      sendJson(response, 200, { brain: { linked: conversations.linked() }, conversations: conversations.list(limit) });
+      return true;
+    }
+    if (path === conversationsPath && method === "POST") {
+      request.resume();
+      if (!isJson(request)) {
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return true;
+      }
+      sendJson(response, 201, { conversation: conversations.create() });
+      return true;
+    }
+    const match = conversationRoute.exec(path);
+    const id = match?.[1];
+    if (match === null || id === undefined || conversations.get(id) === undefined) {
+      return false;
+    }
+    const action = match[2];
+    if (action === undefined && method === "GET") {
+      const detail = conversations.detail(id);
+      if (detail === undefined) {
+        return false;
+      }
+      sendJson(response, 200, detail);
+      return true;
+    }
+    if (action === "/messages" && method === "POST") {
+      if (!isJson(request)) {
+        request.resume();
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return true;
+      }
+      const message = parseOwnerMessage(await readBody(request, maximumMessageBytes));
+      if (message === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return true;
+      }
+      const entry = conversations.send(id, message.text);
+      if (entry === undefined) {
+        return false;
+      }
+      sendJson(response, 202, { entry });
+      return true;
+    }
+    if (action === "/interrupt" && method === "POST") {
+      request.resume();
+      if (!isJson(request)) {
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return true;
+      }
+      const conversation = conversations.interrupt(id);
+      if (conversation === undefined) {
+        return false;
+      }
+      sendJson(response, 202, { conversation });
+      return true;
+    }
+    return false;
+  };
+
+  const serveBrain = (client: WebSocket): void => {
+    const conversations = options.conversations;
+    if (conversations === undefined) {
+      client.close(1011, "unavailable");
+      return;
+    }
+    const link = conversations.attach({
+      send: (message) => {
+        if (client.readyState === client.OPEN) {
+          client.send(JSON.stringify(message));
+        }
+      },
+      close: () => client.close(4000, "replaced"),
+    });
+    client.on("close", () => link.detach());
+    client.on("message", (data, binary) => {
+      let message: BrainMessage;
+      try {
+        message = BrainMessage.parse(binary ? undefined : JSON.parse(String(data)));
+      } catch {
+        client.close(1008, "invalid message");
+        return;
+      }
+      link.receive(message);
+    });
+  };
+
   const serveSocket = (client: WebSocket, identity: Identity): void => {
     const followed = new Set<string>();
+    const watched = new Set<string>();
     const send = (message: ServerMessage) => {
       if (client.readyState === client.OPEN) {
         client.send(JSON.stringify(message));
@@ -281,7 +505,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
         send(event);
       }
     });
-    client.on("close", unsubscribe);
+    const unsubscribeConversations =
+      options.conversations?.subscribe((event) => {
+        const conversation = event.type === "entry" ? event.entry.conversation : event.type === "delta" ? event.conversation : undefined;
+        if (conversation === undefined || watched.has(conversation)) {
+          send(event);
+        }
+      }) ?? (() => undefined);
+    client.on("close", () => {
+      unsubscribe();
+      unsubscribeConversations();
+    });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
       try {
@@ -294,6 +528,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
         followed.delete(message.command);
         return;
       }
+      if (message.type === "unwatch") {
+        watched.delete(message.conversation);
+        return;
+      }
+      if (message.type === "watch") {
+        watched.add(message.conversation);
+        for (const entry of options.conversations?.entries(message.conversation, message.after) ?? []) {
+          send({ type: "entry", entry });
+        }
+        return;
+      }
       followed.add(message.command);
       for (const chunk of options.commands.output(message.command, message.after)) {
         send({ type: "output", chunk });
@@ -303,6 +548,19 @@ export function createHubServer(options: HubServerOptions): HubServer {
   };
 
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    const path = pathOf(request);
+    if (isBrainPath(path)) {
+      if (!isBrain(request)) {
+        refuseSocket(socket, 403);
+        return;
+      }
+      if (path !== brainLinkPath) {
+        refuseSocket(socket, 404);
+        return;
+      }
+      sockets.handleUpgrade(request, socket, head, (client: WebSocket) => serveBrain(client));
+      return;
+    }
     const identity = await authenticate(request);
     if (identity === undefined) {
       refuseSocket(socket, 403);

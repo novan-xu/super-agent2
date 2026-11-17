@@ -58,4 +58,57 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        state TEXT NOT NULL,
+        provider TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX conversations_by_update ON conversations (updated_at, id);
+      CREATE TABLE turns (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations (id),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        state TEXT NOT NULL,
+        reason TEXT,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER
+      ) STRICT;
+      CREATE INDEX turns_by_conversation ON turns (conversation_id, started_at);
+      CREATE TABLE conversation_entries (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations (id),
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        turn_id TEXT,
+        provider TEXT,
+        body TEXT NOT NULL,
+        prompt TEXT,
+        taken INTEGER,
+        created_at INTEGER NOT NULL,
+        UNIQUE (conversation_id, seq)
+      ) STRICT;
+      CREATE INDEX entries_waiting ON conversation_entries (taken, created_at) WHERE taken = 0;
+      CREATE TABLE program_sessions (
+        conversation_id TEXT NOT NULL REFERENCES conversations (id),
+        provider TEXT NOT NULL,
+        session TEXT,
+        through INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (conversation_id, provider)
+      ) STRICT;
+      CREATE TABLE brain_commands (
+        command_id TEXT PRIMARY KEY REFERENCES commands (id),
+        conversation_id TEXT NOT NULL REFERENCES conversations (id),
+        held INTEGER NOT NULL DEFAULT 0,
+        reported INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+    `,
+  },
 ];

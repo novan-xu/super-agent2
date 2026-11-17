@@ -1,0 +1,151 @@
+import { z } from "zod";
+
+export const providers = ["gpt", "claude", "deepseek"] as const;
+export const Provider = z.enum(providers);
+export type Provider = z.infer<typeof Provider>;
+
+export const ConversationId = z.string().regex(/^[0-9A-Za-z-]{1,64}$/);
+
+export const ConversationState = z.enum(["idle", "working"]);
+export type ConversationState = z.infer<typeof ConversationState>;
+
+export const Conversation = z.object({
+  id: ConversationId,
+  title: z.string(),
+  state: ConversationState,
+  provider: Provider.nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Conversation = z.infer<typeof Conversation>;
+
+export const TurnState = z.enum(["running", "completed", "interrupted", "failed"]);
+export type TurnState = z.infer<typeof TurnState>;
+
+export const finishedTurnStates: readonly TurnState[] = ["completed", "interrupted", "failed"];
+
+export const Turn = z.object({
+  id: z.string().min(1),
+  conversation: ConversationId,
+  provider: Provider,
+  model: z.string(),
+  state: TurnState,
+  reason: z.string().nullable(),
+  startedAt: z.number().int(),
+  endedAt: z.number().int().nullable(),
+});
+export type Turn = z.infer<typeof Turn>;
+
+export const ToolState = z.enum(["running", "done", "failed"]);
+export type ToolState = z.infer<typeof ToolState>;
+
+const entryBase = {
+  id: z.string().min(1),
+  conversation: ConversationId,
+  seq: z.number().int().positive(),
+  at: z.number().int(),
+};
+
+export const OwnerEntry = z.object({ ...entryBase, kind: z.literal("owner"), text: z.string(), taken: z.boolean() });
+export type OwnerEntry = z.infer<typeof OwnerEntry>;
+
+export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable() });
+export type NoticeEntry = z.infer<typeof NoticeEntry>;
+
+export const TextEntry = z.object({ ...entryBase, kind: z.literal("text"), turn: z.string(), text: z.string() });
+export type TextEntry = z.infer<typeof TextEntry>;
+
+export const ToolEntry = z.object({
+  ...entryBase,
+  kind: z.literal("tool"),
+  turn: z.string(),
+  name: z.string(),
+  input: z.string(),
+  output: z.string(),
+  state: ToolState,
+});
+export type ToolEntry = z.infer<typeof ToolEntry>;
+
+export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, TextEntry, ToolEntry]);
+export type ConversationEntry = z.infer<typeof ConversationEntry>;
+
+export const BrainStatus = z.object({
+  linked: z.boolean(),
+});
+export type BrainStatus = z.infer<typeof BrainStatus>;
+
+export const ConversationList = z.object({
+  brain: BrainStatus,
+  conversations: z.array(Conversation),
+});
+export type ConversationList = z.infer<typeof ConversationList>;
+
+export const ConversationResponse = z.object({
+  conversation: Conversation,
+});
+export type ConversationResponse = z.infer<typeof ConversationResponse>;
+
+export const ConversationDetail = z.object({
+  conversation: Conversation,
+  turns: z.array(Turn),
+  entries: z.array(ConversationEntry),
+});
+export type ConversationDetail = z.infer<typeof ConversationDetail>;
+
+export const maximumMessageLength = 100_000;
+
+export const OwnerMessage = z.object({
+  text: z.string().trim().min(1).max(maximumMessageLength),
+});
+export type OwnerMessage = z.infer<typeof OwnerMessage>;
+
+export const EntryResponse = z.object({
+  entry: ConversationEntry,
+});
+export type EntryResponse = z.infer<typeof EntryResponse>;
+
+export const ConversationUpdate = z.object({
+  type: z.literal("conversation"),
+  conversation: Conversation,
+});
+export type ConversationUpdate = z.infer<typeof ConversationUpdate>;
+
+export const TurnUpdate = z.object({
+  type: z.literal("turn"),
+  turn: Turn,
+});
+export type TurnUpdate = z.infer<typeof TurnUpdate>;
+
+export const EntryUpdate = z.object({
+  type: z.literal("entry"),
+  entry: ConversationEntry,
+});
+export type EntryUpdate = z.infer<typeof EntryUpdate>;
+
+export const EntryDelta = z.object({
+  type: z.literal("delta"),
+  conversation: ConversationId,
+  entry: z.string().min(1),
+  field: z.enum(["text", "output"]),
+  text: z.string(),
+});
+export type EntryDelta = z.infer<typeof EntryDelta>;
+
+export const BrainUpdate = z.object({
+  type: z.literal("brain"),
+  brain: BrainStatus,
+});
+export type BrainUpdate = z.infer<typeof BrainUpdate>;
+
+export const WatchConversation = z.object({
+  type: z.literal("watch"),
+  conversation: ConversationId,
+  after: z.number().int().nonnegative().default(0),
+});
+export type WatchConversation = z.input<typeof WatchConversation>;
+
+export const UnwatchConversation = z.object({
+  type: z.literal("unwatch"),
+  conversation: ConversationId,
+});
+export type UnwatchConversation = z.infer<typeof UnwatchConversation>;
