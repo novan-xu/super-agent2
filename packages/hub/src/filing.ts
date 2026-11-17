@@ -222,6 +222,7 @@ function failed(reason: string, held = false): FilingOutcome {
 }
 
 export interface IssueFilerOptions {
+  readonly accountOf?: (repository: string) => GitHubAccount;
   readonly host: IssueHost;
   readonly tickets: TicketService;
   readonly database: HubDatabase;
@@ -346,7 +347,7 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
       if (request.body.trim() === "") {
         return Promise.resolve(failed("The issue body is empty"));
       }
-      const account = accountFor(request.repository, request.account);
+      const account = request.account ?? (options.accountOf ?? accountFor)(request.repository);
       const key = filingKey(request.repository, title.data.en, request.body);
       return once(key, async () => {
         const record = records.get(key);
@@ -383,7 +384,7 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
       if (!summary.success) {
         return Promise.resolve(failed("The summary needs an English original and a Chinese copy"));
       }
-      const account = accountFor(request.repository, request.account);
+      const account = request.account ?? (options.accountOf ?? accountFor)(request.repository);
       return once(JSON.stringify([request.repository.toLowerCase(), request.number]), async () => {
         const existing = liveTicket(request.repository, request.number);
         if (existing !== undefined) {

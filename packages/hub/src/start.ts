@@ -1,5 +1,6 @@
 import type { Clock } from "./clock.js";
 import { loadConfig } from "./config.js";
+import { cloudflareServiceTokens, cloudflareSettings } from "./cloudflare.js";
 import { type Hub, startHub } from "./hub.js";
 import type { KeySource } from "./keys.js";
 
@@ -21,8 +22,11 @@ export async function startFromEnvironment(
     }
     return undefined;
   }
+  const cloudflare = cloudflareSettings(env);
   const hub = await startHub({
     config: loaded.config,
+    report: options.report,
+    ...("missing" in cloudflare ? {} : { serviceTokens: cloudflareServiceTokens(cloudflare) }),
     ...(options.keySource === undefined ? {} : { keySource: options.keySource }),
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });

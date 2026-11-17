@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { brainToolsPath } from "@super-agent2/protocol";
+import { brainToolsPath, providers } from "@super-agent2/protocol";
 import { type Brain, createBrain } from "./brain.js";
 import type { Clock } from "@super-agent2/programs";
 import { type BrainConfig, loadBrainConfig } from "./config.js";
@@ -18,7 +18,7 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
   const token = readFileSync(config.tokenFile, "utf8").trim();
   prepareWorkspace(config.workspace);
   const adapters = new Map<BrainConfig["order"][number], ProgramAdapter>(
-    config.order.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment, clock })]),
+    providers.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment, clock })]),
   );
   const link = createHubLink({ hubUrl: config.hubUrl, token, report });
   const brain = createBrain({
@@ -30,7 +30,7 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     workspace: config.workspace,
     maximumOpen: config.maximumOpen,
   });
-  link.bind({ receive: (message) => brain.receive(message), running: () => brain.running() });
+  link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });
   link.connect();
   return {
     brain,

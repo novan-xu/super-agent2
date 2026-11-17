@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createPushDevice, type FakeForge, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
+import { type AccessServiceTokens, createPushDevice, type FakeForge, type Hub, type PushDevice, receivePush, type SubscriptionAdjustment, type Target } from "@super-agent2/hub";
 import type { Behaviour, HandBack, ScriptedRunners } from "./scripted.js";
 import { AllowanceProgram, AllowanceState, allowancePrograms, brainToolsPath, conversationHeader, deploymentFile, ProgramId, readDeploymentFile, type Subscriptions, TicketState } from "@super-agent2/protocol";
 
@@ -210,6 +210,7 @@ export interface HarnessOptions {
   readonly brainToken: () => string;
   readonly scripted: ScriptedRunners;
   readonly deployments?: Map<string, string>;
+  readonly cloudflare?: FakeServiceTokens;
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -225,6 +226,27 @@ function readBody(request: IncomingMessage): Promise<Buffer> {
     request.on("end", () => resolve(Buffer.concat(chunks)));
     request.on("error", () => resolve(Buffer.concat(chunks)));
   });
+}
+
+export interface FakeServiceTokens {
+  readonly tokens: AccessServiceTokens;
+  failRemove: boolean;
+  readonly made: string[];
+}
+
+export function fakeServiceTokens(): FakeServiceTokens {
+  const fake: FakeServiceTokens = {
+    failRemove: false,
+    made: [],
+    tokens: {
+      create: (name) => {
+        fake.made.push(name);
+        return Promise.resolve({ id: randomUUID(), clientId: `${randomBytes(16).toString("hex")}.access`, clientSecret: randomBytes(32).toString("hex") });
+      },
+      remove: () => (fake.failRemove ? Promise.reject(new Error("The harness's Cloudflare refuses to delete")) : Promise.resolve()),
+    },
+  };
+  return fake;
 }
 
 export function createHarness(options: HarnessOptions): Harness {
@@ -683,6 +705,12 @@ export function createHarness(options: HarnessOptions): Harness {
       if (path === "/__harness/scripted") {
         options.scripted.connect();
         scriptedMachine(url, response);
+        return true;
+      }
+      if (path === "/__harness/cloudflare" && options.cloudflare !== undefined) {
+        const remove = url.searchParams.get("remove");
+        options.cloudflare.failRemove = remove === "fail";
+        json(response, 200, { remove: options.cloudflare.failRemove ? "fail" : "ok", made: options.cloudflare.made });
         return true;
       }
       if (path === "/__harness/allowance") {

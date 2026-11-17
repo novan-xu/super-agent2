@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { manifestPath, pageAssetsPath, pageIconsPath, pageRoute, serviceWorkerPath } from "@super-agent2/protocol";
+import { manifestPath, pageAssetsPath, pageIconsPath, pageRoute, serviceWorkerPath, themeScriptPath } from "@super-agent2/protocol";
 import { webManifest } from "./manifest.js";
 
 export interface PageFile {
@@ -54,8 +54,8 @@ export function pageFiles(directory: string): PageFiles {
     if (path === manifestPath) {
       return { body: Buffer.from(webManifest()), type: "application/manifest+json; charset=utf-8", immutable: false };
     }
-    if (path === serviceWorkerPath) {
-      const body = await readOrNothing(join(directory, "sw.js"));
+    if (path === serviceWorkerPath || path === themeScriptPath) {
+      const body = await readOrNothing(join(directory, path === serviceWorkerPath ? "sw.js" : "theme.js"));
       return body === undefined ? undefined : { body, type: types["js"] ?? "text/javascript", immutable: false };
     }
     const folder = path.startsWith(pageAssetsPath) ? "assets" : path.startsWith(pageIconsPath) ? "icons" : undefined;

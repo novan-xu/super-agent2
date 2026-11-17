@@ -8,6 +8,7 @@ export interface ServiceToken {
 
 export interface AccessServiceTokens {
   create(name: string): Promise<ServiceToken>;
+  remove(id: string): Promise<void>;
 }
 
 export interface CloudflareSettings {
@@ -45,7 +46,29 @@ export function cloudflareSettings(environment: Readonly<Record<string, string |
 export function cloudflareServiceTokens(settings: CloudflareSettings): AccessServiceTokens {
   const call = settings.fetch ?? fetch;
   const base = settings.apiBase ?? cloudflareApiBase;
+  const failure = async (response: Response, what: string): Promise<Error> => {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+    const failed = Failure.safeParse(body);
+    const messages = failed.success ? (failed.data.errors ?? []).map((error) => error.message) : [];
+    return new Error(`Cloudflare refused to ${what} (HTTP ${response.status})${messages.length > 0 ? `: ${messages.join("; ")}` : ""}`);
+  };
   return {
+    remove: async (id) => {
+      const response = await call(`${base}/accounts/${encodeURIComponent(settings.accountId)}/access/service_tokens/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${settings.apiToken}` },
+      });
+      if (response.ok || response.status === 404) {
+        await response.body?.cancel();
+        return;
+      }
+      throw await failure(response, "delete the service token");
+    },
     create: async (name) => {
       const response = await call(`${base}/accounts/${encodeURIComponent(settings.accountId)}/access/service_tokens`, {
         method: "POST",

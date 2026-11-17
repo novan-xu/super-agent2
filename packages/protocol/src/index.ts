@@ -14,6 +14,7 @@ export * from "./hub.js";
 export * from "./page.js";
 export * from "./rounds.js";
 export * from "./runner.js";
+export * from "./settings.js";
 export * from "./tickets.js";
 export * from "./verification.js";
 export * from "./version.js";

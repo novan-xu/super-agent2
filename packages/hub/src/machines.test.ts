@@ -123,6 +123,7 @@ describe("the machines command line", () => {
           names.push(name);
           return created;
         },
+        remove: async () => undefined,
       },
     });
     return { code, out, err, names };

@@ -7,13 +7,6 @@ import "./styles/page.css";
 
 document.title = text("app.name");
 
-const light = window.matchMedia("(prefers-color-scheme: light)");
-const applyTheme = () => {
-  document.documentElement.dataset["theme"] = light.matches ? "light" : "dark";
-};
-applyTheme();
-light.addEventListener("change", applyTheme);
-
 const container = document.getElementById("app");
 
 if (container) {

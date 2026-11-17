@@ -1,7 +1,7 @@
 import type { CommandRecord, Conversation, OwnerEntry, Ticket, TicketHistory } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
-import { holdCard, startCard, ticket, workEvent } from "../live/fixtures.js";
+import { holdCard, settingsSnapshot, startCard, ticket, workEvent } from "../live/fixtures.js";
 import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
 import type { SocketEvents } from "./socket.js";
@@ -45,6 +45,12 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
     editMemory: (id, text, revision) => answer(`editMemory ${id} ${text} ${revision}`, { memories: [], limit: 30 }),
     deleteMemory: (id, revision) => answer(`deleteMemory ${id} ${revision}`, { memories: [], limit: 30 }),
+    settings: () => answer("settings", settingsSnapshot()),
+    addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run", expiresAt: 5 }),
+    revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
+    setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
+    setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
+    setTable: (table) => answer("setTable", { table }),
     ...overrides,
   };
 }
@@ -549,5 +555,33 @@ describe("PageController and the history", () => {
     expect(hub.calls).toEqual(["deleteMemory 3 7"]);
     expect(await page.editMemory(3, "先说结论", 7)).toBe(false);
     expect(failures).toEqual(["conflict"]);
+  });
+
+  it("reads the settings and keeps what a change answers", async () => {
+    const hub = api();
+    const page = controller(hub);
+    await page.loadSettings();
+    expect(page.store.getState().settings?.brain.order).toEqual(["gpt", "claude", "deepseek"]);
+    expect(await page.setOrder(["claude", "gpt"])).toBe(true);
+    expect(page.store.getState().settings?.brain.order).toEqual(["claude", "gpt", "deepseek"]);
+    expect(await page.addMachine("studio", "macos")).toEqual({ name: "studio", system: "macos", command: "run", expiresAt: 5 });
+    expect(hub.calls).toContain("addMachine studio macos");
+  });
+
+  it("tells a refused table change apart from other failures", async () => {
+    const failures: Failure[] = [];
+    const refused = controller(api({ setTable: () => Promise.resolve({ ok: false, error: "unsupported" }) }), failures);
+    expect(await refused.setTable(settingsSnapshot().table)).toBe("unsupported");
+    expect(failures).toEqual([]);
+    const lost = controller(api({ setTable: () => Promise.resolve({ ok: false, error: "network" }) }), failures);
+    expect(await lost.setTable(settingsSnapshot().table)).toBe("failed");
+    expect(failures).toEqual(["network"]);
+  });
+
+  it("says when adding a machine is refused for want of Cloudflare", async () => {
+    const failures: Failure[] = [];
+    const page = controller(api({ addMachine: () => Promise.resolve({ ok: false, error: "cloudflare" }) }), failures);
+    expect(await page.addMachine("studio", "windows")).toBeUndefined();
+    expect(failures).toEqual(["cloudflare"]);
   });
 });

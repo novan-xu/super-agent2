@@ -50,6 +50,7 @@ export interface ShellProps {
   readonly model: string | null;
   readonly actions?: ReactNode;
   readonly fill: boolean;
+  readonly subtitle?: string | null;
   readonly toast: string | null;
   readonly waiting: number;
   readonly children?: ReactNode;
@@ -116,6 +117,12 @@ export function Shell(props: ShellProps) {
           <header className="top">
             <div className="top-title">
               <h1>{titleOf(current)}</h1>
+              {props.subtitle === undefined || props.subtitle === null ? null : (
+                <>
+                  <span className="muted">/</span>
+                  <span className="muted top-sub">{props.subtitle}</span>
+                </>
+              )}
             </div>
             <div className="od-row">{props.actions}</div>
           </header>

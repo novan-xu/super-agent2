@@ -1,3 +1,4 @@
+import type { Provider } from "@super-agent2/protocol";
 import { randomUUID } from "node:crypto";
 import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, SteerResult } from "@super-agent2/brain";
 import { conversationHeader } from "@super-agent2/protocol";
@@ -255,10 +256,10 @@ class DemoHandle implements ProgramHandle {
   }
 }
 
-export function demoProgram(): ProgramAdapter {
+export function demoProgram(provider: Provider = "claude", model = "demo"): ProgramAdapter {
   return {
-    provider: "claude",
-    model: "demo",
+    provider,
+    model,
     effort: "high",
     open: (options: OpenOptions, listener: ProgramListener) => new DemoHandle(listener, options.session, options.tools),
   };

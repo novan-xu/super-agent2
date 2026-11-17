@@ -427,4 +427,23 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE program_sessions ADD COLUMN memory_seen INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE install_codes (
+        name TEXT PRIMARY KEY,
+        system TEXT NOT NULL,
+        code_hash TEXT NOT NULL UNIQUE,
+        hub TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        claimed_at INTEGER
+      ) STRICT;
+      CREATE TABLE repository_accounts (
+        repository TEXT PRIMARY KEY,
+        account TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];

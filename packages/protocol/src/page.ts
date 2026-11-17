@@ -1,4 +1,5 @@
 import { ConversationId } from "./conversations.js";
+import { SettingsSection } from "./settings.js";
 
 export const pageViews = ["workbench", "conversations", "history", "memory", "settings"] as const;
 export type PageView = (typeof pageViews)[number];
@@ -7,6 +8,7 @@ export type PageRoute =
   | { readonly view: "home" }
   | { readonly view: "conversations"; readonly conversation: string | null }
   | { readonly view: "ticket"; readonly ticket: number }
+  | { readonly view: "settings"; readonly section: SettingsSection }
   | { readonly view: Exclude<PageView, "conversations"> };
 
 export const pageAssetsPath = "/assets/";
@@ -14,6 +16,8 @@ export const pageAssetsPath = "/assets/";
 export const pageIconsPath = "/icons/";
 
 export const serviceWorkerPath = "/sw.js";
+
+export const themeScriptPath = "/theme.js";
 
 export const manifestPath = "/manifest.webmanifest";
 
@@ -52,6 +56,10 @@ export function pageRoute(path: string): PageRoute | undefined {
     }
     return ConversationId.safeParse(conversation).success ? { view, conversation } : undefined;
   }
+  if (view === "settings" && conversation !== undefined) {
+    const section = SettingsSection.safeParse(conversation);
+    return section.success ? { view, section: section.data } : undefined;
+  }
   return conversation === undefined ? { view } : undefined;
 }
 
@@ -63,6 +71,8 @@ export function pagePath(route: PageRoute): string {
       return route.conversation === null ? "/conversations" : `/conversations/${route.conversation}`;
     case "ticket":
       return ticketAddress(route.ticket);
+    case "settings":
+      return "section" in route ? `/settings/${route.section}` : "/settings";
     default:
       return `/${route.view}`;
   }

@@ -19,6 +19,14 @@ import {
   TicketResponse,
   WorkerMessageResponse,
   WorkEventList,
+  type EngineTable,
+  EngineTableBody,
+  type GitHubAccount,
+  MachineAdded,
+  MachineRevoked,
+  type MachineSystem,
+  type Provider,
+  SettingsSnapshot,
 } from "@super-agent2/protocol";
 import type { z } from "zod";
 
@@ -93,6 +101,12 @@ export const hubApi = {
   reassign: (ticket: number, change: ChoiceChange) => call(`/api/tickets/${ticket}/reassign`, TicketList, change),
   editMemory: (id: number, text: string, revision: number) => call(`/api/memories/${id}`, MemoryList, { text, revision }, "PUT"),
   deleteMemory: (id: number, revision: number) => call(`/api/memories/${id}`, MemoryList, { revision }, "DELETE"),
+  settings: () => call("/api/settings", SettingsSnapshot),
+  addMachine: (name: string, system: MachineSystem) => call("/api/machines", MachineAdded, { name, system }),
+  revokeMachine: (name: string) => call(`/api/machines/${encodeURIComponent(name)}/revoke`, MachineRevoked, {}),
+  setOrder: (order: readonly Provider[]) => call("/api/brain/order", SettingsSnapshot, { order }, "PUT"),
+  setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
+  setTable: (table: EngineTable) => call("/api/engine-table", EngineTableBody, { table }, "PUT"),
   pushKey: () => call("/api/push", PushKey),
   subscribePush: (subscription: PushSubscriptionRequest) => call("/api/push/subscription", PushState, subscription),
   unsubscribePush: (endpoint: string) => call("/api/push/subscription", PushState, { endpoint }, "DELETE"),

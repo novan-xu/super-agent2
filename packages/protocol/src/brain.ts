@@ -131,6 +131,22 @@ export const PrepareRequest = z.object({
 });
 export type PrepareRequest = z.infer<typeof PrepareRequest>;
 
+export const ProviderState = z.object({
+  provider: Provider,
+  model: z.string(),
+  effort: z.string(),
+  available: z.boolean(),
+  until: z.number().int().nullable(),
+});
+export type ProviderState = z.infer<typeof ProviderState>;
+
+export const BrainProviders = z.object({
+  type: z.literal("providers"),
+  order: z.array(Provider),
+  providers: z.array(ProviderState),
+});
+export type BrainProviders = z.infer<typeof BrainProviders>;
+
 export const BrainMessage = z.discriminatedUnion("type", [
   BrainHello,
   TurnStarted,
@@ -143,6 +159,7 @@ export const BrainMessage = z.discriminatedUnion("type", [
   TurnFinished,
   SessionRecorded,
   PrepareRequest,
+  BrainProviders,
 ]);
 export type BrainMessage = z.infer<typeof BrainMessage>;
 
@@ -174,7 +191,13 @@ export const Prepared = z.object({
 });
 export type Prepared = z.infer<typeof Prepared>;
 
-export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared]);
+export const SetProviderOrder = z.object({
+  type: z.literal("order"),
+  order: z.array(Provider).min(1),
+});
+export type SetProviderOrder = z.infer<typeof SetProviderOrder>;
+
+export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder]);
 export type HubToBrain = z.infer<typeof HubToBrain>;
 
 export const brainLinkPath = "/brain/link";

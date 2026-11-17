@@ -1,5 +1,5 @@
-import { finishedTicketStates } from "@super-agent2/protocol";
-import type { MachineChoice, StartChoice, StoredWorkEvent, Ticket, TicketVerification, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
+import { finishedTicketStates, startingEngineTable } from "@super-agent2/protocol";
+import type { MachineChoice, SettingsSnapshot, StartChoice, StoredWorkEvent, Ticket, TicketVerification, WaitingCard, WorkEvent, WorkStatus } from "@super-agent2/protocol";
 
 export function verification(overrides: Partial<TicketVerification> = {}): TicketVerification {
   return {
@@ -191,4 +191,22 @@ export function stuckTicket(id: number, overrides: Partial<NonNullable<Ticket["s
 
 export function stuckCard(id: number, overrides: Partial<NonNullable<Ticket["stuck"]>> = {}, guidance: { readonly en: string; readonly zh: string } | null = { en: "Return hello", zh: "让 greet 返回 hello" }): WaitingCard {
   return { kind: "stuck", key: `stuck:${id}-40000`, at: 40_000, ticket: stuckTicket(id, overrides), guidance };
+}
+
+export function settingsSnapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
+  return {
+    machines: [],
+    enrollments: [],
+    canAdd: { cloudflare: true, release: true },
+    repositories: [],
+    accounts: [
+      { account: "novan-xu", configured: true },
+      { account: "nuofan-island", configured: false },
+    ],
+    brain: { linked: true, order: ["gpt", "claude", "deepseek"], providers: [] },
+    table: startingEngineTable,
+    subscriptions: [],
+    devices: [],
+    ...overrides,
+  };
 }

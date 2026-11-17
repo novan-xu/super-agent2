@@ -1,3 +1,4 @@
+import type { GitHubAccount } from "@super-agent2/protocol";
 import { RepositoryName } from "@super-agent2/protocol";
 import type { CredentialSource } from "./credentials.js";
 import { accountFor } from "./filing.js";
@@ -13,6 +14,7 @@ export interface ReleaseSource {
 }
 
 export interface GitHubReleaseOptions {
+  readonly accountOf?: (repository: string) => GitHubAccount;
   readonly repository: string;
   readonly version: string;
   readonly credentials: CredentialSource;
@@ -25,7 +27,7 @@ export function gitHubRelease(options: GitHubReleaseOptions): ReleaseSource {
   return {
     version: options.version,
     open: async () => {
-      const found = options.credentials(accountFor(repository));
+      const found = options.credentials((options.accountOf ?? accountFor)(repository));
       const token = found.ok ? found.credentials["GH_TOKEN"] : undefined;
       if (token === undefined || token === "") {
         return { ok: false, reason: found.ok ? `There is no GitHub token for ${repository}` : found.reason };

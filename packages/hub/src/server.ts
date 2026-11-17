@@ -55,9 +55,18 @@ import {
   RunnerToHub,
   runnerTokenHeader,
   StuckAnswerRequest,
+  enrollPath,
+  installCodeHeader,
+  MachineAddRequest,
+  type MachineAdded,
+  type MachineRevoked,
+  MachineName,
+  ProviderOrderChange,
+  RepositoryAccountChange,
+  type SettingsSnapshot,
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { z } from "zod";
+import { z } from "zod";
 import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
 import type { BrainTokenCheck } from "./brain-token.js";
 import type { ChainStarter, StartError, StartOutcome } from "./chains.js";
@@ -79,6 +88,9 @@ import type { WorkService } from "./work.js";
 import { text } from "@super-agent2/catalog";
 import type { ToolServer } from "./tools.js";
 import type { Waiting } from "./waiting.js";
+import type { MachineAdmin } from "./enrollment.js";
+import type { RepositoryAccounts } from "./repositories.js";
+import type { Settings } from "./settings.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
@@ -96,6 +108,11 @@ export const chainChoicePath = "/api/chains/choice";
 export const engineTablePath = "/api/engine-table";
 export const allowancePath = "/api/allowance";
 export const memoriesPath = "/api/memories";
+export const settingsPath = "/api/settings";
+export const brainOrderPath = "/api/brain/order";
+export const repositoryAccountPath = "/api/repositories/account";
+
+const revokeRoute = /^\/api\/machines\/([^/]{1,63})\/revoke$/;
 
 const memoryRoute = /^\/api\/memories\/([1-9][0-9]{0,15})$/;
 
@@ -167,6 +184,9 @@ export interface HubServerOptions {
   readonly version?: string;
   readonly release?: ReleaseSource;
   readonly memories?: MemoryService;
+  readonly settings?: Settings;
+  readonly admin?: MachineAdmin;
+  readonly repositories?: RepositoryAccounts;
 }
 
 export interface HubServer {
@@ -207,7 +227,10 @@ type Body =
   | WorkerMessageResponse
   | EngineTableBody
   | AllowanceList
-  | MemoryList;
+  | MemoryList
+  | SettingsSnapshot
+  | MachineAdded
+  | MachineRevoked;
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -459,6 +482,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 404, { error: "not_found" });
       return;
     }
+    if (path === enrollPath) {
+      await serveEnroll(request, response, method);
+      return;
+    }
     if (path === runnerReleasePath && method === "GET") {
       await serveRelease(request, response);
       return;
@@ -483,6 +510,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return command === undefined ? [] : [{ command, hold }];
       });
       sendJson(response, 200, { holds });
+      return;
+    }
+    if (path === settingsPath && method === "GET" && options.settings !== undefined) {
+      sendJson(response, 200, options.settings.snapshot());
+      return;
+    }
+    if ((path === machinesPath && method === "POST") || (revokeRoute.test(path) && method === "POST")) {
+      await serveMachineChange(request, response, path);
+      return;
+    }
+    if ((path === brainOrderPath || path === repositoryAccountPath) && method === "PUT") {
+      await serveSettingChange(request, response, path);
       return;
     }
     if (path === machinesPath && method === "GET" && options.runners !== undefined) {
@@ -531,6 +570,100 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     sendJson(response, 404, { error: "not_found" });
+  };
+
+  const serveEnroll = async (request: IncomingMessage, response: ServerResponse, method: string): Promise<void> => {
+    request.resume();
+    const admin = options.admin;
+    if (method !== "POST" || admin === undefined) {
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    const header = request.headers[installCodeHeader];
+    const outcome = typeof header === "string" ? await admin.redeem(header.trim()) : { ok: false as const, error: "refused" as const };
+    if (!outcome.ok) {
+      sendJson(response, outcome.error === "refused" ? 403 : 503, { error: outcome.error === "refused" ? "forbidden" : "unavailable" });
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": Buffer.byteLength(outcome.script),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    response.end(outcome.script);
+  };
+
+  const serveMachineChange = async (request: IncomingMessage, response: ServerResponse, path: string): Promise<void> => {
+    const admin = options.admin;
+    if (admin === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!ownerAction(request, response)) {
+      return;
+    }
+    const body = await readBody(request);
+    const revoked = revokeRoute.exec(path)?.[1];
+    if (revoked !== undefined) {
+      const name = MachineName.safeParse(revoked);
+      if (!name.success || parseJson(body, z.object({}).strict()) === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return;
+      }
+      const outcome = await admin.revoke(name.data);
+      if (!outcome.ok) {
+        sendJson(response, 404, { error: "not_found" });
+        return;
+      }
+      options.waiting?.refresh();
+      sendJson(response, 200, { name: name.data, accessToken: outcome.accessToken });
+      return;
+    }
+    const given = parseJson(body, MachineAddRequest.strict());
+    if (given === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    const outcome = admin.add({ ...given, hub: new URL(String(request.headers.origin)).origin });
+    if (!outcome.ok) {
+      const status = outcome.error === "conflict" ? 409 : outcome.error === "bad_request" ? 400 : 503;
+      sendJson(response, status, { error: outcome.error });
+      return;
+    }
+    sendJson(response, 201, { name: outcome.name, system: outcome.system, command: outcome.command, expiresAt: outcome.expiresAt });
+  };
+
+  const serveSettingChange = async (request: IncomingMessage, response: ServerResponse, path: string): Promise<void> => {
+    const settings = options.settings;
+    if (settings === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!ownerAction(request, response)) {
+      return;
+    }
+    const body = await readBody(request);
+    if (path === brainOrderPath) {
+      const given = parseJson(body, ProviderOrderChange.strict());
+      if (given === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return;
+      }
+      settings.setOrder(given.order);
+      sendJson(response, 200, settings.snapshot());
+      return;
+    }
+    const given = parseJson(body, RepositoryAccountChange.strict());
+    const repositories = options.repositories;
+    if (given === undefined || repositories === undefined || !repositories.set(given.repository, given.account)) {
+      sendJson(response, 400, { error: "bad_request" });
+      return;
+    }
+    settings.changed();
+    sendJson(response, 200, settings.snapshot());
   };
 
   const servePage = async (response: ServerResponse, path: string, headOnly: boolean): Promise<boolean> => {
@@ -692,6 +825,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 400, { error: "bad_request" });
       return true;
     }
+    if (options.settings !== undefined) {
+      const outcome = options.settings.setTable(given.table);
+      if (!outcome.ok) {
+        sendJson(response, 422, { error: "unsupported" });
+        return true;
+      }
+      options.waiting?.refresh();
+      sendJson(response, 200, { table: outcome.table });
+      return true;
+    }
     const table = defaults.setTable(given.table);
     options.waiting?.refresh();
     sendJson(response, 200, { table });
@@ -768,6 +911,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return true;
       }
       push.unsubscribe(removal.endpoint);
+      options.settings?.changed();
       sendJson(response, 200, { subscribed: false });
       return true;
     }
@@ -778,6 +922,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     const outcome = push.subscribe(subscription, new URL(String(request.headers.origin)).origin);
     if (outcome === "saved") {
+      options.settings?.changed();
       sendJson(response, 200, { subscribed: true });
     } else {
       sendJson(response, outcome === "invalid" ? 400 : 409, { error: outcome === "invalid" ? "bad_request" : "conflict" });
@@ -1153,6 +1298,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
     const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
     const unsubscribeMemories = options.memories?.subscribe((memories) => send({ type: "memories", memories: [...memories] })) ?? (() => undefined);
+    const unsubscribeSettings = options.settings?.subscribe((settings) => send({ type: "settings", settings })) ?? (() => undefined);
     const unsubscribeWork =
       options.work?.subscribe((event) => {
         if (watchedTickets.has(event.ticket)) {
@@ -1166,6 +1312,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       unsubscribeWaiting();
       unsubscribeTickets();
       unsubscribeMemories();
+      unsubscribeSettings();
     });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
@@ -1215,6 +1362,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (options.memories !== undefined) {
       send({ type: "memories", memories: options.memories.list() });
+    }
+    if (options.settings !== undefined) {
+      send({ type: "settings", settings: options.settings.snapshot() });
     }
   };
 
