@@ -6,6 +6,8 @@ import { type BrainConfig, loadBrainConfig } from "./config.js";
 import { createHubLink, type HubLink } from "./link.js";
 import type { ProgramAdapter } from "@super-agent2/programs";
 import { programAdapter } from "@super-agent2/programs";
+import { startProgramUpdates } from "./program-update.js";
+import { join, delimiter } from "node:path";
 import { prepareWorkspace } from "./workspace.js";
 
 export interface RunningBrain {
@@ -17,8 +19,10 @@ export interface RunningBrain {
 export function startBrain(config: BrainConfig, environment: Readonly<Record<string, string | undefined>>, clock: Clock, report: (line: string) => void): RunningBrain {
   const token = readFileSync(config.tokenFile, "utf8").trim();
   prepareWorkspace(config.workspace);
+  const programDir = environment.BRAIN_PROGRAM_DIR;
+  const programEnvironment = programDir === undefined ? environment : { ...environment, PATH: `${join(programDir, "bin")}${delimiter}${environment.PATH ?? ""}` };
   const adapters = new Map<BrainConfig["order"][number], ProgramAdapter>(
-    providers.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment, clock })]),
+    providers.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment: programEnvironment, clock })]),
   );
   const link = createHubLink({ hubUrl: config.hubUrl, token, report });
   const brain = createBrain({
@@ -31,12 +35,14 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     attachments: config.attachments,
     maximumOpen: config.maximumOpen,
   });
+  const stopUpdates = programDir === undefined ? () => undefined : startProgramUpdates(brain, programDir, report);
   link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });
   link.connect();
   return {
     brain,
     link,
     close: async () => {
+      stopUpdates();
       await link.close();
       await brain.close();
     },

@@ -3937,3 +3937,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Chosen:** Baseline each engine from the stored machine reports or its first nonempty report, and batch new model IDs per engine in each report. Include Antigravity and ignore effort-only changes.
 - **Why:** This avoids questions about the existing catalogue while making each later report actionable without delaying notices.
 - **Other options:** Wait for a timed cross-machine batch; count new efforts as models; exclude Antigravity.
+
+## 2026-11-18 ? Brain program updates
+
+- **Chosen:** Check npm latest at startup and every six hours; queue new turns while all three programs are checked and
+  installed, and activate each successful installation separately from a persistent volume. The image versions are
+  the floor, including the dsh prerelease. Failed updates leave the previous version active and retry on the next check.
+- **Why:** This keeps the brain current without a deployment, avoids changing files under running programs, and allows
+  one provider to update even if another fails. Sessions resume using the hub's existing saved session IDs.
+- **Other options:** Scheduled image rebuilds and deployments; updating all programs as one transaction.
