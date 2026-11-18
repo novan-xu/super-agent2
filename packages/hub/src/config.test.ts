@@ -48,6 +48,14 @@ describe("loadConfig", () => {
     expect(result.ok && result.config.brainTokenFile).toBe("/run/secrets/brain.token");
   });
 
+  it("reads the first-time allowance for a pipeline, in minutes", () => {
+    expect(loadConfig(valid)).toMatchObject({ ok: true, config: expect.not.objectContaining({ firstPipelineAllowanceMinutes: expect.anything() }) });
+    const result = loadConfig({ ...valid, HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: "90" });
+    expect(result.ok && result.config.firstPipelineAllowanceMinutes).toBe(90);
+    expect(problemsFor({ ...valid, HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: "0" })[0]).toMatch(/^HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES must be at least 1/);
+    expect(problemsFor({ ...valid, HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: "two hours" })[0]).toMatch(/^HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES must be a whole number of minutes/);
+  });
+
   it("reads the project folders", () => {
     const result = loadConfig({
       ...valid,

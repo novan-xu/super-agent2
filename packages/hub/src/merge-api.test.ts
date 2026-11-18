@@ -95,6 +95,7 @@ describe("the brain's merge shortcut", () => {
     await settled(running);
     const waiting = await callTool(running, "read_ticket", { ticket: ticket.id });
     expect(waiting.text).toContain("Verification: waiting (waiting: pipeline); rule workflows; change code; head abc123");
+    expect(waiting.text).toContain("Waiting on the pipeline for 0 minutes; there is no usual time for this repository yet (0 green pipelines recorded), so the first-time allowance applies");
     const listed = (await (
       await fetch(`http://127.0.0.1:${running.address.port}${brainToolsPath}`, {
         method: "POST",
