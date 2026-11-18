@@ -9,8 +9,8 @@ a computer.
 
 1. The brain can do anything the owner can. The hub is the brain's hands, not a gate.
 2. Every constraint on LLM behaviour lives in code. `AGENTS.md` holds guidance only, and nothing in it is relied on.
-3. The code constraints are the closed list in [Code constraints](#code-constraints). A new one is added only after the
-   same failure has happened twice.
+3. The code constraints are the closed list in [Code constraints](#code-constraints). The owner explicitly required
+   the ticket lock. Further additions require the same failure to have happened twice.
 4. The repository holds code only. No comments, with no exceptions.
 5. No issue reviewer, no repairer, and no LLM anywhere in verification.
 
@@ -43,6 +43,7 @@ API directly.
 | Role | Providers |
 | --- | --- |
 | Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
+| Router | Uses the brain's provider order and the same subscriptions and programs. Starts with Claude Haiku 5.5 (`claude-haiku-5-5`), the lightest GPT model offered in Codex (initially `gpt-6-luna`), and `deepseek-flash`. |
 | Worker, code | Codex, Claude Code and `dsh`. |
 | Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
 
@@ -54,6 +55,8 @@ for workers as well.
 The brain switches provider by itself when its program reports itself unavailable. A worker does the same, decided by
 the hub.
 
+- The router follows the brain's order and skips unavailable providers. With no routing result from any provider,
+  the hub keeps the input in a new topic.
 - When a worker's program reports itself unavailable (a used-up subscription, a rate limit, a failed login, an
   overloaded or failing service), the ticket continues on the next provider in the owner's order, on the same machine
   when that machine has the program, with the model and effort the start-defaults table gives for that provider and the
@@ -78,24 +81,90 @@ the hub.
   again by itself when the earliest time passes or a reading shows one back; the brain is told once that it waits.
   Antigravity unavailable for prose falls to the code providers in the owner's order.
 
-## The brain's session
+## The brain's topics
 
-Talking to the brain feels like a session of Codex or Claude Code left open, not like sending requests to a service.
+- The owner talks to the brain in one continuous stream. The hub records owner messages on arrival and appends
+  answers as they arrive from parallel topics. A topic view shows the messages and work for that topic alone.
+- Each topic has its own long-lived program session. It answers one turn at a time, independently of other topics.
+  Topics share the hub's confirmed memory, tickets, decisions and attachments.
+- The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
+  interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
+- The brain gives each topic a title. The owner can rename, merge and archive topics. A merge combines the histories
+  and ticket ownership in the chosen destination after the affected turns finish. Old topic links resolve to that
+  destination, and its next turn gets the combined history through the seed.
+- Archived topics stay in the stream and searchable history. The router leaves them out of automatic matching.
+  A direct message, quoted reply, handover or ticket notice to an archived topic makes it active again.
+- Each existing conversation becomes a topic, keeping its history and saved program session IDs.
 
-- A conversation is one long-lived session. It keeps its context from one message to the next, for days.
-- The owner sees the brain work as it happens: what it reads, what it runs, what it writes.
-- The owner can send a message while the brain is working, and can interrupt it. Codex and Claude Code take both
-  natively; `dsh` through a small plugin this repository ships and mounts at each start.
-- A session whose context grows long is compacted by its program, and goes on.
-- A restart of the brain, the hub or the NAS resumes the same session.
-- When another provider takes over, its session is given the conversation so far.
-- The owner can open a new conversation and return to an earlier one.
+### Routing
+
+- A message sent in a topic view goes straight to that topic. A quoted reply goes to the quoted message's topic and
+  gives the session the quoted message. The topic view offers quotes from its own messages, and the main stream can
+  quote across topics. Both forms of direct routing skip the router.
+- For other messages in the main stream, a resident router uses the [topic board](#topic-board) and the message to
+  choose an existing topic or a new one. It uses a fast model through the provider's program, with about one second
+  of routing latency as the target. The router has no tools.
+- When unsure, the router starts a new topic. If there is a plausible match, it marks the new topic as possibly
+  belonging to that topic. The owner can move the message to another topic with 移到…. A topic session can also
+  hand a message over to another topic.
+- A move or handover changes where the original message belongs and queues it at the destination. Pending work on that
+  message is removed from the source. If the source is answering it, that turn is interrupted before the destination
+  handles it. Earlier replies stay in their source topic and completed work is kept.
+
+### Session lifecycle
+
+- After a configurable idle period of two hours by default, the brain saves a topic summary and closes its program.
+  It keeps the session ID. When a topic needs a slot sooner, the least recently used idle topic closes the same way.
+  If all slots are busy, waiting topics keep their inputs until a slot frees.
+- The next input resumes the saved session after a close or a restart of the brain, hub or NAS. When a program reports
+  the session lost, the topic starts a replacement with the seed. A provider taking over gets the same seed and
+  uses its own saved session for that topic when available. The program still compacts its own context as it grows.
 
 The brain checks npm `latest` for Codex, Claude Code and dsh at startup and every six hours. It waits until all
 turns finish, queues new inputs, closes idle program processes and installs newer versions into a persistent volume.
 Each successful install is activated atomically; a failure leaves the previous program in place and is retried at the
-next check. The image pins remain the minimum versions, including dsh's prerelease when npm latest is older. The next
-turn resumes its saved session through the hub. Updates and failures are logged by the brain container.
+next check. The image pins remain the minimum versions, including dsh's prerelease when npm latest is older. The router
+uses the updated program and topics resume their saved sessions through the hub. The brain container logs updates and
+failures.
+
+### Session seed
+
+The seed is an index. The brain reads details through tools. Completeness comes first, especially for the topic's own
+history. The input and its attachments accompany the seed. The seed goes to new and reopened sessions, in this order.
+
+1. **Quoted message.** Include it in full on any quoted turn, including one in a session that is already open. If it
+   exceeds the program's available input, give its reference and the tool for reading it in parts.
+2. **This topic's history.** Include the whole history when it fits. Otherwise include the full summary and up to the
+   last 30 turns verbatim. The saved summary leaves room for recent turns within the history budget. Keep the newest
+   complete turns first when the history cap is reached.
+3. **Confirmed memory.** Include the owner's confirmed text.
+4. **Open tickets.** Give one line per ticket, with this topic's tickets first.
+5. **Topic board.** Give titles and current statuses.
+
+Each part has a budget (see [Limits](#limits)). For each part with omissions, state how many items were left out and
+name the hub tool that reads them. The hub keeps the complete records.
+
+### Topic board
+
+- The hub keeps each topic's title and a one-line current status. It updates the status at the end of each turn and
+  reflects renames, merges and archives on the board.
+- At the start of a turn, the topic gets the board entries changed since its last input. A new or reopened session gets
+  a board snapshot in its seed. A topic can read more of the board at any time.
+- Every topic can read another topic's recent messages or summary and search across topic history through hub tools.
+  If the owner asks to combine work from two topics, either session can read what it needs.
+
+### Ticket changes
+
+- Each ticket belongs to the topic that filed it. Repairs opened by the hub inherit the repaired ticket's topic.
+  A ticket's topic is the destination for its [notices](#notices).
+- A topic gets a ticket's lock on its first successful change to that ticket in a turn. The hub refuses changes from
+  another topic while the lock is held and names the holder. Reads can continue.
+- A topic reads an existing ticket before changing it. The hub ties the write to the topic turn and refuses it when
+  the ticket has changed since that topic's last read or successful write. The topic reads it again before retrying.
+  The hub checks the lock and the ticket version together with the write. A change that touches several tickets checks
+  and takes the locks for all of them together.
+- The hub releases the locks when the turn ends, including on failure or interruption. When a turn is lost, the hub
+  ends it and revokes its ability to write before releasing its locks. A lock has no time-based expiry.
 
 ## The brain's reach
 
@@ -119,7 +188,7 @@ Two things follow:
 
 ## Ticket flow
 
-1. **Conversation.** The brain examines the exchange before filing anything. When the goal or the scope is unclear, it
+1. **Topic.** The brain examines the exchange in its topic before filing anything. When the goal or the scope is unclear, it
    talks with the owner first, one short question at a time. Details of implementation are decided, not asked, and
    recorded as decisions (see [Choices made on the owner's behalf](#choices-made-on-the-owners-behalf)).
 2. **Issues.** The brain files one GitHub issue per piece of work. An issue is the single hand-off: the worker knows only
@@ -140,11 +209,12 @@ Two things follow:
    same folder, on a new branch from the updated default branch, and tells it what merged and what remains. The brain
    is not part of this.
 9. **Report.** The ticket is merged when every issue of its chain is closed by one of its merged pull requests. It
-   reports to the brain once, with the pull requests merged, the final merge commit, whether the change needs
+   reports to its topic once, with the pull requests merged, the final merge commit, whether the change needs
    deploying, and every decision recorded on the owner's behalf.
-10. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
-   tries again. What is already merged stays merged. A worker whose program becomes unavailable is not a failure: the
-   hub continues the ticket on another provider (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
+10. **Failure.** At any step, the hub hands the failing output to the ticket's topic. The brain writes guidance and
+   the worker tries again. What is already merged stays merged. When a worker's program becomes unavailable, the hub
+   continues the ticket on another provider and leaves the failure count unchanged
+   (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
 
 11. **Stuck.** After three guided rounds without passing, the ticket stops and waits for the owner on a card in 等你,
    who resumes it (a fresh count, with words for the brain) or gives it up. Giving up takes one press and destroys
@@ -154,9 +224,10 @@ Two things follow:
 There are two kinds of ticket. Everything above is a code ticket. Everything else a worker does is a task ticket: a task
 in words, with material and attachments, and a repository and a commit when it needs one. The worker does it in a
 scratch folder, beside a checkout of the repository at that commit when one is named, and hands back an outcome (done
-or failed), a report and any text and files. Done, the result is delivered to the owner in the conversation and the
-ticket is done (`delivered`); failed, it goes through the failure loop. Nothing is verified. A task ticket can be
-arranged after a code chain and take that chain's final merge commit as its commit, filled in when it begins.
+or failed), a report and any text and files. Done, the result is delivered to the owner in the ticket's topic and the
+main stream, and the ticket is done (`delivered`). A failed task goes through the failure loop. Nothing is verified.
+A task ticket can be arranged after a code chain and take that chain's final merge commit as its commit, filled in
+when it begins.
 
 ## Chains
 
@@ -215,7 +286,7 @@ which of them decides matters less than the record. The owner reviews the decisi
 
 - A decision is something chosen on the owner's behalf where the owner might have chosen differently: what was chosen,
   why, and what else was possible, each in English with a Chinese copy. The hub keeps them per ticket, with who recorded
-  them, so a new conversation or another provider loses nothing.
+  them, so they remain available to every topic and provider.
 - A worker hands its decisions in with each pull request, or with a task's hand-back; a hand-in without any is valid.
   The brain records its own with `record_decision`, against a ticket, at any time: its assumptions at filing, how it
   arranged or cut the work, what it told a worker. A decision on a ticket that joins a chain moves with it. The same
@@ -224,15 +295,18 @@ which of them decides matters less than the record. The owner reviews the decisi
   recorded for it, and the brain reports them to the owner in Chinese. The ticket's page lists them too, whatever the
   brain says, so the report does not rest on the brain remembering.
 - On the ticket's page each decision shows with 可以 and one box for an opinion. 可以 settles it; an opinion settles it
-  as not OK. When every decision recorded on the ticket so far is settled, the hub sends the brain one `[hub]` message
-  with every opinion and its decision, and the brain decides how to group them into follow-up issues, talking with the
-  owner first where the scope of a fix is unclear. A review with no opinion sends nothing.
+  as not OK. When every decision recorded on the ticket so far is settled, the hub sends the ticket's topic one
+  `[hub]` message with every opinion and its decision. The brain decides how to group them into follow-up issues,
+  talking with the owner first where the scope of a fix is unclear. A review with no opinion sends nothing.
 - Nothing waits on the review: no ticket, chain or deployment. Finished tickets with decisions to review carry their
   count in 历史, and 历史 in the navigation carries the total; there is no push notification.
 
 ## Start defaults
 
-The hub remembers model IDs seen for each engine across machine reports. The first nonempty report for an engine establishes a baseline; later new IDs in a report are grouped into one conversation notice for that engine. Effort-only changes and disappearing models do not create notices. The brain proposes a row change and uses `set_engine_row` only with the owner’s agreement; changed pairs must be offered by an online machine, as for page edits.
+The hub remembers model IDs seen for each engine across machine reports. The first nonempty report for an engine
+establishes a baseline. Later new IDs in a report are grouped into one notice for that engine in the System topic.
+Effort-only changes and disappearing models do not create notices. The brain proposes a row change and uses
+`set_engine_row` only with the owner's agreement. Changed pairs must be offered by an online machine, as for page edits.
 
 For each chain the brain chooses, once, where and how it runs: machine, engine, model and effort, for example Mac mini,
 Codex, `gpt-6.1-sol`, high. They are defaults: the owner can change any of them on the card before the start, and the
@@ -273,7 +347,7 @@ A model and effort the chosen machine's program does not offer is refused, never
 
 ## Memory
 
-The memory carries what the owner wants kept from one conversation to the next. It belongs to the owner.
+Memory is shared across every topic. It belongs to the owner.
 
 - Each memory is one text, in Chinese, stored exactly as the owner wrote or confirmed it. The page shows it as it is,
   line breaks included, and the brain is given exactly that text.
@@ -287,8 +361,8 @@ The memory carries what the owner wants kept from one conversation to the next. 
   and invisible characters. Two wordings of one meaning are left to the brain's judgement.
 - The hub also refuses a suggestion without Chinese or one that looks like a credential. The brain's suggestions have no
   count or length limit.
-- The brain is given the memory, the suggestions waiting and what the owner declined or deleted, at the start of each
-  conversation, again whenever any of it changes, and in the answer of every memory tool.
+- The seed includes confirmed memory. Each topic gets changes to confirmed memory at its next input. The shared memory
+  tools give access to the complete confirmed text, suggestions waiting and what the owner declined or deleted.
 
 ## Deployment
 
@@ -358,6 +432,10 @@ This is the complete list.
 7. **Nothing without the front door.** No route of the hub is open to the internet: every request through the host name
    carries a signed Access assertion for the application that covers its path, and the hub refuses any request without
    one. There is no Bypass rule; adding a machine needs none, because its credentials travel in the install line.
+8. **Ticket lock.** The owner explicitly required the hub to allow only one topic turn to change a ticket at a time.
+   The hub enforces this on all brain-initiated changes to its ticket state, with a stale-read check and release at
+   the end of the turn (see [Ticket changes](#ticket-changes)). The owner's controls and the hub's own work continue
+   independently, and their changes advance the ticket version.
 
 ## Tests
 
@@ -370,8 +448,8 @@ No test fails because something took longer than expected.
 
 ## Attachments
 
-The owner can attach any file to a message, in the conversation with the brain and in a ticket's messages to its
-worker: from the photo library, the camera or Files on the phone, by pasting an image, or by dropping files on the
+The owner can attach any file to a message in the main stream, a topic view or a ticket's messages to its worker.
+Files can come from the photo library, the camera or Files on the phone, from a pasted image or from a drop on the
 composer on a computer. A message may be attachments alone.
 
 - The page uploads each file as soon as it is chosen, in parts of 8 MiB, each one request; the hub writes each part
@@ -401,6 +479,14 @@ Delivered files go from the runner to the hub in parts the hub asks for, and are
 database. The owner's attachments go to the hub in parts the page sends, and from the hub to a runner in parts the runner
 asks for. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
 
+The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default, plus one resident router.
+
+The [session seed](#session-seed) targets about 25,000 tokens. Its starting budgets are 18,000 for topic history,
+3,000 for confirmed memory, 2,000 for open tickets and 1,000 for the topic board. The quote can use the remaining
+input budget and take the seed past its target when the provider can fit it. The provider's input capacity is the
+hard limit. The current input and quote take priority, followed by the seed parts in order. Omitted items stay
+available through the hub tools.
+
 ## Decisions
 
 A choice that would have been the owner's, made without the owner so that work does not stop, is recorded in
@@ -424,7 +510,11 @@ are.
 
 ## Notices
 
-New-model notices include a link to Settings → Models and tell the brain the reported efforts, machines and current row.
+- Ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic
+  and appear in the main stream. They skip the router. The first event for an older ticket without a topic creates
+  one named after the ticket. Later events use that same topic.
+- Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use.
+  New-model notices link to Settings → Models and tell the brain the reported efforts, machines and current row.
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and
 is sent as a push notification from the web page. There is no Lark channel. The notification for a held operation names
@@ -447,6 +537,12 @@ Kept from it:
 
 Changed by this design:
 
+- 对话 opens the single live stream. Each brain answer and each owner message has a small topic label that opens
+  the topic view. An owner message's label shows where it was routed.
+- The topic list shows automatically recognised topics. Selecting a topic filters the view and sends input directly
+  there. Topics can be renamed, merged or archived from the list or the topic view.
+- The owner can quote a message when replying, as in Teams. The composer shows the quoted message. Picking a
+  destination under 移到… moves an owner message immediately. A possible match from the router can be used in one tap.
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
   确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.
@@ -502,9 +598,9 @@ credential-looking text in a memory, and still injects the credentials into each
 
 The work is tracked as GitHub issues under five milestones.
 
-1. **Brain reach.** Hub with the general command channel, the front door and the confirmation lock; the brain's session
-   connected to it; the conversation page in Chinese; then deployment on the NAS, taking over the host name and stopping
-   the first Super-agent.
+1. **Brain reach.** Hub with the general command channel, the front door and the confirmation lock, with the brain
+   connected to it and a Chinese conversation page. Then deployment on the NAS, taking over the host name and
+   stopping the first Super-agent.
 2. **Dispatch.** Runners, tickets and chains, start defaults, and workers through to an opened pull request; writing
    tickets; 工作台.
 3. **Verification and merge.** Woodpecker rules, automatic merge, the failure loop and its retry cap.
