@@ -282,7 +282,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       [
         `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`,
         ...chainProgress(ticket),
-        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, deploy it once with deploy_repository at the last merge commit, unless the owner said otherwise.",
+        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, deploy it once with deploy_repository at the last merge commit, unless the owner said otherwise; Super-agent2 itself is deployed on the NAS, not through the hub.",
       ].join("\n"),
     );
   };

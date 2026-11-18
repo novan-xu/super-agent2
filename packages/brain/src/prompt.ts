@@ -1,4 +1,4 @@
-import type { BrainInput, BrainMemory, HistoryItem, MemoryBrief, MemoryChange, Provider } from "@super-agent2/protocol";
+import { type BrainInput, describeMemoryState, type HistoryItem, type MemoryBrief, type MemoryChange, type Provider } from "@super-agent2/protocol";
 
 export const historyItemLimit = 4_000;
 
@@ -37,40 +37,53 @@ export function inputText(inputs: readonly BrainInput[]): string {
   return inputs.map((input) => input.text).join("\n\n");
 }
 
-function memoryLine(memory: BrainMemory): string {
-  return memory.ownerWords ? `- #${memory.id} (the owner's own words, in Chinese) ${memory.text}` : `- #${memory.id} ${memory.text}`;
-}
-
-const actionWords: Readonly<Record<MemoryChange["action"], string>> = {
-  remembered: "added",
-  rewritten: "rewrote",
-  edited: "edited",
-  deleted: "deleted",
-};
-
 function changeLine(change: MemoryChange): string {
-  if (change.by === "owner") {
-    return change.action === "deleted"
-      ? `- The owner deleted #${change.id}: ${change.text} Do not remember it again unless the owner asks.`
-      : `- The owner edited #${change.id}; it now reads, in Chinese: ${change.text} Follow it. Then call remember with id ${change.id} to write its English to match, keeping the owner's Chinese exactly as it is.`;
+  const text = JSON.stringify(change.text);
+  const memory = `#${change.memory ?? 0}`;
+  if (change.by === "brain") {
+    if (change.action === "suggested") {
+      return change.memory === null
+        ? `- You suggested in another conversation (suggestion ${change.suggestion ?? 0}): ${text}`
+        : `- You suggested forgetting ${memory} in another conversation (suggestion ${change.suggestion ?? 0}).`;
+    }
+    return `- You ${change.action} ${memory} in another conversation: ${text}`;
   }
-  return `- You ${actionWords[change.action]} #${change.id} in another conversation: ${change.text}`;
+  switch (change.action) {
+    case "added":
+      return `- The owner added ${memory}: ${text}`;
+    case "edited":
+      return `- The owner edited ${memory}; it now reads: ${text}`;
+    case "deleted":
+      return change.suggestion === null
+        ? `- The owner deleted ${memory}: ${text}`
+        : `- The owner confirmed suggestion ${change.suggestion} and forgot ${memory}: ${text}`;
+    case "replaced":
+      return `- ${memory} was replaced when the owner confirmed suggestion ${change.suggestion ?? 0}: ${text}`;
+    case "confirmed":
+      return `- The owner confirmed suggestion ${change.suggestion ?? 0}; it is now ${memory}: ${text}`;
+    case "declined":
+      return change.memory === null
+        ? `- The owner declined suggestion ${change.suggestion ?? 0}: ${text}`
+        : `- The owner declined suggestion ${change.suggestion ?? 0} to forget ${memory}, and kept it.`;
+    case "suggested":
+      return `- Suggestion ${change.suggestion ?? 0}: ${text}`;
+  }
 }
 
 export function memoryPrompt(brief: MemoryBrief): string {
-  const list = brief.memories.length === 0 ? ["(empty)"] : brief.memories.map(memoryLine);
+  const state = describeMemoryState(brief);
   if (brief.first) {
     return [
-      `[hub] Your memory: what you have learned about the owner across conversations (${brief.memories.length} of ${brief.limit}). Apply it without being asked. The owner reads and corrects it in 记忆; recall, remember and forget change it.`,
-      ...list,
+      "[hub] Your memory: what the owner keeps for every conversation, in Chinese, exactly as the owner wrote or confirmed it in 记忆. Apply it without being asked. Only the owner changes it: remember and forget suggest a change, which waits in 记忆 until the owner confirms or declines it. This replaces any memory you were given before.",
+      ...state,
       "[hub] End of your memory.",
     ].join("\n");
   }
   return [
-    "[hub] Your memory changed since you last saw it. What the owner changed is the owner's decision.",
+    "[hub] Your memory changed since you last saw it. What the owner did is the owner's decision.",
     ...brief.changes.map(changeLine),
-    `Your memory is now (${brief.memories.length} of ${brief.limit}), replacing what you were given before:`,
-    ...list,
+    "Now, replacing what you were given before:",
+    ...state,
     "[hub] End of your memory.",
   ].join("\n");
 }

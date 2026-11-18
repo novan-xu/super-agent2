@@ -43,8 +43,10 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     pushKey: () => answer("pushKey", { publicKey: null }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
-    editMemory: (id, text, revision) => answer(`editMemory ${id} ${text} ${revision}`, { memories: [], limit: 30 }),
-    deleteMemory: (id, revision) => answer(`deleteMemory ${id} ${revision}`, { memories: [], limit: 30 }),
+    addMemory: (text) => answer(`addMemory ${text}`, { memories: [], suggestions: [] }),
+    editMemory: (id, text) => answer(`editMemory ${id} ${text}`, { memories: [], suggestions: [] }),
+    deleteMemory: (id) => answer(`deleteMemory ${id}`, { memories: [], suggestions: [] }),
+    decideSuggestion: (id, decision) => answer(`decideSuggestion ${id} ${decision}`, { memories: [], suggestions: [] }),
     settings: () => answer("settings", settingsSnapshot()),
     addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run", expiresAt: 5 }),
     revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
@@ -541,14 +543,17 @@ describe("PageController and the history", () => {
     expect(ids(page)).toEqual([2, 1]);
   });
 
-  it("edits and deletes a memory at the version the owner saw, and reports a refusal", async () => {
-    const hub = api({ editMemory: () => Promise.resolve({ ok: false, error: "conflict" }) });
+  it("adds, edits and deletes a memory, confirms and declines a suggestion, and reports a refusal", async () => {
+    const hub = api({ editMemory: () => Promise.resolve({ ok: false, error: "not_found" }) });
     const failures: Failure[] = [];
     const page = controller(hub, failures);
-    expect(await page.deleteMemory(3, 7)).toBe(true);
-    expect(hub.calls).toEqual(["deleteMemory 3 7"]);
-    expect(await page.editMemory(3, "先说结论", 7)).toBe(false);
-    expect(failures).toEqual(["conflict"]);
+    expect(await page.addMemory(" 先说结论\n再列细节 ")).toBe(true);
+    expect(await page.deleteMemory(3)).toBe(true);
+    expect(await page.decideSuggestion(4, "confirm")).toBe(true);
+    expect(await page.decideSuggestion(5, "decline")).toBe(true);
+    expect(hub.calls).toEqual(["addMemory  先说结论\n再列细节 ", "deleteMemory 3", "decideSuggestion 4 confirm", "decideSuggestion 5 decline"]);
+    expect(await page.editMemory(3, "先说结论")).toBe(false);
+    expect(failures).toEqual(["not_found"]);
   });
 
   it("reads the settings and keeps what a change answers", async () => {
