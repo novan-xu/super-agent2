@@ -47,7 +47,6 @@ const Environment = z.object({
     .refine((folders) => folders.every(isAbsolutePath), {
       error: "must be absolute folders separated by commas, such as /srv/projects,~/work",
     }),
-  HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
@@ -65,7 +64,6 @@ export interface Config {
   readonly port: number;
   readonly host: string;
   readonly projectFolders: readonly string[];
-  readonly credentialPaths: readonly string[];
   readonly brainTokenFile: string;
   readonly pageDir?: string;
   readonly vapid?: VapidSettings;
@@ -121,7 +119,6 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       port: value.HUB_PORT,
       host: value.HUB_HOST,
       projectFolders: value.HUB_PROJECT_FOLDERS,
-      credentialPaths: value.HUB_CREDENTIAL_PATHS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),

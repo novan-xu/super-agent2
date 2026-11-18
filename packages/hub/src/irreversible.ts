@@ -1,7 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import { type ApiRequest, type Effect, effectsOf, type Push, textEffects } from "./effects.js";
 import { expand, type Invocation, programName } from "./invocations.js";
-import { absolute, globMatcher, isDevice, isSessionItem, type Location, type PathMatcher, pathText, variableRoot, within } from "./paths.js";
+import { absolute, isSessionItem, type Location, pathText, variableRoot, within } from "./paths.js";
 import type { Word } from "./shell.js";
 
 export const formIds = [
@@ -9,7 +9,6 @@ export const formIds = [
   "repository-publication",
   "default-branch-rewrite",
   "data-deletion",
-  "credential-change",
   "file-deletion",
 ] as const;
 
@@ -24,7 +23,6 @@ export interface CommandPattern {
 }
 
 export interface RequestRule {
-  readonly api: "github" | "cloudflare" | "any";
   readonly methods: readonly string[];
   readonly path: RegExp;
   readonly body?: (request: ApiRequest) => boolean;
@@ -38,9 +36,6 @@ export interface TextRule {
 export interface LockSettings {
   readonly projectFolders: readonly Location[];
   readonly temporaryFolders: readonly Location[];
-  readonly credentials: PathMatcher;
-  readonly configuredCredentials: PathMatcher;
-  readonly projectConfiguration: PathMatcher;
   readonly defaultBranches: ReadonlySet<string>;
 }
 
@@ -120,31 +115,14 @@ function insideTemporary(target: Location, contents: boolean, settings: LockSett
   return settings.temporaryFolders.some((folder) => within(target, folder, !contents));
 }
 
-function touchesCredential(effect: Effect, settings: LockSettings): boolean {
-  if (effect.kind !== "delete" && effect.kind !== "write" && effect.kind !== "relocate") {
-    return false;
-  }
-  const { target } = effect;
-  if (isDevice(target)) {
-    return false;
-  }
-  if ((target.known && target.root === "cert:") || settings.configuredCredentials(target)) {
-    return true;
-  }
-  if (settings.projectConfiguration(target) && insideProject(target, false, settings)) {
-    return false;
-  }
-  return settings.credentials(target);
-}
-
 export const irreversibleForms: readonly IrreversibleForm[] = [
   {
     id: "repository-deletion",
     description: text("hold.form.repositoryDeletion"),
     commands: [{ programs: ["gh"], subcommand: [["repo"], ["delete"]] }],
     requests: [
-      { api: "github", methods: ["DELETE"], path: repository },
-      { api: "github", methods: ["POST"], path: /^graphql$/, body: graphql(/deleteRepository/i) },
+      { methods: ["DELETE"], path: repository },
+      { methods: ["POST"], path: /^graphql$/, body: graphql(/deleteRepository/i) },
     ],
   },
   {
@@ -155,9 +133,9 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
       { programs: ["gh"], subcommand: [["repo"], ["create", "new"]], flags: ["--public"] },
     ],
     requests: [
-      { api: "github", methods: ["PATCH", "PUT", "POST"], path: repository, body: publishes },
-      { api: "github", methods: ["POST"], path: /^(?:user|orgs\/[^/]+)\/repos$|^repos\/[^/]+\/[^/]+\/generate$/, body: createsPublic },
-      { api: "github", methods: ["POST"], path: /^graphql$/, body: graphql(/visibility\s*:\s*PUBLIC/i) },
+      { methods: ["PATCH", "PUT", "POST"], path: repository, body: publishes },
+      { methods: ["POST"], path: /^(?:user|orgs\/[^/]+)\/repos$|^repos\/[^/]+\/[^/]+\/generate$/, body: createsPublic },
+      { methods: ["POST"], path: /^graphql$/, body: graphql(/visibility\s*:\s*PUBLIC/i) },
     ],
   },
   {
@@ -169,9 +147,9 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
       { programs: ["java"], words: [/bfg[^/\\]*\.jar$/i] },
     ],
     requests: [
-      { api: "github", methods: ["DELETE"], path: /^repos\/[^/]+\/[^/]+\/git\/refs\/heads\/(?:main|master|trunk)$/ },
-      { api: "github", methods: ["PATCH", "POST"], path: /^repos\/[^/]+\/[^/]+\/git\/refs\/heads\/(?:main|master|trunk)$/, body: forcesRef },
-      { api: "github", methods: ["POST"], path: /^graphql$/, body: graphql(/force\s*:\s*true/i) },
+      { methods: ["DELETE"], path: /^repos\/[^/]+\/[^/]+\/git\/refs\/heads\/(?:main|master|trunk)$/ },
+      { methods: ["PATCH", "POST"], path: /^repos\/[^/]+\/[^/]+\/git\/refs\/heads\/(?:main|master|trunk)$/, body: forcesRef },
+      { methods: ["POST"], path: /^graphql$/, body: graphql(/force\s*:\s*true/i) },
     ],
     effect: (effect, settings) => effect.kind === "push" && rewritesDefault(effect.push, settings),
   },
@@ -203,34 +181,6 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
     ],
   },
   {
-    id: "credential-change",
-    description: text("hold.form.credentialChange"),
-    commands: [
-      { programs: ["gh"], subcommand: [["secret"], ["delete", "remove", "set"]] },
-      { programs: ["gh"], subcommand: [["auth"], ["logout"]] },
-      { programs: ["gh"], subcommand: [["ssh-key", "gpg-key"], ["delete"]] },
-      { programs: ["gh"], subcommand: [["repo"], ["deploy-key"], ["delete"]] },
-      { programs: dockers, subcommand: [["secret"], ["rm", "remove"]] },
-      { programs: ["kubectl"], subcommand: [["delete"], ["secret", "secrets"]] },
-      { programs: ["wrangler"], subcommand: [["secret"], ["delete", "put"]] },
-      { programs: ["cloudflared"], subcommand: [["tunnel"], ["delete"]] },
-      { programs: ["woodpecker-cli", "woodpecker"], words: [/^secret$/, /^(?:rm|remove|delete|update|set)$/] },
-      { programs: ["gpg", "gpg2"], flags: ["--delete-key", "--delete-keys", "--delete-secret-key", "--delete-secret-keys", "--delete-secret-and-public-key", "--delete-secret-and-public-keys"] },
-      { programs: ["security"], words: [/^delete-(?:generic-password|internet-password|certificate|identity|keychain)$/] },
-      { programs: ["cmdkey"], words: [/^\/delete/i] },
-    ],
-    requests: [
-      { api: "any", methods: ["DELETE", "PUT", "PATCH"], path: /(?:^|\/)secrets\/[^/]+$/ },
-      { api: "github", methods: ["DELETE"], path: /^(?:user|repos\/[^/]+\/[^/]+)\/keys\/[^/]+$|^user\/(?:gpg_keys|ssh_signing_keys)\/[^/]+$|^applications\/[^/]+\/(?:token|grant)$|^installation\/token$/ },
-      { api: "cloudflare", methods: ["DELETE", "PUT"], path: /^(?:user|accounts\/[^/]+)\/tokens\/[^/]+$/ },
-      { api: "cloudflare", methods: ["PUT", "POST"], path: /^(?:user|accounts\/[^/]+)\/tokens\/[^/]+\/value$/ },
-      { api: "cloudflare", methods: ["DELETE"], path: /^(?:accounts|zones)\/[^/]+\/access\/service_tokens\/[^/]+$/ },
-      { api: "cloudflare", methods: ["POST"], path: /^(?:accounts|zones)\/[^/]+\/access\/service_tokens\/[^/]+\/(?:refresh|rotate)$/ },
-      { api: "cloudflare", methods: ["DELETE"], path: /^accounts\/[^/]+\/(?:cfd_tunnel|tunnels)\/[^/]+$/ },
-    ],
-    effect: touchesCredential,
-  },
-  {
     id: "file-deletion",
     description: text("hold.form.fileDeletion"),
     effect: (effect, settings) =>
@@ -241,50 +191,9 @@ export const irreversibleForms: readonly IrreversibleForm[] = [
   },
 ];
 
-export const defaultCredentialPaths: readonly string[] = [
-  "**/secrets/**",
-  "**/.secrets/**",
-  "**/.env",
-  "**/.env.*",
-  "**/*.env",
-  "**/*.pem",
-  "**/*.key",
-  "**/*.p12",
-  "**/*.pfx",
-  "**/*.jks",
-  "**/*.keystore",
-  "**/id_rsa*",
-  "**/id_dsa*",
-  "**/id_ecdsa*",
-  "**/id_ed25519*",
-  "**/.ssh/authorized_keys*",
-  "**/.netrc",
-  "**/_netrc",
-  "**/.git-credentials",
-  "**/.npmrc",
-  "**/.pypirc",
-  "**/.config/gh/hosts.yml",
-  "**/.docker/config.json",
-  "**/.aws/credentials",
-  "**/.kube/config",
-  "**/.cloudflared/**",
-  "**/.superagent/**",
-  "**/.codex/auth.json",
-  "**/.credentials*",
-  "**/credentials",
-  "**/credentials.json",
-  "!**/*.pub",
-  "!**/*.example",
-  "!**/*.sample",
-  "!**/*.template",
-  "!**/*.dist",
-];
-
 export const defaultBranchNames: readonly string[] = ["main", "master", "trunk"];
 
 export const temporaryFolders: readonly string[] = ["/tmp", "/var/tmp", "$TMPDIR", "$TMP", "$TEMP"];
-
-export const projectConfigurationPaths: readonly string[] = ["**/.env", "**/.env.*"];
 
 function folderLocation(folder: string): Location | undefined {
   if (folder.startsWith("$")) {
@@ -295,7 +204,6 @@ function folderLocation(folder: string): Location | undefined {
 
 export interface LockSettingsInput {
   readonly projectFolders: readonly string[];
-  readonly credentialPaths: readonly string[];
 }
 
 export function lockSettings(input: LockSettingsInput): LockSettings {
@@ -307,9 +215,6 @@ export function lockSettings(input: LockSettingsInput): LockSettings {
   return {
     projectFolders: locations(input.projectFolders.filter((folder) => !folder.startsWith("$"))),
     temporaryFolders: locations(temporaryFolders),
-    credentials: globMatcher([...defaultCredentialPaths, ...input.credentialPaths]),
-    configuredCredentials: globMatcher(input.credentialPaths),
-    projectConfiguration: globMatcher(projectConfigurationPaths),
     defaultBranches: new Set(defaultBranchNames),
   };
 }
@@ -326,8 +231,6 @@ const programValueOptions: Readonly<Record<string, readonly string[]>> = {
   gh: ["-R", "--repo"],
   kubectl: ["-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-l", "--selector", "-o", "--output"],
   prisma: ["--schema"],
-  wrangler: ["-c", "--config", "-e", "--env", "--name"],
-  cloudflared: ["--config", "--origincert", "--loglevel", "--logfile", "--cred-file", "--credentials-file"],
 };
 
 function valueOptionsOf(program: string): readonly string[] {
@@ -414,24 +317,15 @@ function matchesCommand(pattern: CommandPattern, invocation: Invocation): boolea
   return true;
 }
 
-function apiPath(request: ApiRequest, api: RequestRule["api"]): string | undefined {
-  if (api === "any") {
+function apiPath(request: ApiRequest): string | undefined {
+  if (request.host === "api.github.com") {
     return request.path;
   }
-  if (api === "github") {
-    if (request.host === "api.github.com") {
-      return request.path;
-    }
-    return request.path.startsWith("api/v3/") ? request.path.slice("api/v3/".length) : undefined;
-  }
-  if (request.host === "api.cloudflare.com" && request.path.startsWith("client/v4/")) {
-    return request.path.slice("client/v4/".length);
-  }
-  return undefined;
+  return request.path.startsWith("api/v3/") ? request.path.slice("api/v3/".length) : undefined;
 }
 
 function matchesRequest(rule: RequestRule, request: ApiRequest): boolean {
-  const path = apiPath(request, rule.api);
+  const path = apiPath(request);
   return path !== undefined && rule.methods.includes(request.method) && rule.path.test(path) && (rule.body === undefined || rule.body(request));
 }
 

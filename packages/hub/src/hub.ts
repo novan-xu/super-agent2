@@ -155,7 +155,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
             clock,
             verify,
             ownerEmail: config.ownerEmail,
-            settings: lockSettings({ projectFolders: config.projectFolders, credentialPaths: config.credentialPaths }),
+            settings: lockSettings({ projectFolders: config.projectFolders }),
           })
         : undefined;
     commands = createCommandService({

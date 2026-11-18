@@ -116,7 +116,7 @@ function start(): void {
   database = openDatabase({ dataDir, clock });
   const keys = createKeyCache({ source: staticKeySource(keySet(key)), clock });
   const verify = createAccessVerifier({ team, audience, keys, clock });
-  lock = createConfirmationLock({ database, clock, verify, ownerEmail, settings: lockSettings({ projectFolders: [], credentialPaths: [] }) });
+  lock = createConfirmationLock({ database, clock, verify, ownerEmail, settings: lockSettings({ projectFolders: [] }) });
   commands = createCommandService({ database, clock, targets: [toyTarget()], credentials: testCredentials, gate: lock.gate });
   tickets = createTicketService({ database, clock });
   chains = createChains({

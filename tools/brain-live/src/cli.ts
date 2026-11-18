@@ -73,7 +73,6 @@ const hub: Hub = await startHub({
     port: 0,
     host: "127.0.0.1",
     projectFolders: [],
-    credentialPaths: [],
     brainTokenFile: join(dataDir, "brain.token"),
   },
   keySource: () => Promise.resolve(keys),
