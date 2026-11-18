@@ -1,10 +1,26 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
-import { antigravityAdapter, claudeAdapter, codexAdapter, dshAdapter, type ProgramEvent, type ProgramHandle, type ProgramSettings, type WorkerAdapter } from "@super-agent2/programs";
 import {
+  antigravityAdapter,
+  claudeAdapter,
+  codexAdapter,
+  dshAdapter,
+  type ProgramEvent,
+  type ProgramHandle,
+  type ProgramSettings,
+  type PromptImage,
+  type WorkerAdapter,
+} from "@super-agent2/programs";
+import {
+  type Attachment,
+  attachmentPartBytes,
+  type AttachmentPart,
   type FetchFile,
+  isNativeImage,
+  type MessageWork,
+  storedName,
   filePartBytes,
   type HubToRunner,
   type RunnerToHub,
@@ -18,6 +34,7 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import {
+  type AttachedFile,
   brief,
   type BriefPlace,
   continueText,
@@ -39,7 +56,10 @@ import { replaceFile } from "./replace-file.js";
 import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
 import { checkWritingHandback, clearOutput, outputFolder, prepareScratch, writingPaths, writingPlace } from "./writing.js";
 
-export type WorkMessage = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" }>;
+export type WorkMessage = Extract<
+  HubToRunner,
+  { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" | "work.attachment.part" }
+>;
 
 export type AdapterFactory = (engine: WorkEngine, settings: ProgramSettings) => WorkerAdapter;
 
@@ -82,6 +102,7 @@ export interface Works {
   held(): WorkHeld[];
   busy(): number;
   receive(message: WorkMessage): void;
+  disconnected(): void;
   idle(): Promise<void>;
   close(): Promise<void>;
 }
@@ -109,6 +130,24 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface Prompt {
+  readonly text: string;
+  readonly images: readonly PromptImage[];
+}
+
+function joined(prompts: readonly Prompt[], first?: string): Prompt {
+  return { text: [...(first === undefined ? [] : [first]), ...prompts.map((prompt) => prompt.text)].join("\n\n"), images: prompts.flatMap((prompt) => prompt.images) };
+}
+
+export function attachmentFile(folder: string, attachment: Attachment): string {
+  return join(folder, "attachments", attachment.id, storedName(attachment.name));
+}
+
+interface Asked {
+  readonly resolve: (part: AttachmentPart) => void;
+  readonly reject: (error: Error) => void;
+}
+
 interface Work {
   record: WorkRecord;
   readonly paths: WorkPaths;
@@ -118,7 +157,9 @@ interface Work {
   writing: WritingTask | undefined;
   handle: ProgramHandle | undefined;
   turn: boolean;
-  queue: string[];
+  queue: Prompt[];
+  messages: Set<string>;
+  inbox: Promise<void>;
   generation: number;
   ran: boolean;
   freshTried: boolean;
@@ -144,6 +185,7 @@ export function createWorks(options: WorksOptions): Works {
   }
   const readPullRequest = options.readPullRequest ?? readPullRequestWith(run, gh);
   const works = new Map<number, Work>();
+  const asked = new Map<string, Asked>();
   const tasks = new Set<Promise<void>>();
   let closing = false;
 
@@ -182,6 +224,25 @@ export function createWorks(options: WorksOptions): Works {
     return last;
   };
 
+  const messageIds = (paths: WorkPaths, attempt: number): Set<string> => {
+    const ids = new Set<string>();
+    const file = eventsFile(paths, attempt);
+    if (!existsSync(file)) {
+      return ids;
+    }
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      try {
+        const event: unknown = EventLine.parse(JSON.parse(line)).event;
+        if (typeof event === "object" && event !== null && Reflect.get(event, "kind") === "message") {
+          ids.add(String(Reflect.get(event, "id")));
+        }
+      } catch {
+        continue;
+      }
+    }
+    return ids;
+  };
+
   const load = () => {
     const folder = join(options.home, "work");
     if (!existsSync(folder)) {
@@ -208,6 +269,8 @@ export function createWorks(options: WorksOptions): Works {
     handle: undefined,
     turn: false,
     queue: [],
+    messages: messageIds(paths, record.attempt),
+    inbox: Promise.resolve(),
     generation: 0,
     ran: false,
     freshTried: false,
@@ -274,7 +337,7 @@ export function createWorks(options: WorksOptions): Works {
     changed();
   };
 
-  const startTurn = (work: Work, prompt: string) => {
+  const startTurn = (work: Work, prompt: string, images: readonly PromptImage[] = []) => {
     const handle = work.handle;
     if (handle === undefined || work.record.ended) {
       return;
@@ -283,7 +346,7 @@ export function createWorks(options: WorksOptions): Works {
     work.turn = true;
     emit(work, { kind: "phase", phase: "turn", detail: "The worker is working" });
     try {
-      handle.start(prompt);
+      handle.start(prompt, images);
     } catch (error) {
       track(end(work, { kind: "failed", failure: "program", reason: messageOf(error) }));
     }
@@ -405,7 +468,8 @@ export function createWorks(options: WorksOptions): Works {
         }
         const queued = work.queue.splice(0);
         if (queued.length > 0) {
-          startTurn(work, queued.join("\n\n"));
+          const next = joined(queued);
+          startTurn(work, next.text, next.images);
           return;
         }
         track(check(work));
@@ -470,20 +534,32 @@ export function createWorks(options: WorksOptions): Works {
     }
     const where = place(work);
     const waiting = work.queue.splice(0);
-    const withWaiting = (prompt: string) => [prompt, ...waiting].join("\n\n");
+    const withWaiting = (prompt: string) => {
+      const next = joined(waiting, prompt);
+      startTurn(work, next.text, next.images);
+    };
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
-      startTurn(work, withWaiting(brief(task, where)));
+      withWaiting(brief(task, where));
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    startTurn(work, withWaiting(task.note === null ? resumeText(task, where) : continueText(task, where, task.note)));
+    withWaiting(task.note === null ? resumeText(task, where) : continueText(task, where, task.note));
   };
 
   const beginWriting = async (work: Work, task: WritingTask) => {
     emit(work, { kind: "phase", phase: "preparing", detail: `Preparing the scratch folder ${work.paths.worktree}` });
     try {
-      prepareScratch(work.paths, task.materials);
+      const files = new Map<string, string>();
+      for (const material of task.materials) {
+        if (material.attachment !== null && material.attachment !== undefined) {
+          files.set(material.name, await fetchAttachment(work, task.attempt, material.attachment));
+        }
+      }
+      if (work.writing !== task || work.stopping) {
+        return;
+      }
+      prepareScratch(work.paths, task.materials, files);
     } catch (error) {
       await end(work, { kind: "failed", failure: "prepare", reason: messageOf(error) });
       return;
@@ -501,14 +577,17 @@ export function createWorks(options: WorksOptions): Works {
     }
     const where = writingPlace(work.paths);
     const waiting = work.queue.splice(0);
-    const withWaiting = (prompt: string) => [prompt, ...waiting].join("\n\n");
+    const withWaiting = (prompt: string) => {
+      const next = joined(waiting, prompt);
+      startTurn(work, next.text, next.images);
+    };
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
-      startTurn(work, withWaiting(writingBrief(task, where)));
+      withWaiting(writingBrief(task, where));
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    startTurn(work, withWaiting(task.note === null ? writingResumeText(task, where) : writingContinueText(where, task.note)));
+    withWaiting(task.note === null ? writingResumeText(task, where) : writingContinueText(where, task.note));
   };
 
   const start = async (given: { readonly code: WorkTask } | { readonly writing: WritingTask }) => {
@@ -623,27 +702,101 @@ export function createWorks(options: WorksOptions): Works {
     }
   };
 
-  const message = async (ticket: number, attempt: number, id: string, from: WorkSender, text: string) => {
-    const work = works.get(ticket);
-    if (work === undefined || work.record.attempt !== attempt || !work.live || work.record.ended) {
+  const requestPart = (ticket: number, attempt: number, attachment: string, offset: number, length: number): Promise<AttachmentPart> =>
+    new Promise((resolve, reject) => {
+      const key = `${ticket}:${attachment}:${offset}`;
+      asked.get(key)?.reject(new Error("asked again"));
+      asked.set(key, { resolve, reject });
+      try {
+        options.send({ type: "work.attachment", ticket, attempt, attachment, offset, length });
+      } catch (error) {
+        asked.delete(key);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+  const fetchAttachment = async (work: Work, attempt: number, attachment: Attachment): Promise<string> => {
+    const file = attachmentFile(work.paths.folder, attachment);
+    mkdirSync(join(file, ".."), { recursive: true });
+    if (!existsSync(file)) {
+      writeFileSync(file, "");
+    }
+    let have = statSync(file).size;
+    if (have > attachment.size) {
+      truncateSync(file, 0);
+      have = 0;
+    }
+    while (have < attachment.size) {
+      const part = await requestPart(work.record.ticket, attempt, attachment.id, have, Math.min(attachmentPartBytes, attachment.size - have));
+      const data = part.data === null ? undefined : Buffer.from(part.data, "base64");
+      if (data === undefined || data.length === 0 || have + data.length > attachment.size) {
+        throw new Error(`The hub could not send the attachment ${attachment.name} from byte ${have}: ${part.problem ?? "the part was empty or too long"}`);
+      }
+      appendFileSync(file, data);
+      have += data.length;
+    }
+    return file;
+  };
+
+  const receivePart = (part: AttachmentPart) => {
+    const key = `${part.ticket}:${part.attachment}:${part.offset}`;
+    const waiting = asked.get(key);
+    if (waiting !== undefined) {
+      asked.delete(key);
+      waiting.resolve(part);
+    }
+  };
+
+  const deliverMessage = async (work: Work, incoming: MessageWork) => {
+    const { id, from, text } = incoming;
+    const attachments = incoming.attachments ?? [];
+    let files: AttachedFile[];
+    try {
+      files = [];
+      for (const attachment of attachments) {
+        files.push({ attachment, path: await fetchAttachment(work, incoming.attempt, attachment) });
+      }
+    } catch (error) {
+      work.messages.delete(id);
+      log(`Could not fetch the attachments of message ${id} for ticket ${incoming.ticket}: ${messageOf(error)}`);
       return;
     }
-    const prompt = messageText(from, text);
+    if (!work.live || work.record.ended || work.record.attempt !== incoming.attempt) {
+      return;
+    }
+    const prompt: Prompt = {
+      text: messageText(from, text, files),
+      images: files
+        .filter((file) => isNativeImage(file.attachment.mediaType))
+        .map((file) => ({ path: file.path, mediaType: file.attachment.mediaType, size: file.attachment.size })),
+    };
+    const shown = attachments.length === 0 ? {} : { attachments };
     if (work.turn && work.handle !== undefined) {
-      const delivery = await work.handle.steer(prompt);
+      const delivery = await work.handle.steer(prompt.text, prompt.images);
       if (delivery === "queued") {
         work.queue.push(prompt);
       }
-      emit(work, { kind: "message", id, from, text, delivery });
+      emit(work, { kind: "message", id, from, text, ...shown, delivery });
       return;
     }
     if (work.handle === undefined) {
       work.queue.push(prompt);
-      emit(work, { kind: "message", id, from, text, delivery: "queued" });
+      emit(work, { kind: "message", id, from, text, ...shown, delivery: "queued" });
       return;
     }
-    emit(work, { kind: "message", id, from, text, delivery: "steered" });
-    startTurn(work, prompt);
+    emit(work, { kind: "message", id, from, text, ...shown, delivery: "steered" });
+    startTurn(work, prompt.text, prompt.images);
+  };
+
+  const message = (incoming: MessageWork) => {
+    const work = works.get(incoming.ticket);
+    if (work === undefined || work.record.attempt !== incoming.attempt || !work.live || work.record.ended || work.messages.has(incoming.id)) {
+      return Promise.resolve();
+    }
+    work.messages.add(incoming.id);
+    const next = work.inbox.then(() => deliverMessage(work, incoming));
+    work.inbox = next.catch(() => undefined);
+    return next;
   };
 
   const stop = async (ticket: number, keep: boolean, remove: boolean) => {
@@ -707,7 +860,10 @@ export function createWorks(options: WorksOptions): Works {
           sync(incoming.ticket, incoming.attempt, incoming.after);
           return;
         case "work.message":
-          track(message(incoming.ticket, incoming.attempt, incoming.id, incoming.from, incoming.text));
+          track(message(incoming));
+          return;
+        case "work.attachment.part":
+          receivePart(incoming);
           return;
         case "work.stop":
           track(stop(incoming.ticket, incoming.save, incoming.remove));
@@ -715,6 +871,13 @@ export function createWorks(options: WorksOptions): Works {
         case "work.file":
           track(serveFile(incoming));
           return;
+      }
+    },
+    disconnected: () => {
+      const waiting = [...asked.values()];
+      asked.clear();
+      for (const entry of waiting) {
+        entry.reject(new Error("The link to the hub closed"));
       }
     },
     idle: async () => {

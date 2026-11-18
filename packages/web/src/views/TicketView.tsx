@@ -5,6 +5,7 @@ import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline }
 import { panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
 import { draftOptions, draftWithEffort, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, type ReassignDraft, reassignChange, reassignMachines } from "../live/reassign.js";
 import type { LogItem } from "../live/work.js";
+import { AttachButton, PendingList, SentAttachments, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
@@ -18,7 +19,7 @@ export type TicketOrigin = "workbench" | "history";
 export interface TicketActions {
   stop(ticket: number): Promise<boolean>;
   reassign(ticket: number, change: ChoiceChange): Promise<boolean>;
-  message(ticket: number, text: string): Promise<boolean>;
+  message(ticket: number, text: string, attachments?: readonly string[]): Promise<boolean>;
   machines(): Promise<MachineChoice[] | undefined>;
 }
 
@@ -49,7 +50,8 @@ const WorkItem = memo(function WorkItem({ item, live, last, ticket }: { readonly
             <strong>{text(`timeline.from.${item.from}`)}</strong>
             <span className="num">{clockOf(item.at)}</span>
           </span>
-          <span className="work-msg-text">{item.text}</span>
+          {item.text === "" ? null : <span className="work-msg-text">{item.text}</span>}
+          <SentAttachments attachments={item.attachments} />
         </div>
       );
     case "finished":
@@ -526,11 +528,13 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
   );
 }
 
-function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text: string) => Promise<boolean> }) {
+function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text: string, attachments: readonly string[]) => Promise<boolean> }) {
   const [drafts, setDrafts] = useState<Readonly<Record<number, string>>>({});
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const draft = drafts[ticket] ?? "";
+  const attaching = useAttachments(String(ticket));
+  const empty = draft.trim() === "" && attaching.items.length === 0;
 
   useLayoutEffect(() => {
     const element = field.current;
@@ -542,14 +546,16 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
 
   const submit = async () => {
     const message = draft.trim();
-    if (message === "" || sending) {
+    if (empty || sending) {
       return;
     }
     setSending(true);
-    const sent = await send(message);
+    const attachments = await attaching.settle();
+    const sent = attachments === undefined ? false : await send(message, attachments);
     setSending(false);
     if (sent) {
       setDrafts((all) => ({ ...all, [ticket]: "" }));
+      attaching.clear();
     }
     field.current?.focus();
   };
@@ -568,8 +574,12 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
         event.preventDefault();
         void submit();
       }}
+      onDragOver={attaching.over}
+      onDrop={attaching.drop}
     >
+      <PendingList attaching={attaching} />
       <div className="reply">
+        <AttachButton add={attaching.add} />
         <textarea
           ref={field}
           className="field"
@@ -581,8 +591,9 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
             setDrafts((all) => ({ ...all, [ticket]: value }));
           }}
           onKeyDown={keyDown}
+          onPaste={attaching.paste}
         />
-        <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="submit" aria-label={text("composer.send")} disabled={draft.trim() === "" || sending}>
+        <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="submit" aria-label={text("composer.send")} disabled={empty || sending}>
           <Icon name="send" />
         </button>
       </div>
@@ -634,12 +645,12 @@ export function TicketView({ detail, known, actions, origin, backHref, back, now
   }, [ticket !== null]);
 
   const send = useCallback(
-    async (message: string) => {
+    async (message: string, attachments: readonly string[]) => {
       if (ticket === null) {
         return false;
       }
       following.current = true;
-      return actions.message(ticket.id, message);
+      return actions.message(ticket.id, message, attachments);
     },
     [actions, ticket],
   );

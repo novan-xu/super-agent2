@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { BrainInput, BrainMessage, BrainProviders, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
+import type { BrainInput, BrainMessage, BrainProviders, HistoryItem, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
 import type { Clock } from "@super-agent2/programs";
 import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
-import { continuationPrompt, turnPrompt } from "./prompt.js";
+import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt, withAttachments } from "./prompt.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
 
 export interface PrepareCall {
@@ -24,6 +24,7 @@ export interface BrainOptions {
   readonly clock: Clock;
   readonly tools: { readonly url: string; readonly token: string };
   readonly workspace: string;
+  readonly attachments?: string;
   readonly maximumOpen?: number;
   readonly newId?: () => string;
 }
@@ -76,6 +77,11 @@ interface State {
   used: number;
 }
 
+function lastOwner(history: readonly HistoryItem[]): Pick<BrainInput, "attachments">[] {
+  const owner = history.findLast((item) => item.kind === "owner");
+  return owner?.kind === "owner" ? [owner] : [];
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -84,6 +90,7 @@ export function createBrain(options: BrainOptions): Brain {
   const { transport, adapters } = options;
   const newId = options.newId ?? randomUUID;
   const maximumOpen = options.maximumOpen ?? 4;
+  const attachments = options.attachments ?? defaultAttachmentsFolder;
   const choice = createProviderChoice(options.order.filter((provider) => adapters.has(provider)), options.clock);
   const status = (): BrainProviders => ({
     type: "providers",
@@ -319,7 +326,9 @@ export function createBrain(options: BrainOptions): Brain {
       if (input === undefined) {
         return;
       }
-      const result = await live.handle.steer(input.text).catch(() => "queued" as const);
+      const result = await live.handle
+        .steer(withAttachments(input.text, input.attachments, attachments), promptImages([input], attachments))
+        .catch(() => "queued" as const);
       if (result !== "steered" || state.turn !== turn) {
         return;
       }
@@ -370,7 +379,11 @@ export function createBrain(options: BrainOptions): Brain {
       state.used = uses;
       live.attempt = attempt;
       turn.started = true;
-      live.handle.start(mode === "fresh" ? turnPrompt(prepared.history, turn.inputs, prepared.memory) : continuationPrompt(prepared.history, prepared.memory));
+      if (mode === "fresh") {
+        live.handle.start(turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), promptImages(turn.inputs, attachments));
+      } else {
+        live.handle.start(continuationPrompt(prepared.history, prepared.memory, attachments), promptImages(lastOwner(prepared.history), attachments));
+      }
     } catch (error) {
       providers.markUnavailable(provider, messageOf(error), null);
       switchProvider(state, attempt, messageOf(error));

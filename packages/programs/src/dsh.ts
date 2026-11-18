@@ -1,12 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { isNativeImage } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
 import { conversationVariable, type ProgramSettings, toolTokenVariable } from "./settings.js";
@@ -140,6 +141,24 @@ export function dshPatch(url: string | null, control: DshControl | null = null):
     `          x-super-agent-conversation: !!js 'process.env.${conversationVariable}'`,
     ...quiet,
   ].join("\n");
+}
+
+export const dshImageBytes = 20 * 1024 * 1024;
+
+export function dshImages(images: readonly PromptImage[]): PromptImage[] {
+  return images.filter((image) => isNativeImage(image.mediaType) && image.size <= dshImageBytes);
+}
+
+export function dshContent(text: string, images: readonly PromptImage[]): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [{ type: "text", text }];
+  for (const image of dshImages(images)) {
+    try {
+      blocks.push({ type: "image", data: readFileSync(image.path).toString("base64"), mimeType: image.mediaType.toLowerCase() });
+    } catch {
+      continue;
+    }
+  }
+  return blocks;
 }
 
 function textOf(content: readonly { readonly type: string; readonly text?: string | undefined }[] | undefined): string {
@@ -396,7 +415,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
   };
 
   return {
-    start: (prompt) => {
+    start: (prompt, images = []) => {
       running = true;
       stopping = false;
       interruptRequested = false;
@@ -407,7 +426,15 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         if (interruptRequested) {
           return false;
         }
-        await entry.rpc.request("session/prompt", { sessionId: session, contentBlocks: [{ type: "text", text: prompt }] });
+        const content = dshContent(prompt, images);
+        try {
+          await entry.rpc.request("session/prompt", { sessionId: session, contentBlocks: content });
+        } catch (error) {
+          if (content.length === 1 || interruptRequested) {
+            throw error;
+          }
+          await entry.rpc.request("session/prompt", { sessionId: session, contentBlocks: [{ type: "text", text: prompt }] });
+        }
         stored = true;
         return true;
       });
@@ -428,12 +455,13 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         },
       );
     },
-    steer: async (text): Promise<SteerResult> => {
+    steer: async (text, images = []): Promise<SteerResult> => {
       const link = control.link();
       if (!running || interruptRequested || link === undefined || session === null) {
         return "queued";
       }
-      const result = await link.request("steer", { sessionId: session, text }).catch(() => undefined);
+      const shown = dshImages(images).map((image) => ({ path: image.path, mediaType: image.mediaType.toLowerCase() }));
+      const result = await link.request("steer", { sessionId: session, text, images: shown }).catch(() => undefined);
       return result === "steered" ? "steered" : "queued";
     },
     interrupt: () => {

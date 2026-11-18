@@ -33,6 +33,7 @@ describe("loadConfig", () => {
         credentialPaths: [],
         brainTokenFile: join("/data", "brain.token"),
         pageDir: defaultPageDir,
+        attachmentsDir: join("/data", "attachments"),
       },
     });
   });

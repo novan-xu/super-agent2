@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { WorkSender, WorkTask, WritingTask } from "@super-agent2/protocol";
+import { type Attachment, attachmentLine, type WorkSender, type WorkTask, type WritingTask } from "@super-agent2/protocol";
 import { type WritingPlace, writingTaskText } from "./writing.js";
 
 export const workerGuidanceFile = fileURLToPath(new URL("../guidance/WORKER.md", import.meta.url));
@@ -57,9 +57,22 @@ export function continueText(task: WorkTask, place: BriefPlace, note: string): s
   return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`].join("\n");
 }
 
-export function messageText(from: WorkSender, text: string): string {
+export interface AttachedFile {
+  readonly attachment: Attachment;
+  readonly path: string;
+}
+
+export function messageText(from: WorkSender, text: string, files: readonly AttachedFile[] = []): string {
   const who = from === "owner" ? "the owner" : from === "brain" ? "the brain" : "the hub";
-  return `[Message from ${who}] ${text}`;
+  if (files.length === 0) {
+    return `[Message from ${who}] ${text}`;
+  }
+  return [
+    `[Message from ${who}] ${text}`.trimEnd(),
+    `[hub] ${files.length === 1 ? "A file is" : `${files.length} files are`} attached to this message, outside your worktree so they are never committed by accident:`,
+    ...files.map((file) => `- ${attachmentLine(file.attachment, file.path)}`),
+    "Images are also shown to you with the message when your program can take them. Read any attached file with your own tools at its path; copy it into the repository only if the task needs it there.",
+  ].join("\n");
 }
 
 export function lostSessionNote(): string {

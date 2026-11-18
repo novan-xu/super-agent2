@@ -12,7 +12,7 @@ function turn(fields: Partial<Turn> = {}): Turn {
 }
 
 function owner(seq: number, time: number): ConversationEntry {
-  return { id: `o${seq}`, conversation: id, seq, at: time, kind: "owner", text: "hi", taken: true };
+  return { id: `o${seq}`, conversation: id, seq, at: time, kind: "owner", text: "hi", attachments: [], taken: true };
 }
 
 function text(seq: number, time: number, turnId = "t1"): ConversationEntry {

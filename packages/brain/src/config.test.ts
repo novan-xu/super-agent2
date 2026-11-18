@@ -12,6 +12,7 @@ describe("loadBrainConfig", () => {
         hubUrl: "http://hub:8080",
         tokenFile: "/run/secrets/brain.token",
         workspace: "/workspace",
+        attachments: "/var/lib/superagent2/link/attachments",
         order: ["claude", "gpt", "deepseek"],
         maximumOpen: 4,
         providers: {

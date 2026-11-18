@@ -207,3 +207,18 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 :root[data-theme="light"][data-accent="rose"] { --accent: #e46f8f; --accent-on: #1a1917; --accent-soft: rgba(228, 111, 143, 0.16); --meta: #ab536b; --focus-ring: 0 0 0 3px rgba(228, 111, 143, 0.45); }
 :root[data-accent="graphite"] { --accent: #d6d0c4; --accent-on: #1a1917; --accent-soft: rgba(214, 208, 196, 0.14); --meta: #d6d0c4; --focus-ring: 0 0 0 3px rgba(214, 208, 196, 0.45); }
 :root[data-theme="light"][data-accent="graphite"] { --accent: #cbc6ba; --accent-on: #1a1917; --accent-soft: rgba(203, 198, 186, 0.16); --meta: #706d66; --focus-ring: 0 0 0 3px rgba(203, 198, 186, 0.45); }
+
+.att-item { position: relative; max-width: min(100%, 260px); overflow: hidden; }
+.att-item::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: var(--att-progress, 0%); background: var(--accent); transition: width var(--motion-fast) var(--ease-standard); }
+.att-item--done::after { content: none; }
+.att-item--failed { border-color: transparent; background: var(--warn-soft); color: var(--warn); }
+.att-item--failed::after { content: none; }
+.att-item--uploading .att-thumb { opacity: .6; }
+.att-thumb { width: 20px; height: 20px; flex: none; border-radius: 4px; object-fit: cover; }
+.att-name { min-width: 0; }
+.msg-files .chip { max-width: 100%; }
+.msg--me .msg-attachments { justify-content: flex-end; max-width: 86%; }
+.att-image { display: block; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border-soft); background: var(--sunk); line-height: 0; }
+.att-image img { display: block; width: auto; height: auto; max-width: min(240px, 60vw); max-height: 240px; object-fit: contain; }
+.steer .reply .icon-btn { align-self: flex-end; min-height: 44px; }
+.work-msg .msg-attachments { margin-top: var(--space-1); }

@@ -1,4 +1,6 @@
-import type { BrainInput, BrainMemory, HistoryItem, MemoryBrief, MemoryChange, Provider } from "@super-agent2/protocol";
+import { isAbsolute, join } from "node:path";
+import { type BrainAttachment, type BrainInput, type BrainMemory, type HistoryItem, isNativeImage, type MemoryBrief, type MemoryChange, type Provider } from "@super-agent2/protocol";
+import type { PromptImage } from "@super-agent2/programs";
 
 export const historyItemLimit = 4_000;
 
@@ -16,12 +18,49 @@ function speaker(provider: Provider | null): string {
   return provider === null ? "Assistant" : `Assistant (${names[provider]})`;
 }
 
-export function describeHistory(history: readonly HistoryItem[]): string {
+export const defaultAttachmentsFolder = "/var/lib/superagent2/link/attachments";
+
+export function attachmentPath(root: string, attachment: Pick<BrainAttachment, "path">): string {
+  const parts = attachment.path.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..") || isAbsolute(attachment.path)) {
+    throw new Error(`The attachment path ${attachment.path} is not a plain relative path`);
+  }
+  return join(root, ...parts);
+}
+
+function attachmentLines(attachments: readonly BrainAttachment[], root: string): string[] {
+  if (attachments.length === 0) {
+    return [];
+  }
+  return [
+    `[hub] The owner attached ${attachments.length === 1 ? "a file" : `${attachments.length} files`} to this message:`,
+    ...attachments.map(
+      (attachment) =>
+        `- ${attachment.name} (${attachment.mediaType}, ${attachment.size} bytes), attachment id ${attachment.id}, at ${attachmentPath(root, attachment)}`,
+    ),
+    "Images are also shown to you with the message when your program can take them. Read any attached file with your own tools at its path. To pass one on to a worker, give its attachment id (as material of a writing ticket, or with message_worker); the file itself reaches the worker.",
+  ];
+}
+
+export function withAttachments(text: string, attachments: readonly BrainAttachment[], root: string): string {
+  const lines = attachmentLines(attachments, root);
+  return lines.length === 0 ? text : [text, ...lines].filter((part) => part !== "").join("\n");
+}
+
+export function promptImages(inputs: readonly Pick<BrainInput, "attachments">[], root: string): PromptImage[] {
+  return inputs.flatMap((input) =>
+    input.attachments
+      .filter((attachment) => isNativeImage(attachment.mediaType))
+      .map((attachment) => ({ path: attachmentPath(root, attachment), mediaType: attachment.mediaType, size: attachment.size })),
+  );
+}
+
+export function describeHistory(history: readonly HistoryItem[], root: string = defaultAttachmentsFolder): string {
   return history
     .map((item) => {
       switch (item.kind) {
         case "owner":
-          return `Owner: ${item.text}`;
+          return `Owner: ${withAttachments(item.text, item.attachments, root)}`;
         case "notice":
           return `Hub notice: ${item.text}`;
         case "text":
@@ -33,8 +72,8 @@ export function describeHistory(history: readonly HistoryItem[]): string {
     .join("\n\n");
 }
 
-export function inputText(inputs: readonly BrainInput[]): string {
-  return inputs.map((input) => input.text).join("\n\n");
+export function inputText(inputs: readonly BrainInput[], root: string = defaultAttachmentsFolder): string {
+  return inputs.map((input) => withAttachments(input.text, input.attachments, root)).join("\n\n");
 }
 
 function memoryLine(memory: BrainMemory): string {
@@ -79,22 +118,27 @@ function withMemory(memory: MemoryBrief | null, parts: readonly string[]): strin
   return (memory === null ? parts : [memoryPrompt(memory), ...parts]).join("\n\n");
 }
 
-export function turnPrompt(history: readonly HistoryItem[], inputs: readonly BrainInput[], memory: MemoryBrief | null = null): string {
+export function turnPrompt(
+  history: readonly HistoryItem[],
+  inputs: readonly BrainInput[],
+  memory: MemoryBrief | null = null,
+  root: string = defaultAttachmentsFolder,
+): string {
   if (history.length === 0) {
-    return withMemory(memory, [inputText(inputs)]);
+    return withMemory(memory, [inputText(inputs, root)]);
   }
   return withMemory(memory, [
     "[hub] Other assistants handled part of this conversation while you were unavailable. This is what happened since you last took part:",
-    describeHistory(history),
+    describeHistory(history, root),
     "[hub] End of the earlier conversation. The owner's new message follows.",
-    inputText(inputs),
+    inputText(inputs, root),
   ]);
 }
 
-export function continuationPrompt(history: readonly HistoryItem[], memory: MemoryBrief | null = null): string {
+export function continuationPrompt(history: readonly HistoryItem[], memory: MemoryBrief | null = null, root: string = defaultAttachmentsFolder): string {
   return withMemory(memory, [
     "[hub] Another assistant was answering the owner and stopped because it became unavailable. This is what happened since you last took part, ending with the owner's latest message and the work done on it so far:",
-    describeHistory(history),
+    describeHistory(history, root),
     "[hub] Continue from here: finish answering the owner's latest message. Do not repeat a command that already ran unless it needs to run again.",
   ]);
 }

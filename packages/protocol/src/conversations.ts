@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Attachment, AttachmentId } from "./attachments.js";
 import { GeneratedText } from "./generated.js";
 
 export const providers = ["gpt", "claude", "deepseek"] as const;
@@ -47,7 +48,13 @@ const entryBase = {
   at: z.number().int(),
 };
 
-export const OwnerEntry = z.object({ ...entryBase, kind: z.literal("owner"), text: z.string(), taken: z.boolean() });
+export const OwnerEntry = z.object({
+  ...entryBase,
+  kind: z.literal("owner"),
+  text: z.string(),
+  attachments: z.array(Attachment).default([]),
+  taken: z.boolean(),
+});
 export type OwnerEntry = z.infer<typeof OwnerEntry>;
 
 export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable() });
@@ -107,10 +114,12 @@ export const ConversationDetail = z.object({
 });
 export type ConversationDetail = z.infer<typeof ConversationDetail>;
 
-
-export const OwnerMessage = z.object({
-  text: z.string().trim().min(1),
-});
+export const OwnerMessage = z
+  .object({
+    text: z.string().trim(),
+    attachments: z.array(AttachmentId).default([]),
+  })
+  .refine((message) => message.text !== "" || message.attachments.length > 0, { message: "needs text or an attachment" });
 export type OwnerMessage = z.infer<typeof OwnerMessage>;
 
 export const EntryResponse = z.object({

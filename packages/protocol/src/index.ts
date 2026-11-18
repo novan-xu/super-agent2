@@ -1,5 +1,6 @@
 export * from "./access.js";
 export * from "./allowance.js";
+export * from "./attachments.js";
 export * from "./brain.js";
 export * from "./chains.js";
 export * from "./commands.js";

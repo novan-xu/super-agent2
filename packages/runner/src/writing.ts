@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
   type DeliveredFile,
@@ -29,10 +29,18 @@ export function outputFolder(paths: WorkPaths): string {
   return join(paths.worktree, "output");
 }
 
-export function prepareScratch(paths: WorkPaths, materials: readonly WritingMaterial[]): void {
+export function prepareScratch(paths: WorkPaths, materials: readonly WritingMaterial[], files: ReadonlyMap<string, string> = new Map()): void {
   mkdirSync(inputFolder(paths), { recursive: true });
   mkdirSync(outputFolder(paths), { recursive: true });
   for (const material of materials) {
+    const given = files.get(material.name);
+    if (given !== undefined) {
+      const file = join(inputFolder(paths), material.name);
+      if (!existsSync(file)) {
+        copyFileSync(given, file);
+      }
+      continue;
+    }
     if (material.text === null) {
       continue;
     }
@@ -168,6 +176,9 @@ export function checkWritingHandback(check: WritingCheck): WritingOutcome {
 }
 
 export function materialLine(material: WritingMaterial): string {
+  if (material.attachment !== null && material.attachment !== undefined) {
+    return `- input/${material.name}, from ${material.source} (the file the owner attached, ${material.attachment.size} bytes)`;
+  }
   return material.text === null
     ? `- Not a file: get it yourself from ${material.source} (named ${material.name})`
     : `- input/${material.name}, from ${material.source}`;

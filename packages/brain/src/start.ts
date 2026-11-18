@@ -28,6 +28,7 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     clock,
     tools: { url: new URL(brainToolsPath, config.hubUrl).toString(), token },
     workspace: config.workspace,
+    attachments: config.attachments,
     maximumOpen: config.maximumOpen,
   });
   link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });

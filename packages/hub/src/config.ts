@@ -62,6 +62,7 @@ const Environment = z.object({
   HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
+  HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
   HUB_SOURCE_REPOSITORY: unlessEmpty(RepositoryName),
   VAPID_PUBLIC_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
@@ -81,6 +82,7 @@ export interface Config {
   readonly credentialPaths: readonly string[];
   readonly brainTokenFile: string;
   readonly pageDir?: string;
+  readonly attachmentsDir?: string;
   readonly vapid?: VapidSettings;
   readonly version?: string;
   readonly sourceRepository?: string;
@@ -137,6 +139,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       credentialPaths: value.HUB_CREDENTIAL_PATHS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
+      attachmentsDir: value.HUB_ATTACHMENTS_DIR ?? join(value.HUB_DATA_DIR, "attachments"),
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),

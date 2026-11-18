@@ -27,6 +27,7 @@ import { createTicketService, type TicketService, type TicketWork } from "./tick
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
+import { type AttachmentStore, attachmentsFolder, createAttachmentStore } from "./attachments.js";
 import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
 import { createVerification, type Ticker, type VerificationService } from "./verification.js";
@@ -87,6 +88,7 @@ export interface Hub {
   readonly admin: MachineAdmin;
   readonly repositories: RepositoryAccounts;
   readonly settings: Settings;
+  readonly attachments: AttachmentStore;
   readonly address: AddressInfo;
   close(): Promise<void>;
 }
@@ -145,6 +147,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     changed: () => settingsChanged(),
   });
   const files = createTicketFiles(database);
+  const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
   const credentials = options.credentials ?? environmentCredentials(environment);
   const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
   try {
@@ -180,6 +183,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         runners,
         credentials,
         files,
+        attachments,
         tell: (conversation, notice, prompt) => {
           told.tell(conversation, notice, prompt);
         },
@@ -292,6 +296,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         machines: () => runners.describe(),
         deployments,
         memories,
+        attachments,
         tickets: {
           tickets,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
@@ -304,6 +309,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       }),
       tickets,
       files,
+      attachments,
       memories,
       settings,
       admin,
@@ -367,6 +373,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       admin,
       repositories,
       settings,
+      attachments,
       address,
       close: async () => {
         settings.close();

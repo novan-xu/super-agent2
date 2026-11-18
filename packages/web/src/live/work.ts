@@ -1,4 +1,4 @@
-import type { DeliveredFile, GeneratedText, StoredWorkEvent, ToolState, WorkFailure, WorkSender } from "@super-agent2/protocol";
+import type { Attachment, DeliveredFile, GeneratedText, StoredWorkEvent, ToolState, WorkFailure, WorkSender } from "@super-agent2/protocol";
 
 export type LogItem =
   | { readonly kind: "text"; readonly key: string; readonly at: number; readonly text: string }
@@ -11,7 +11,7 @@ export type LogItem =
       readonly output: string;
       readonly state: ToolState;
     }
-  | { readonly kind: "message"; readonly key: string; readonly at: number; readonly from: WorkSender; readonly text: string }
+  | { readonly kind: "message"; readonly key: string; readonly at: number; readonly from: WorkSender; readonly text: string; readonly attachments: readonly Attachment[] }
   | { readonly kind: "finished"; readonly key: string; readonly at: number; readonly pullRequest: number; readonly url: string; readonly report: GeneratedText }
   | {
       readonly kind: "delivered";
@@ -119,7 +119,7 @@ function foldItems(items: readonly LogItem[], stored: StoredWorkEvent): readonly
       return [...items, { kind: "tool", key, at, name: "", input: "", output: event.output ?? "", state }];
     }
     case "message":
-      return [...items, { kind: "message", key: `${attempt}:message:${event.id}`, at, from: event.from, text: event.text }];
+      return [...items, { kind: "message", key: `${attempt}:message:${event.id}`, at, from: event.from, text: event.text, attachments: event.attachments ?? [] }];
     case "finished":
       return [...items, { kind: "finished", key: `${attempt}:end:${stored.seq}`, at, pullRequest: event.pullRequest, url: event.url, report: event.report }];
     case "delivered":

@@ -12,6 +12,8 @@ import {
   deploymentFile,
   deploymentOutcomeMarker,
   MaterialName,
+  AttachmentId,
+  type Attachment,
   Platform,
   platforms,
   RepositoryName,
@@ -27,6 +29,7 @@ import type { CommandService } from "./commands.js";
 import { short, type DeploymentService } from "./deployments.js";
 import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop.js";
 import type { ConversationService } from "./conversations.js";
+import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
@@ -94,6 +97,7 @@ const MaterialArgument = z.object({
   name: MaterialName,
   source: z.string().trim().min(1),
   text: z.string().optional(),
+  attachment: AttachmentId.optional(),
 });
 
 const WritingArguments = z.object({
@@ -114,7 +118,7 @@ const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
 
 const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
 
-const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1) });
+const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1), attachments: z.array(AttachmentId).optional() });
 
 const ChainArgument = z.object({
   name: z.string().trim().min(1).max(100),
@@ -203,6 +207,7 @@ export interface ToolServerOptions {
   readonly tickets?: TicketTools;
   readonly deployments?: DeploymentService;
   readonly memories?: MemoryService;
+  readonly attachments?: AttachmentStore;
 }
 
 export interface TicketTools {
@@ -572,6 +577,7 @@ function ticketDefinitions() {
         "Decide by purpose and substance, never by file type. A README, developer documentation, code comments, a changelog or release notes for a repository, and the translation of engineering documents (specifications, design documents, API references) are code work: file an issue for them with file_issue and let a code engine do it. A text file is not code work just because it is a file, and a document is not writing work just because it is long.",
         "Give the task in English, with a Chinese title and summary for the owner. State the language of the result and any requirement on tone, length or format. The worker knows only this task and the material, not this conversation.",
         "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`: for example pasted by the owner in this conversation, a link, or a path on a machine), and its text when you have it, verbatim. A piece without `text` is described to the worker by its source only, and the worker gets it from there. Material the owner pasted in the conversation is passed on as `text`; you are the only way it reaches the worker.",
+        "A file the owner attached in this conversation is passed on as the file itself: give its attachment id in `attachment` (and no `text`), with a name that keeps its extension. The file is put in the worker's input folder under that name.",
         "Afterwards state its defaults with choose_defaults (kind writing), as for any ticket. The owner starts it with 开始 on its card; you cannot start it.",
       ].join(" "),
       inputSchema: {
@@ -588,6 +594,7 @@ function ticketDefinitions() {
                 name: { type: "string", description: "A plain file name for the piece, letters, digits, dots, hyphens and underscores, for example notice.txt" },
                 source: { type: "string", description: "Where it comes from, in English" },
                 text: { type: "string", description: "The text itself, verbatim, when you have it" },
+                attachment: { type: "string", description: "The attachment id of a file the owner attached in this conversation, to pass on the file itself" },
               },
               required: ["name", "source"],
               additionalProperties: false,
@@ -635,6 +642,11 @@ function ticketDefinitions() {
         properties: {
           ticket: { type: "integer", minimum: 1, description: "The ticket number" },
           text: { type: "string", description: "The message, in English" },
+          attachments: {
+            type: "array",
+            items: { type: "string", description: "An attachment id" },
+            description: "Files the owner attached in this conversation to pass on to the worker, by their attachment ids; each reaches the worker's machine as the file itself",
+          },
         },
         required: ["ticket", "text"],
         additionalProperties: false,
@@ -947,6 +959,20 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (new Set(material.map((piece) => piece.name)).size !== material.length) {
           return { text: "Nothing was opened: two pieces of material have the same name.", isError: true };
         }
+        const attached = new Map<string, Attachment>();
+        for (const piece of material) {
+          if (piece.attachment === undefined) {
+            continue;
+          }
+          if (piece.text !== undefined) {
+            return { text: `Nothing was opened: the material ${piece.name} has both text and an attachment; give one.`, isError: true };
+          }
+          const chosen = options.attachments?.choose([piece.attachment]);
+          if (chosen === undefined || !chosen.ok || chosen.attachments[0] === undefined) {
+            return { text: `Nothing was opened: ${chosen?.ok === false ? chosen.reason : `there is no attachment ${piece.attachment}`}.`, isError: true };
+          }
+          attached.set(piece.name, chosen.attachments[0]);
+        }
         try {
           const ticket = tools.tickets.open({
             repository: null,
@@ -957,8 +983,15 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             difficulty: parsed.data.difficulty,
             platform: parsed.data.platform,
             conversation,
-            writing: { task: parsed.data.task, materials: material.map((piece) => ({ name: piece.name, source: piece.source, text: piece.text ?? null })) },
+            writing: {
+              task: parsed.data.task,
+              materials: material.map((piece) => {
+                const attachment = attached.get(piece.name);
+                return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
+              }),
+            },
           });
+          options.attachments?.grant(ticket.id, [...attached.values()]);
           return {
             text: [
               `Opened writing ticket ${ticket.id}.`,
@@ -1005,7 +1038,10 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             ? []
             : [
                 `Task: ${writing.task}`,
-                ...writing.materials.map((piece) => `Material ${piece.name}, from ${piece.source}${piece.text === null ? " (by its source only)" : ` (${piece.text.length} characters given)`}`),
+                ...writing.materials.map(
+                  (piece) =>
+                    `Material ${piece.name}, from ${piece.source}${piece.attachment !== null && piece.attachment !== undefined ? ` (the attached file ${piece.attachment.name}, ${piece.attachment.size} bytes)` : piece.text === null ? " (by its source only)" : ` (${piece.text.length} characters given)`}`,
+                ),
               ]),
         ];
         return { text: output === "" ? report.join("\n") : [...report, "The latest worker's output ends with:", output].join("\n") };
@@ -1018,10 +1054,19 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain");
-        return sent.ok
-          ? { text: `Sent to the worker of ticket ${parsed.data.ticket}. Read the ticket to see how it answers.` }
-          : { text: sent.reason, isError: true };
+        const chosen = options.attachments?.choose(parsed.data.attachments ?? []) ?? { ok: true as const, attachments: [] };
+        if (!chosen.ok) {
+          return { text: `Nothing was sent: ${chosen.reason}.`, isError: true };
+        }
+        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain", chosen.attachments);
+        if (!sent.ok) {
+          return { text: sent.reason, isError: true };
+        }
+        return {
+          text: sent.delivered
+            ? `Sent to the worker of ticket ${parsed.data.ticket}. Read the ticket to see how it answers.`
+            : `The worker's machine is not connected now; the message is kept and reaches the worker of ticket ${parsed.data.ticket} when the machine is back.`,
+        };
       }
       case "stop_ticket": {
         const parsed = StopTicketArguments.safeParse(raw);

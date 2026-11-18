@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, SteerResult, WorkerAdapter } from "@super-agent2/programs";
-import type { RunnerToHub, RunnerWorkEvent, WorkEngine, WorkEvent, WorkTask, WritingTask } from "@super-agent2/protocol";
+import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, PromptImage, SteerResult, WorkerAdapter } from "@super-agent2/programs";
+import { type Attachment, type RunnerToHub, type RunnerWorkEvent, storedName, type WorkEngine, type WorkEvent, type WorkTask, type WritingTask } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createGit, type ProcessRunner, runProcess } from "./git.js";
 import type { PullRequestState } from "./handback.js";
@@ -44,6 +44,7 @@ class Recorder<T> {
 class FakeHandle implements ProgramHandle {
   readonly prompts: string[] = [];
   readonly steered: string[] = [];
+  readonly images: (readonly PromptImage[])[] = [];
   closed = false;
   running = false;
 
@@ -55,17 +56,19 @@ class FakeHandle implements ProgramHandle {
     readonly listener: ProgramListener,
   ) {}
 
-  start(prompt: string): void {
+  start(prompt: string, images: readonly PromptImage[] = []): void {
     this.running = true;
     this.prompts.push(prompt);
+    this.images.push(images);
     this.fake.changed.push(this);
   }
 
-  steer(text: string): Promise<SteerResult> {
+  steer(text: string, images: readonly PromptImage[] = []): Promise<SteerResult> {
     if (this.fake.steer === "queued" || !this.running) {
       return Promise.resolve("queued");
     }
     this.steered.push(text);
+    this.images.push(images);
     this.fake.changed.push(this);
     return Promise.resolve("steered");
   }
@@ -604,5 +607,113 @@ describe("a writing worker on the runner", () => {
     const handle = await programs.prompted(1);
     handle.emit({ type: "unavailable", reason: "resource exhausted", until: null });
     expect(await ended(25)).toEqual({ kind: "failed", failure: "program", reason: "resource exhausted" });
+  });
+});
+
+function attachmentRequests(): Extract<RunnerToHub, { readonly type: "work.attachment" }>[] {
+  return sent.items.filter((message): message is Extract<RunnerToHub, { readonly type: "work.attachment" }> => message.type === "work.attachment");
+}
+
+function serveAttachments(works: Works, files: ReadonlyMap<string, Buffer>, partBytes: number, stopAfter = Number.POSITIVE_INFINITY): Promise<void> {
+  let answered = 0;
+  return new Promise((resolve) => {
+    const next = (): void => {
+      void sent.until(() => answered >= stopAfter || attachmentRequests().length > answered).then(() => {
+        if (answered >= stopAfter) {
+          resolve();
+          return;
+        }
+        const asked = attachmentRequests()[answered];
+        answered += 1;
+        if (asked === undefined) {
+          return;
+        }
+        const data = files.get(asked.attachment)?.subarray(asked.offset, asked.offset + Math.min(asked.length, partBytes));
+        works.receive({
+          type: "work.attachment.part",
+          ticket: asked.ticket,
+          attempt: asked.attempt,
+          attachment: asked.attachment,
+          offset: asked.offset,
+          data: data === undefined ? null : data.toString("base64"),
+          problem: data === undefined ? "not given" : null,
+        });
+        next();
+      });
+    };
+    next();
+  });
+}
+
+describe("attachments on the runner", () => {
+  const photo: Attachment = { id: "a".repeat(32), name: "../../photo.png", size: 5, mediaType: "image/png" };
+  const note: Attachment = { id: "b".repeat(32), name: "note.txt", size: 9, mediaType: "text/plain" };
+  const files = new Map([
+    [photo.id, Buffer.from("PNG!!")],
+    [note.id, Buffer.from("code word")],
+  ]);
+
+  it("fetches a message's files from the hub in parts into the ticket's folder outside the worktree, and shows the images to the program", async () => {
+    const works = start();
+    void serveAttachments(works, files, 2);
+    works.receive({ type: "work.start", task: task(31) });
+    const handle = await programs.prompted(1);
+    works.receive({ type: "work.message", ticket: 31, attempt: 1, id: "m-a", from: "owner", text: "", attachments: [photo, note] });
+    await programs.changed.until(() => handle.steered.length === 1);
+    const paths = workPaths(home, repository, 31);
+    const photoPath = join(paths.folder, "attachments", photo.id, storedName(photo.name));
+    const notePath = join(paths.folder, "attachments", note.id, "note.txt");
+    expect(readFileSync(photoPath, "utf8")).toBe("PNG!!");
+    expect(readFileSync(notePath, "utf8")).toBe("code word");
+    expect(photoPath.startsWith(paths.worktree)).toBe(false);
+    expect(storedName(photo.name)).not.toContain("/");
+    expect(handle.steered[0]).toContain(notePath);
+    expect(handle.steered[0]).toContain(photoPath);
+    expect(handle.images.at(-1)).toEqual([{ path: photoPath, mediaType: "image/png", size: 5 }]);
+    expect(attachmentRequests().map((message) => message.offset)).toEqual([0, 2, 4, 0, 2, 4, 6, 8]);
+    await sent.until(() => kinds(31).includes("message"));
+    expect(events(31).find((message) => message.event.kind === "message")?.event).toEqual({ kind: "message", id: "m-a", from: "owner", text: "", attachments: [photo, note], delivery: "steered" });
+    works.receive({ type: "work.message", ticket: 31, attempt: 1, id: "m-a", from: "owner", text: "", attachments: [photo, note] });
+    await works.idle();
+    expect(handle.steered).toHaveLength(1);
+  });
+
+  it("keeps what arrived when the link drops, and finishes the file when the hub gives the message again", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(32) });
+    const handle = await programs.prompted(1);
+    const served = serveAttachments(works, files, 2, 2);
+    works.receive({ type: "work.message", ticket: 32, attempt: 1, id: "m-b", from: "owner", text: "look", attachments: [photo] });
+    await served;
+    await sent.until(() => attachmentRequests().length === 3);
+    works.disconnected();
+    await works.idle();
+    expect(kinds(32)).not.toContain("message");
+    const file = join(workPaths(home, repository, 32).folder, "attachments", photo.id, storedName(photo.name));
+    expect(readFileSync(file, "utf8")).toBe("PNG!");
+    const before = attachmentRequests().length;
+    const resumed = sent.until(() => attachmentRequests().length > before).then(() => {
+      const asked = attachmentRequests().at(-1);
+      if (asked !== undefined) {
+        works.receive({ type: "work.attachment.part", ticket: 32, attempt: 1, attachment: photo.id, offset: asked.offset, data: Buffer.from("!").toString("base64"), problem: null });
+      }
+      return asked?.offset;
+    });
+    works.receive({ type: "work.message", ticket: 32, attempt: 1, id: "m-b", from: "owner", text: "look", attachments: [photo] });
+    expect(await resumed).toBe(4);
+    await programs.changed.until(() => handle.steered.length === 1);
+    expect(readFileSync(file, "utf8")).toBe("PNG!!");
+  });
+
+  it("puts a writing ticket's attached material in the input folder under its name", async () => {
+    const works = start();
+    void serveAttachments(works, files, 8);
+    works.receive({
+      type: "work.write",
+      task: writingTask(33, { materials: [{ name: "contract.txt", source: "attached by the owner", text: null, attachment: note }] }),
+    });
+    const handle = await programs.prompted(1);
+    expect(readFileSync(join(writingPaths(home, 33).worktree, "input", "contract.txt"), "utf8")).toBe("code word");
+    expect(handle.prompts[0]).toContain("input/contract.txt");
   });
 });
