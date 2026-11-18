@@ -3,6 +3,7 @@ import { type ChoiceChange, chineseOf, type DecisionReview, type MachineChoice, 
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
 import { kindKey, panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
+import { loadComposerDraft, saveComposerDraft } from "../live/drafts.js";
 import { draftOptions, draftWithEffort, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, type ReassignDraft, reassignChange, reassignMachines } from "../live/reassign.js";
 import type { LogItem } from "../live/work.js";
 import { AttachButton, PendingList, SentAttachments, useAttachments } from "../parts/Attachments.js";
@@ -590,10 +591,10 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
 }
 
 function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text: string, attachments: readonly string[]) => Promise<boolean> }) {
-  const [drafts, setDrafts] = useState<Readonly<Record<number, string>>>({});
+  const draftKey = `ticket:${ticket}`;
+  const [draft, setDraft] = useState(() => loadComposerDraft(draftKey).text);
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
-  const draft = drafts[ticket] ?? "";
   const attaching = useAttachments(String(ticket));
   const empty = draft.trim() === "" && attaching.items.length === 0;
 
@@ -605,6 +606,10 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
     }
   }, [draft]);
 
+  useEffect(() => {
+    saveComposerDraft(draftKey, { text: draft });
+  }, [draft, draftKey]);
+
   const submit = async () => {
     const message = draft.trim();
     if (empty || sending) {
@@ -615,7 +620,7 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
     const sent = attachments === undefined ? false : await send(message, attachments);
     setSending(false);
     if (sent) {
-      setDrafts((all) => ({ ...all, [ticket]: "" }));
+      setDraft("");
       attaching.clear();
     }
     field.current?.focus();
@@ -649,7 +654,8 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
           aria-label={text("ticket.reply")}
           onChange={(event) => {
             const value = event.target.value;
-            setDrafts((all) => ({ ...all, [ticket]: value }));
+            setDraft(value);
+            saveComposerDraft(draftKey, { text: value });
           }}
           onKeyDown={keyDown}
           onPaste={attaching.paste}
@@ -783,7 +789,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
               }
             })}
           </ol>
-          {offers.reply ? <Reply ticket={ticket.id} send={send} /> : null}
+          {offers.reply ? <Reply key={ticket.id} ticket={ticket.id} send={send} /> : null}
         </div>
         <Panel ticket={ticket} known={known} actions={actions} now={now} />
       </div>
