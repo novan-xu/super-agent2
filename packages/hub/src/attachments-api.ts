@@ -12,6 +12,8 @@ export interface AttachmentRequest {
   readonly method: string;
   readonly store: AttachmentStore;
   readonly sameOrigin: boolean;
+  readonly basePath?: string;
+  readonly maxFileBytes?: number;
   readonly readBody: () => Promise<string | undefined>;
 }
 
@@ -48,7 +50,8 @@ export function contentDisposition(name: string): string {
 
 export async function serveAttachments(given: AttachmentRequest): Promise<boolean> {
   const { request, response, path, method, store } = given;
-  if (path === attachmentsPath) {
+  const basePath = given.basePath ?? attachmentsPath;
+  if (path === basePath) {
     if (method !== "POST") {
       return false;
     }
@@ -68,10 +71,14 @@ export async function serveAttachments(given: AttachmentRequest): Promise<boolea
       reply(response, 400, { error: "bad_request" });
       return true;
     }
+    if (given.maxFileBytes !== undefined && parsed.data.size > given.maxFileBytes) {
+      reply(response, 400, { error: "too_large" });
+      return true;
+    }
     reply(response, 201, store.create(parsed.data));
     return true;
   }
-  const match = attachmentRoute.exec(path);
+  const match = attachmentRoute.exec(path.replace(basePath, attachmentsPath));
   const id = match?.[1];
   if (match === null || id === undefined) {
     return false;
