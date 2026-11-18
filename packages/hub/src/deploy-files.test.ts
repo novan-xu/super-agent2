@@ -21,7 +21,7 @@ describe("Super-agent2's own repository", () => {
     if (!reading.ok) {
       throw new Error(reading.reason);
     }
-    expect(reading.file.target).toBe("pc");
+    expect(reading.file.target).toBe("mac-mini");
     expect(reading.file.deploy).toContain("ssh novan-nas-maintenance");
     expect(reading.file.deploy).toContain("deploy.sh release $(git rev-parse HEAD)");
     expect(reading.file.health.command).toContain("deploy.sh health");

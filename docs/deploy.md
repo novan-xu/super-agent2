@@ -46,14 +46,14 @@ It lists the containers, the running and previous commits and the latest release
 Super-agent2 is deployed like any repository: by a worker, through a task ticket the brain arranges after the chain
 that changes it, started with that chain's 开始. Its recipe is `.superagent2/deployment.json`:
 
-- `target` is `pc`, the owner's Windows PC, whose own SSH access reaches the NAS as `novan-nas-maintenance`. The hub
+- `target` is `mac-mini`, the owner's Mac mini, whose own SSH access reaches the NAS as `novan-nas-maintenance`. The hub
   runs the ticket only on the runner of that name, and the runner refuses to deploy anywhere else. If the machine that
-  should deploy has another name, change `target` (through a code ticket) or name the runner `pc`.
+  should deploy has another name, change `target` (through a code ticket) or name the runner `mac-mini`.
 - `deploy` runs `deploy.sh release` of the checkout's commit on the NAS over that SSH alias; `health` runs
   `deploy.sh health`; `rollback` runs `deploy.sh rollback`.
 
 While the release runs, the hub and the brain stop and start again under the ticket. The runner's link drops and comes
-back; the worker keeps running on the PC, its events are kept on disk and synced to the new hub, its hand-back is
+back; the worker keeps running on the Mac mini, its events are kept on disk and synced to the new hub, its hand-back is
 delivered there, and only once no worker runs does the runner move to the new hub's version. A runner never switches to a
 version the hub no longer announces, so if the release goes back, the runner stays where it is. A worker that finds the
 new version does not come up hands back failed, and the brain guides it like any failure.
@@ -131,7 +131,7 @@ This version is released by hand once, as above, from the running version, which
   that deployments are now done by tickets.
 - After the release, every runner moves to the new version by itself once its workers are idle. A runner of the
   previous version still holding a writing worker finishes it under the old version first.
-- For Super-agent2 to deploy itself, the PC's runner must be named `pc` (or `target` changed), and the account it runs
+- For Super-agent2 to deploy itself, the Mac mini's runner must be named `mac-mini` (or `target` changed), and the account it runs
   as must reach the NAS with `ssh novan-nas-maintenance` without a prompt.
 - `secrets/brain.env` and `secrets/hub.env` need no change. `NAS_SSH_*`, `HUB_CREDENTIAL_PATHS` and any deployment
   settings an older hub was given are ignored.
