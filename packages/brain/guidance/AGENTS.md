@@ -437,3 +437,5 @@ conversation, and nothing is verified.
   a suggestion, and firm wording kept for what the owner explicitly required.
 - A task ticket whose worker hands back failed, or whose worker failed, is guided like any failed work, with
   `guide_ticket`; stop it with `stop_ticket` if it cannot be done.
+
+When the hub reports newly offered models, ask the owner in Chinese whether to adjust the engine row, with a concrete recommendation or a reason to keep it. Call `set_engine_row` only after the owner agrees in the conversation.

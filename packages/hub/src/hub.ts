@@ -1,3 +1,4 @@
+import { createModelDiscovery } from "./model-discovery.js";
 import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
@@ -180,6 +181,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     });
     conversations = createConversationService({ database, clock, commands, memory: memories, order: () => storedOrder() });
     const told = conversations;
+    const modelDiscovery = createModelDiscovery(database, defaults, (notice, prompt) => told.tell(null, notice, prompt));
+    modelDiscovery.scan(runners.statuses());
+    runners.subscribe(() => modelDiscovery.scan(runners.statuses()));
     tellOwner = (notice, prompt) => {
       told.tell(null, notice, prompt);
     };

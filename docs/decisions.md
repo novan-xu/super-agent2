@@ -3931,3 +3931,9 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The owner's instruction was to deploy the latest version and have both runners installed and configured. Trying the new tokens against Cloudflare first, before installing anything, was the way to find out whether the owner's Access set-up needed a change that only the owner can make; it did not. Node.js is what the install script refuses to go on without.
 - **Other options:** Waiting for the owner to press 添加机器; installing Node.js through Homebrew, which changes more of the machine than a folder in the user's home; leaving the Mac mini out until the owner had installed Node.js.
 - **Not verified:** No ticket has run on either machine yet. The first run of the install line on Windows stopped because the orchestrator had merged the error stream into the output, which Windows PowerShell 5.1 turns into a failure when a program writes to it; run as the page shows it, without that, it worked. dsh on the Mac mini is 0.2.2-rc.1, a newer version than the one the control plugin was tried with.
+
+## 2026-11-18 — New model discovery
+
+- **Chosen:** Baseline each engine from the stored machine reports or its first nonempty report, and batch new model IDs per engine in each report. Include Antigravity and ignore effort-only changes.
+- **Why:** This avoids questions about the existing catalogue while making each later report actionable without delaying notices.
+- **Other options:** Wait for a timed cross-machine batch; count new efforts as models; exclude Antigravity.
