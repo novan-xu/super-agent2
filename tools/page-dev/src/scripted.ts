@@ -271,7 +271,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
         if (work === undefined || work.ended || work.attempt !== message.attempt) {
           return;
         }
-        emit(work, { kind: "message", id: message.id, from: message.from, text: message.text, delivery: "steered" });
+        emit(work, { kind: "message", id: message.id, from: message.from, text: message.text, ...(message.attachments === undefined ? {} : { attachments: message.attachments }), delivery: "steered" });
         emit(work, { kind: "text", block: `reply-${message.id}`, delta: `收到：「${message.text}」。下一步会照这个做。` });
         return;
       }

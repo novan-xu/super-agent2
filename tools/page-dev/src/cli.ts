@@ -205,6 +205,7 @@ async function startBrain(): Promise<(() => Promise<void>) | undefined> {
     clock: systemClock,
     tools: { url: `${hubUrl}${brainToolsPath}`, token },
     workspace,
+    attachments: join(hubDir, "attachments"),
   });
   link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });
   link.connect();

@@ -217,8 +217,12 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .att-thumb { width: 20px; height: 20px; flex: none; border-radius: 4px; object-fit: cover; }
 .att-name { min-width: 0; }
 .msg-files .chip { max-width: 100%; }
+.msg-attachments { align-items: flex-end; }
 .msg--me .msg-attachments { justify-content: flex-end; max-width: 86%; }
 .att-image { display: block; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border-soft); background: var(--sunk); line-height: 0; }
 .att-image img { display: block; width: auto; height: auto; max-width: min(240px, 60vw); max-height: 240px; object-fit: contain; }
 .steer .reply .icon-btn { align-self: flex-end; min-height: 44px; }
 .work-msg .msg-attachments { margin-top: var(--space-1); }
+.conv-main, .composer, .msg, .steer { grid-template-columns: minmax(0, 1fr); }
+.att-item, .msg-attachments .chip { max-width: 100%; }
+.att-item .att-name, .msg-attachments .att-name { overflow: hidden; text-overflow: ellipsis; }
