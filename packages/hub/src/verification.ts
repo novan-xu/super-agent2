@@ -20,10 +20,11 @@ import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi, type MergeMethod, type MergeMethods, type PullRequestState } from "./github-api.js";
 import type { FailureReport } from "./failure-loop.js";
+import { createPipelineTimes, durationChinese, durationWords, defaultFirstAllowanceMinutes, noticesDue, overrunFactor, thresholdOf, usualMinimum } from "./pipeline-times.js";
 import { clip, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
-import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type WoodpeckerApi } from "./woodpecker.js";
+import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type PipelineWorkflow, type WoodpeckerApi } from "./woodpecker.js";
 
 export type Ticker = (tick: () => void) => () => void;
 
@@ -55,6 +56,14 @@ export interface VerificationOptions {
   readonly pollMilliseconds?: number;
   readonly report?: (report: FailureReport) => void;
   readonly ownRepository?: string;
+  readonly firstAllowanceMinutes?: number;
+}
+
+export interface WaitedFor {
+  readonly waited: number;
+  readonly usual: number | null;
+  readonly samples: number;
+  readonly threshold: number;
 }
 
 export type SkipOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
@@ -64,6 +73,7 @@ export interface VerificationService {
   poll(): Promise<void>;
   skip(ticket: number, reason: string): Promise<SkipOutcome>;
   logs(ticket: number): StepLog[];
+  waitedFor(ticket: number): WaitedFor | null;
   resume(): void;
   idle(): Promise<void>;
   close(): void;
@@ -150,7 +160,7 @@ type Outcome = { readonly kind: "none"; readonly reason: string } | { readonly k
   readonly failed: readonly FailedStep[];
   readonly logs: readonly StepLog[];
   readonly reason: string;
-} | { readonly kind: "waiting"; readonly wait: VerificationWait; readonly reason: string; readonly pipeline: VerifiedPipeline | null; readonly workflows: readonly VerifiedWorkflow[] };
+} | { readonly kind: "waiting"; readonly wait: VerificationWait; readonly reason: string; readonly pipeline: VerifiedPipeline | null; readonly workflows: readonly VerifiedWorkflow[]; readonly detail?: Pipeline };
 
 const columns = [
   "entry",
@@ -178,6 +188,10 @@ const columns = [
   "deployment",
   "reported_at",
   "checked_at",
+  "head_at",
+  "wait_since",
+  "notice_key",
+  "notice_count",
 ] as const;
 
 const IdRow = z.object({ ticket_id: z.number().int() });
@@ -200,6 +214,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
   const doFetch = options.fetch ?? fetch;
   const tell: Tell = options.tell ?? (() => undefined);
   const ticker = options.ticker ?? intervalTicker(options.pollMilliseconds ?? defaultVerificationPoll);
+  const times = createPipelineTimes(options.database);
+  const firstAllowance = (options.firstAllowanceMinutes ?? defaultFirstAllowanceMinutes) * 60_000;
   const tails = new Map<number, Promise<void>>();
   const pending = new Set<number>();
   const states = new Map<number, string>();
@@ -246,8 +262,10 @@ export function createVerification(options: VerificationOptions): VerificationSe
     });
   };
 
+  const unwatched: Patch = { wait_since: null };
+
   const wait = (id: number, waiting: VerificationWait, reason: string, extra: Patch = {}) => {
-    save(id, { state: "waiting", waiting, reason, ...extra });
+    save(id, { state: "waiting", waiting, reason, ...unwatched, ...extra });
   };
 
   const tellOnce = (ticket: Ticket, key: string, notice: string, prompt: string) => {
@@ -282,6 +300,59 @@ export function createVerification(options: VerificationOptions): VerificationSe
     } catch (error) {
       return `the files changed on both sides could not be read: ${reasonOf(error)}`;
     }
+  };
+
+  const workflowLine = (workflow: PipelineWorkflow, now: number): string => {
+    if (workflow.state === "pending" || workflow.state === "created") {
+      return `${workflow.name}: ${workflow.state}, ${workflow.agent === null ? "no agent has picked it up" : `assigned to agent ${workflow.agent}, not started`}`;
+    }
+    if (workflow.state === "running") {
+      return `${workflow.name}: running${workflow.agent === null ? "" : ` on agent ${workflow.agent}`}${workflow.started === null ? "" : `, started ${durationWords(now - workflow.started)} ago`}`;
+    }
+    return `${workflow.name}: ${workflow.state}`;
+  };
+
+  const woodpeckerSays = (detail: Pipeline | undefined, waited: number, now: number): string[] => {
+    if (detail === undefined) {
+      return [`Woodpecker says: it has no pipeline for this head, ${durationWords(waited)} after the hub first saw the head.`];
+    }
+    return [
+      `Woodpecker says now: pipeline #${detail.number} is ${detail.status}${detail.created === null ? "" : `, created ${durationWords(now - detail.created)} ago`}.`,
+      ...(detail.workflows.length === 0 ? ["It has no workflow yet."] : detail.workflows.map((workflow) => `  ${workflowLine(workflow, now)}`)),
+    ];
+  };
+
+  const overrun = (ticket: Ticket, repository: string, head: string, entry: number, outcome: { readonly pipeline: VerifiedPipeline | null; readonly detail?: Pipeline }, since: number): void => {
+    const now = clock.now();
+    const waited = now - since;
+    const usual = times.usual(repository);
+    const threshold = thresholdOf(usual, firstAllowance);
+    const due = noticesDue(waited, threshold);
+    const key = `${entry}:${head}:${outcome.pipeline?.number ?? 0}`;
+    const row = rowOf(ticket.id);
+    const sent = row?.notice_key === key ? row.notice_count : 0;
+    if (closed || due === 0 || due <= sent) {
+      return;
+    }
+    save(ticket.id, { notice_key: key, notice_count: due });
+    const basis =
+      usual.milliseconds === null
+        ? `The hub has no usual time for ${repository} yet (${usual.samples} green pipeline${usual.samples === 1 ? "" : "s"} recorded, ${usualMinimum} needed), so it uses a first-time allowance of ${durationWords(firstAllowance)}; it tells you when a wait reaches that, and again at each doubling.`
+        : `What is usual for ${repository}: ${durationWords(usual.milliseconds)}, the median of its last ${usual.samples} green pipelines, each from creation to finish, so waiting for an agent counts. The hub tells you when a wait reaches ${overrunFactor} times that, ${durationWords(threshold)}, and again at each doubling.`;
+    const prompt = [
+      `[hub] ${described(ticket)} has waited ${durationWords(waited)} for its verification, far beyond what is usual. This is notice ${due} for this ${outcome.pipeline === null ? "head" : "pipeline"}.`,
+      `Pull request #${ticket.pullRequest ?? 0} in ${repository}, head ${head}, branch ${ticket.branch ?? "(none)"}${outcome.pipeline === null ? "" : `; pipeline ${outcome.pipeline.url}`}.`,
+      ...woodpeckerSays(outcome.detail, waited, now),
+      basis,
+      "Nothing is decided from the time: the ticket stays verifying, nothing failed, no guided round is counted, and nothing was cancelled or restarted. The hub keeps checking by itself and merges by its rules when the pipeline is green.",
+      "Look at it yourself first, without interrupting anything: the pipeline's steps and logs, and whether the agents are online. A pipeline that is merely slow is left alone. Step in only if the look finds a real problem, such as an agent offline, a step that hangs, or a pipeline stuck in the queue: then act, and tell the owner in Chinese what you found and did. If nothing is wrong, wait, and say no more than one line.",
+      `If it still waits, the hub tells you again at ${durationWords(threshold * 2 ** due)} of waiting.`,
+    ].join("\n");
+    const notice =
+      usual.milliseconds === null
+        ? text("notice.pipelineLongFirst", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(firstAllowance) })
+        : text("notice.pipelineLong", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(usual.milliseconds) });
+    tell(ticket.conversation, notice, prompt);
   };
 
   const entryOf = (id: number): number => SeqRow.parse(selectEntry.get(id)).seq ?? 0;
@@ -331,10 +402,15 @@ export function createVerification(options: VerificationOptions): VerificationSe
     return [];
   };
 
-  const findPipeline = async (woodpecker: WoodpeckerApi, repository: number, pullRequest: number, head: string): Promise<PipelineSummary | undefined> => {
+  const findPipeline = async (woodpecker: WoodpeckerApi, repository: number, name: string, pullRequest: number, head: string): Promise<PipelineSummary | undefined> => {
     const prefix = `refs/pull/${pullRequest}/`;
     for (let page = 1; page <= pipelinePages; page += 1) {
       const list = await woodpecker.pipelines(repository, pullRequest, page);
+      for (const entry of list) {
+        if (entry.status === "success" && entry.created !== null && entry.finished !== null) {
+          times.record(name, entry.number, entry.created, entry.finished);
+        }
+      }
       const found = list
         .filter((entry) => entry.commit === head && entry.ref.startsWith(prefix) && (entry.event === "" || entry.event === "pull_request"))
         .sort((a, b) => b.number - a.number)[0];
@@ -377,7 +453,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return { kind: "none", reason: `The head ${short(head)} defines no Woodpecker workflow` };
     }
     try {
-      const summary = await findPipeline(woodpecker, known.id, pullRequest, head);
+      const summary = await findPipeline(woodpecker, known.id, repository, pullRequest, head);
       if (summary === undefined) {
         return { kind: "waiting", wait: "pipeline", reason: `Woodpecker has no pipeline for the head ${short(head)} yet; the head defines ${names.join(", ")}`, pipeline: null, workflows: [] };
       }
@@ -386,10 +462,13 @@ export function createVerification(options: VerificationOptions): VerificationSe
       const shown: VerifiedPipeline = { number: pipeline.number, url: woodpecker.pipelineUrl(known.id, pipeline.number) };
       const evidence = judge(head, names, pipeline, config);
       if (evidence.kind === "green") {
+        if (pipeline.created !== null && pipeline.finished !== null) {
+          times.record(repository, pipeline.number, pipeline.created, pipeline.finished);
+        }
         return { kind: "green", pipeline: shown, workflows: evidence.workflows };
       }
       if (evidence.kind === "waiting") {
-        return { kind: "waiting", wait: evidence.wait, reason: evidence.reason, pipeline: shown, workflows: evidence.workflows };
+        return { kind: "waiting", wait: evidence.wait, reason: evidence.reason, pipeline: shown, workflows: evidence.workflows, detail: pipeline };
       }
       const logs: StepLog[] = [];
       for (const step of evidence.failed) {
@@ -693,6 +772,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
         state: "checking",
         waiting: null,
         reason: null,
+        head_at: clock.now(),
+        ...unwatched,
         pipeline: null,
         workflows: "[]",
         failures: "[]",
@@ -726,7 +807,17 @@ export function createVerification(options: VerificationOptions): VerificationSe
           return;
         }
         if (outcome.kind === "waiting") {
-          wait(id, outcome.wait, outcome.reason, { rule: "workflows", pipeline: outcome.pipeline === null ? null : JSON.stringify(outcome.pipeline), workflows: JSON.stringify(outcome.workflows) });
+          const watched = outcome.wait === "pipeline" || outcome.wait === "workflows";
+          const since = outcome.detail?.created ?? row.head_at ?? clock.now();
+          wait(id, outcome.wait, outcome.reason, {
+            rule: "workflows",
+            pipeline: outcome.pipeline === null ? null : JSON.stringify(outcome.pipeline),
+            workflows: JSON.stringify(outcome.workflows),
+            ...(watched ? { wait_since: since, head_at: row.head_at ?? clock.now() } : {}),
+          });
+          if (watched) {
+            overrun(ticket, repository, pull.head, entry, outcome, since);
+          }
           return;
         }
         if (outcome.kind === "red") {
@@ -734,6 +825,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
             rule: "workflows",
             state: "failed",
             waiting: null,
+            ...unwatched,
             reason: outcome.reason,
             pipeline: JSON.stringify(outcome.pipeline),
             workflows: JSON.stringify(outcome.workflows),
@@ -764,7 +856,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         }
         if (outcome.kind === "green") {
           rule = "workflows";
-          save(id, { rule, pipeline: JSON.stringify(outcome.pipeline), workflows: JSON.stringify(outcome.workflows), reason: null });
+          save(id, { rule, pipeline: JSON.stringify(outcome.pipeline), workflows: JSON.stringify(outcome.workflows), reason: null, ...unwatched });
         } else {
           rule = "none";
           save(id, { rule, reason: outcome.reason });
@@ -862,6 +954,15 @@ export function createVerification(options: VerificationOptions): VerificationSe
     logs: (id) => {
       const row = rowOf(id);
       return row === undefined ? [] : logsOf(row);
+    },
+    waitedFor: (id) => {
+      const ticket = tickets.get(id);
+      const row = rowOf(id);
+      if (ticket === undefined || row === undefined || ticket.repository === null || ticket.state !== "verifying" || row.state !== "waiting" || row.wait_since === null) {
+        return null;
+      }
+      const usual = times.usual(ticket.repository);
+      return { waited: clock.now() - row.wait_since, usual: usual.milliseconds, samples: usual.samples, threshold: thresholdOf(usual, firstAllowance) };
     },
     resume: () => {
       if (closed || stopTicker !== undefined) {

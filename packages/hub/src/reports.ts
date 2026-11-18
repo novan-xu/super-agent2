@@ -1,4 +1,6 @@
 import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketMove, type TicketWait } from "@super-agent2/protocol";
+import { durationWords, overrunFactor } from "./pipeline-times.js";
+import type { WaitedFor } from "./verification.js";
 
 export const reportLimit = 40_000;
 
@@ -10,6 +12,15 @@ export function clip(text: string, limit: number = reportLimit): string {
   const tail = limit - head;
   const omitted = text.length - head - tail;
   return `${text.slice(0, head)}\n[... ${omitted} characters omitted ...]\n${text.slice(text.length - tail)}`;
+}
+
+export function waitedLine(waited: WaitedFor): string {
+  const usual =
+    waited.usual === null
+      ? `there is no usual time for this repository yet (${waited.samples} green pipeline${waited.samples === 1 ? "" : "s"} recorded), so the first-time allowance applies`
+      : `usual for this repository: ${durationWords(waited.usual)}, the median of its last ${waited.samples} green pipelines`;
+  const when = waited.usual === null ? "the allowance" : `${overrunFactor} times the usual`;
+  return `Waiting on the pipeline for ${durationWords(waited.waited)}; ${usual}. You are told at ${durationWords(waited.threshold)} (${when}) and again at each doubling. The time decides nothing: the ticket stays verifying.`;
 }
 
 export function tail(text: string, limit: number): string {

@@ -51,6 +51,13 @@ const Environment = z.object({
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
   HUB_SOURCE_REPOSITORY: unlessEmpty(RepositoryName),
+  HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: unlessEmpty(
+    z
+      .string()
+      .regex(/^\d+$/, { error: "must be a whole number of minutes" })
+      .transform(Number)
+      .pipe(z.number().int().min(1, { error: "must be at least 1" })),
+  ),
   VAPID_PUBLIC_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
   VAPID_PRIVATE_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
   VAPID_SUBJECT: unlessEmpty(z.string().regex(/^(?:mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/, { error: "must be a mailto: address or an https URL" })),
@@ -69,6 +76,7 @@ export interface Config {
   readonly vapid?: VapidSettings;
   readonly version?: string;
   readonly sourceRepository?: string;
+  readonly firstPipelineAllowanceMinutes?: number;
 }
 
 export interface VapidSettings {
@@ -124,6 +132,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),
+      ...(value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES === undefined ? {} : { firstPipelineAllowanceMinutes: value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES }),
     },
   };
 }
