@@ -68,6 +68,7 @@ services:
       BRAIN_HUB_URL: http://hub:8080
       BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
       BRAIN_WORKSPACE: /home/node/workspace
+      BRAIN_PROGRAM_DIR: /var/lib/superagent2/programs
       BRAIN_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
       CLAUDE_CONFIG_DIR: /home/node/.claude
     volumes:
@@ -76,6 +77,7 @@ services:
       - brain-claude:/home/node/.claude
       - brain-dsh:/home/node/.dsh
       - brain-workspace:/home/node/workspace
+      - brain-programs:/var/lib/superagent2/programs
     logging: *logging
 
   tunnel:
@@ -106,6 +108,8 @@ volumes:
     name: ${SUPERAGENT2_PROJECT}-brain-claude
   brain-dsh:
     name: ${SUPERAGENT2_PROJECT}-brain-dsh
+  brain-programs:
+    name: ${SUPERAGENT2_PROJECT}-brain-programs
   brain-workspace:
     name: ${SUPERAGENT2_PROJECT}-brain-workspace
 

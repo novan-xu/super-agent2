@@ -3931,3 +3931,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The owner's instruction was to deploy the latest version and have both runners installed and configured. Trying the new tokens against Cloudflare first, before installing anything, was the way to find out whether the owner's Access set-up needed a change that only the owner can make; it did not. Node.js is what the install script refuses to go on without.
 - **Other options:** Waiting for the owner to press 添加机器; installing Node.js through Homebrew, which changes more of the machine than a folder in the user's home; leaving the Mac mini out until the owner had installed Node.js.
 - **Not verified:** No ticket has run on either machine yet. The first run of the install line on Windows stopped because the orchestrator had merged the error stream into the output, which Windows PowerShell 5.1 turns into a failure when a program writes to it; run as the page shows it, without that, it worked. dsh on the Mac mini is 0.2.2-rc.1, a newer version than the one the control plugin was tried with.
+
+## 2026-11-18 ? Brain program updates
+
+- **Chosen:** Check npm latest at startup and every six hours; queue new turns while all three programs are checked and
+  installed, and activate each successful installation separately from a persistent volume. The image versions are
+  the floor, including the dsh prerelease. Failed updates leave the previous version active and retry on the next check.
+- **Why:** This keeps the brain current without a deployment, avoids changing files under running programs, and allows
+  one provider to update even if another fails. Sessions resume using the hub's existing saved session IDs.
+- **Other options:** Scheduled image rebuilds and deployments; updating all programs as one transaction.

@@ -91,6 +91,12 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 - When another provider takes over, its session is given the conversation so far.
 - The owner can open a new conversation and return to an earlier one.
 
+The brain checks npm `latest` for Codex, Claude Code and dsh at startup and every six hours. It waits until all
+turns finish, queues new inputs, closes idle program processes and installs newer versions into a persistent volume.
+Each successful install is activated atomically; a failure leaves the previous program in place and is retried at the
+next check. The image pins remain the minimum versions, including dsh's prerelease when npm latest is older. The next
+turn resumes its saved session through the hub. Updates and failures are logged by the brain container.
+
 ## The brain's reach
 
 The hub gives the brain one general capability: run a shell command in the hub's own container and return its output.
