@@ -572,3 +572,19 @@ describe("when every provider is unavailable", () => {
     expect(defaults.unavailable().map((mark) => mark.program)).toEqual(["antigravity"]);
   });
 });
+
+describe("DeepSeek balance routing", () => {
+  it("holds an empty balance through a failed read and clears it when money returns", () => {
+    const balance = (amount: number, readAt: number): AllowanceReading => ({ program: "dsh", readAt, available: true, wallets: [{ currency: "CNY", total: amount, granted: 0, toppedUp: amount }], problem: null });
+    machine("pc", "win32", complex, [balance(0, clock.now())]);
+    expect(defaults.out().has("dsh")).toBe(true);
+    clock.advance(1000);
+    machine("pc", "win32", complex, [{ program: "dsh", readAt: clock.now(), available: null, wallets: [], problem: "failed" }]);
+    expect(defaults.balance().state).toBe("unknown");
+    expect(defaults.out().has("dsh")).toBe(true);
+    clock.advance(1000);
+    machine("mini", "darwin", complex, [balance(50, clock.now())]);
+    expect(defaults.balance().state).toBe("ok");
+    expect(defaults.out().has("dsh")).toBe(false);
+  });
+});

@@ -15,7 +15,7 @@ export const AllowanceWindow = z.object({
 });
 export type AllowanceWindow = z.infer<typeof AllowanceWindow>;
 
-export const AllowanceReading = z.object({
+export const SubscriptionReading = z.object({
   program: AllowanceProgram,
   readAt: z.number().int(),
   state: AllowanceState,
@@ -24,13 +24,34 @@ export const AllowanceReading = z.object({
   windows: z.array(AllowanceWindow),
   problem: z.string().nullable(),
 });
-export type AllowanceReading = z.infer<typeof AllowanceReading>;
+export type SubscriptionReading = z.infer<typeof SubscriptionReading>;
 
-export function unknownAllowance(program: AllowanceProgram, readAt: number, problem: string | null): AllowanceReading {
+export const BalanceWallet = z.object({ currency: z.string().min(1), total: z.number().finite(), granted: z.number().finite(), toppedUp: z.number().finite() });
+export const BalanceReading = z.object({
+  program: z.literal("dsh"), readAt: z.number().int(), available: z.boolean().nullable(),
+  wallets: z.array(BalanceWallet), problem: z.string().nullable(),
+});
+export type BalanceReading = z.infer<typeof BalanceReading>;
+export const AllowanceReading = z.union([SubscriptionReading, BalanceReading]);
+export type AllowanceReading = z.infer<typeof AllowanceReading>;
+export const Balance = BalanceReading.extend({ state: z.enum(["ok", "low", "empty", "unknown"]), machine: z.string().nullable() });
+export type Balance = z.infer<typeof Balance>;
+export const defaultLowBalance = 30;
+
+export function currentBalance(readings: readonly MachineReading[], now: number, low: number = defaultLowBalance, maxAge: number = Number.MAX_SAFE_INTEGER): Balance {
+  const current = readings.filter((item): item is MachineReading & { reading: BalanceReading } => item.reading.program === "dsh" && item.reading.readAt <= now && now - item.reading.readAt <= maxAge)
+    .sort((a, b) => b.reading.readAt - a.reading.readAt || a.machine.localeCompare(b.machine))[0];
+  if (current === undefined) return { program: "dsh", readAt: now, available: null, wallets: [], problem: "no current reading", state: "unknown", machine: null };
+  const { reading } = current;
+  const state = reading.available === null ? "unknown" : !reading.available || reading.wallets.every((wallet) => wallet.total <= 0) ? "empty" : reading.wallets.every((wallet) => wallet.total < low) ? "low" : "ok";
+  return { ...reading, state, machine: current.machine };
+}
+
+export function unknownAllowance(program: AllowanceProgram, readAt: number, problem: string | null): z.infer<typeof SubscriptionReading> {
   return { program, readAt, state: "unknown", remainingPercent: null, resetsAt: null, windows: [], problem };
 }
 
-export function allowanceFrom(program: AllowanceProgram, readAt: number, windows: readonly AllowanceWindow[], blocked: boolean): AllowanceReading {
+export function allowanceFrom(program: AllowanceProgram, readAt: number, windows: readonly AllowanceWindow[], blocked: boolean): z.infer<typeof SubscriptionReading> {
   if (windows.length === 0 && !blocked) {
     return unknownAllowance(program, readAt, "the program reported no usage window");
   }
@@ -71,6 +92,7 @@ export interface MachineReading {
 
 export function currentSubscription(program: AllowanceProgram, readings: readonly MachineReading[], now: number, maxAge: number = allowanceMaxAge): Subscription {
   const current = readings
+    .filter((item): item is MachineReading & { reading: z.infer<typeof SubscriptionReading> } => item.reading.program !== "dsh")
     .filter(({ reading }) => reading.program === program && reading.state !== "unknown" && reading.readAt <= now && now - reading.readAt <= maxAge)
     .filter(({ reading }) => !(reading.state === "exhausted" && reading.resetsAt !== null && reading.resetsAt <= now))
     .sort((a, b) => b.reading.readAt - a.reading.readAt || (a.machine < b.machine ? -1 : 1))[0];
@@ -90,6 +112,7 @@ export function currentSubscription(program: AllowanceProgram, readings: readonl
 
 export const AllowanceList = z.object({
   subscriptions: z.array(Subscription),
+  balance: Balance.optional(),
 });
 export type AllowanceList = z.infer<typeof AllowanceList>;
 

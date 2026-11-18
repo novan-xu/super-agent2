@@ -19,7 +19,7 @@ const usage = [
   "  run          Run the runner in this terminal",
   "  status       Say whether the runner is set up and running",
   "  programs     List the command-line programs found here, with their models and efforts",
-  "  allowance    Read what is left on the Codex and Claude Code subscriptions logged in here",
+  "  allowance    Read the Codex and Claude Code subscriptions and DeepSeek balance logged in here",
   "  version      Print this runner's version and protocol",
 ];
 

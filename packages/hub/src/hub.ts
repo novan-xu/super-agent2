@@ -127,9 +127,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     database,
     clock,
     statuses: () => runners.statuses(),
+    ...(config.deepseekLowBalance === undefined ? {} : { lowBalance: config.deepseekLowBalance }),
     providerOrder: () => storedOrder(),
     ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
+  runners.subscribe(() => defaults.changed());
   let work: WorkService | undefined;
   const ticketWork: TicketWork = options.ticketWork ?? {
     begin: (ticket) => work?.begin(ticket),
