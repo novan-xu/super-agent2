@@ -68,8 +68,9 @@ it("uses a local ticket folder while the shared path is unavailable and uses the
 it("recognizes the same GitHub repository across URL forms", () => {
   for (const url of [
     "https://github.com/Owner/Repo.git", "git@GitHub.com:Owner/Repo", "ssh://git@github.com/owner/repo.git",
-    "git://github.com/owner/repo/", "ssh://git@ssh.github.com:443/owner/repo.git",
+    "git://github.com/owner/repo/", "ssh://git@ssh.github.com:443/owner/repo.git", "git@github.com:/owner/repo",
   ]) expect(githubRepository(url)).toBe("owner/repo");
   expect(githubRepository("https://github.com.example/owner/repo")).toBeUndefined();
+  expect(githubRepository("file://github.com/owner/repo")).toBeUndefined();
   expect(githubRepository("https://github.com/other/repo")).toBe("other/repo");
 });

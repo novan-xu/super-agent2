@@ -56,18 +56,18 @@ export function withRepository<T>(repository: string, body: () => Promise<T>): P
 }
 
 export function githubRepository(url: string): string | undefined {
-  const scp = /^(?:[^@/]+@)?github\.com:(?!\/)(.+)$/i.exec(url);
+  const scp = /^(?:[^@/]+@)?(?:ssh\.)?github\.com:(?!\/\/)(.+)$/i.exec(url);
   let path = scp?.[1];
   if (path === undefined) {
     try {
       const parsed = new URL(url);
-      if (!["github.com", "ssh.github.com"].includes(parsed.hostname)) return undefined;
-      path = parsed.pathname.replace(/^\/+/, "");
+      if (!["github.com", "ssh.github.com"].includes(parsed.hostname) || !["http:", "https:", "ssh:", "git:", "git+ssh:", "ssh+git:"].includes(parsed.protocol)) return undefined;
+      path = parsed.pathname;
     } catch {
       return undefined;
     }
   }
-  const repository = path.replace(/\/+$/, "").replace(/\.git$/i, "").toLowerCase();
+  const repository = path.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").toLowerCase();
   return /^[a-z0-9-]+\/[a-z0-9_.-]+$/.test(repository) ? repository : undefined;
 }
 
@@ -79,6 +79,7 @@ function ownedDirectory(path: string): void {
       throw new Error(`The runner needs a directory at ${path}`, { cause: error });
     }
   }
+  if (existsAt(join(path, ".git"))) throw new Error(`The runner's directory is occupied by a checkout at ${path}`);
 }
 
 export function taskFolderInProjects(projects: string, ticket: number): string {
@@ -103,8 +104,10 @@ export async function pathsInProjects(
   const url = remote(repository);
   const root = realpathSync(projects);
   return locks.with(`projects:${join(root, name.toLowerCase())}`, async () => {
+    const agent = join(root, "_agent");
+    ownedDirectory(agent);
     const names = readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name !== "_agent")
+      .filter((entry) => entry.isDirectory() && entry.name.toLowerCase() !== "_agent")
       .map((entry) => entry.name)
       .sort((a, b) => a === name ? -1 : b === name ? 1 : a.localeCompare(b, "en"));
     let clone: string | undefined;
@@ -117,6 +120,7 @@ export async function pathsInProjects(
       }
     }
     if (clone === undefined) {
+      if (name.toLowerCase() === "_agent") throw new Error("The repository needs a first-level checkout with a folder name other than _agent");
       clone = join(root, name);
       try {
         lstatSync(clone);
@@ -126,9 +130,7 @@ export async function pathsInProjects(
       }
       await git.must(["clone", "--origin", "origin", "--", url, clone], root);
     }
-    const agent = join(root, "_agent");
     const worktrees = join(agent, basename(clone));
-    ownedDirectory(agent);
     ownedDirectory(worktrees);
     return { ...paths, clone, worktree: join(worktrees, `t${ticket}`), shared: true };
   });
