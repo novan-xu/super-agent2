@@ -314,12 +314,17 @@ const programWords: Readonly<Record<ProviderUnavailable["program"], string>> = {
   antigravity: "Antigravity",
 };
 
-export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = []): string {
+export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = [], balance?: import("@super-agent2/protocol").Balance): string {
   const lines = [
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
     "An unknown reading is not used up. dsh is the default only when both are used up.",
   ];
+  if (balance !== undefined) {
+    const amounts = balance.wallets.map((wallet) => `${wallet.currency} ${wallet.total} (granted ${wallet.granted}, topped up ${wallet.toppedUp})`).join(", ");
+    const read = balance.machine === null ? "" : `, read ${new Date(balance.readAt).toISOString()} on ${balance.machine}`;
+    lines.push(`DeepSeek balance (dsh): ${balance.state}${amounts ? `, ${amounts}` : ""}${read}${balance.problem ? `, ${balance.problem}` : ""}`);
+  }
   if (unavailable.length === 0) {
     lines.push("No worker program is marked unavailable.");
   } else {

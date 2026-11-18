@@ -1,5 +1,7 @@
 import {
   activeMarks,
+  currentBalance,
+  type Balance,
   type AllowanceStates,
   EngineTable,
   engineOrder,
@@ -35,6 +37,7 @@ export interface StartDefaults {
   table(): EngineTable;
   setTable(table: EngineTable): EngineTable;
   subscriptions(): Subscriptions;
+  balance(): Balance;
   unavailable(): ProviderUnavailable[];
   out(): Map<ProgramId, ProviderOut>;
   order(prose: boolean): ProgramId[];
@@ -52,6 +55,7 @@ export interface StartDefaultsOptions {
   readonly clock: Clock;
   readonly statuses: () => readonly MachineStatus[];
   readonly adjust?: SubscriptionAdjustment;
+  readonly lowBalance?: number;
   readonly providerOrder?: () => readonly Provider[] | undefined;
 }
 
@@ -112,6 +116,22 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     return options.adjust === undefined ? read : options.adjust(read);
   };
 
+  const balance = (): Balance => currentBalance(readingsOf(options.statuses()), clock.now(), options.lowBalance);
+  const balanceHold = (): boolean => {
+    const row = selectSetting.get("deepseek_balance_hold");
+    let saved: { readAt: number; empty: boolean } = { readAt: -1, empty: false };
+    try {
+      if (row !== undefined) saved = z.object({ readAt: z.number(), empty: z.boolean() }).parse(JSON.parse(ValueRow.parse(row).value));
+    } catch { saved = { readAt: -1, empty: false }; }
+    const known = readingsOf(options.statuses()).filter((item) => item.reading.program === "dsh" && item.reading.available !== null);
+    const latest = currentBalance(known, clock.now(), options.lowBalance, Number.MAX_SAFE_INTEGER);
+    if (latest.machine !== null && latest.readAt > saved.readAt) {
+      saved = { readAt: latest.readAt, empty: latest.state === "empty" };
+      upsertSetting.run("deepseek_balance_hold", JSON.stringify(saved), clock.now());
+    }
+    return saved.empty;
+  };
+
   const machines = (): MachineChoice[] => machineChoices(options.statuses());
 
   const marks = (): ProviderMark[] =>
@@ -128,7 +148,9 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
 
   const out = (): Map<ProgramId, ProviderOut> => {
     const read = subscriptions();
-    return providersOut(unavailable(), { codex: read.codex, claude: read.claude }, clock.now());
+    const result = providersOut(unavailable(), { codex: read.codex, claude: read.claude }, clock.now());
+    if (balanceHold()) result.set("dsh", { reason: "The DeepSeek balance is empty", until: null, given: false });
+    return result;
   };
 
   const order = (prose: boolean): ProgramId[] => engineOrder(options.providerOrder?.(), prose);
@@ -150,6 +172,7 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
       return parsed;
     },
     subscriptions,
+    balance,
     unavailable,
     out,
     order,
@@ -189,6 +212,6 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
         listeners.delete(listener);
       };
     },
-    changed,
+    changed: () => { balanceHold(); changed(); },
   };
 }

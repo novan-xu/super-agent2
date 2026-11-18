@@ -177,7 +177,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
       allowances = await readAllowances(prober, programs, now);
       log(
         `Allowance: ${allowances
-          .map((entry) => (entry.state === "unknown" ? `${entry.program} unknown` : `${entry.program} ${entry.state} with ${entry.remainingPercent ?? "?"}% left`))
+          .map((entry) => (entry.program === "dsh" ? `dsh ${entry.available === null ? "unknown" : "read"}` : entry.state === "unknown" ? `${entry.program} unknown` : `${entry.program} ${entry.state} with ${entry.remainingPercent ?? "?"}% left`))
           .join(", ")}`,
       );
       link.update();

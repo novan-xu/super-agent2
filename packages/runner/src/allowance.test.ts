@@ -115,7 +115,7 @@ describe("reading every allowance", () => {
     expect(asked.map((entry) => [entry.path, entry.args])).toEqual([["/bin/codex", ["app-server"]]]);
     expect(asked[0]?.options?.until?.(JSON.stringify({ id: allowanceRequestId, result: {} }))).toBe(true);
     expect(asked[0]?.options?.until?.(JSON.stringify({ id: "superagent2-initialize", result: {} }))).toBe(false);
-    expect(readings.map((reading) => [reading.program, reading.state, reading.remainingPercent])).toEqual([
+    expect(readings.filter((reading) => reading.program !== "dsh").map((reading) => [reading.program, reading.state, reading.remainingPercent])).toEqual([
       ["codex", "available", 60],
       ["claude", "unknown", null],
     ]);
@@ -125,5 +125,26 @@ describe("reading every allowance", () => {
     const prober: Prober = { find: () => undefined, capture: () => Promise.reject(new Error("codex exited with 1 before answering")) };
     const [codex] = await readAllowances(prober, programs, () => now);
     expect(codex).toMatchObject({ state: "unknown", problem: "codex exited with 1 before answering" });
+  });
+});
+
+describe("reading dsh balance", () => {
+  it("keeps dsh stdin open while awaiting the account service", async () => {
+    const dsh: ProgramReport = { id: "dsh", installed: true, path: "/bin/dsh", version: "1", models: [], source: "configuration", problem: null };
+    let captured: CaptureOptions | undefined;
+    const prober: Prober = { find: () => undefined, capture: (_path, _args, options) => {
+      captured = options;
+      return Promise.resolve(JSON.stringify({ id: "superagent2-balance", result: { status: "ready", value: [{ currency: "CNY", balance: "42" }], bonusWallets: [] } }));
+    } };
+    const readings = await readAllowances(prober, [dsh], () => now);
+    expect(captured?.input).toBe("");
+    expect(readings.find((reading) => reading.program === "dsh")).toMatchObject({ available: true, wallets: [{ total: 42 }] });
+  });
+  it("combines normal and bonus wallets and rejects failed or malformed results", async () => {
+    const { dshBalance } = await import("./allowance.js");
+    const output = JSON.stringify({ id: "superagent2-balance", result: { status: "ready", value: [{ currency: "CNY", balance: "20.50" }], bonusWallets: [{ currency: "CNY", balance: "9.25" }] } });
+    expect(dshBalance(output, now)).toMatchObject({ available: true, wallets: [{ currency: "CNY", total: 29.75, granted: 9.25, toppedUp: 20.5 }] });
+    expect(dshBalance('{"id":"superagent2-balance","result":null}', now)).toMatchObject({ available: null, problem: expect.any(String) });
+    expect(dshBalance(output.replace("20.50", "invalid"), now)).toMatchObject({ available: null });
   });
 });

@@ -88,7 +88,7 @@ export function defaultEngine(kind: TicketKind, brainEngine: ProgramId | null, a
     return context.out.has("antigravity") ? proseFallback(allowance, context) : "antigravity";
   }
   if (allowance.codex === "exhausted" && allowance.claude === "exhausted") {
-    return "dsh";
+    return context.out.has("dsh") ? null : "dsh";
   }
   if (brainEngine !== "codex" && brainEngine !== "claude") {
     return null;

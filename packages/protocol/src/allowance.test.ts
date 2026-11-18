@@ -48,3 +48,18 @@ describe("the current subscription", () => {
     expect(currentSubscription("claude", [exhausted(now - 1000, now + 1)], now).state).toBe("unknown");
   });
 });
+
+describe("DeepSeek balance", () => {
+  it("classifies boundaries, unavailable and unknown, using the latest reading", async () => {
+    const { currentBalance } = await import("./allowance.js");
+    const reading = (total: number, available: boolean | null = true) => ({ program: "dsh" as const, readAt: now, available, wallets: [{ currency: "CNY", total, granted: 0, toppedUp: total }], problem: null });
+    const check = (total: number, available: boolean | null = true, low?: number) => currentBalance([{ machine: "mini", reading: reading(total, available) }], now, low).state;
+    expect(check(30)).toBe("ok");
+    expect(check(29.99)).toBe("low");
+    expect(check(0)).toBe("empty");
+    expect(check(50, false)).toBe("empty");
+    expect(check(50, null)).toBe("unknown");
+    expect(check(40, true, 50)).toBe("low");
+    expect(currentBalance([{ machine: "mini", reading: reading(10) }, { machine: "pc", reading: { ...reading(0), readAt: now - 1 } }], now)).toMatchObject({ state: "low", machine: "mini" });
+  });
+});

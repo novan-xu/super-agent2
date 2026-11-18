@@ -1043,6 +1043,7 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   general window; a full window, a reached limit, a lock, or ordinary usage not allowed makes it used up. Limits scoped
   to one model are left out. dsh and Antigravity are not read: neither has a way to say what is left (dsh's help and
   profiles have no usage or balance command, Antigravity's help has none), and neither is part of the engine choice.
+  The later decision "Read the DeepSeek account balance through dsh" supersedes the dsh finding.
   A reading that fails is reported as unknown with the reason. `node packages/runner/dist/main.js allowance` prints
   the readings.
 - **Why:** Workers run on the runners with each machine's own logins, so the machine is where the reading means
@@ -4066,3 +4067,9 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The owner requires both the Mac mini and PC to run up to 8 tickets at once, and neither machine currently
   sets an override.
 - **Other options:** Keep the default at 2 and configure each machine separately.
+
+## 2026-11-18 — Read the DeepSeek account balance through dsh
+
+- **Chosen:** The runner invokes dsh's account service `getBalance` inside dsh, using the existing login. It combines normal and bonus wallets per currency; the hub labels totals below the configurable `HUB_DEEPSEEK_LOW_BALANCE` (30 by default) low, and holds dsh unavailable when all totals are nonpositive until a later successful reading shows money. A failed reading is unknown and does not clear that hold.
+- **Why:** The installed dsh account service already reads the platform account's recharge and bonus wallets using the same login as `deepseek-account`. Its response does not contain the public API's `is_available` flag.
+- **Other options:** Call the public balance API with a separate API key, or use an undocumented direct request with the account token. Both would bypass dsh's own account service.

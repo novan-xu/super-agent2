@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type AllowanceProgram,
   type AllowanceReading,
   type AllowanceWindow,
+  type SubscriptionReading,
   allowanceFrom,
   type ProgramReport,
   unknownAllowance,
@@ -100,7 +106,7 @@ function isoTime(value: string | null | undefined): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
-export function codexAllowance(output: string, readAt: number): AllowanceReading {
+export function codexAllowance(output: string, readAt: number): SubscriptionReading {
   const answer = answerLine(output, CodexAnswer);
   if (answer === undefined) {
     return unknownAllowance("codex", readAt, "Codex did not answer account/rateLimits/read");
@@ -119,7 +125,7 @@ export function codexAllowance(output: string, readAt: number): AllowanceReading
   return allowanceFrom("codex", readAt, windows, blocked);
 }
 
-export function claudeAllowance(output: string, readAt: number): AllowanceReading {
+export function claudeAllowance(output: string, readAt: number): SubscriptionReading {
   const answer = answerLine(output, ClaudeAnswer);
   if (answer === undefined) {
     return unknownAllowance("claude", readAt, "Claude Code did not answer get_usage");
@@ -164,13 +170,48 @@ export const allowanceSources: readonly AllowanceSource[] = [
   },
 ];
 
+const DshAnswer = z.object({ id: z.literal("superagent2-balance"), result: z.object({ status: z.literal("ready"), value: z.array(z.object({ currency: z.string().min(1), balance: z.string() })), bonusWallets: z.array(z.object({ currency: z.string().min(1), balance: z.string() })) }) });
+
+export function dshBalance(output: string, readAt: number): AllowanceReading {
+  const unknown = { program: "dsh" as const, readAt, available: null, wallets: [], problem: "dsh could not read the account balance" };
+  try {
+    const line = output.split(/\r?\n/).find((item) => item.includes('"superagent2-balance"'));
+    const parsed = DshAnswer.safeParse(JSON.parse(line ?? "null"));
+    if (!parsed.success) return unknown;
+    const wallets = new Map<string, { currency: string; total: number; granted: number; toppedUp: number }>();
+    for (const [kind, entries] of [["toppedUp", parsed.data.result.value], ["granted", parsed.data.result.bonusWallets]] as const) {
+      for (const entry of entries) {
+        const amount = Number(entry.balance);
+        if (entry.balance.trim() === "" || !Number.isFinite(amount)) return unknown;
+        const wallet = wallets.get(entry.currency) ?? { currency: entry.currency, total: 0, granted: 0, toppedUp: 0 };
+        wallet[kind] += amount; wallet.total += amount; wallets.set(entry.currency, wallet);
+      }
+    }
+    if (wallets.size === 0) return unknown;
+    return { program: "dsh", readAt, available: true, wallets: [...wallets.values()], problem: null };
+  } catch { return unknown; }
+}
+
+async function readDsh(prober: Prober, programs: readonly ProgramReport[], now: () => number): Promise<AllowanceReading> {
+  const program = programs.find((entry) => entry.id === "dsh");
+  if (!program?.installed || program.path === null) return { program: "dsh", readAt: now(), available: null, wallets: [], problem: "the program is not installed here" };
+  const plugin = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./dsh-balance.ts" : "./dsh-balance.js", import.meta.url));
+  const patch = join(tmpdir(), `super-agent2-balance-${randomUUID()}.yml`);
+  try {
+    writeFileSync(patch, `- insert:\n    - id: super-agent2-balance\n      name: ${JSON.stringify(plugin.replaceAll("\\", "/"))}\n`);
+    const output = await prober.capture(program.path, ["--profile", "sdk", "--patch", patch], { input: "", until: (line) => line.includes('"superagent2-balance"') });
+    return dshBalance(output, now());
+  } catch { return { program: "dsh", readAt: now(), available: null, wallets: [], problem: "dsh could not read the account balance" }; }
+  finally { rmSync(patch, { force: true }); }
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 export async function readAllowances(prober: Prober, programs: readonly ProgramReport[], now: () => number): Promise<AllowanceReading[]> {
-  return Promise.all(
-    allowanceSources.map(async (source) => {
+  return Promise.all([
+    ...allowanceSources.map(async (source) => {
       const program = programs.find((entry) => entry.id === source.program);
       if (program === undefined || !program.installed || program.path === null) {
         return unknownAllowance(source.program, now(), "the program is not installed here");
@@ -185,5 +226,6 @@ export async function readAllowances(prober: Prober, programs: readonly ProgramR
         return unknownAllowance(source.program, now(), messageOf(error));
       }
     }),
-  );
+    ...(programs.some((entry) => entry.id === "dsh" && entry.installed && entry.path !== null) ? [readDsh(prober, programs, now)] : []),
+  ]);
 }

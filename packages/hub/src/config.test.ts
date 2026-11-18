@@ -64,6 +64,12 @@ describe("loadConfig", () => {
     expect(problemsFor({ ...valid, HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: "two hours" })[0]).toMatch(/^HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES must be a whole number of minutes/);
   });
 
+  it("reads the configurable DeepSeek low balance threshold", () => {
+    const result = loadConfig({ ...valid, HUB_DEEPSEEK_LOW_BALANCE: "42.5" });
+    expect(result.ok && result.config.deepseekLowBalance).toBe(42.5);
+    expect(problemsFor({ ...valid, HUB_DEEPSEEK_LOW_BALANCE: "-1" })[0]).toMatch(/^HUB_DEEPSEEK_LOW_BALANCE/);
+  });
+
   it("reads the project folders", () => {
     const result = loadConfig({
       ...valid,
