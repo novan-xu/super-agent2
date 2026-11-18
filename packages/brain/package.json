@@ -18,12 +18,14 @@
   "dependencies": {
     "@super-agent2/programs": "workspace:*",
     "@super-agent2/protocol": "workspace:*",
+    "semver": "^7.8.6",
     "ws": "8.23.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@super-agent2/hub": "workspace:*",
     "@types/node": "^24.19.2",
+    "@types/semver": "^7.8.0",
     "@types/ws": "8.18.2"
   }
 }

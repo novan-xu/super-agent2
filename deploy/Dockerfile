@@ -38,7 +38,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN npm install --global @openai/codex@0.163.0 @anthropic-ai/claude-code@2.1.326 @deepseek-ai/dsh@0.2.1-rc.2 \
  && npm cache clean --force
-RUN mkdir -p /home/node/.codex /home/node/.claude /home/node/.dsh /home/node/workspace /var/lib/superagent2/link \
+RUN mkdir -p /home/node/.codex /home/node/.claude /home/node/.dsh /home/node/workspace /var/lib/superagent2/link /var/lib/superagent2/programs \
  && chown -R node:node /home/node /var/lib/superagent2
 COPY --from=build /app /app
 USER node
