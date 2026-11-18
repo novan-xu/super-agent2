@@ -33,6 +33,7 @@ let begun: number[];
 let sentBack: { readonly ticket: number; readonly note: string }[];
 let ticks: (() => void)[];
 let withWoodpecker: boolean;
+let ownRepository: string;
 
 const noDefaults: ChainDefaults = {
   resolve: () => {
@@ -71,6 +72,7 @@ function open(): void {
     credentials,
     fetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
+    ownRepository,
     ticker: (tick) => {
       ticks.push(tick);
       return () => undefined;
@@ -107,6 +109,7 @@ beforeEach(() => {
   sentBack = [];
   ticks = [];
   withWoodpecker = true;
+  ownRepository = "novan-xu/super-agent2";
   open();
 });
 
@@ -564,6 +567,19 @@ describe("after the merge", () => {
     expect(deployedReport?.notice).toBe(`工单 ${deployed.id} 已合并，这次改动需要部署`);
     expect(deployedReport?.prompt).toContain("so this change needs deploying");
     expect(deployedReport?.prompt).toContain("The ticket deployed nothing");
+  });
+
+  it("says a merge of Super-agent2 itself is deployed by hand, even when its tree still holds a deployment file", async () => {
+    await shut();
+    ownRepository = repository.toUpperCase();
+    open();
+    const own = verifying([83], 30, "p3", ["src/app.ts"], ["src/app.ts", ".superagent2/deployment.json"]);
+    await settle();
+    const report = told.find((entry) => entry.prompt.includes(`Ticket ${own.id} (`));
+    expect(report?.notice).toBe(`工单 ${own.id} 已合并，Super-agent2 的新版本等你部署`);
+    expect(report?.prompt).toContain("this is Super-agent2 itself, which the hub does not deploy");
+    expect(report?.prompt).toContain("report it with report_deployment");
+    expect(report?.prompt).not.toContain("deploy_repository");
   });
 
   it("stops polling a ticket that is no longer verifying", async () => {

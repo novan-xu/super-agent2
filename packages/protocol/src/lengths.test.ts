@@ -9,7 +9,7 @@ describe("what the owner, the brain and a worker send", () => {
     expect(WorkerMessage.safeParse({ text: long }).success).toBe(true);
     expect(StuckAnswerRequest.safeParse({ at: 1, answer: "resume", words: long }).success).toBe(true);
     expect(CommandEnvironment.safeParse({ NOTE: long }).success).toBe(true);
-    expect(DeploymentFile.safeParse({ target: "nas", deploy: long, health: { command: long }, rollback: long }).success).toBe(true);
+    expect(DeploymentFile.safeParse({ target: "box", deploy: long, health: { command: long }, rollback: long }).success).toBe(true);
     expect(DeploymentOutcome.safeParse({ result: "failed", reason: long }).success).toBe(true);
     expect(ChainStart.safeParse({ chains: Array.from({ length: 500 }, (_, index) => ({ ticket: index + 1, fingerprint: "a".repeat(64) })) }).success).toBe(true);
     const materials = Array.from({ length: 50 }, (_, index) => ({ name: `piece-${index}.txt`, source: "x".repeat(5_000), text: long }));
