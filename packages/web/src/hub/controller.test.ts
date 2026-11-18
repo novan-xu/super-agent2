@@ -24,7 +24,6 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     calls,
     conversations: () => answer("conversations", { brain: { linked: true }, conversations: [] }),
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
-    create: () => answer("create", { conversation }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
     sendToStream: (text) => answer(`stream ${text}`, { entry, topic: conversation, position: 1 }),
     interrupt: (id) => answer(`interrupt ${id}`, { conversation }),
@@ -93,21 +92,20 @@ describe("PageController", () => {
         return { ok: true, value: { entry, topic: conversation, position: 1 } };
       },
     }));
-    page.open(null, true);
+    const scope = { kind: "repository", repository: "owner/project" } as const;
+    page.open(null, true, scope);
     expect(await page.send("回复", [], "source")).toBe(true);
     page.open("c8");
     expect(await page.send("继续", [], "source", "c9")).toBe(true);
-    expect(sent).toEqual([["回复", [], "source"], ["c9", "继续", [], "source"]]);
+    expect(sent).toEqual([["回复", [], "source", scope], ["c9", "继续", [], "source"]]);
   });
 
-  it("opens an explicitly created topic and sends directly to it", async () => {
+  it("opens an existing topic and sends directly to it", async () => {
     const hub = api();
     const page = controller(hub);
-    const created = await page.createTopic();
-    expect(created).toBe("c9");
-    page.open(created ?? null);
+    page.open("c9");
     expect(await page.send("你好")).toBe(true);
-    expect(hub.calls).toEqual(["create", "detail c9", "send c9 你好"]);
+    expect(hub.calls).toEqual(["detail c9", "send c9 你好"]);
     expect(page.store.getState().list.map((item) => item.id)).toEqual(["c9"]);
     expect(page.store.getState().current?.entries).toEqual([entry]);
   });

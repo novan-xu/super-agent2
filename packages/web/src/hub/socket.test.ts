@@ -110,6 +110,26 @@ describe("HubSocket", () => {
     ]);
   });
 
+  it("drops older stream pages after switching scopes, even when returning to the same scope", () => {
+    const { socket, sockets, messages } = harness();
+    socket.start();
+    const link = sockets[0]!;
+    link.open();
+    socket.watchStream(true, { kind: "daily" });
+    socket.watchStream(true, { kind: "code" });
+    socket.watchStream(true, { kind: "daily" });
+    expect(link.sent).toEqual([
+      { type: "watch.stream", scope: { kind: "daily" }, subscription: 1 },
+      { type: "watch.stream", scope: { kind: "code" }, subscription: 2 },
+      { type: "watch.stream", scope: { kind: "daily" }, subscription: 3 },
+    ]);
+    const page = { type: "stream.page", before: null, entries: [], turns: [] };
+    link.deliver(JSON.stringify({ ...page, subscription: 1 }));
+    link.deliver(JSON.stringify({ ...page, subscription: 2 }));
+    link.deliver(JSON.stringify({ ...page, subscription: 3 }));
+    expect(messages).toEqual([{ ...page, subscription: 3 }]);
+  });
+
   it("passes on only messages of the protocol", () => {
     const { socket, sockets, messages } = harness();
     socket.start();

@@ -17,6 +17,17 @@ export const TopicScope = z.discriminatedUnion("kind", [
 ]);
 export type TopicScope = z.infer<typeof TopicScope>;
 
+export function topicInScope(topic: { readonly repository: string | null; readonly needsRepository?: true | undefined }, scope: TopicScope): boolean {
+  switch (scope.kind) {
+    case "daily":
+      return topic.repository === null && topic.needsRepository !== true;
+    case "code":
+      return topic.repository !== null || topic.needsRepository === true;
+    case "repository":
+      return topic.repository?.toLowerCase() === scope.repository.toLowerCase();
+  }
+}
+
 export const ConversationState = z.enum(["idle", "working"]);
 export type ConversationState = z.infer<typeof ConversationState>;
 
@@ -114,6 +125,7 @@ export type BrainStatus = z.infer<typeof BrainStatus>;
 export const ConversationList = z.object({
   brain: BrainStatus,
   conversations: z.array(Conversation),
+  repositories: z.array(RepositoryName).optional(),
 });
 export type ConversationList = z.infer<typeof ConversationList>;
 
@@ -158,12 +170,15 @@ export const StreamPage = z.object({
 });
 export type StreamPage = z.infer<typeof StreamPage>;
 
-export const StreamPageUpdate = StreamPage.extend({ type: z.literal("stream.page") });
-export const StreamEntryUpdate = StreamEntry.extend({ type: z.literal("stream.entry") });
+const StreamSubscription = z.number().int().positive().optional();
+export const StreamPageUpdate = StreamPage.extend({ type: z.literal("stream.page"), subscription: StreamSubscription, resumed: z.literal(true).optional() });
+export const StreamEntryUpdate = StreamEntry.extend({ type: z.literal("stream.entry"), subscription: StreamSubscription });
 
 export const WatchStream = z.object({
   type: z.literal("watch.stream"),
   after: z.number().int().nonnegative().optional(),
+  scope: TopicScope.optional(),
+  subscription: StreamSubscription,
 });
 export const UnwatchStream = z.object({ type: z.literal("unwatch.stream") });
 export const ReadStreamPage = z.object({ type: z.literal("read.stream"), before: z.number().int().positive() });

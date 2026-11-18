@@ -25,6 +25,8 @@ import {
   streamLargestPage,
   streamPageSize,
   streamPath,
+  topicInScope,
+  type TopicScope,
   type CommandList,
   type CommandResponse,
   type Health,
@@ -1075,11 +1077,15 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return true;
     }
     if (path === conversationsPath && method === "GET") {
-      const limit = integerParameter(url, "limit", defaultListLimit, maximumListLimit);
+      const all = url.searchParams.get("all") === "1";
+      const limit = all ? Number.MAX_SAFE_INTEGER : integerParameter(url, "limit", defaultListLimit, maximumListLimit);
       if (limit === undefined) {
         return false;
       }
-      sendJson(response, 200, { brain: { linked: conversations.linked() }, conversations: conversations.list(limit) });
+      sendJson(response, 200, {
+        brain: { linked: conversations.linked() }, conversations: conversations.list(limit),
+        ...(all ? { repositories: options.repositories?.list().map(({ repository }) => repository) ?? [] } : {}),
+      });
       return true;
     }
     if (path === conversationsPath && method === "POST") {
@@ -1411,7 +1417,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const followed = new Set<string>();
     const watched = new Set<string>();
     const watchedTickets = new Set<number>();
-    let watchingStream = false;
+    let watchingStream: { scope?: TopicScope | undefined; subscription?: number | undefined } | undefined;
+    const streamTag = () => ({ subscription: watchingStream?.subscription });
     const send = (message: ServerMessage) => {
       if (client.readyState === client.OPEN) {
         client.send(JSON.stringify(message));
@@ -1428,11 +1435,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
           if (watched.has(event.topic.id)) {
             send({ type: "entry", entry: event.entry });
           }
-          if (watchingStream) {
-            send({ ...event, type: "stream.entry" });
+          if (watchingStream !== undefined && (watchingStream.scope === undefined || topicInScope(event.topic, watchingStream.scope))) {
+            send({ ...event, type: "stream.entry", ...streamTag() });
           }
-        } else if (event.type !== "delta" || watchingStream || watched.has(event.conversation)) {
+        } else if (event.type !== "delta" || watched.has(event.conversation)) {
           send(event);
+        } else if (watchingStream !== undefined) {
+          const topic = watchingStream.scope === undefined ? undefined : options.conversations?.get(event.conversation);
+          if (watchingStream.scope === undefined || (topic !== undefined && topicInScope(topic, watchingStream.scope))) {
+            send(event);
+          }
         }
       }) ?? (() => undefined);
     const unsubscribeWaiting =
@@ -1476,28 +1488,30 @@ export function createHubServer(options: HubServerOptions): HubServer {
       if (message.type === "watch.stream") {
         const conversations = options.conversations;
         if (conversations !== undefined) {
-          watchingStream = true;
+          watchingStream = { scope: message.scope, subscription: message.subscription };
           if (message.after === undefined) {
-            send({ type: "stream.page", ...conversations.stream() });
+            send({ type: "stream.page", ...conversations.stream(undefined, undefined, message.scope), ...streamTag() });
+          } else if (message.scope !== undefined) {
+            send({ type: "stream.page", ...conversations.streamAfter(message.after, message.scope), resumed: true, ...streamTag() });
           } else {
             const { entries, turns } = conversations.streamAfter(message.after);
             for (const turn of turns) {
               send({ type: "turn", turn });
             }
             for (const item of entries) {
-              send({ type: "stream.entry", ...item });
+              send({ type: "stream.entry", ...item, ...streamTag() });
             }
           }
         }
         return;
       }
       if (message.type === "unwatch.stream") {
-        watchingStream = false;
+        watchingStream = undefined;
         return;
       }
       if (message.type === "read.stream") {
-        if (watchingStream && options.conversations !== undefined) {
-          send({ type: "stream.page", ...options.conversations.stream(message.before) });
+        if (watchingStream !== undefined && options.conversations !== undefined) {
+          send({ type: "stream.page", ...options.conversations.stream(message.before, undefined, watchingStream.scope), ...streamTag() });
         }
         return;
       }

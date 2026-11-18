@@ -10,9 +10,9 @@ export interface Day {
 
 export type StreamItem =
   | { readonly kind: "day"; readonly key: string; readonly day: Day }
-  | { readonly kind: "entry"; readonly key: string; readonly entry: Exclude<ConversationEntry, ToolEntry>; readonly lead: boolean; readonly live: boolean }
+  | { readonly kind: "entry"; readonly key: string; readonly entry: Exclude<ConversationEntry, ToolEntry>; readonly lead: boolean; readonly live: boolean; readonly topic?: string }
   | { readonly kind: "ended"; readonly key: string; readonly turn: Turn }
-  | { readonly kind: "status"; readonly key: string; readonly tool: ToolEntry | null };
+  | { readonly kind: "status"; readonly key: string; readonly tool: ToolEntry | null; readonly topic?: string };
 
 function dayOf(at: number): { readonly year: number; readonly month: number; readonly day: number } {
   const date = new Date(at);
@@ -54,13 +54,18 @@ export function combinedStreamItems(entries: readonly ConversationEntry[], turns
 
 function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: number, working: boolean, combined: boolean): readonly StreamItem[] {
   const items: StreamItem[] = [];
-  const running = new Set(state.turns.filter((turn) => turn.state === "running").map((turn) => turn.id));
+  const runningTurns = state.turns.filter((turn) => turn.state === "running");
+  const running = new Set(runningTurns.map((turn) => turn.id));
+  const activeTools = new Map<string, ToolEntry>();
   const ended = endedTurns(state.turns);
   const lastOfTurn = new Map<string, string>();
   for (const entry of state.entries) {
     const turn = turnOf(entry);
     if (turn !== null) {
       lastOfTurn.set(turn, entry.id);
+    }
+    if (entry.kind === "tool" && entry.state === "running" && running.has(entry.turn)) {
+      activeTools.set(entry.turn, entry);
     }
   }
   const endings = new Map<string, Turn[]>();
@@ -80,6 +85,7 @@ function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: numbe
     if (previousDay === undefined || !sameDay(previousDay, day)) {
       items.push({ kind: "day", key: `day-${anchor}`, day: describeDay(at, now) });
       previousDay = day;
+      previous = undefined;
     }
   };
   const pushLoose = (before: number) => {
@@ -97,9 +103,10 @@ function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: numbe
     pushLoose(entry.at);
     if (entry.kind !== "tool") {
       pushDay(entry.at, entry.id);
-      const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry));
+      const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry) && previous.conversation === entry.conversation);
       const live = entry.kind === "text" && running.has(entry.turn) && (combined ? lastOfTurn.get(entry.turn) === entry.id : entry === lastEntry && working);
-      items.push({ kind: "entry", key: entry.id, entry, lead, live });
+      const topic = combined && (entry.kind !== "text" || lead) ? { topic: entry.conversation } : {};
+      items.push({ kind: "entry", key: entry.id, entry, lead, live, ...topic });
       previous = entry;
     }
     for (const turnEnded of endings.get(entry.id) ?? []) {
@@ -112,6 +119,12 @@ function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: numbe
   if (working) {
     const tool = state.entries.findLast((entry): entry is ToolEntry => entry.kind === "tool" && entry.state === "running" && running.has(entry.turn)) ?? null;
     items.push({ kind: "status", key: "status", tool });
+  }
+  if (combined) {
+    const byTopic = new Map(runningTurns.map((turn) => [turn.conversation, turn]));
+    for (const [topic, turn] of byTopic) {
+      items.push({ kind: "status", key: `status-${topic}`, topic, tool: activeTools.get(turn.id) ?? null });
+    }
   }
   return items;
 }

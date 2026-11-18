@@ -1,9 +1,10 @@
 import { text } from "@super-agent2/catalog";
-import type { Conversation } from "@super-agent2/protocol";
-import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type Conversation, type ConversationEntry, type StreamEntry as StreamRecord, type TopicScope, topicInScope } from "@super-agent2/protocol";
+import { type KeyboardEvent, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { combinedStreamItems, streamItems } from "../live/stream.js";
+import { topicScopeKey } from "../live/topic-scope.js";
 import type { TopicStreamState } from "../live/topic-stream.js";
 import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
@@ -32,9 +33,16 @@ interface ListProps {
   readonly hrefOf: (conversation: string) => string;
   readonly open: (conversation: string) => void;
   readonly now: number;
+  readonly showRepository: boolean;
 }
 
-function ConversationList({ list, current, hrefOf, open, now }: ListProps) {
+type TopicHeading = StreamRecord["topic"];
+
+function repositoryOf(topic: TopicHeading | undefined): string | null {
+  return topic?.repository ?? (topic?.needsRepository === true ? text("conversation.repository.pending") : null);
+}
+
+export function TopicList({ list, current, hrefOf, open, now, showRepository }: ListProps) {
   return (
     <ul className="conv-list">
       {list.map((conversation) => (
@@ -47,7 +55,8 @@ function ConversationList({ list, current, hrefOf, open, now }: ListProps) {
           >
             <span className="ri-title od-truncate">{titleOf(conversation)}</span>
             <span className="ri-meta">
-              {conversation.state === "working" ? <span className="dot dot--ok dot--live" /> : null}
+              {conversation.state === "working" ? <span className="dot dot--ok dot--live" role="img" aria-label={text("conversation.answering")} /> : null}
+              {showRepository ? <span className="od-truncate">{repositoryOf(conversation)}</span> : null}
               <span className="num">{whenOf(conversation.updatedAt, now)}</span>
             </span>
           </a>
@@ -72,7 +81,7 @@ interface QuotePreview {
   readonly text: string;
 }
 
-function Composer({ working, canStop, send, stop, draftKey, quote, clearQuote }: ComposerProps) {
+export function TopicComposer({ working, canStop, send, stop, draftKey, quote, clearQuote }: ComposerProps) {
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -174,6 +183,8 @@ function Composer({ working, canStop, send, stop, draftKey, quote, clearQuote }:
 }
 
 export interface ConversationViewProps {
+  readonly conversation: string | null;
+  readonly scope: TopicScope;
   readonly state: ConversationState | null;
   readonly stream: TopicStreamState | null;
   readonly list: readonly Conversation[];
@@ -182,6 +193,10 @@ export interface ConversationViewProps {
   readonly model: string | null;
   readonly hrefOf: (conversation: string) => string;
   readonly open: (conversation: string) => void;
+  readonly streamHref: string;
+  readonly openStream: () => void;
+  readonly navigation?: ReactNode;
+  readonly compact?: boolean;
   readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
   readonly stop: () => void;
   readonly loadOlder: () => void;
@@ -189,36 +204,151 @@ export interface ConversationViewProps {
 }
 
 export function ConversationView(props: ConversationViewProps) {
-  const { state, stream, now } = props;
-  const scroller = useRef<HTMLDivElement>(null);
+  const { state, stream, now, conversation, scope, list, hrefOf, open } = props;
   const following = useRef(true);
-  const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const picker = useRef<HTMLDialogElement>(null);
   const [quotes, setQuotes] = useState<Readonly<Record<string, QuotePreview | undefined>>>({});
-  const items = useMemo(
-    () => stream === null ? (state === null ? [] : streamItems(state, now)) : combinedStreamItems(stream.entries.map(({ entry }) => entry), stream.turns, now),
-    [state, stream, now],
-  );
-  const topics = useMemo(() => {
-    const titles = new Map(stream?.entries.map(({ topic }) => [topic.id, topic.title]));
-    for (const topic of props.list) {
-      titles.set(topic.id, topic.title);
-    }
-    return titles;
-  }, [stream, props.list]);
   const working = state !== null && isWorking(state);
-  const conversationId = state?.id ?? null;
-  const draftKey = conversationId ?? "";
-  const thisYear = new Date(now).getFullYear();
+  const draftKey = conversation === null ? `scope:${topicScopeKey(scope)}` : `topic:${conversation}`;
+  const showRepository = scope.kind === "code";
+  const filtered = useMemo(() => list.filter((topic) => topicInScope(topic, scope)), [list, scope]);
   const clearQuote = useCallback((id: string) => {
     setQuotes((all) => all[draftKey]?.id === id ? { ...all, [draftKey]: undefined } : all);
   }, [draftKey]);
+  const selectQuote = useCallback((entry: VisibleEntry) => {
+    setQuotes((all) => ({ ...all, [draftKey]: { id: entry.id, text: previewOf(entry) } }));
+  }, [draftKey]);
+
+  const send = useCallback(
+    async (message: string, attachments: readonly string[], quotedMessage?: string) => {
+      following.current = true;
+      return props.send(message, attachments, quotedMessage);
+    },
+    [props.send],
+  );
+
+  const pick = (conversation: string) => {
+    picker.current?.close();
+    open(conversation);
+  };
+
+  const title = titleOf(state?.conversation ?? list.find((topic) => topic.id === conversation));
+  const online = props.status === "open";
+  const lastModel = state?.turns.at(-1)?.model ?? props.model;
+
+  return (
+    <div className={props.compact === true ? "conv conv--solo conv--compact" : "conv"}>
+      <div className="conv-main">
+        <div className="conv-bar">
+          {props.navigation}
+          <div className="conv-toolbar">
+            {conversation === null ? null : (
+              <div className="conv-current">
+                <a className="icon-btn" aria-label={text("conversation.backToStream")} href={props.streamHref}
+                  onClick={(event) => followLink(event, props.openStream)}><Icon name="back" size={16} /></a>
+                <h2 className="conv-title od-truncate">{title}</h2>
+              </div>
+            )}
+            <button className="conv-pick" type="button" aria-haspopup="dialog" onClick={() => picker.current?.showModal()}>
+              {text("conversation.list")}
+              <Icon name="down" size={16} />
+            </button>
+            <span className="od-fill" />
+            <span className="brain-chip">
+            <span className={`dot ${!online ? "dot--warn" : props.linked ? "dot--ok" : "dot--bad"}`} />
+            {online ? <span>{text("brain.name")}</span> : null}
+            {!online ? (
+              <span>{text("hub.reconnecting")}</span>
+            ) : props.linked ? (
+              lastModel === null ? null : <span className="mono">{lastModel}</span>
+            ) : (
+              <span>{text("brain.offline")}</span>
+            )}
+            </span>
+          </div>
+        </div>
+        <TopicStream key={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
+          following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote} />
+        <TopicComposer working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
+          quote={quotes[draftKey]} clearQuote={clearQuote} />
+      </div>
+      {props.compact === true ? null : (
+        <aside className="rail" aria-label={text("conversation.list")}>
+          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={open} now={now} showRepository={showRepository} />
+        </aside>
+      )}
+      <dialog className="dlg" ref={picker} aria-label={text("conversation.list")}>
+        <div className="dlg-in">
+          <div className="dlg-head">
+            <h2>{text("conversation.list")}</h2>
+            <button className="icon-btn" type="button" aria-label={text("conversation.close")} onClick={() => picker.current?.close()}>
+              <Icon name="x" />
+            </button>
+          </div>
+          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={pick} now={now} showRepository={showRepository} />
+        </div>
+      </dialog>
+    </div>
+  );
+}
+
+type VisibleEntry = Exclude<ConversationEntry, { kind: "tool" }>;
+
+function previewOf(entry: VisibleEntry): string {
+  const fallback = entry.kind === "owner" ? entry.attachments[0]?.name : entry.kind === "delivery" ? entry.title.zh : undefined;
+  return (entry.text?.trim() || fallback || text("conversation.quote")).slice(0, 240);
+}
+
+function toneOf(id: string): number {
+  let hash = 0;
+  for (const character of id) {
+    hash = Math.imul(31, hash) + character.charCodeAt(0);
+  }
+  return (hash >>> 0) % 4;
+}
+
+interface TopicStreamProps {
+  readonly state: ConversationState | null;
+  readonly stream: TopicStreamState | null;
+  readonly scope: TopicScope;
+  readonly list: readonly Conversation[];
+  readonly online: boolean;
+  readonly now: number;
+  readonly following: RefObject<boolean>;
+  readonly hrefOf: (topic: string) => string;
+  readonly open: (topic: string) => void;
+  readonly loadOlder: () => void;
+  readonly selectQuote: (entry: VisibleEntry) => void;
+}
+
+export function TopicStream({ state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote }: TopicStreamProps) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const topics = useMemo(() => {
+    const found = new Map(stream?.entries.map(({ topic }) => [topic.id, topic]));
+    for (const topic of list) {
+      found.set(topic.id, topic);
+    }
+    return found;
+  }, [stream, list]);
+  const entries = useMemo(() => stream === null ? state?.entries ?? [] : stream.entries.flatMap(({ entry, topic }) =>
+    topicInScope(topics.get(topic.id) ?? topic, scope) ? [entry] : []), [state, stream, topics, scope]);
+  const previews = useMemo(() => new Map(entries.flatMap((entry) => entry.kind === "tool" ? [] : [[entry.id, entry] as const])), [entries]);
+  const items = useMemo(() => {
+    if (stream === null) {
+      return state === null ? [] : streamItems(state, now);
+    }
+    const turns = stream.turns.filter((turn) => {
+      const topic = topics.get(turn.conversation);
+      return topic !== undefined && topicInScope(topic, scope);
+    });
+    return combinedStreamItems(entries, turns, now);
+  }, [state, stream, entries, topics, scope, now]);
+  const thisYear = new Date(now).getFullYear();
 
   useLayoutEffect(() => {
     following.current = true;
-    older.current = null;
-  }, [conversationId]);
-
+  }, [following]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element === null) {
@@ -230,7 +360,7 @@ export function ConversationView(props: ConversationViewProps) {
     } else if (following.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [items, stream?.loading]);
+  }, [items, stream?.loading, following]);
 
   useEffect(() => {
     const element = scroller.current;
@@ -244,99 +374,51 @@ export function ConversationView(props: ConversationViewProps) {
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [following]);
 
-  const send = useCallback(
-    async (message: string, attachments: readonly string[], quotedMessage?: string) => {
-      following.current = true;
-      return props.send(message, attachments, quotedMessage);
-    },
-    [props.send],
-  );
-
-  const pick = (conversation: string) => {
-    picker.current?.close();
-    props.open(conversation);
+  const topicLabel = (id: string) => {
+    const topic = topics.get(id);
+    return (
+      <a className={`topic-label topic-tone-${toneOf(id)}`} href={hrefOf(id)} onClick={(event) => followLink(event, () => open(id))}>
+        <span className="od-truncate">{titleOf(topic)}</span>
+        {scope.kind === "code" && repositoryOf(topic) !== null ? <span className="topic-repo od-truncate">{repositoryOf(topic)}</span> : null}
+      </a>
+    );
   };
 
-  const title = stream === null ? titleOf(state?.conversation) : text("conversation.all");
-  const online = props.status === "open";
-  const lastModel = state?.turns.at(-1)?.model ?? props.model;
-
   return (
-    <div className="conv">
-      <div className="conv-main">
-        <div className="conv-bar">
-          <button className="conv-pick" type="button" aria-haspopup="dialog" onClick={() => picker.current?.showModal()}>
-            <span className="od-truncate">{title}</span>
-            <Icon name="down" size={16} />
-          </button>
-          <h2 className="conv-title od-truncate">{title}</h2>
-          <span className="od-fill" />
-          <span className="brain-chip">
-            <span className={`dot ${!online ? "dot--warn" : props.linked ? "dot--ok" : "dot--bad"}`} />
-            {online ? <span>{text("brain.name")}</span> : null}
-            {!online ? (
-              <span>{text("hub.reconnecting")}</span>
-            ) : props.linked ? (
-              lastModel === null ? null : <span className="mono">{lastModel}</span>
-            ) : (
-              <span>{text("brain.offline")}</span>
-            )}
-          </span>
-        </div>
-        <div
-          className={stream === null ? "stream" : "stream stream--combined"}
-          ref={scroller}
-          onScroll={(event) => {
-            const element = event.currentTarget;
-            following.current = element.scrollHeight - element.scrollTop - element.clientHeight < nearBottom;
-          }}
-        >
-          <div className="stream-inner" role="log" aria-label={text("conversation.stream")}>
-            {stream?.before != null ? (
-              <button className="btn btn-sm stream-older" type="button" disabled={stream.loading || !online} onClick={() => {
-                const element = scroller.current;
-                if (element !== null) {
-                  following.current = false;
-                  older.current = { height: element.scrollHeight, top: element.scrollTop };
-                }
-                props.loadOlder();
-              }}>{text("conversation.older")}</button>
-            ) : null}
-            {items.map((item) => {
-              const id = item.kind === "entry" ? item.entry.conversation : item.kind === "ended" ? item.turn.conversation : null;
-              const topic = stream === null || id === null ? undefined : (
-                <a className="topic-label od-truncate" href={props.hrefOf(id)} onClick={(event) => followLink(event, () => props.open(id))}>
-                  {topics.get(id) || text("conversation.untitled")}
-                </a>
-              );
-              const quote = item.kind === "entry" ? () => {
-                const { entry } = item;
-                const fallback = entry.kind === "owner" ? entry.attachments[0]?.name : entry.kind === "delivery" ? entry.title.zh : undefined;
-                setQuotes((all) => ({ ...all, [draftKey]: { id: entry.id, text: (entry.text?.trim() || fallback || text("conversation.quote")).slice(0, 240) } }));
-              } : undefined;
-              return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={topic} quote={quote} />;
-            })}
-          </div>
-        </div>
-        <Composer working={working} canStop={conversationId !== null} send={send} stop={props.stop} draftKey={draftKey}
-          quote={quotes[draftKey]} clearQuote={clearQuote} />
+    <div className={stream === null ? "stream" : "stream stream--combined"} ref={scroller} onScroll={(event) => {
+      const element = event.currentTarget;
+      following.current = element.scrollHeight - element.scrollTop - element.clientHeight < nearBottom;
+    }}>
+      <div className="stream-inner" role="log" aria-label={text("conversation.stream")}>
+        {stream?.before != null ? (
+          <button className="btn btn-sm stream-older" type="button" disabled={stream.loading || !online} onClick={() => {
+            const element = scroller.current;
+            if (element !== null) {
+              following.current = false;
+              older.current = { height: element.scrollHeight, top: element.scrollTop };
+            }
+            loadOlder();
+          }}>{text("conversation.older")}</button>
+        ) : null}
+        {items.map((item) => {
+          const id = item.kind === "ended" && stream !== null ? item.turn.conversation : "topic" in item ? item.topic : undefined;
+          const entry = item.kind === "entry" ? item.entry : undefined;
+          const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
+          const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
+          return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
+            quote={entry === undefined ? undefined : () => selectQuote(entry)}
+            quoted={entry?.kind === "owner" && entry.quotedMessage !== undefined ? (
+              <div className="sent-quote od-truncate">{source === undefined ? text("conversation.quote") : previewOf(source)}</div>
+            ) : undefined}
+            match={match === undefined ? undefined : (
+              <a className="possible-match od-truncate" href={hrefOf(match)} onClick={(event) => followLink(event, () => open(match))}>
+                {text("conversation.possibleMatch", { topic: titleOf(topics.get(match)) })}
+              </a>
+            )} />;
+        })}
       </div>
-      <aside className="rail" aria-label={text("conversation.list")}>
-        <ConversationList list={props.list} current={conversationId} hrefOf={props.hrefOf} open={props.open} now={now} />
-      </aside>
-      <dialog className="dlg" ref={picker} aria-label={text("conversation.list")}>
-        <div className="dlg-in">
-          <div className="dlg-head">
-            <h2>{text("conversation.list")}</h2>
-            <button className="icon-btn" type="button" aria-label={text("conversation.close")} onClick={() => picker.current?.close()}>
-              <Icon name="x" />
-            </button>
-          </div>
-          <ConversationList list={props.list} current={conversationId} hrefOf={props.hrefOf} open={pick} now={now} />
-        </div>
-      </dialog>
     </div>
   );
 }

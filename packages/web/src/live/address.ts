@@ -15,7 +15,7 @@ export function destinationOf(address: string, origin: string): Destination | un
   if (url.origin !== origin) {
     return undefined;
   }
-  const route = pageRoute(url.pathname);
+  const route = pageRoute(url.pathname, url.search);
   if (route === undefined) {
     return undefined;
   }

@@ -93,7 +93,7 @@ describe("the brain status", () => {
     expect(calling).toContain("正在调用 run_command：gh repo view");
     expect(calling).not.toContain("ignored");
     const noSummary = renderToString(<StreamEntry item={{ kind: "status", key: "status", tool: { ...tool, input: "" } }} thisYear={2026} />);
-    expect(noSummary).toContain("正在调用 run_command</div>");
+    expect(noSummary).toContain("正在调用 run_command</span>");
   });
 });
 

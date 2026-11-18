@@ -1,5 +1,6 @@
-import { type ClientMessage, ServerMessage } from "@super-agent2/protocol";
+import { type ClientMessage, ServerMessage, type TopicScope } from "@super-agent2/protocol";
 import { reconnectDelay } from "../live/reconnect.js";
+import { topicScopeKey } from "../live/topic-scope.js";
 
 export type SocketStatus = "connecting" | "open" | "closed";
 
@@ -47,6 +48,8 @@ export class HubSocket {
   private cancelRetry: (() => void) | undefined;
   private watching: string | null = null;
   private watchingStream = false;
+  private streamScope: TopicScope | undefined;
+  private streamSubscription = 0;
   private watchingTicket: number | null = null;
   private running = false;
 
@@ -95,11 +98,13 @@ export class HubSocket {
     }
   }
 
-  watchStream(watching: boolean): void {
-    if (watching === this.watchingStream) {
+  watchStream(watching: boolean, scope?: TopicScope, restart = false): void {
+    if (!restart && watching === this.watchingStream && (!watching || topicScopeKey(scope) === topicScopeKey(this.streamScope))) {
       return;
     }
     this.watchingStream = watching;
+    this.streamScope = scope;
+    this.streamSubscription += 1;
     if (watching) {
       this.followStream();
     } else {
@@ -113,7 +118,11 @@ export class HubSocket {
 
   private followStream(): void {
     const after = this.options.resumeStream?.();
-    this.send({ type: "watch.stream", ...(after === undefined ? {} : { after }) });
+    this.send({
+      type: "watch.stream",
+      ...(after === undefined ? {} : { after }),
+      ...(this.streamScope === undefined ? {} : { scope: this.streamScope, subscription: this.streamSubscription }),
+    });
   }
 
   private ticketAfter(ticket: number): number {
@@ -182,7 +191,14 @@ export class HubSocket {
         }
         const parsed = ServerMessage.safeParse(value);
         if (parsed.success) {
-          this.options.onMessage(parsed.data);
+          const message = parsed.data;
+          if (message.type === "stream.page" || message.type === "stream.entry") {
+            const expected = this.streamScope === undefined ? undefined : this.streamSubscription;
+            if (!this.watchingStream || message.subscription !== expected) {
+              return;
+            }
+          }
+          this.options.onMessage(message);
         }
       },
       close: () => {

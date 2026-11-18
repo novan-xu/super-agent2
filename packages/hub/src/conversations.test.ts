@@ -490,6 +490,51 @@ describe("the topic stream", () => {
     expect(resumed.received.find(({ type }) => type === "turn")).toMatchObject({ turn: { conversation: first } });
   });
 
+  it("pages and replays each subscription in its own scope, including a turn with no visible text yet", async () => {
+    const running = await start();
+    const daily = running.conversations.create().id;
+    const project = openTicket(running, undefined, "owner/project").conversation!;
+    const other = openTicket(running, undefined, "owner/other").conversation!;
+    running.conversations.send(daily, "Earlier daily message");
+    for (let index = 0; index < 52; index += 1) {
+      running.conversations.send(project, `Repository message ${index}`);
+    }
+    running.conversations.send(other, "Other repository");
+    const pending = await running.conversations.sendToStream(undefined, "Choose a repository", [], { scope: { kind: "code" } });
+    const brain = running.conversations.attach({ send: () => undefined, close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    brain.receive({ type: "turn.started", conversation: project, turn: "working", provider: "claude", model: "model", inputs: [] });
+
+    const { socket, received } = await pageSocket(running);
+    socket.send(JSON.stringify({ type: "watch.stream", scope: { kind: "daily" }, subscription: 1 }));
+    await until(() => received.some(({ type }) => type === "stream.page"), socket);
+    expect(received.at(-1)).toMatchObject({
+      type: "stream.page", subscription: 1, before: null, turns: [], entries: [{ topic: { id: daily } }],
+    });
+    socket.send(JSON.stringify({ type: "watch.stream", scope: { kind: "repository", repository: "OWNER/Project" }, subscription: 2 }));
+    await until(() => received.some((message) => message.type === "stream.page" && message.subscription === 2), socket);
+    const projectPage = received.find((message) => message.type === "stream.page" && message.subscription === 2);
+    expect(projectPage?.type === "stream.page" && projectPage.entries).toHaveLength(50);
+    expect(projectPage).toMatchObject({ before: 4, turns: [{ id: "working", conversation: project }] });
+
+    socket.send(JSON.stringify({ type: "read.stream", before: 4 }));
+    await until(() => received.filter((message) => message.type === "stream.page" && message.subscription === 2).length === 2, socket);
+    expect(received.at(-1)).toMatchObject({
+      type: "stream.page", subscription: 2, before: null, entries: [{ position: 2, topic: { id: project } }, { position: 3, topic: { id: project } }],
+    });
+
+    socket.send(JSON.stringify({ type: "watch.stream", after: 53, scope: { kind: "code" }, subscription: 3 }));
+    await until(() => received.some((message) => message.type === "stream.page" && message.subscription === 3), socket);
+    expect(received.at(-1)).toMatchObject({
+      type: "stream.page", subscription: 3, resumed: true, entries: [{ topic: { id: other } }, { topic: { id: pending?.topic.id } }],
+    });
+    running.conversations.send(daily, "New daily message");
+    running.conversations.send(project, "New project message");
+    await until(() => received.some((message) => message.type === "stream.entry" && message.subscription === 3), socket);
+    expect(received.flatMap((message) => message.type === "stream.entry" && message.subscription === 3 ? [message.topic.id] : []))
+      .toEqual([project]);
+  });
+
   it("persists topic ownership for old tickets and repairs, and routes new-model notices into one System topic", async () => {
     const running = await start();
     const topic = running.conversations.create();
