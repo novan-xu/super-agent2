@@ -33,6 +33,7 @@ import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
 import { createVerification, type MergedPart, type Ticker, type VerificationService } from "./verification.js";
 import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
+import { createDecisionReviews, type DecisionReviews } from "./reviews.js";
 import type { AccessServiceTokens } from "./cloudflare.js";
 import { createMachineAdmin, type MachineAdmin } from "./enrollment.js";
 import { createRepositoryAccounts, type RepositoryAccounts } from "./repositories.js";
@@ -79,6 +80,7 @@ export interface Hub {
   readonly work: WorkService | undefined;
   readonly verification: VerificationService;
   readonly loop: FailureLoop;
+  readonly reviews: DecisionReviews;
   readonly taskTickets: TaskTickets;
   readonly memories: MemoryService;
   readonly admin: MachineAdmin;
@@ -105,6 +107,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let chains: Chains;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
+  let reviews: DecisionReviews;
   let taskTickets: TaskTickets;
   let memories: MemoryService;
   let settings: Settings;
@@ -244,6 +247,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ownerEmail: config.ownerEmail,
     });
     loop = failures;
+    reviews = createDecisionReviews({
+      tickets,
+      tell: (conversation, notice, prompt) => {
+        told.tell(conversation, notice, prompt);
+      },
+    });
     taskTickets = createTaskTickets({
       database,
       tickets,
@@ -317,6 +326,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       loop: failures,
+      reviews,
       defaults,
       brainToken,
       runners,
@@ -368,6 +378,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       work,
       verification,
       loop: failures,
+      reviews,
       taskTickets,
       memories,
       admin,

@@ -124,7 +124,7 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       if (message.type === "tickets") {
         const detail = state.detail;
         const changed = detail === null ? undefined : message.tickets.find((ticket) => ticket.id === detail.id);
-        return withDetail({ ...state, tickets: receiveTickets(message.tickets) }, detail === null || changed === undefined ? detail : receiveTicketChange(detail, changed));
+        return withDetail({ ...state, tickets: receiveTickets(message.tickets, message.reviews) }, detail === null || changed === undefined ? detail : receiveTicketChange(detail, changed));
       }
       if (message.type === "ticket") {
         const tickets = receiveTicket(state.tickets, message.ticket);

@@ -73,10 +73,13 @@ Two things follow:
 
 ## Ticket flow
 
-1. **Conversation.** The brain examines the exchange before filing anything. It asks only when the answer changes what
-   gets built; otherwise it makes a reasonable assumption and writes it into the issue.
+1. **Conversation.** The brain examines the exchange before filing anything. When the goal or the scope is unclear, it
+   talks with the owner first, one short question at a time. Details of implementation are decided, not asked, and
+   recorded as decisions (see [Choices made on the owner's behalf](#choices-made-on-the-owners-behalf)).
 2. **Issues.** The brain files one GitHub issue per piece of work. An issue is the single hand-off: the worker knows only
-   its issues and the repository.
+   its issues and the repository. It is a fairly complete plan (background, goal, a suggested approach, what is in and
+   out of scope, open points each with a recommended option, and what done means), written in advising language;
+   firm wording is kept for what the owner explicitly required, marked as such.
 3. **Arrangement.** As it files them, the brain arranges the issues into chains and chooses each chain's start defaults.
 4. **Start.** The owner presses 开始 on a chain's card. One start starts the whole arrangement.
 5. **Work.** The hub creates a git worktree on a new branch and starts a worker in full-access mode. The worker works
@@ -91,8 +94,8 @@ Two things follow:
    same folder, on a new branch from the updated default branch, and tells it what merged and what remains. The brain
    is not part of this.
 9. **Report.** The ticket is merged when every issue of its chain is closed by one of its merged pull requests. It
-   reports to the brain once, with the pull requests merged, the final merge commit and whether the change needs
-   deploying.
+   reports to the brain once, with the pull requests merged, the final merge commit, whether the change needs
+   deploying, and every decision recorded on the owner's behalf.
 10. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
    tries again. What is already merged stays merged.
 
@@ -124,6 +127,28 @@ ticket is a single issue. The issue is what the owner manages; the brain decides
 - Starting starts everything arranged: tickets with nothing before them begin, and each waiting ticket begins by itself
   when the tickets before it have merged, that is when every issue of them is closed.
 - A started chain is closed. Later work is a new ticket after it.
+
+## Choices made on the owner's behalf
+
+Nobody is asked anything while a ticket runs. A worker decides by itself, and the brain decides on the owner's behalf;
+which of them decides matters less than the record. The owner reviews the decisions afterwards.
+
+- A decision is something chosen on the owner's behalf where the owner might have chosen differently: what was chosen,
+  why, and what else was possible, each in English with a Chinese copy. The hub keeps them per ticket, with who recorded
+  them, so a new conversation or another provider loses nothing.
+- A worker hands its decisions in with each pull request, or with a task's hand-back; a hand-in without any is valid.
+  The brain records its own with `record_decision`, against a ticket, at any time: its assumptions at filing, how it
+  arranged or cut the work, what it told a worker. A decision on a ticket that joins a chain moves with it. The same
+  decision recorded twice is kept once.
+- When a ticket ends (merged, done, stuck at the cap, or stopped), the hub's report to the brain lists every decision
+  recorded for it, and the brain reports them to the owner in Chinese. The ticket's page lists them too, whatever the
+  brain says, so the report does not rest on the brain remembering.
+- On the ticket's page each decision shows with 可以 and one box for an opinion. 可以 settles it; an opinion settles it
+  as not OK. When every decision recorded on the ticket so far is settled, the hub sends the brain one `[hub]` message
+  with every opinion and its decision, and the brain decides how to group them into follow-up issues, talking with the
+  owner first where the scope of a fix is unclear. A review with no opinion sends nothing.
+- Nothing waits on the review: no ticket, chain or deployment. Finished tickets with decisions to review carry their
+  count in 历史, and 历史 in the navigation carries the total; there is no push notification.
 
 ## Start defaults
 
@@ -337,6 +362,7 @@ Changed by this design:
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
   确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.
+- A ticket shows the decisions made on the owner's behalf above its timeline, each with 可以 and a box for an opinion.
 - Everything that showed the issue reviewer, the repairer, LLM verification or Lark is gone.
 
 ## Stack

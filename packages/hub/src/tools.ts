@@ -36,7 +36,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
-import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport, waitedLine } from "./reports.js";
+import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
@@ -127,6 +127,8 @@ const ListArguments = z.object({
 const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
 
 const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
+
+const DecisionArguments = z.object({ ticket: z.number().int().positive(), chosen: GeneratedText, why: GeneratedText, other_options: GeneratedText });
 
 const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1), attachments: z.array(AttachmentId).optional() });
 
@@ -493,7 +495,7 @@ function ticketDefinitions() {
       title: "File an issue and open its ticket",
       description: [
         "Create a GitHub issue in a repository, as the account that owns it, and open a pending ticket for it.",
-        "One issue per piece of work. Write the title and body in English so the issue stands alone: the worker knows only its issues and the repository. Put the assumptions you made in the body.",
+        "Usually one issue per piece of work. Write the title and body in English so the issue stands alone: the worker knows only its issues and the repository. The body is a fairly complete plan in advising language (suggested, recommended), with firm wording only for what the owner explicitly required. Record what you decided on the owner's behalf with record_decision against the ticket this opens.",
         "The title and the summary also carry a Chinese copy, which is what the owner sees.",
         "Calling it again with the same repository, title and body after a failure does not create a second issue: an issue already there is used.",
         "This is a shortcut over run_command with gh; anything it does not cover can still be done that way, and open_ticket makes a ticket for an issue filed otherwise. A code ticket is for repository work that ends in pull requests; anything else a worker does on a machine is a task ticket (open_task_ticket).",
@@ -504,7 +506,7 @@ function ticketDefinitions() {
           repository: { type: "string", description: "The repository as owner/name" },
           title: generatedSchema("issue title"),
           summary: generatedSchema("one or two sentence summary"),
-          body: { type: "string", description: "The issue body in English Markdown: goal, scope, assumptions and when it is done" },
+          body: { type: "string", description: "The issue body in English Markdown, a plan: background, goal, a suggested approach, what is in and out of scope, open points each with a recommended option, and what done means" },
           kind: { type: "string", enum: [...codeKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
           ...startChoices,
         },
@@ -594,7 +596,7 @@ function ticketDefinitions() {
     {
       name: "read_ticket",
       title: "Read a ticket",
-      description: "Read a ticket: its repository, issues in order, kind, state, choices, branch, pull request, guided round, what it waits for, and its history of states.",
+      description: "Read a ticket: its repository, issues in order, kind, state, choices, branch, pull request, guided round, what it waits for, its history of states, and the decisions recorded on the owner's behalf with the owner's review of each.",
       inputSchema: {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The ticket number" } },
@@ -619,6 +621,26 @@ function ticketDefinitions() {
           },
         },
         required: ["ticket", "text"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "record_decision",
+      title: "Record a decision made on the owner's behalf",
+      description: [
+        "Record, against a ticket, something you chose on the owner's behalf where the owner might have chosen differently: an assumption you made when filing its issues or task, what you told its worker in a guided round or a message, how you arranged, cut or joined the work. The test is whether the owner would have wanted to be asked.",
+        "The record lives in the hub, not in this conversation, so a new conversation or another model loses nothing. The owner sees each decision on the ticket's page, with 可以 and a box for an opinion; it is listed in the ticket's end report (merged, done, stuck or stopped); and once the owner has gone through the ticket's decisions, every opinion comes back to you in one message. Nothing waits on the review.",
+        "You can record at any time, in any state of the ticket. The same decision recorded twice is kept once. Workers record their own decisions when they hand in; do not record those again.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: { type: "integer", minimum: 1, description: "The ticket the decision belongs to" },
+          chosen: generatedSchema("statement of what was chosen"),
+          why: generatedSchema("reason it was chosen"),
+          other_options: generatedSchema("the other options there were, and why they were not taken"),
+        },
+        required: ["ticket", "chosen", "why", "other_options"],
         additionalProperties: false,
       },
     },
@@ -1010,11 +1032,29 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason);
         if (result.ok) {
-          return { text: [`Stopped ticket ${result.ticket.id}.`, ticketLine(result.ticket), ...chainProgress(result.ticket)].join("\n") };
+          return { text: [`Stopped ticket ${result.ticket.id}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
         }
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
           : { text: `Ticket ${parsed.data.ticket} is ${result.ticket?.state ?? "finished"} and cannot be stopped.`, isError: true };
+      }
+      case "record_decision": {
+        const parsed = DecisionArguments.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        const { ticket, chosen, why, other_options } = parsed.data;
+        if (tools.tickets.get(ticket) === undefined) {
+          return { text: `There is no ticket ${ticket}; nothing was recorded.`, isError: true };
+        }
+        const recorded = tools.tickets.change((writes) => writes.recordDecisions(ticket, "brain", [{ chosen, why, otherOptions: other_options }]));
+        const decision = recorded[0];
+        return {
+          text:
+            decision === undefined
+              ? `Ticket ${ticket} already has this decision recorded; nothing new was recorded.`
+              : `Recorded on ticket ${ticket}. ${decisionLine(decision, false)} The owner sees it on the ticket's page and reviews it there.`,
+        };
       }
       case "read_allowance": {
         if (tools.defaults === undefined) {

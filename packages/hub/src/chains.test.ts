@@ -195,6 +195,17 @@ describe("arranging", () => {
     ]);
   });
 
+  it("moves the decisions recorded on a joined ticket onto the chain that took its issues", () => {
+    const { tickets, chains } = setup();
+    file(tickets, 1);
+    file(tickets, 2);
+    const assumption = { chosen: { en: "Kept the old format", zh: "保留旧格式" }, why: { en: "Files exist in it", zh: "已有文件用它" }, otherOptions: { en: "A new format", zh: "新格式" } };
+    tickets.change((writes) => writes.recordDecisions(2, "brain", [assumption]));
+    expect(chains.arranger.arrange([chain("parser", [1, 2], pairTitle)]).ok).toBe(true);
+    expect(tickets.get(2)?.decisions).toEqual([]);
+    expect(tickets.get(1)?.decisions).toEqual([expect.objectContaining({ source: "brain", chosen: assumption.chosen })]);
+  });
+
   it("keeps the working order it is given and the highest difficulty", () => {
     const { tickets, chains } = setup();
     file(tickets, 1, sandbox, { difficulty: "mechanical" });

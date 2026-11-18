@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
+  type Decision,
   type DeliveredFile,
   DeliveryFileName,
   type DeploymentFileReading,
@@ -161,7 +162,7 @@ export function mediaTypeOf(name: string): string {
 }
 
 export type TaskCheckOutcome =
-  | { readonly ok: true; readonly outcome: TaskOutcome; readonly text: string | null; readonly files: readonly DeliveredFile[]; readonly report: GeneratedText }
+  | { readonly ok: true; readonly outcome: TaskOutcome; readonly text: string | null; readonly files: readonly DeliveredFile[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
   | { readonly ok: false; readonly problem: string };
 
 export interface TaskCheck {
@@ -197,7 +198,7 @@ export function checkTaskHandback(check: TaskCheck): TaskCheckOutcome {
   if (!parsed.success) {
     return {
       ok: false,
-      problem: `The hand-back file ${handback} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "outcome" ("done" or "failed"), "report" with "en" in English and "zh" in Simplified Chinese, and may name "text" (a file in the output folder whose text the owner reads) and "files" (a list of file names in the output folder).`,
+      problem: `The hand-back file ${handback} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "outcome" ("done" or "failed"), "report" with "en" in English and "zh" in Simplified Chinese, and may name "text" (a file in the output folder whose text the owner reads), "files" (a list of file names in the output folder) and "decisions" (each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh").`,
     };
   }
   const given = parsed.data;
@@ -248,7 +249,7 @@ export function checkTaskHandback(check: TaskCheck): TaskCheckOutcome {
     }
   }
   const files: DeliveredFile[] = listed.map((name) => ({ name, size: sizes.get(name) ?? 0, mediaType: mediaTypeOf(name) }));
-  return { ok: true, outcome: given.outcome, text: delivered, files, report: given.report };
+  return { ok: true, outcome: given.outcome, text: delivered, files, report: given.report, decisions: given.decisions };
 }
 
 export function materialLine(material: TaskMaterial): string {

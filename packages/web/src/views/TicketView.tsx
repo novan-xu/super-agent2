@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { type ChoiceChange, chineseOf, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
+import { type ChoiceChange, chineseOf, type DecisionReview, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
 import { kindKey, panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
@@ -9,6 +9,7 @@ import { AttachButton, PendingList, SentAttachments, useAttachments } from "../p
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
+import { Decisions } from "./Decisions.js";
 import { clockOf, DeliveryBody, TextBody, ToolFold } from "./Entries.js";
 import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones } from "./TicketParts.js";
 
@@ -20,6 +21,7 @@ export interface TicketActions {
   stop(ticket: number): Promise<boolean>;
   reassign(ticket: number, change: ChoiceChange): Promise<boolean>;
   message(ticket: number, text: string, attachments?: readonly string[]): Promise<boolean>;
+  review(ticket: number, decision: number, review: DecisionReview): Promise<boolean>;
   machines(): Promise<MachineChoice[] | undefined>;
 }
 
@@ -729,6 +731,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, now
       </div>
       <div className="detail">
         <div className="detail-main">
+          <Decisions ticket={ticket} review={actions.review} />
           <ol className="timeline" ref={list} aria-label={text("ticket.timeline")}>
             {entries.map((entry) => {
               switch (entry.kind) {

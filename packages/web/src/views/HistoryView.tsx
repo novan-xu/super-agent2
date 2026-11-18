@@ -3,6 +3,7 @@ import { chineseOf, type Ticket } from "@super-agent2/protocol";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { type HistoryState, historyLine, matchNote } from "../live/history.js";
 import { kindKey } from "../live/phase.js";
+import { toReview } from "../live/tickets.js";
 import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
 import { ChainNumbers, momentOf, PhaseStatus, PullRequestNumbers } from "./TicketParts.js";
@@ -30,6 +31,7 @@ interface RowProps {
 const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: RowProps) {
   const line = historyLine(ticket);
   const note = matchNote(ticket, query);
+  const review = toReview(ticket);
   return (
     <a className="lrow" id={`ticket-${ticket.id}`} href={href} onClick={(event) => followLink(event, () => open(ticket.id))}>
       <PhaseStatus phase={line.how} />
@@ -49,6 +51,11 @@ const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: 
         {note === null ? null : <span className="lrow-note lrow-note--match">{note}</span>}
       </span>
       <span className="lrow-side">
+        {review === 0 ? null : (
+          <span className="count count--hot" role="img" aria-label={text("decision.toReview", { count: review })} title={text("decision.toReview", { count: review })}>
+            {review}
+          </span>
+        )}
         <span className="num">{momentOf(ticket.endedAt ?? ticket.updatedAt, now)}</span>
         {ticket.pullRequests.length === 0 ? null : <PullRequestNumbers ticket={ticket} />}
       </span>

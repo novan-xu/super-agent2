@@ -1,5 +1,6 @@
 import {
   type ChoiceChange,
+  type DecisionReview,
   type EngineTable,
   type GitHubAccount,
   type MachineAdded,
@@ -262,6 +263,16 @@ export class PageController {
     }
     this.store.dispatch({ type: "server", message: { type: "ticket", ticket: stopped.value.ticket } });
     void this.readTicket(ticket);
+    return true;
+  }
+
+  async reviewDecision(ticket: number, decision: number, review: DecisionReview): Promise<boolean> {
+    const reviewed = await this.options.api.reviewDecision(ticket, decision, review);
+    if (!reviewed.ok) {
+      this.options.onFailure(reviewed.error);
+      return false;
+    }
+    this.store.dispatch({ type: "server", message: { type: "ticket", ticket: reviewed.value.ticket } });
     return true;
   }
 

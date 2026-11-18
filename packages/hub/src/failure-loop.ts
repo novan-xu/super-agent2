@@ -18,7 +18,7 @@ import {
 } from "@super-agent2/protocol";
 import type { AccessVerifier } from "./access.js";
 import type { Tell } from "./chains.js";
-import { chainProgress, tail } from "./reports.js";
+import { chainProgress, decisionReport, tail } from "./reports.js";
 import { TicketError, type TicketService } from "./tickets.js";
 import type { VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
@@ -143,6 +143,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         `The hub stopped it for the owner. Its branch, its pull request and the worker's output are kept, nothing runs for it, and no round can start: guide_ticket refuses it. The owner decides on its card in 等你, where they can resume it with a fresh count or give it up.`,
         ...chainProgress(stuck),
         "Now call describe_stuck once with where it is stuck, in English with a Chinese copy, in a few sentences: what the work is, what keeps failing, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the card. Then tell the owner in Chinese, in a line or two, that it waits for them.",
+        ...decisionReport(stuck),
       ].join("\n"),
     );
   };
@@ -239,6 +240,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
           ...chainProgress(stopped.ticket),
           words === "" ? "The owner gave no words." : `The owner's words to you: ${words}`,
           "Acknowledge it to the owner in Chinese in a line.",
+          ...decisionReport(stopped.ticket),
         ].join("\n"),
       );
       return { ok: true, ticket: stopped.ticket };
@@ -274,16 +276,22 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
   };
 
   const ownerStopped = (ticket: Ticket) => {
-    if (closed || ticket.repository === null || !ticket.pullRequests.some((pull) => pull.state === "merged")) {
+    const merged = ticket.repository !== null && ticket.pullRequests.some((pull) => pull.state === "merged");
+    if (closed || (!merged && ticket.decisions.length === 0)) {
       return;
     }
     tell(
       ticket.conversation,
-      text("notice.ownerStoppedChain", { ticket: ticket.id }),
+      text(merged ? "notice.ownerStoppedChain" : "notice.ownerStopped", { ticket: ticket.id }),
       [
-        `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`,
+        merged
+          ? `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`
+          : `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed, and nothing more of it is done.`,
         ...chainProgress(ticket),
-        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, and no task ticket that deploys it is arranged, open one at the last merge commit with open_task_ticket, unless the owner said otherwise; the owner starts it.",
+        merged
+          ? "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, and no task ticket that deploys it is arranged, open one at the last merge commit with open_task_ticket, unless the owner said otherwise; the owner starts it."
+          : "Acknowledge it to the owner in Chinese in a line.",
+        ...decisionReport(ticket),
       ].join("\n"),
     );
   };

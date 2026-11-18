@@ -206,7 +206,7 @@ describe("a ticket that ends while the list is open", () => {
 
 describe("a ticket's ending, through the page", () => {
   it("shows in the history and leaves the open tickets in one change", () => {
-    let state = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [ticket(1, { state: "verifying" }), ticket(2, { state: "working" })] } });
+    let state = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [ticket(1, { state: "verifying" }), ticket(2, { state: "working" })], reviews: [] } });
     state = pageReducer(state, { type: "history.loading" });
     state = pageReducer(state, { type: "history.page", applied: "", page: page([ended(9, 900)]) });
     expect(state.tickets.open.map((entry) => entry.id)).toEqual([2, 1]);

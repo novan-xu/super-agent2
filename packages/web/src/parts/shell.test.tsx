@@ -72,6 +72,13 @@ describe("Shell", () => {
     expect(html.match(/count count--hot/g)).toHaveLength(2);
   });
 
+  it("shows how many decisions of finished tickets wait for the owner's review on 历史", () => {
+    const html = render({ waiting: 0, reviews: 5 });
+    expect(html).toContain('aria-label="历史 5"');
+    expect(html).toContain('<span class="tab-badge">5</span>');
+    expect(html.match(/count count--hot/g)).toHaveLength(1);
+  });
+
   it("shows no count when nothing waits", () => {
     const html = render({ waiting: 0 });
     expect(html).not.toContain("count--hot");

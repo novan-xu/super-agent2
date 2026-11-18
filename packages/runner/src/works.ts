@@ -394,6 +394,7 @@ export function createWorks(options: WorksOptions): Works {
           text: outcome.text,
           files: [...outcome.files],
           report: outcome.report,
+          ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
         },
       };
     }
@@ -411,7 +412,19 @@ export function createWorks(options: WorksOptions): Works {
       cwd: work.paths.worktree,
       read: readPullRequest,
     });
-    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, closes: [...outcome.closes], report: outcome.report } } : outcome;
+    return outcome.ok
+      ? {
+          ok: true,
+          event: {
+            kind: "finished",
+            pullRequest: outcome.pullRequest,
+            url: outcome.url,
+            closes: [...outcome.closes],
+            report: outcome.report,
+            ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
+          },
+        }
+      : outcome;
   };
 
   const check = async (work: Work) => {

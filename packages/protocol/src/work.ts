@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Attachment, AttachmentId } from "./attachments.js";
 import { GitHubAccount } from "./commands.js";
+import { Decision } from "./decisions.js";
 import { GeneratedText } from "./generated.js";
 
 export const workEngines = ["codex", "claude", "dsh", "antigravity"] as const;
@@ -59,7 +60,14 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     attachments: z.array(Attachment).optional(),
     delivery: z.enum(["steered", "queued"]),
   }),
-  z.object({ kind: z.literal("finished"), pullRequest: z.number().int().positive(), url: z.string().min(1), closes: z.array(z.number().int().positive()).optional(), report: GeneratedText }),
+  z.object({
+    kind: z.literal("finished"),
+    pullRequest: z.number().int().positive(),
+    url: z.string().min(1),
+    closes: z.array(z.number().int().positive()).optional(),
+    report: GeneratedText,
+    decisions: z.array(Decision).optional(),
+  }),
   z.object({
     kind: z.literal("delivered"),
     outcome: TaskOutcome.optional(),
@@ -67,6 +75,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     text: z.string().nullable(),
     files: z.array(DeliveredFile),
     report: GeneratedText,
+    decisions: z.array(Decision).optional(),
   }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
@@ -311,6 +320,7 @@ export type WorkerMessageResponse = z.infer<typeof WorkerMessageResponse>;
 export const Handback = z.object({
   pullRequest: z.number().int().positive(),
   summary: GeneratedText,
+  decisions: z.array(Decision).default([]),
 });
 export type Handback = z.infer<typeof Handback>;
 
@@ -321,6 +331,7 @@ export const TaskHandback = z.preprocess(
     report: GeneratedText,
     text: z.string().min(1).nullable().optional(),
     files: z.array(z.string().min(1)).default([]),
+    decisions: z.array(Decision).default([]),
   }),
 );
 export type TaskHandback = z.infer<typeof TaskHandback>;
