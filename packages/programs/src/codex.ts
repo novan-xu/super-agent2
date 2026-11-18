@@ -36,6 +36,10 @@ const TurnError = z.looseObject({ message: z.string().optional(), codexErrorInfo
 const TurnCompleted = z.looseObject({
   turn: z.looseObject({ id: z.string(), status: z.string(), error: TurnError }),
 });
+const TokenUsage = z.looseObject({
+  threadId: z.string(),
+  tokenUsage: z.looseObject({ modelContextWindow: z.number().int().positive() }),
+});
 const RateLimits = z.looseObject({
   rateLimits: z.looseObject({
     primary: z.looseObject({ resetsAt: z.number().nullable().optional() }).nullable().optional(),
@@ -217,6 +221,13 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
         }
         return;
       }
+      case "thread/tokenUsage/updated": {
+        const event = TokenUsage.safeParse(params);
+        if (event.success && event.data.threadId === threadId) {
+          listener({ type: "capacity", tokens: event.data.tokenUsage.modelContextWindow });
+        }
+        return;
+      }
       case "account/rateLimits/updated": {
         const event = RateLimits.safeParse(params);
         if (!event.success) {
@@ -293,7 +304,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   const ready = (async () => {
     await client.request("initialize", {
       clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super-agent2 brain", version: "0.0.0" },
-      capabilities: { experimentalApi: false, optOutNotificationMethods: ["thread/tokenUsage/updated"] },
+      capabilities: { experimentalApi: false, optOutNotificationMethods: tools === null ? ["thread/tokenUsage/updated"] : [] },
     });
     client.notify("initialized");
     const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never", sandbox: "danger-full-access", config };

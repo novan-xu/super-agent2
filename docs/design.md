@@ -118,7 +118,7 @@ the hub.
 
 ### Session lifecycle
 
-- After a configurable idle period of two hours by default, the brain saves a topic summary and closes its program.
+- After `BRAIN_IDLE_MS` (two hours by default), the brain closes the idle program with its topic summary saved in the hub.
   It keeps the session ID. When a topic needs a slot sooner, the least recently used idle topic closes the same way.
   If all slots are busy, waiting topics keep their inputs until a slot frees.
 - The next input resumes the saved session after a close or a restart of the brain, hub or NAS. When a program reports
@@ -486,8 +486,8 @@ asks for. Clipping of logs and output handed to an LLM, or listed on the page, i
 
 The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default, plus one resident router.
 
-The [session seed](#session-seed) has a configurable soft line, about 15% of the input capacity of the provider and
-model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
+The [session seed](#session-seed) uses `BRAIN_SEED_SOFT_SHARE`, 0.15 by default, as the soft share of the input
+capacity of the provider and model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
 open tickets and the topic board in full by default; there are no fixed token totals or per-part token shares. Once the
 soft line is passed, the hub starts leaving material out in this order: topic-board statuses (keeping titles), the
 oldest of the last 50 history turns (always keeping the summary), ticket lines beyond this topic's own, then confirmed

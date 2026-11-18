@@ -38,6 +38,7 @@ import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { commandReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import { createTopicContext, type TopicContext } from "./topic-context.js";
 
 export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate;
 
@@ -62,7 +63,8 @@ export interface ConversationService {
   entries(id: string, after?: number): ConversationEntry[];
   stream(before?: number, limit?: number, repository?: string | null): StreamPage;
   streamAfter(after: number): StreamPage;
-  send(id: string, message: string, attachments?: readonly Attachment[]): OwnerEntry | undefined;
+  send(id: string, message: string, attachments?: readonly Attachment[], quotedMessage?: string): OwnerEntry | undefined;
+  readonly topics: TopicContext;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[]): StreamEntry | undefined;
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
@@ -147,6 +149,7 @@ const EntryRow = z.object({
   body: z.string(),
   prompt: z.string().nullable(),
   taken: z.number().int().nullable(),
+  quote_id: z.string().nullable(),
   created_at: z.number().int(),
 });
 type EntryRow = z.infer<typeof EntryRow>;
@@ -164,7 +167,7 @@ const Body = z.looseObject({
   state: z.string().optional(),
 });
 
-const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int(), memory_seen: z.number().int() });
+const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int(), memory_seen: z.number().int(), memory_offered: z.number().int(), board_seen: z.number().int() });
 
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
@@ -253,6 +256,24 @@ function deliveryHistory(entry: DeliveryEntry): string {
   return `[hub] The result of task ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
+function historyItem(raw: unknown): HistoryItem {
+  const row = EntryRow.parse(raw);
+  const entry = toEntry(row);
+  const provider = row.provider === null ? null : Provider.parse(row.provider);
+  switch (entry.kind) {
+    case "owner":
+      return { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
+    case "notice":
+      return { kind: "notice", text: entry.text };
+    case "delivery":
+      return { kind: "notice", text: deliveryHistory(entry) };
+    case "text":
+      return { kind: "text", provider, text: entry.text };
+    case "tool":
+      return { kind: "tool", provider, name: entry.name, input: entry.input, output: entry.output };
+  }
+}
+
 function heldPrompt(command: CommandRecord, output: string, conversation: string): string {
   return [
     `[hub] The command ${command.id} that was held for the owner's confirmation has an outcome.`,
@@ -265,6 +286,7 @@ function heldPrompt(command: CommandRecord, output: string, conversation: string
 export function createConversationService(options: ConversationServiceOptions): ConversationService {
   const { connection } = options.database;
   const { clock, commands, tickets } = options;
+  const topics = createTopicContext(options.database, historyItem);
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
   let brainProviders: BrainProviders | undefined;
@@ -300,12 +322,12 @@ export function createConversationService(options: ConversationServiceOptions): 
   const selectEntries = connection.prepare(
     "SELECT * FROM conversation_entries WHERE conversation_id = ? AND (seq > ? OR turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY seq",
   );
-  const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? ORDER BY seq");
+  const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND (? OR taken IS NOT 0) ORDER BY seq");
   const selectWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE taken = 0 ORDER BY created_at, rowid");
   const selectLastSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ?");
   const insertEntry = connection.prepare(
-    `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
+    `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, stream_seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
   const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
   const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
@@ -316,16 +338,21 @@ export function createConversationService(options: ConversationServiceOptions): 
   const markTaken = connection.prepare(
     "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE id = ? AND conversation_id = ? AND taken = 0",
   );
-  const selectSession = connection.prepare("SELECT session, through, memory_seen FROM program_sessions WHERE conversation_id = ? AND provider = ?");
+  const selectSession = connection.prepare("SELECT session, through, memory_seen, memory_offered, board_seen FROM program_sessions WHERE conversation_id = ? AND provider = ?");
+  const discardSession = connection.prepare("DELETE FROM program_sessions WHERE conversation_id = ? AND provider = ?");
   const upsertSession = connection.prepare(
-    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET session = excluded.session, through = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.through ELSE 0 END, memory_seen = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.memory_seen ELSE 0 END, updated_at = excluded.updated_at",
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET session = excluded.session, through = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.through ELSE 0 END, memory_seen = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.memory_seen ELSE 0 END, board_seen = CASE WHEN program_sessions.session IS NULL OR program_sessions.session = excluded.session THEN program_sessions.board_seen ELSE 0 END, updated_at = excluded.updated_at",
   );
   const advanceSession = connection.prepare(
-    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET through = excluded.through, memory_seen = program_sessions.memory_offered, updated_at = excluded.updated_at",
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET through = excluded.through, memory_seen = MAX(program_sessions.memory_seen, program_sessions.memory_offered), board_seen = program_sessions.board_offered, updated_at = excluded.updated_at",
   );
-  const offerMemory = connection.prepare(
-    "INSERT INTO program_sessions (conversation_id, provider, session, through, memory_offered, updated_at) VALUES (?, ?, NULL, 0, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET memory_offered = excluded.memory_offered",
+  const offerContext = connection.prepare(
+    "INSERT INTO program_sessions (conversation_id, provider, session, through, memory_offered, board_offered, updated_at) VALUES (?, ?, NULL, 0, ?, ?, ?) ON CONFLICT (conversation_id, provider) DO UPDATE SET memory_offered = excluded.memory_offered, board_offered = excluded.board_offered",
   );
+  const seeMemory = connection.prepare(
+    "UPDATE program_sessions SET memory_seen = MAX(memory_seen, ?) WHERE conversation_id = ? AND provider = ?",
+  );
+  const selectConsumedSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ? AND taken IS NOT 0");
   const insertBrainCommand = connection.prepare(
     "INSERT INTO brain_commands (command_id, conversation_id) VALUES (?, ?) ON CONFLICT (command_id) DO NOTHING",
   );
@@ -409,6 +436,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     readonly provider?: Provider | null;
     readonly body: Readonly<Record<string, unknown>>;
     readonly prompt?: string;
+    readonly quote?: string;
   }
 
   const addEntry = (entry: NewEntry): string => {
@@ -424,6 +452,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       entry.prompt ?? null,
       entry.prompt === undefined ? null : 0,
       clock.now(),
+      entry.quote ?? null,
     );
     emitEntry(id);
     return id;
@@ -461,7 +490,11 @@ export function createConversationService(options: ConversationServiceOptions): 
       return;
     }
     const attached = row.kind === "owner" ? z.array(Attachment).catch([]).parse(Body.parse(JSON.parse(row.body)).attachments ?? []) : [];
-    const input: BrainInput = { id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached) };
+    const quote = row.quote_id === null ? undefined : topics.message(row.quote_id);
+    const input: BrainInput = {
+      id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached),
+      ...(quote === undefined ? {} : { quote }),
+    };
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
@@ -471,38 +504,33 @@ export function createConversationService(options: ConversationServiceOptions): 
       .map(toTurn)
       .find((turn) => turn.state === "running");
 
-  const endTurn = (id: string, outcome: TurnOutcome, reason: string | null) => {
+  const endTurn = (id: string, outcome: TurnOutcome, reason: string | null, applied = false) => {
     const turn = getTurn(id);
     if (turn === undefined || turn.state !== "running") {
       return;
     }
-    finishTurn.run(outcome, reason, clock.now(), id);
-    advanceSession.run(turn.conversation, turn.provider, lastSeq(turn.conversation), clock.now());
+    connection.exec("BEGIN IMMEDIATE");
+    try {
+      finishTurn.run(outcome, reason, clock.now(), id);
+      topics.finish(turn.conversation, id, outcome);
+      if (applied) {
+        advanceSession.run(turn.conversation, turn.provider, SeqRow.parse(selectConsumedSeq.get(turn.conversation)).seq, clock.now());
+      }
+      connection.exec("COMMIT");
+    } catch (error) {
+      connection.exec("ROLLBACK");
+      throw error;
+    }
     emitTurn(id);
     updateConversation(turn.conversation, { state: runningTurnOf(turn.conversation) === undefined ? "idle" : "working" });
   };
 
-  const history = (conversation: string, through: number, exclude: ReadonlySet<string>): HistoryItem[] =>
+  const history = (conversation: string, through: number, exclude: ReadonlySet<string>, includeWaiting: boolean): HistoryItem[] =>
     selectAfter
-      .all(conversation, through)
+      .all(conversation, through, Number(includeWaiting))
       .map((row) => EntryRow.parse(row))
       .filter((row) => !exclude.has(row.id))
-      .map((row): HistoryItem => {
-        const entry = toEntry(row);
-        const provider = row.provider === null ? null : Provider.parse(row.provider);
-        switch (entry.kind) {
-          case "owner":
-            return { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
-          case "notice":
-            return { kind: "notice", text: entry.text };
-          case "delivery":
-            return { kind: "notice", text: deliveryHistory(entry) };
-          case "text":
-            return { kind: "text", provider, text: entry.text };
-          case "tool":
-            return { kind: "tool", provider, name: entry.name, input: entry.input, output: entry.output };
-        }
-      });
+      .map(historyItem);
 
   const providerOfTurn = (turn: string): Provider | null => {
     const found = getTurn(turn);
@@ -572,7 +600,11 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "input.taken": {
-        if (known(message.conversation, message.turn) && markTaken.run(message.turn, message.input, message.conversation).changes > 0) {
+        const turn = getTurn(message.turn);
+        if (turn?.conversation === message.conversation && markTaken.run(message.turn, message.input, message.conversation).changes > 0) {
+          if (message.memoryRevision !== undefined) {
+            seeMemory.run(message.memoryRevision, message.conversation, turn.provider);
+          }
           emitEntry(message.input);
         }
         return;
@@ -656,7 +688,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       case "turn.finished": {
         if (known(message.conversation, message.turn)) {
-          endTurn(message.turn, message.outcome, message.reason);
+          endTurn(message.turn, message.outcome, message.reason, message.applied ?? message.outcome === "completed");
         }
         return;
       }
@@ -667,22 +699,34 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "prepare": {
-        const found = message.fresh ? undefined : selectSession.get(message.conversation, message.provider);
+        if (message.fresh) {
+          discardSession.run(message.conversation, message.provider);
+        }
+        const found = selectSession.get(message.conversation, message.provider);
         const session = found === undefined ? undefined : SessionRow.parse(found);
         const given = session?.session ?? null;
         const memory = options.memory;
-        let brief: MemoryBrief | null = null;
-        if (memory !== undefined && get(message.conversation) !== undefined) {
-          const revision = memory.revision();
-          brief = memory.brief(message.conversation, given === null || session === undefined ? null : session.memory_seen);
-          offerMemory.run(message.conversation, message.provider, revision, clock.now());
+        const structured = message.seed !== undefined;
+        const snapshot = structured && !message.steer && (message.seed || given === null);
+        const memoryRevision = memory?.revision() ?? 0;
+        const memorySeen = session === undefined || (given === null && !message.steer) ? null
+          : Math.max(session.memory_seen, message.steer ? session.memory_offered : 0);
+        const changedMemory = memory?.brief(message.conversation, memorySeen) ?? null;
+        const brief = changedMemory ?? (snapshot ? memory?.brief(message.conversation, null) ?? null : null);
+        const board = structured && !message.steer ? topics.board(snapshot ? 0 : (session?.board_seen ?? 0)) : [];
+        if (!message.steer && get(message.conversation) !== undefined) {
+          offerContext.run(message.conversation, message.provider, memoryRevision, board.at(-1)?.revision ?? session?.board_seen ?? 0, clock.now());
         }
+        const exclude = new Set(message.exclude);
         sendToBrain({
           type: "prepared",
           request: message.request,
           session: given,
-          history: history(message.conversation, session?.through ?? 0, new Set(message.exclude)),
+          history: snapshot || message.steer ? [] : history(message.conversation, session?.through ?? 0, exclude, !structured),
           memory: brief,
+          ...(snapshot ? { seed: topics.seed(message.conversation, exclude, message.continuing === true) } : {}),
+          ...(structured && !message.steer ? { board: board.map(({ revision: _, ...entry }) => entry) } : {}),
+          ...(message.steer ? { memoryRevision } : {}),
         });
         return;
       }
@@ -757,13 +801,13 @@ export function createConversationService(options: ConversationServiceOptions): 
       prompt: delivery.prompt,
     });
 
-  const send = (id: string, message: string, attachments: readonly Attachment[] = []): OwnerEntry | undefined => {
+  const send = (id: string, message: string, attachments: readonly Attachment[] = [], quotedMessage?: string): OwnerEntry | undefined => {
     const conversation = get(id);
-    if (conversation === undefined) {
+    if (conversation === undefined || (quotedMessage !== undefined && getEntry(quotedMessage) === undefined)) {
       return undefined;
     }
     updateConversation(id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
-    const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message });
+    const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message, ...(quotedMessage === undefined ? {} : { quote: quotedMessage }) });
     const row = selectEntry.get(entryId);
     if (row !== undefined) {
       deliver(EntryRow.parse(row));
@@ -774,6 +818,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   return {
     create,
+    topics,
     tell,
     deliver: deliverResult,
     get,

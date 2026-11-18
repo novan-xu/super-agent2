@@ -17,6 +17,7 @@ export const BrainInput = z.object({
   source: InputSource,
   text: z.string(),
   attachments: z.array(BrainAttachment).default([]),
+  quote: z.object({ id: z.string().min(1), item: z.lazy(() => HistoryItem) }).optional(),
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 
@@ -27,6 +28,24 @@ export const HistoryItem = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("tool"), provider: Provider.nullable(), name: z.string(), input: z.string(), output: z.string() }),
 ]);
 export type HistoryItem = z.infer<typeof HistoryItem>;
+
+export const TopicBoardEntry = z.object({
+  id: ConversationId,
+  title: z.string(),
+  repository: z.string().nullable(),
+  state: z.enum(["active", "archived"]),
+  status: z.string(),
+  mergedInto: ConversationId.nullable(),
+});
+export type TopicBoardEntry = z.infer<typeof TopicBoardEntry>;
+
+export const TopicSeed = z.object({
+  summary: z.string(),
+  olderTurns: z.number().int().nonnegative(),
+  turns: z.array(z.array(HistoryItem)),
+  tickets: z.array(z.object({ own: z.boolean(), line: z.string() })),
+});
+export type TopicSeed = z.infer<typeof TopicSeed>;
 
 export const TurnOutcome = z.enum(["completed", "interrupted", "failed"]);
 export type TurnOutcome = z.infer<typeof TurnOutcome>;
@@ -59,6 +78,7 @@ export const InputTaken = z.object({
   conversation: ConversationId,
   turn: z.string().min(1),
   input: z.string().min(1),
+  memoryRevision: z.number().int().nonnegative().optional(),
 });
 export type InputTaken = z.infer<typeof InputTaken>;
 
@@ -117,6 +137,7 @@ export const TurnFinished = z.object({
   turn: z.string().min(1),
   outcome: TurnOutcome,
   reason: z.string().nullable(),
+  applied: z.boolean().optional(),
 });
 export type TurnFinished = z.infer<typeof TurnFinished>;
 
@@ -135,6 +156,9 @@ export const PrepareRequest = z.object({
   provider: Provider,
   exclude: z.array(z.string().min(1)),
   fresh: z.boolean(),
+  seed: z.boolean().optional(),
+  steer: z.boolean().optional(),
+  continuing: z.boolean().optional(),
 });
 export type PrepareRequest = z.infer<typeof PrepareRequest>;
 
@@ -195,6 +219,9 @@ export const Prepared = z.object({
   session: z.string().min(1).nullable(),
   history: z.array(HistoryItem),
   memory: MemoryBrief.nullable().default(null),
+  memoryRevision: z.number().int().nonnegative().optional(),
+  seed: TopicSeed.optional(),
+  board: z.array(TopicBoardEntry).optional(),
 });
 export type Prepared = z.infer<typeof Prepared>;
 

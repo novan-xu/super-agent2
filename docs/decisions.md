@@ -4026,6 +4026,27 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options** Keep fixed token budgets by seed part, or trim older history before topic-board statuses and extra
   ticket lines.
 
+## 2026-11-18 — Topic summaries and seed capacity (#102)
+
+- **Chosen** The hub records an extract from the owner's request and the assistant's final reply at the end of each
+  turn. The board takes the first nonempty line of the final reply, with an outcome when the turn did not complete or
+  had no reply. Topic summaries surface the first and up to twelve most recent applicable turn extracts, and the
+  history tool can page through the complete messages.
+- **Why** The summary is already durable when a topic goes idle or gives up a slot. It costs no model call and still
+  updates when a provider fails or the brain restarts. Extracts preserve the original wording.
+- **Other options** Ask the topic's own session to write a rolling summary, or send the context to the router's fast model.
+
+- **Chosen** Read the context window from Codex, Claude Code and dsh usage or request events when available. Until
+  a program reports a window, use `BRAIN_GPT_INPUT_CAPACITY`, `BRAIN_CLAUDE_INPUT_CAPACITY` or
+  `BRAIN_DEEPSEEK_INPUT_CAPACITY` for the configured model. Their defaults are 128,000, 200,000 and 128,000 tokens.
+  Estimate GPT text at four ASCII characters per token and Claude and DeepSeek at three. Add half the difference
+  between UTF-8 bytes and UTF-16 code units to account for multilingual text. Native image accounting stays with
+  the provider. If the current input, quote and newest history turn already exceed the soft share, keep the recent
+  history while it fits the hard capacity.
+- **Why** The programs report their effective windows during execution. Configured fallbacks cover the first call
+  and programs that omit the window. The estimate accounts for Chinese text without adding model-specific tokenizers.
+- **Other options** Maintain a model catalogue or use a separate tokenizer for each provider.
+
 ## 2026-11-18 — Ticket lock and stale reads (#84)
 
 - **Chosen** Add the owner's required lock to the closed code-constraint list. Require the current ticket version

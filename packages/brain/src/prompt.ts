@@ -55,7 +55,7 @@ export function promptImages(inputs: readonly Pick<BrainInput, "attachments">[],
   );
 }
 
-export function describeHistory(history: readonly HistoryItem[], root: string = defaultAttachmentsFolder): string {
+export function describeHistory(history: readonly HistoryItem[], root: string = defaultAttachmentsFolder, verbatim = false): string {
   return history
     .map((item) => {
       switch (item.kind) {
@@ -66,7 +66,7 @@ export function describeHistory(history: readonly HistoryItem[], root: string = 
         case "text":
           return `${speaker(item.provider)}: ${item.text}`;
         case "tool":
-          return `${speaker(item.provider)} used ${item.name} with ${clip(item.input, 2_000)}\nResult: ${clip(item.output)}`;
+          return `${speaker(item.provider)} used ${item.name} with ${verbatim ? item.input : clip(item.input, 2_000)}\nResult: ${verbatim ? item.output : clip(item.output)}`;
       }
     })
     .join("\n\n");

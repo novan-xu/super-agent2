@@ -144,6 +144,10 @@ describe("the brain's ticket tools", () => {
       "remember",
       "recall",
       "forget",
+      "read_topic_board",
+      "read_topic_history",
+      "search_topic_history",
+      "read_seed_material",
     ]);
   });
 

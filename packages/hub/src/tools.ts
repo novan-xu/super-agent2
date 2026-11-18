@@ -40,6 +40,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
+import { topicCall, topicDefinitions } from "./topic-tools.js";
 import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { TaskTickets } from "./task-tickets.js";
@@ -795,6 +796,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
       ...(options.memories === undefined ? [] : memoryDefinitions()),
+      ...topicDefinitions(),
     ];
   };
 
@@ -1236,6 +1238,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         break;
       default: {
         const ticketResult =
+          topicCall(conversations.topics, options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation) ??
           (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
           (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
         if (ticketResult === undefined) {
