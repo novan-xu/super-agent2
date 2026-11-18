@@ -9,6 +9,7 @@ import {
   countsAsRound,
   cursorAt,
   finishedTicketStates,
+  hasRemainingWork,
   type HistoryCursor,
   type HistoryPosition,
   historyPageSize,
@@ -22,8 +23,10 @@ import {
   ChosenBy,
   type Difficulty,
   GeneratedText,
+  openIssueNumbers,
   openTicketStates,
   type Platform,
+  type RepairOpener,
   RepositoryName,
   fitsForm,
   Ticket,
@@ -158,13 +161,34 @@ export interface DecisionPlace {
   readonly pullRequest?: number | null | undefined;
 }
 
+export interface RepairRecord {
+  readonly ticket: number;
+  readonly repairs: number;
+  readonly openedBy: RepairOpener;
+  readonly words: string;
+  readonly openedAt: number;
+  readonly round: number | null;
+  readonly failure: LoopFailure | null;
+  readonly where: GeneratedText | null;
+  readonly saved: boolean | null;
+  readonly savedDetail: string | null;
+}
+
+export type RepairOutcome = { readonly ok: true; readonly ticket: Ticket; readonly followers: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
+
+export type GiveUpOutcome =
+  | { readonly ok: true; readonly ticket: Ticket; readonly repair: Ticket | null; readonly followers: readonly Ticket[] }
+  | { readonly ok: false; readonly error: "not_found" | "refused" };
+
 export interface TicketWrites {
   get(id: number): Ticket | undefined;
   open(request: TicketToOpen): number;
   setIssues(id: number, issues: readonly TicketIssue[]): void;
   describe(id: number, description: TicketDescription): void;
   setWaits(id: number, waits: readonly WaitToSet[]): void;
-  redirectWaits(from: number, to: number): void;
+  redirectWaits(from: number, to: number): number[];
+  openRepair(id: number, by: RepairOpener, words: string): number;
+  repairSaved(id: number, saved: boolean, detail: string): void;
   waive(id: number, before: number): boolean;
   deployed(id: number): void;
   move(id: number, to: TicketState, reason?: GeneratedText): Ticket;
@@ -200,6 +224,10 @@ export interface TicketService {
   rounds(id: number): TicketRound[];
   switches(id: number): TicketSwitch[];
   task(id: number): TicketTask | undefined;
+  repairRecord(id: number): RepairRecord | undefined;
+  lineage(id: number): Ticket[];
+  repair(id: number, by: RepairOpener, words: string): RepairOutcome;
+  giveUp(id: number, reason: GeneratedText, words: string): GiveUpOutcome;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
   reviews(): TicketReviewCount[];
@@ -464,6 +492,38 @@ export function switchOf(row: unknown): TicketSwitch {
   });
 }
 
+const RepairRow = z.object({
+  ticket_id: z.number().int(),
+  repairs: z.number().int(),
+  opened_by: z.string(),
+  words: z.string(),
+  opened_at: z.number().int(),
+  round: z.number().int().nullable(),
+  failure: z.string().nullable(),
+  detail: z.string().nullable(),
+  where_en: z.string().nullable(),
+  where_zh: z.string().nullable(),
+  saved: z.number().int().nullable(),
+  saved_detail: z.string().nullable(),
+});
+
+function repairOf(row: unknown): RepairRecord {
+  const value = RepairRow.parse(row);
+  const failure = LoopFailureKind.safeParse(value.failure);
+  return {
+    ticket: value.ticket_id,
+    repairs: value.repairs,
+    openedBy: value.opened_by === "brain" ? "brain" : "owner",
+    words: value.words,
+    openedAt: value.opened_at,
+    round: value.round,
+    failure: failure.success ? { kind: failure.data, detail: value.detail ?? "" } : null,
+    where: pair(value.where_en, value.where_zh),
+    saved: value.saved === null ? null : value.saved === 1,
+    savedDetail: value.saved_detail,
+  };
+}
+
 function stuckOf(row: z.infer<typeof TicketRow>): TicketStuck | null {
   if (row.state !== "stuck" || row.stuck_at === null || row.stuck_from === null || row.stuck_failure === null) {
     return null;
@@ -563,7 +623,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const insertWait = connection.prepare("INSERT INTO ticket_waits (ticket_id, waits_for, deployment) VALUES (?, ?, ?)");
   const deleteWaits = connection.prepare("DELETE FROM ticket_waits WHERE ticket_id = ?");
   const selectRedirected = connection.prepare(
-    "SELECT w.ticket_id, w.deployment FROM ticket_waits w JOIN tickets t ON t.id = w.ticket_id WHERE w.waits_for = ? AND t.state = 'pending'",
+    "SELECT w.ticket_id, w.deployment FROM ticket_waits w JOIN tickets t ON t.id = w.ticket_id WHERE w.waits_for = ? AND w.waived_at IS NULL AND t.state IN ('pending', 'waiting') ORDER BY w.ticket_id",
   );
   const deleteWait = connection.prepare("DELETE FROM ticket_waits WHERE ticket_id = ? AND waits_for = ?");
   const upsertWait = connection.prepare(
@@ -593,6 +653,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateRan = connection.prepare("UPDATE tickets SET ran = ? WHERE id = ?");
   const selectRounds = connection.prepare("SELECT * FROM ticket_rounds WHERE ticket_id = ? ORDER BY seq");
   const selectSwitches = connection.prepare("SELECT * FROM ticket_switches WHERE ticket_id = ? ORDER BY seq");
+  const selectRepairOf = connection.prepare("SELECT * FROM ticket_repairs WHERE ticket_id = ?");
+  const selectRepairedBy = connection.prepare("SELECT ticket_id FROM ticket_repairs WHERE repairs = ?");
+  const insertRepair = connection.prepare(
+    "INSERT INTO ticket_repairs (ticket_id, repairs, opened_by, words, opened_at, round, failure, detail, where_en, where_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const updateRepairSaved = connection.prepare("UPDATE ticket_repairs SET saved = ?, saved_detail = ? WHERE repairs = ? AND saved IS NULL");
   const selectLastRound = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_rounds WHERE ticket_id = ?");
   const insertRound = connection.prepare(
     "INSERT INTO ticket_rounds (ticket_id, seq, round, attempt, failure, detail, guidance_en, guidance_zh, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -628,6 +694,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const pullRequests = selectPullRequests.all(value.id).map(pullRequestOf);
     const task = taskOf(value.id);
     const decisions = selectDecisions.all(value.id).map(decisionOf);
+    const repairing = selectRepairOf.get(value.id);
+    const repaired = selectRepairedBy.get(value.id);
     return Ticket.parse({
       id: value.id,
       form: value.form,
@@ -669,6 +737,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
       joinedInto: value.joined_into,
+      repairs: repairing === undefined ? null : RepairRow.parse(repairing).repairs,
+      repairedBy: repaired === undefined ? null : IdRow.parse(repaired).ticket_id,
       conversation: value.conversation_id,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
@@ -680,6 +750,28 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const row = selectTicket.get(id);
     return row === undefined ? undefined : toTicket(row);
   };
+
+  const earlierIds = (id: number): number[] => {
+    const found: number[] = [];
+    let at = id;
+    for (;;) {
+      const row = selectRepairOf.get(at);
+      if (row === undefined) {
+        return found.reverse();
+      }
+      at = RepairRow.parse(row).repairs;
+      if (at === id || found.includes(at)) {
+        return found.reverse();
+      }
+      found.push(at);
+    }
+  };
+
+  const followersOf = (repair: Ticket): Ticket[] =>
+    selectWaitingFor.all(repair.id).flatMap((row) => {
+      const ticket = get(IdRow.parse(row).ticket_id);
+      return ticket === undefined || !(ticket.state === "pending" || ticket.state === "waiting") ? [] : [ticket];
+    });
 
   const movesOf = (id: number): TicketMove[] =>
     selectMoves.all(id).map((row) => {
@@ -867,13 +959,81 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         touch(id);
       },
       redirectWaits: (from, to) => {
+        const moved: number[] = [];
         for (const row of selectRedirected.all(from)) {
           const value = z.object({ ticket_id: z.number().int(), deployment: z.number().int() }).parse(row);
           deleteWait.run(value.ticket_id, from);
           if (value.ticket_id !== to) {
             upsertWait.run(value.ticket_id, to, value.deployment);
+            moved.push(value.ticket_id);
           }
           touch(value.ticket_id);
+        }
+        return moved;
+      },
+      openRepair: (id, by, words) => {
+        const old = existing(id);
+        if (old.state !== "stopped" || old.joinedInto !== null) {
+          throw new TicketError(`Ticket ${id} is ${old.state}${old.joinedInto === null ? "" : " and was joined into another ticket"}; only a stopped ticket that was not joined into another has a repair`);
+        }
+        if (selectRepairedBy.get(id) !== undefined) {
+          throw new TicketError(`Ticket ${id} already has a repair ticket`);
+        }
+        if (!hasRemainingWork(old)) {
+          throw new TicketError(`Every issue of ticket ${id} is closed by a merged pull request, so nothing remains to repair`);
+        }
+        const open = new Set(openIssueNumbers(old));
+        const task = old.form === "task" ? taskOf(id) : undefined;
+        const raw = TicketRow.parse(selectTicket.get(id));
+        const stuck = raw.stuck_failure === null ? undefined : LoopFailureKind.safeParse(raw.stuck_failure);
+        const repair = writes.open({
+          form: old.form,
+          repository: old.repository,
+          issues: old.issues.filter((issue) => open.has(issue.number)),
+          title: old.title,
+          summary: old.summary,
+          kind: old.kind,
+          difficulty: old.difficulty ?? undefined,
+          platform: old.platform ?? undefined,
+          requiredMachine: old.requiredMachine,
+          conversation: old.conversation ?? undefined,
+          ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys } }),
+        });
+        if (task?.commit !== undefined && task.commit !== null) {
+          writes.setCommit(repair, task.commit);
+        }
+        if (old.form === "code" && old.branch !== null) {
+          updateBranch.run(old.branch, repair);
+        }
+        for (const wait of old.waits) {
+          insertWait.run(repair, wait.ticket, wait.deployment ? 1 : 0);
+          if (wait.waived) {
+            waiveWait.run(clock.now(), repair, wait.ticket);
+          }
+        }
+        insertRepair.run(
+          repair,
+          id,
+          by,
+          words,
+          clock.now(),
+          raw.stuck_round,
+          stuck?.success === true ? stuck.data : null,
+          stuck?.success === true ? (raw.stuck_detail ?? "") : null,
+          raw.stuck_where_en,
+          raw.stuck_where_zh,
+        );
+        writes.redirectWaits(id, repair);
+        touch(id);
+        touch(repair);
+        return repair;
+      },
+      repairSaved: (id, saved, detail) => {
+        if (updateRepairSaved.run(saved ? 1 : 0, detail, id).changes > 0) {
+          const repaired = selectRepairedBy.get(id);
+          if (repaired !== undefined) {
+            touch(IdRow.parse(repaired).ticket_id);
+          }
         }
       },
       waive: (id, before) => {
@@ -1062,7 +1222,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       },
       recordDecisions: (id, source, decisions, place = {}) => {
         const current = existing(id);
-        const known: Decision[] = [...current.decisions];
+        const known: Decision[] = [...current.decisions, ...earlierIds(id).flatMap((before) => selectDecisions.all(before).map(decisionOf))];
         const recorded: TicketDecision[] = [];
         const now = clock.now();
         for (const given of decisions) {
@@ -1201,6 +1361,52 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf), switches: selectSwitches.all(id).map(switchOf) };
     },
     task: taskOf,
+    repairRecord: (id) => {
+      const row = selectRepairOf.get(id);
+      return row === undefined ? undefined : repairOf(row);
+    },
+    lineage: (id) => earlierIds(id).flatMap((before) => {
+      const ticket = get(before);
+      return ticket === undefined ? [] : [ticket];
+    }),
+    repair: (id, by, words) => {
+      const before = get(id);
+      if (before === undefined) {
+        return { ok: false, reason: `There is no ticket ${id}.` };
+      }
+      try {
+        const repair = change((writes) => writes.get(writes.openRepair(id, by, words.trim())));
+        const opened = repair === undefined ? undefined : get(repair.id);
+        return opened === undefined ? { ok: false, reason: `The repair of ticket ${id} was not stored.` } : { ok: true, ticket: opened, followers: followersOf(opened) };
+      } catch (error) {
+        if (error instanceof TicketError) {
+          return { ok: false, reason: error.message };
+        }
+        throw error;
+      }
+    },
+    giveUp: (id, reason, words) => {
+      const given = GeneratedText.parse(reason);
+      const current = get(id);
+      if (current === undefined) {
+        return { ok: false, error: "not_found" };
+      }
+      if (!canMoveTicket(current.form, current.state, "stopped")) {
+        return { ok: false, error: "refused" };
+      }
+      const repairs = hasRemainingWork(current);
+      const opened = change((writes) => {
+        writes.move(id, "stopped", given);
+        return repairs ? writes.openRepair(id, "owner", words.trim()) : null;
+      });
+      const ticket = get(id);
+      const repair = opened === null ? null : (get(opened) ?? null);
+      if (ticket === undefined) {
+        return { ok: false, error: "not_found" };
+      }
+      work.stop(ticket);
+      return { ok: true, ticket, repair, followers: repair === null ? [] : followersOf(repair) };
+    },
     rounds: (id) => selectRounds.all(id).map(roundOf),
     switches: (id) => selectSwitches.all(id).map(switchOf),
     forIssue: (repository, number) =>

@@ -335,7 +335,9 @@ export function createChains(options: ChainsOptions): Chains {
 
   const unsubscribe = tickets.subscribe((ticket) => {
     if (ticket.state === "stopped") {
-      tellStopped(ticket);
+      if (ticket.repairedBy === null) {
+        tellStopped(ticket);
+      }
       return;
     }
     if (ticket.state === "merged" || ticket.state === "delivered" || ticket.state === "waiting") {
@@ -650,6 +652,9 @@ export function createChains(options: ChainsOptions): Chains {
           }
           return refuse(`no pending ticket holds issue ${spec.repository}#${number}; it does not exist here. File it with file_issue, or open a ticket for it with open_ticket, first`);
         }
+        if (ticket.repairs !== null) {
+          return refuse(`issue ${spec.repository}#${number} is on ticket ${ticket.id}, a repair ticket that continues the work of ticket ${ticket.repairs} on its branch; it cannot be regrouped, and the owner starts it as it is`);
+        }
         const issue = ticket.issues.find((entry) => entry.number === number && entry.repository.toLowerCase() === spec.repository.toLowerCase());
         if (issue === undefined) {
           return refuse(`issue ${spec.repository}#${number} could not be read from ticket ${ticket.id}`);
@@ -687,7 +692,11 @@ export function createChains(options: ChainsOptions): Chains {
           return refuse(`chain ${spec.name} comes after ticket ${before}, which this arrangement rearranges; name its chain instead`);
         }
         if (ticket.state === "stopped") {
-          return refuse(`chain ${spec.name} comes after ticket ${before}, which has stopped`);
+          return refuse(
+            ticket.repairedBy === null
+              ? `chain ${spec.name} comes after ticket ${before}, which has stopped`
+              : `chain ${spec.name} comes after ticket ${before}, which has stopped; ticket ${ticket.repairedBy} repairs it, so come after that`,
+          );
         }
       }
     }

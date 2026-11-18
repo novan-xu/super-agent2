@@ -3613,3 +3613,156 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   The tool's report says how many markers it found next to its comment findings.
 - **Why:** One slipped into `main` through a pull request whose checks were green, because no check looked for it.
 - **Other options:** A new tool of its own; matching the `=======` line too, which would flag Markdown.
+
+## 2026-11-18 — Giving up a stuck ticket opens a repair ticket
+
+- **Chosen:** At the owner's decision, 放弃 on a stuck ticket no longer ends the matter. `TicketService.giveUp` does, in
+  one transaction, what the stop did before (the ticket moves from `stuck` to `stopped` with the reason "引导到上限后，你放弃了它")
+  and opens a repair ticket for what remains: a new ticket of the same form, kind, difficulty, platform, repository and
+  pinned machine, in the same conversation, `pending`, with no machine, engine, model or effort chosen and no owner's
+  choice. The hub never starts it; the owner's 开始 does, like any ticket. The three-round stop is unchanged and nothing
+  is started without the owner. A repair of a repair needs nothing special: it is the same operation again on the
+  repair ticket, and the lineage (`TicketService.lineage`, oldest first) is what makes it readable. When nothing remains
+  (a code ticket with every issue closed, which a stuck ticket never is) the ticket is only stopped. `停止` on a running
+  ticket is unchanged, deliberate and opens nothing. This overturns the give-up part of "The owner's answer, and the card
+  in 等你" (which stopped the ticket, removed the worktree and left nothing following), the part of "The stop at the cap
+  is a state of its own" that offered "using `stopped` and opening a new ticket on resume" as an option not taken (the
+  new ticket now follows giving up, not resuming), and what "The ticket and its states" says of a stopped ticket's work
+  being "a new ticket for the same issue, which is allowed": the hub now opens it. A stopped ticket is still final; the
+  repair is a new ticket.
+- **Why:** The owner's words: after giving up, a ticket is reopened automatically, linked to the pull request of that
+  time, and marked as a repair ticket; the next ticket continues the unfinished work. Doing both in one transaction means
+  no state exists in which the owner gave up and nothing follows, and what waited on the ended ticket is never told as
+  blocked.
+- **Other options:** The brain opening the repair after the stop (a step that can be skipped, and a window with nothing
+  following); opening it already started (the owner's 开始 is not skipped, and "Three failed rounds and then I decide"
+  stands); a flag on the ended ticket instead of a ticket of its own; special treatment for a repair of a repair.
+
+## 2026-11-18 — What a repair ticket holds, and how it is linked
+
+- **Chosen:** Migration 27 adds `ticket_repairs` (the repair ticket, the ticket it repairs with a unique constraint so a
+  ticket has at most one repair, who opened it, the owner's words, the time, and a snapshot of how the repaired ticket
+  was stuck: the round, the failure, the failure's detail and the brain's `describe_stuck` text, none of which survives
+  on the ticket once it is stopped, plus whether its folder was saved). `Ticket.repairs` and `Ticket.repairedBy` carry
+  the link both ways to the page, `read_ticket` and `list_tickets`. A chain's repair holds the issues still open, in
+  their order, and the branch of the ticket it repairs, and nothing of its pull requests: its worker hands in the open
+  pull request again, and that becomes the repair's own row; the ended ticket's rows stay as they were, which is the
+  true record of that time. A task's repair holds the task, its material, its commit (the resolved one when there is one,
+  so `merged` is not resolved again) and its deployment. It copies the waits of the repaired ticket, with the waived ones
+  still waived, so a deployment's commit and a chain's earlier waits stay as they were, and the title and summary
+  unchanged. A pinned machine is copied; a machine is not pinned for a task that merely ran somewhere, because a repair
+  pinned to a machine that failed would wait for ever. `arrange_chains` refuses to regroup a repair ticket (it would lose
+  the branch and the link), and a ticket may not come `after` a stopped ticket that has a repair: the message names the
+  repair. A decision handed in is kept once across the whole lineage, so a worker that repeats an earlier decision
+  adds nothing.
+- **Why:** The link, the snapshot and the lineage are the whole account the repair's worker and the owner need, and they
+  survive the ended ticket's own columns being cleared; one repair per ticket keeps the lineage a line, not a tree.
+- **Other options:** Columns on `tickets` (the snapshot does not belong there); copying the pull request rows (the ended
+  ticket would then show a pull request as its own that another ticket merged); moving the decisions to the repair, as an
+  arrangement's join does (the ended ticket's decisions are the owner's to review where they were made).
+
+## 2026-11-18 — What the repair worker is given
+
+- **Chosen:** The first attempt of a repair ticket is a takeover (`takeover` true, as for a new provider), with the hub's
+  note built from the whole lineage, oldest first: for each earlier ticket its end and its last worker, each guided round
+  (the failure it answered and the guidance given, or that it was a retry not counted), how it stopped (the failure and
+  its detail, and the brain's description of where it was stuck) and the owner's words when they gave it up; the
+  advice that guidance which did not get the work through is usually better not repeated; the branch, the pull requests
+  handed in or merged and the issues each closed, the issues closed and the issues still open (the repair's own), the
+  open pull request and that continuing it is usual; where the earlier worker's folder is and whether its uncommitted work
+  was saved; the decisions of every earlier ticket (not to be handed in again); every message of the owner or the brain the
+  earlier workers were given with the names of their attachments, which are sent again in one message of the hub; and the
+  end of the last earlier worker's own output. The runner adds what it reads when the program starts, the commits not on
+  the default branch and `git status --short`, or a task's output files. A repair worker that itself switches provider
+  is given this note after the switch's own, so no later program loses the lineage. Guided rounds count from zero for the
+  repair. The hub's note, the guidance for the worker and the brain's guidance say the account is advice and a record,
+  not instructions.
+- **Why:** The brief: reuse the takeover note, plus what failed. The repair worker is the third party to the failure and
+  should not repeat it.
+- **Other options:** The earlier worker's whole output; the earlier session's transcript; telling the repair worker only
+  the brain's description.
+
+## 2026-11-18 — The folder of an ended ticket is kept for its repair
+
+- **Chosen:** The suggested option, with a safeguard. Giving up tells the machine of the ended ticket's last worker to
+  save its folder (commit what is uncommitted and push the branch, `work.stop` with `save` true and `remove` false) and
+  keeps it; nothing is removed. The repair's start message carries `folder`, the number of the first ticket of its
+  lineage, and the runner works in that ticket's worktree (`<name>-t<folder>`) or, for a task, its scratch folder, while
+  the repair's own record (`work/t<repair>`, hand-back, events) stays under its own number. On the same machine the repair
+  is in the folder as it was left, uncommitted changes and installed dependencies included; on another machine it starts
+  from the pushed branch, as a move does, and the note says so. The hub removes the folders of every ticket of a lineage
+  once the last one has ended, whatever the end (merged, delivered or stopped), by the same message and the same
+  reconnection rule as before: a runner holding the work of an ended ticket whose lineage is still open is left alone.
+  No start waits for the save: a runner that restarted since the worker ran has lost its credentials for the push and
+  reports nothing, an offline machine cannot answer, and a hang there would be a blocking point; the machine's own report
+  (`stopped` with whether it saved and why) is recorded and the note says what is known, and where it is not known that
+  only what was pushed before is certain to be on the branch. A repair the brain opens for a ticket that was stopped
+  earlier finds the folder already removed (a stop removes it, as before) unless its machine was away, and starts from the
+  branch. A repair of a task is not pinned to the machine of the earlier work.
+- **Why:** The brief's suggestion keeps uncommitted work and installed dependencies; saving to the branch as well covers
+  a repair on another machine and a folder lost with its machine. Naming the earlier ticket's folder, rather than
+  copying it, costs no disk or time and keeps one worktree per branch, which Git requires.
+- **Other options:** A fresh worktree for the repair with the save only; removing the old folder at once (the previous
+  behaviour); waiting for the save before the repair starts; copying the folder.
+
+## 2026-11-18 — What waited on the ended ticket waits on the repair
+
+- **Chosen:** In the transaction that opens a repair, every wait on the ended ticket of a ticket that is `pending` or
+  `waiting` and has not been waived moves to the repair, keeping its deployment flag (`redirectWaits`, which also
+  now covers `waiting` tickets). A pending ticket after the repair is in its start group, so one 开始 on the repair starts
+  it too; a ticket the owner already started stays `waiting` and begins when the repair has merged or is done. A deployment
+  ticket whose commit is `merged` therefore resolves to the repair's final merge commit, which contains the earlier
+  merged work, and `after_deployment` waits for the repair's deployment. The brain is not told those tickets are
+  blocked, which the stop used to tell it. A wait the brain or the owner had waived stays waived, and a ticket past
+  its wait is untouched. The brain's later repair of a stopped ticket does the same for the waits not yet waived.
+- **Why:** The brief: chains and task tickets arranged after the stuck ticket follow the repair instead of being cut
+  loose or told to the brain as blocked.
+- **Other options:** Leaving them to the brain with `proceed_ticket`; redirecting only the pending ones.
+
+## 2026-11-18 — Start defaults for a repair, and the brain's tool for a stopped ticket
+
+- **Chosen:** The hub's message to the brain says a repair ticket was opened, what it holds, what now waits for it, the
+  run that failed, and asks for `choose_defaults` as for any ticket, with advice (not a rule) to prefer a different
+  provider or a stronger model than the failed run and to say why in the one-line reason the owner reads on the card.
+  The hub does not choose for the brain and does not start the ticket. `open_repair_ticket` lets the brain open the same
+  repair for a ticket that stopped with work remaining when the owner asks in conversation; it refuses a ticket that is
+  not stopped, a stuck ticket (the owner decides on its card), one joined into another, one that already has a repair,
+  and one with nothing left; it is pending like any other and the tool's result carries the same advice. The page-dev
+  demo brain answers with another provider and a higher difficulty.
+- **Why:** Constraints on the LLM live in hub code and guidance advises; the choice of provider is the brain's, by the
+  allowance it can read.
+- **Other options:** The hub choosing a different provider by itself; letting the brain stop and repair a stuck ticket.
+
+## 2026-11-18 — 放弃 takes one press, and what else the card and its notices say
+
+- **Chosen:** 放弃 on the stuck card is answered with one press, like 继续, 确认 and 拒绝; the page's arming step is gone
+  (`arm`, `disarm` and the `armed` card step), since nothing is destroyed. The label stays 放弃, the owner's word. A
+  shorter label that reads truer to what now happens, "转补救", is proposed and not applied. The notice in the conversation
+  now says 你放弃了工单 N，已开补救工单 M，等你开始; the stopped ticket's reason stays 引导到上限后，你放弃了它; the
+  brain's message and the stuck notice describe the new behaviour. 停止 on a running ticket still takes two presses. The page
+  shows a repair ticket by a 补救 chip on its start card, its row in 工作台, its row in 历史 and its page, whose header links
+  to 接着工单 N; the repaired ticket's header links to 由工单 M 接着做. The word 修复 is taken by the kind `fix`, so the chip
+  is 补救. This overturns the second press of 放弃 in "The owner's answer, and the card in 等你" and the sentence in "确认 and
+  拒绝 on a held command take one press" that arming "now exists only for a stuck ticket's 放弃".
+- **Why:** The two presses guarded a destructive step that no longer exists. The owner's rule: no secondary labels; the
+  chip and one link each say it.
+- **Other options:** Keeping two presses; a note under the button saying a repair opens; a label that names the repair.
+
+## 2026-11-18 — What was verified of repair tickets
+
+- **Chosen:** Verified in tests: a chain stuck on its second pull request given up through the owner's request
+  (the ended ticket, the repair's issues, branch, kind, difficulty, platform and links, no start message, the save message
+  and no removal, the brain's message, the card and no stuck card, `read_ticket` and `list_tickets`); a deployment ticket,
+  a started ticket and an after-deployment ticket redirected, the start of the repair through the owner's request starting
+  the pending ones with it, the repair's start message and its note with every guided round, the brain's description, the
+  owner's words, the decisions and the messages, the repair merging to the end and the deployment beginning at its final
+  merge commit; no removal while the lineage is open, the removal of every ticket's folder when it ends, and the
+  reconnection rule; a repair of a repair, one decision once across the lineage; a stopped ticket repaired by the brain,
+  the owner's stop opening nothing, and every refusal; a task ticket repaired with its task, commit and pin; the runner
+  working in the earlier folder and scratch folder, saving without removing, surviving a restart, and removing both; the
+  page's one-press card, chips and links. Driven in the page through `tools/page-dev` (`/__harness/loop?case=repair`): a
+  chain stuck after one merged pull request, given up with one press and words, the repair card with its chip and the
+  brain's reason, started, merged to the end, and both tickets' pages linked in 历史. Not verified: a real worker, a real
+  push of a real folder, a repair on another real machine, and macOS.
+- **Why:** The brief asks to say what was and was not checked.
+- **Other options:** None.

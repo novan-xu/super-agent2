@@ -6,6 +6,7 @@ import { kindKey } from "../live/phase.js";
 import { type CardUse, type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
+import { RepairChip } from "./TicketParts.js";
 
 export interface StartCardProps {
   readonly card: Card;
@@ -120,6 +121,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
           </span>
         )}
         <span className="chip">{text(kindKey(ticket))}</span>
+        <RepairChip ticket={ticket} />
         {ticket.difficulty === null ? null : <span className="chip">{text(`ticket.difficulty.${ticket.difficulty}`)}</span>}
         {ticket.platform === null ? null : <span className="chip">{text(`ticket.platform.${ticket.platform}`)}</span>}
       </div>

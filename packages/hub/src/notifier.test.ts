@@ -47,6 +47,8 @@ function ticket(id: number): Ticket {
     verification: null,
     stopReason: null,
     joinedInto: null,
+    repairs: null,
+    repairedBy: null,
     endedAt: null,
     conversation: null,
     createdAt: 1,

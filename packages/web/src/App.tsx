@@ -187,8 +187,6 @@ export function App() {
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(
     () => ({
-      arm: (key: string) => controller.arm(key),
-      disarm: (key: string) => controller.disarm(key),
       answer: (key: string, verdict: Verdict) => void controller.answer(key, verdict),
       start: (keys: readonly string[]) => void controller.startChains(keys),
       choose: (key: string, change: ChoiceChange) => void controller.chooseChain(key, change),
@@ -212,6 +210,7 @@ export function App() {
     },
     [navigate],
   );
+  const openLinked = useCallback((ticket: number) => navigate({ view: "ticket", ticket }), [navigate]);
   const backFromTicket = useCallback(() => navigate({ view: origin }), [navigate, origin]);
   const searchHistory = useCallback((query: string) => void controller.searchHistory(query), [controller]);
   const moreHistory = useCallback(() => void controller.moreHistory(), [controller]);
@@ -333,7 +332,7 @@ export function App() {
       ) : route.view === "memory" ? (
         <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
       ) : route.view === "ticket" ? (
-        <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} now={now} />
+        <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
       ) : route.view === "settings" ? (
         <SettingsView
           section={"section" in route ? route.section : null}

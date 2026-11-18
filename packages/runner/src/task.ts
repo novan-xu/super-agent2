@@ -17,17 +17,18 @@ import {
 import type { Git } from "./git.js";
 import { type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
 
-export function taskPaths(home: string, ticket: number, repository: string | null = null): WorkPaths {
+export function taskPaths(home: string, ticket: number, repository: string | null = null, folderOf: number = ticket): WorkPaths {
   const folder = join(home, "work", `t${ticket}`);
+  const scratch = join(home, "work", `t${folderOf}`, "scratch");
   if (repository === null || repository === "") {
-    return { clone: join(home, "repos", "none"), worktree: join(folder, "scratch"), folder, handback: join(folder, "handback.json") };
+    return { clone: join(home, "repos", "none"), worktree: scratch, folder, handback: join(folder, "handback.json"), scratch };
   }
   const [owner = "unknown", name = "unknown"] = repository.split("/");
-  return { clone: join(home, "repos", owner, name), worktree: join(home, "worktrees", `${name}-t${ticket}`), folder, handback: join(folder, "handback.json") };
+  return { clone: join(home, "repos", owner, name), worktree: join(home, "worktrees", `${name}-t${folderOf}`), folder, handback: join(folder, "handback.json"), scratch };
 }
 
 export function scratchFolder(paths: WorkPaths): string {
-  return join(paths.folder, "scratch");
+  return paths.scratch ?? join(paths.folder, "scratch");
 }
 
 export function inputFolder(paths: WorkPaths): string {

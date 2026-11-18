@@ -44,6 +44,11 @@ describe("历史", () => {
     expect(render(startLoading(initialHistory))).not.toContain("还没有结束的工单");
   });
 
+  it("marks an ended repair ticket as one", () => {
+    const html = render(shown([ended(2, 4_000_000, { repairs: 1 }), ended(1, 3_000_000, { state: "stopped" })]));
+    expect(html.match(/补救/g)).toHaveLength(1);
+  });
+
   it("says plainly that nothing has ended yet", () => {
     const html = render(shown([]));
     expect(html).toContain("还没有结束的工单");

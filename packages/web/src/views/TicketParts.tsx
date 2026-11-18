@@ -40,6 +40,10 @@ export function ChainNumbers({ ticket }: { readonly ticket: Ticket }) {
   );
 }
 
+export function RepairChip({ ticket }: { readonly ticket: Pick<Ticket, "repairs"> }) {
+  return ticket.repairs === null ? null : <span className="chip chip--accent">{text("ticket.repair")}</span>;
+}
+
 export function PullRequestNumbers({ ticket }: { readonly ticket: Ticket }) {
   return (
     <span className="mono chain-numbers">

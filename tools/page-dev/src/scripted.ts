@@ -1,7 +1,7 @@
 import type { Hub, RunnerLink } from "@super-agent2/hub";
 import { type Decision, type HubToRunner, type MachinePlatform, type MachineReport, protocolVersion, type WorkEvent } from "@super-agent2/protocol";
 
-export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "deliver" | "deploy";
+export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "red-second" | "deliver" | "deploy";
 
 export interface HandBack {
   readonly ticket: number;
@@ -9,6 +9,7 @@ export interface HandBack {
   readonly repository: string;
   readonly branch: string;
   readonly pullRequest: number;
+  readonly piece: number;
   readonly closes: readonly number[];
   readonly behaviour: Behaviour;
 }
@@ -212,7 +213,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
       stream(work, "done", words("测试全部通过。PR 已经开好，交回文件也写好了。"), () => {
         const number = 100 + work.ticket * 10 + work.piece;
         if (work.repository !== null && work.branch !== null) {
-          handBack?.({ ticket: work.ticket, attempt: work.attempt, repository: work.repository, branch: work.branch, pullRequest: number, closes: work.closes, behaviour: work.planned });
+          handBack?.({ ticket: work.ticket, attempt: work.attempt, repository: work.repository, branch: work.branch, pullRequest: number, closes: work.closes, piece: work.piece, behaviour: work.planned });
         }
         emit(work, {
           kind: "finished",
@@ -295,7 +296,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
       end(previous);
     }
     const planned = behaviours.get(ticket) ?? (checkouts.get(ticket)?.deploys === true ? "deploy" : checkouts.has(ticket) ? "deliver" : "finish");
-    const behaviour: Behaviour = planned === "fail" && attempt > 1 ? "finish" : planned === "fails" ? "fail" : planned === "red-once" || planned === "red-always" ? "finish" : planned;
+    const behaviour: Behaviour = planned === "fail" && attempt > 1 ? "finish" : planned === "fails" ? "fail" : planned === "red-once" || planned === "red-always" || planned === "red-second" ? "finish" : planned;
     const piece = pieces.get(ticket);
     const work: Running = {
       ticket,

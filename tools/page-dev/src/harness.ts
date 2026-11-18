@@ -57,7 +57,7 @@ export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined, depl
     }
     const woodpecker = forge.woodpecker.get(given.repository) ?? { id: 100 + forge.woodpecker.size, active: true, configFile: "", pipelines: [] };
     forge.woodpecker.set(given.repository, woodpecker);
-    const red = given.behaviour === "red-always" || (given.behaviour === "red-once" && given.attempt === 1);
+    const red = given.behaviour === "red-always" || (given.behaviour === "red-once" && given.attempt === 1) || (given.behaviour === "red-second" && given.piece > 1);
     pipelines += 1;
     const step = 5000 + pipelines;
     woodpecker.pipelines.push({
@@ -428,7 +428,7 @@ export function createHarness(options: HarnessOptions): Harness {
 
   let nextIssue = 1000 + Math.floor(Math.random() * 8000);
 
-  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail", green: "finish", chain: "red-once" };
+  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail", green: "finish", chain: "red-once", repair: "red-second" };
 
   const loopCase = async (url: URL, response: ServerResponse): Promise<void> => {
     const name = url.searchParams.get("case") ?? "";
@@ -436,7 +436,7 @@ export function createHarness(options: HarnessOptions): Harness {
     if (behaviour === undefined) {
       json(response, 400, {
         error:
-          "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round), worker (the worker fails once), green (green at once) or chain (three issues in two pull requests, the first red once), and optionally repository=<owner/name>",
+          "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round), worker (the worker fails once), green (green at once), chain (three issues in two pull requests, the first red once), or repair (three issues in two pull requests, the first merged and the second red every round until the ticket is stuck; give it up on its card and start the repair ticket, which goes green to the end), and optionally repository=<owner/name>",
         cases: Object.keys(loopCases),
       });
       return;
@@ -449,7 +449,7 @@ export function createHarness(options: HarnessOptions): Harness {
           repository: url.searchParams.get("repository") ?? "novan-xu/garden-notes",
           title: [`Failure loop: ${name}`, `失败循环：${name}`],
           titles:
-            name === "chain"
+            name === "chain" || name === "repair"
               ? [
                   ["Parse plain dates", "解析普通日期"],
                   ["Parse relative dates", "解析相对日期"],
@@ -459,7 +459,7 @@ export function createHarness(options: HarnessOptions): Harness {
           behaviour,
           machine: "studio",
           engine: "claude",
-          ...(name === "chain" ? { decision: chainDecision } : {}),
+          ...(name === "chain" || name === "repair" ? { decision: chainDecision } : {}),
         },
       ],
       response,

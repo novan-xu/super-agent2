@@ -3,7 +3,7 @@ import type { Failure } from "../hub/api.js";
 
 export type Verdict = "release" | "refuse" | "resume" | "give-up";
 
-export type CardStep = "idle" | "armed" | "sending";
+export type CardStep = "idle" | "sending";
 
 export interface CardUse {
   readonly step: CardStep;
@@ -20,8 +20,6 @@ export interface WaitingState {
 
 export type WaitingAction =
   | { readonly type: "snapshot"; readonly cards: readonly WaitingCard[] }
-  | { readonly type: "arm"; readonly key: string }
-  | { readonly type: "disarm"; readonly key: string }
   | { readonly type: "sending"; readonly key: string; readonly verdict: Verdict }
   | { readonly type: "starting"; readonly keys: readonly string[] }
   | { readonly type: "choosing"; readonly key: string }
@@ -45,7 +43,7 @@ export function waitingCount(state: WaitingState): number {
   return state.cards.length;
 }
 
-export function canAnswer(state: WaitingState, key: string, verdict: Verdict): boolean {
+export function canAnswer(state: WaitingState, key: string): boolean {
   if (cardOf(state, key) === undefined) {
     return false;
   }
@@ -53,7 +51,7 @@ export function canAnswer(state: WaitingState, key: string, verdict: Verdict): b
   if (step === "sending") {
     return false;
   }
-  return verdict === "give-up" ? step === "armed" : true;
+  return true;
 }
 
 function ordered(cards: readonly WaitingCard[]): WaitingCard[] {
@@ -104,14 +102,8 @@ export function waitingReducer(state: WaitingState, action: WaitingAction): Wait
   switch (action.type) {
     case "snapshot":
       return receive(state, action.cards);
-    case "arm":
-      return useOf(state, action.key).step === "idle" && cardOf(state, action.key)?.kind === "stuck"
-        ? withUse(state, action.key, { step: "armed", verdict: null, failure: null })
-        : state;
-    case "disarm":
-      return useOf(state, action.key).step === "armed" ? withUse(state, action.key, untouched) : state;
     case "sending":
-      return canAnswer(state, action.key, action.verdict)
+      return canAnswer(state, action.key)
         ? withUse(state, action.key, { step: "sending", verdict: action.verdict, failure: null })
         : state;
     case "starting":

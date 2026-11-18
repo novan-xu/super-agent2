@@ -162,7 +162,6 @@ describe("PageController", () => {
     it("does nothing for a card that is not there", async () => {
       const hub = api();
       const page = shown(hub);
-      page.arm("hold:zz");
       expect(await page.answer("hold:zz", "refuse")).toBe(false);
       expect(hub.calls).toEqual([]);
     });

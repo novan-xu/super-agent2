@@ -6,7 +6,6 @@ import {
   guidanceRefusal,
   isMachineFailure,
   type LoopFailure,
-  type LoopFailureKind,
   loopFailureOf,
   nextRound,
   roundCap,
@@ -18,7 +17,7 @@ import {
 } from "@super-agent2/protocol";
 import type { AccessVerifier } from "./access.js";
 import type { Tell } from "./chains.js";
-import { chainProgress, decisionReport, tail } from "./reports.js";
+import { chainProgress, decisionReport, loopFailureWords as failureWords, repairReport, tail } from "./reports.js";
 import { TicketError, type TicketService } from "./tickets.js";
 import type { VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
@@ -60,14 +59,7 @@ export interface FailureLoopOptions {
   readonly ownerEmail: string;
 }
 
-export const failureWords: Readonly<Record<LoopFailureKind, string>> = {
-  workflow: "a Woodpecker workflow on its pull request's head is red",
-  "no-pull-request": "the worker ended without handing back a valid result",
-  program: "the worker's program failed (it exited, crashed, reported an error, or no other provider could take over from one that was unavailable)",
-  lost: "the worker was lost: its machine came back without it",
-  prepare: "the worker's folder could not be prepared",
-  "task-failed": "the worker handed back that its task failed",
-};
+export { failureWords };
 
 export const refusalWords: Readonly<Record<GuidanceRefusal, string>> = {
   closed: "it is not working or verifying, so it has no failure to guide",
@@ -140,7 +132,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       [
         `[hub] ${described(stuck)} failed again after ${stuck.round} guided rounds, the cap of ${roundCap}: ${failureWords[report.failure.kind]}.`,
         report.evidence,
-        `The hub stopped it for the owner. Its branch, its pull request and the worker's output are kept, nothing runs for it, and no round can start: guide_ticket refuses it. The owner decides on its card in 等你, where they can resume it with a fresh count or give it up.`,
+        `The hub stopped it for the owner. Its branch, its pull request and the worker's output are kept, nothing runs for it, and no round can start: guide_ticket refuses it. The owner decides on its card in 等你, where they can resume it with a fresh count, or give it up, which stops it and opens a repair ticket that continues the work.`,
         ...chainProgress(stuck),
         "Now call describe_stuck once with where it is stuck, in English with a Chinese copy, in a few sentences: what the work is, what keeps failing, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the card. Then tell the owner in Chinese, in a line or two, that it waits for them.",
         ...decisionReport(stuck),
@@ -228,22 +220,25 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const stuck = ticket.stuck;
     const words = given.request.words?.trim() ?? "";
     if (given.request.answer === "give-up") {
-      const stopped = tickets.stop(ticket.id, ownerGaveUpReason);
-      if (!stopped.ok) {
-        return { ok: false, error: stopped.error === "not_found" ? "not_found" : "conflict" };
+      const gave = tickets.giveUp(ticket.id, ownerGaveUpReason, words);
+      if (!gave.ok) {
+        return { ok: false, error: gave.error === "not_found" ? "not_found" : "conflict" };
       }
+      const ended = gave.ticket;
+      const repair = gave.repair;
       tell(
-        stopped.ticket.conversation,
-        text("notice.ownerGaveUp", { ticket: ticket.id }),
+        ended.conversation,
+        repair === null ? text("notice.ownerGaveUpEnded", { ticket: ticket.id }) : text("notice.ownerGaveUp", { ticket: ticket.id, repair: repair.id }),
         [
-          `[hub] The owner gave up ${described(ticket)} on its card, after ${stuck.round} guided rounds. It is stopped: its worker's folder is removed; the branch and any pull request stay on GitHub.`,
-          ...chainProgress(stopped.ticket),
-          words === "" ? "The owner gave no words." : `The owner's words to you: ${words}`,
-          "Acknowledge it to the owner in Chinese in a line.",
-          ...decisionReport(stopped.ticket),
+          `[hub] The owner gave up ${described(ticket)} on its card, after ${stuck.round} guided rounds. It is stopped, and nothing of it is destroyed: its branch and any pull request stay on GitHub, and its folder is kept for the repair and saved to the branch where its machine can.`,
+          ...chainProgress(ended),
+          ...(repair === null ? ["No work remained, so no repair ticket was opened."] : repairReport(ended, repair, gave.followers, true)),
+          words === "" ? "The owner gave no words." : `The owner's words, which the repair's worker is given as well: ${words}`,
+          `It was stuck on: ${failureWords[stuck.failure.kind]}${stuck.failure.detail === "" ? "" : ` (${stuck.failure.detail})`}.`,
+          ...decisionReport(ended),
         ].join("\n"),
       );
-      return { ok: true, ticket: stopped.ticket };
+      return { ok: true, ticket: ended };
     }
     let resumed: Ticket;
     try {
@@ -285,7 +280,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       text(merged ? "notice.ownerStoppedChain" : "notice.ownerStopped", { ticket: ticket.id }),
       [
         merged
-          ? `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`
+          ? `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done unless the owner asks for it to go on: then open a repair ticket for it with open_repair_ticket.`
           : `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed, and nothing more of it is done.`,
         ...chainProgress(ticket),
         merged

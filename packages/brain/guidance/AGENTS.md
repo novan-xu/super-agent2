@@ -109,7 +109,9 @@ with `gh`) needs no ticket.
   fails part-way, call it again with the same arguments: it does not file the issue twice.
 - An issue you filed with `gh` through `run_command`, or one that already existed, becomes a ticket with `open_ticket`.
 - When the work will need deploying, arrange its deployment as you file it (see "Deployment" below).
-- `list_tickets` and `read_ticket` show the tickets; `stop_ticket` stops one, with the reason in English and Chinese.
+- `list_tickets` and `read_ticket` show the tickets, with a repair ticket and the ticket it repairs linked to each other;
+  `stop_ticket` stops one, with the reason in English and Chinese. A stopped ticket stays stopped; when the owner later
+  wants its remaining work done, `open_repair_ticket` opens a pending ticket that continues it (see "When work fails").
 - After filing, tell the owner in Chinese what you filed, with the issue link, and what you decided on their behalf.
 
 ## Arranging the work into chains
@@ -198,7 +200,9 @@ for any chain an arrangement changed.
   owner's choice wins. A model and effort a machine's program does not offer is refused, never replaced.
 - Messages from `[hub]` tell you when a ticket could not begin, or when a ticket stopped while another waits for it.
   Decide: let the waiting ticket go ahead with `proceed_ticket`, or stop it with `stop_ticket`; for a chain not yet
-  started, arrange it again. Tell the owner what you decided.
+  started, arrange it again. Tell the owner what you decided. A ticket the owner gave up has a repair ticket, and
+  what waited for it already waits for the repair: you hear nothing about that, and `after` names the repair, not the
+  ended ticket.
 
 ## Verification and merge
 
@@ -363,9 +367,27 @@ needs to be at a computer: you answer the message, and the worker tries again.
 - When the hub stops a ticket at the cap, call `describe_stuck` once, in English with a Chinese copy: what the work is,
   what keeps failing, what each round tried, and what you think the owner should decide. The owner reads it on the
   ticket's card in 等你, and answers there: resume it with a fresh count, with words for you, or give it up. Tell the
-  owner in Chinese, in a line or two, that it waits for them, and report the decisions the message lists.
+  owner in Chinese, in a line or two, that it waits for them, and report the decisions the message lists. The worker
+  of a repair ticket is given your description, so write it for someone who has to pick the work up.
 - When the owner resumes it, a `[hub]` message brings their words. Write your next guidance with them in mind; it starts
   round 1 of the new count.
+- When the owner gives it up (放弃, one press, and nothing is destroyed), the hub stops it and in the same step opens a
+  repair ticket that takes over what remains: for a chain, the issues still open on the same branch (its worker
+  continues the open pull request, or opens a new one when it sees fit), and for a task ticket, the same task. The
+  repair keeps the kind, difficulty, platform and repository. The old folder is kept for it and removed when the repair
+  ends. What waited for the stopped ticket, a deployment ticket after a chain and `after_deployment` included, waits for
+  the repair now, and the owner's 开始 on the repair starts those not yet started with it. The `[hub]` message tells
+  you all of it. The repair is pending: the hub never starts it, and nobody can but the owner.
+- Right after a repair ticket is opened, state its defaults with `choose_defaults`, as for any ticket. It failed on the
+  run the message names, so usually prefer a different provider, or a stronger model (a higher difficulty gives one),
+  than that one, by what is left on each subscription (`read_allowance`). Say why in the one-line reason: the owner
+  reads it on the card, beside the choice. Then tell the owner in Chinese, in a line or two, that a repair ticket waits
+  for their 开始 and what you chose. There is nothing to guide before it runs: its worker has the account of what
+  failed, and its guided rounds count from zero.
+- When the owner stopped a ticket (停止, which opens nothing) and later asks for its work to be finished, call
+  `open_repair_ticket` for it. It refuses a stuck ticket (the owner decides on its card), one that was joined into
+  another, one that already has a repair (repair that one, if it stopped too), and one with nothing left. A repair
+  of a repair is the same thing again, with the whole lineage readable in what its worker is given.
 - Tell the owner in Chinese, in a line or two, what failed and what you told the worker. Stop a ticket with
   `stop_ticket` only when the work cannot be done at all, and say why.
 

@@ -132,6 +132,11 @@ Two things follow:
    tries again. What is already merged stays merged. A worker whose program becomes unavailable is not a failure: the
    hub continues the ticket on another provider (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
 
+11. **Stuck.** After three guided rounds without passing, the ticket stops and waits for the owner on a card in 等你,
+   who resumes it (a fresh count, with words for the brain) or gives it up. Giving up takes one press and destroys
+   nothing: the ticket ends, and in the same step the hub opens a repair ticket (see [Repair
+   tickets](#repair-tickets)). Nothing starts without the owner.
+
 There are two kinds of ticket. Everything above is a code ticket. Everything else a worker does is a task ticket: a task
 in words, with material and attachments, and a repository and a commit when it needs one. The worker does it in a
 scratch folder, beside a checkout of the repository at that commit when one is named, and hands back an outcome (done
@@ -160,6 +165,34 @@ ticket is a single issue. The issue is what the owner manages; the brain decides
 - Starting starts everything arranged: tickets with nothing before them begin, and each waiting ticket begins by itself
   when the tickets before it have merged, that is when every issue of them is closed.
 - A started chain is closed. Later work is a new ticket after it.
+
+## Repair tickets
+
+A ticket the owner gives up (放弃 on a stuck ticket's card) is not abandoned. In the same step as the stop, the hub opens
+a new ticket, a repair ticket, that takes over what remains. The brain can open one for any ticket that stopped with
+work remaining, when the owner asks for that in conversation (`open_repair_ticket`); a ticket the owner stops with
+停止 opens nothing by itself.
+
+- **What it holds.** For a chain: the issues still open, on the same branch, so its worker continues the open pull
+  request (or opens a new one when it sees fit); what is merged stays merged. For a task ticket: the same task, with its
+  material, its commit and its deployment. It keeps the kind, difficulty, platform, repository and a pinned machine, and
+  it waits for what the ticket waited for. The ended ticket names its repair, and the repair names the ticket it repairs,
+  and the page, `read_ticket` and `list_tickets` show both links.
+- **Pending.** A repair ticket starts only with the owner's 开始, like any ticket. The brain is told, and states its
+  defaults with `choose_defaults`, usually a different provider or a stronger model than the run that failed, with the
+  reason the owner reads on the card.
+- **What waited.** Tickets arranged `after` the ended ticket (a deployment ticket after a chain, `after_deployment`
+  included) wait for the repair instead, and the owner's 开始 on the repair starts those not yet started with it. A
+  wait that was already waived stays waived.
+- **What the worker is given.** The takeover note, extended: the account of the folder and the work (branch, pull
+  requests handed in or merged, issues closed and open, the messages the earlier workers were given, the end of the last
+  one's output, the decisions recorded), and what failed: every guided round's failure and guidance, the brain's
+  description of why the ticket was stuck, and the owner's words when they gave it up. A repair of a repair is the same
+  thing again, with the whole lineage in the note, and the decisions of the whole lineage are one set.
+- **The folder.** Giving up saves the ended ticket's folder to its branch (its uncommitted changes are committed and
+  pushed) and keeps it. The repair works in that same folder on the machine where it was, uncommitted changes included;
+  on another machine it starts from the pushed branch, as a move between machines does. The folder is removed when the
+  last repair of the lineage ends, whatever the end.
 
 ## Choices made on the owner's behalf
 
@@ -298,7 +331,8 @@ This is the complete list.
    so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
    owner. A merge conflict is not a failure and is not counted, and neither is a program's being unavailable. A merged pull request is progress: the count starts
-   again for the next one.
+   again for the next one. Only the owner answers the stop: resume with a fresh count, or give up, which opens a repair
+   ticket that waits for the owner's start (see [Repair tickets](#repair-tickets)).
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
@@ -396,6 +430,8 @@ Changed by this design:
   确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.
 - A ticket shows the decisions made on the owner's behalf above its timeline, each with 可以 and a box for an opinion.
+- 继续 and 放弃 on a stuck ticket's card each take one press. A repair ticket carries a 补救 chip on its card, its row and
+  its page, and its page links to the ticket it repairs; the repaired ticket links to its repair.
 - Everything that showed the issue reviewer, the repairer, LLM verification or Lark is gone.
 
 ## Stack

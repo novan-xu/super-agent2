@@ -6,7 +6,7 @@ import { kindKey } from "../live/phase.js";
 import { toReview } from "../live/tickets.js";
 import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
-import { ChainNumbers, momentOf, PhaseStatus, PullRequestNumbers } from "./TicketParts.js";
+import { ChainNumbers, momentOf, PhaseStatus, PullRequestNumbers, RepairChip } from "./TicketParts.js";
 
 export interface HistoryViewProps {
   readonly history: HistoryState;
@@ -39,6 +39,7 @@ const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: 
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
           <span className="chip">{text(kindKey(ticket))}</span>
+          <RepairChip ticket={ticket} />
           {ticket.repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />

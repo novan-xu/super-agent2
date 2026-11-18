@@ -8,7 +8,7 @@ import { initialWaiting, type WaitingState, waitingReducer } from "../live/waiti
 import { TicketView } from "./TicketView.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
+const actions: CardActions = { answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
 
 function state(...cards: WaitingCard[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
@@ -44,11 +44,15 @@ describe("a stopped ticket's card in 等你", () => {
     expect(shown).toContain("Pipeline #9 on abc1234 failed: workflow check, step test (exit code 1)");
   });
 
-  it("asks for a second press before giving up", () => {
-    const armed = waitingReducer(state(stuckCard(4)), { type: "arm", key: "stuck:4-40000" });
-    const shown = text(render(armed));
-    expect(shown).toContain("取消");
-    expect(shown).not.toContain("继续");
+  it("offers 继续 and 放弃 side by side, each answered by one press", () => {
+    const html = render(state(stuckCard(4)));
+    expect(text(html)).toContain("继续");
+    expect(text(html)).toContain("放弃");
+    expect(text(html)).not.toContain("取消");
+    expect(html.match(/<button/g)).toHaveLength(2);
+    const sending = render(waitingReducer(state(stuckCard(4)), { type: "sending", key: "stuck:4-40000", verdict: "give-up" }));
+    expect(sending).toContain("is-busy");
+    expect(text(sending)).toContain("继续");
   });
 });
 
@@ -72,6 +76,8 @@ describe("a round in the ticket's timeline", () => {
           origin="workbench"
           backHref="/workbench"
           back={() => undefined}
+          ticketHref={(id) => `/tickets/${id}`}
+          openTicket={() => undefined}
           now={50}
         />,
       ),

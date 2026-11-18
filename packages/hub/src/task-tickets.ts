@@ -164,7 +164,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         return refuse(`there is no ticket ${id} to come after.`);
       }
       if (found.state === "stopped") {
-        return refuse(`ticket ${id} has stopped, so nothing can come after it.`);
+        return refuse(found.repairedBy === null ? `ticket ${id} has stopped, so nothing can come after it.` : `ticket ${id} has stopped; ticket ${found.repairedBy} repairs it, so come after that.`);
       }
       before.push(found);
     }

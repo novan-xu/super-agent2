@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { moveLabel, needsMoves, openDetail, receiveDetail, timeline } from "./detail.js";
 import { stuckCard, stuckTicket, ticket, workStatus } from "./fixtures.js";
 import { panelOffers, phaseLooks, ticketPhase, ticketProblem } from "./phase.js";
-import { canAnswer, initialWaiting, waitingReducer } from "./waiting.js";
+import { canAnswer, initialWaiting, useOf, waitingReducer } from "./waiting.js";
 
 function move(seq: number, from: TicketMove["from"], to: TicketMove["to"], at: number): TicketMove {
   return { ticket: 1, seq, from, to, reason: null, at };
@@ -30,15 +30,15 @@ describe("a ticket stopped for the owner", () => {
     expect(panelOffers(stuckTicket(1))).toEqual({ stop: false, reassign: false, reply: false });
   });
 
-  it("is answered from its card: resuming at once, giving up only after a second press", () => {
+  it("is answered from its card, resuming and giving up each in one press", () => {
     const shown = waitingReducer(initialWaiting, { type: "snapshot", cards: [stuckCard(1)] });
     const key = "stuck:1-40000";
-    expect(canAnswer(shown, key, "resume")).toBe(true);
-    expect(canAnswer(shown, key, "give-up")).toBe(false);
-    const armed = waitingReducer(shown, { type: "arm", key });
-    expect(canAnswer(armed, key, "give-up")).toBe(true);
-    const again = waitingReducer(armed, { type: "snapshot", cards: [stuckCard(1, { where: { en: "Stuck", zh: "卡住了" } })] });
-    expect(canAnswer(again, key, "give-up")).toBe(true);
+    expect(canAnswer(shown, key)).toBe(true);
+    const sending = waitingReducer(shown, { type: "sending", key, verdict: "give-up" });
+    expect(useOf(sending, key)).toEqual({ step: "sending", verdict: "give-up", failure: null });
+    expect(canAnswer(sending, key)).toBe(false);
+    const again = waitingReducer(shown, { type: "snapshot", cards: [stuckCard(1, { where: { en: "Stuck", zh: "卡住了" } })] });
+    expect(canAnswer(again, key)).toBe(true);
   });
 });
 

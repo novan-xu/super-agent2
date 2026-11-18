@@ -11,11 +11,9 @@ import { followLink } from "../parts/Shell.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
-import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers } from "./TicketParts.js";
+import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers, RepairChip } from "./TicketParts.js";
 
 export interface CardActions {
-  arm(key: string): void;
-  disarm(key: string): void;
   answer(key: string, verdict: Verdict): void;
   start(keys: readonly string[]): void;
   choose(key: string, change: ChoiceChange): void;
@@ -80,6 +78,7 @@ function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Tick
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
           <span className="chip">{text(kindKey(ticket))}</span>
+          <RepairChip ticket={ticket} />
           {ticket.issues.length === 0 ? null : <ChainNumbers ticket={ticket} />}
           {where === null ? null : (
             <span className="chip chip--mono">
@@ -189,8 +188,6 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
               focused={focus === card.key}
               href={ticketHref(card.ticket.id)}
               open={() => openTicket(card.ticket.id)}
-              arm={() => actions.arm(card.key)}
-              disarm={() => actions.disarm(card.key)}
               answer={(answer, words) => actions.answerStuck(card.key, answer, words)}
             />
           ))}

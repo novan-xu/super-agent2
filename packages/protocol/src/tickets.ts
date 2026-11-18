@@ -171,6 +171,14 @@ export function openPullRequest<T extends Pick<TicketPullRequest, "state">>(pull
   return pullRequests.filter((pull) => pull.state === "open").at(-1);
 }
 
+export function hasRemainingWork(ticket: ChainProgress & { readonly form: TicketForm }): boolean {
+  return ticket.form === "task" || openIssueNumbers(ticket).length > 0;
+}
+
+export const repairOpeners = ["owner", "brain"] as const;
+export const RepairOpener = z.enum(repairOpeners);
+export type RepairOpener = z.infer<typeof RepairOpener>;
+
 export const CommitName = z.string().regex(/^[0-9a-f]{7,40}$/i);
 
 export const mergedCommit = "merged";
@@ -224,6 +232,8 @@ export const Ticket = z.object({
   beginFailure: z.string().nullable(),
   stopReason: GeneratedText.nullable(),
   joinedInto: TicketId.nullable(),
+  repairs: TicketId.nullable().default(null),
+  repairedBy: TicketId.nullable().default(null),
   conversation: ConversationId.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),

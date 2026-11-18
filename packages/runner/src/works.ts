@@ -129,6 +129,7 @@ const WorkRecord = z.object({
   session: z.string().nullable(),
   base: z.string().nullable(),
   commit: z.string().nullable().default(null),
+  folder: z.number().int().positive().nullable().default(null),
   ended: z.boolean(),
 });
 type WorkRecord = z.output<typeof WorkRecord>;
@@ -261,7 +262,8 @@ export function createWorks(options: WorksOptions): Works {
     for (const name of readdirSync(folder)) {
       try {
         const record = WorkRecord.parse(JSON.parse(readFileSync(join(folder, name, "work.json"), "utf8")));
-        const paths = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository) : workPaths(options.home, record.repository, record.ticket);
+        const folderOf = record.folder ?? record.ticket;
+        const paths = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository, folderOf) : workPaths(options.home, record.repository, record.ticket, folderOf);
         works.set(record.ticket, blank(record, paths));
       } catch {
         continue;
@@ -693,7 +695,8 @@ export function createWorks(options: WorksOptions): Works {
       await closeHandle(existing);
       existing.live = false;
     }
-    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket) : taskPaths(options.home, task.ticket, given.assignment.checkout?.repository ?? null);
+    const folderOf = task.folder ?? task.ticket;
+    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket, folderOf) : taskPaths(options.home, task.ticket, given.assignment.checkout?.repository ?? null, folderOf);
     const sameAttempt = existing !== undefined && existing.record.attempt === task.attempt;
     if (existing !== undefined && !sameAttempt) {
       for (const name of existsSync(paths.folder) ? readdirSync(paths.folder) : []) {
@@ -720,6 +723,7 @@ export function createWorks(options: WorksOptions): Works {
       session: sameAttempt ? existing.record.session : null,
       base: sameAttempt ? existing.record.base : null,
       commit: existing === undefined ? null : existing.record.commit,
+      folder: task.folder ?? null,
       ended: false,
     };
     const work = blank(record, paths);
@@ -905,7 +909,7 @@ export function createWorks(options: WorksOptions): Works {
     changed();
     let saved = { saved: false, detail: "Stopped" };
     if (keep && task !== undefined) {
-      emit(work, { kind: "phase", phase: "saving", detail: "Saving the work on the branch before it moves" });
+      emit(work, { kind: "phase", phase: "saving", detail: "Saving the work on the branch" });
       saved = await saveWork(gitFor(task), ticket, work.record.branch, work.paths).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
     }
     if (open || (keep && task !== undefined)) {
