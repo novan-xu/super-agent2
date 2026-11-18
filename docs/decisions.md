@@ -2956,10 +2956,9 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   images over 20 MiB go to Claude Code by path only. Antigravity gets the path.
 - **Why:** Checked against each program's own interface and in live runs: a solid-colour image and a text file with a
   random code word, as the first message and as a message into a running turn. Claude Code and Codex answered the colour
-  from the image itself and read the code word at its path. dsh 0.2.1-rc.2 with `deepseek-flash` on the DeepSeek
-  account accepted the image block, but that route is text only: dsh put a placeholder in its place, its `read_image`
-  tool gave the model only "image/png, 96x64 px", and the model found the colour by reading pixel values with
-  PowerShell. The path is what makes that possible, and what lets any program open a file it cannot see.
+  from the image itself and read the code word at its path. The path is what lets any program open a file it cannot
+  see. What this entry first said about dsh, that its route is text only and the model found the colour by reading
+  pixel values, was wrong; see "dsh sees images on deepseek-flash" below.
 - **Other options:** Paths only, which loses Claude's and GPT's sight of the image; images only, which loses every other
   file; converting HEIC to JPEG on the hub, which needs an image library and is unnecessary because Safari already
   converts a photo picked from the library to JPEG.
@@ -3106,3 +3105,27 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   it would be a second label for something the owner reads in the conversation's notice.
 - **Why:** The owner's rule is no unnecessary secondary labels. The notice in the conversation is where the owner sees it.
 - **Other options:** Appending the wait and the usual to the verification line on the page.
+
+## 2026-11-17 — dsh sees images on deepseek-flash
+
+- **Chosen:** No change to how the dsh adapter passes images: `SdkEncodedImageBlock`s in `session/prompt`, and images
+  saved through dsh's attachment store for a message into a running turn, reach `deepseek-flash` as images. The
+  `[hub]` list under a message now says that an image of up to 20 MB is shown with the message and is to be looked at
+  directly, without a tool, and only other files are read at their paths; the brain's guidance says the same. The live
+  step in `tools/brain-live` now draws a random shape in a random colour and fails when the answer misses either, or
+  when any tool call names the image's attachment (that is, a tool opened the file instead of the model looking). This
+  overturns the earlier finding in "Each program gets an attachment in the best way it has, and always its path" that
+  dsh's route is text only.
+- **Why:** The owner said dsh's model is multimodal. Checked with the real dsh 0.2.1-rc.2 and the owner's account,
+  through dsh itself: the account's `GET /models` listing, read with dsh's own `llm.listModels("deepseek-account")`,
+  offers two models, `deepseek-flash` ("DeepSeek-V4.1-Flash", input text and image) and `deepseek-v4-pro`
+  ("DeepSeek-V4-Pro", input text only). A prompt with a 128-pixel shape and "do not use any tool" was answered
+  correctly three times in a row (green triangle, blue triangle, green triangle) with no tool call, and the strict live
+  step passed for the first message and for a message taken into a running turn. The image had reached the model in
+  the earlier run too. The model had been told to "read any attached file with your own tools", so it opened the image
+  with `read_image` (whose text result is only a description of the file) and then sampled pixels with PowerShell. I
+  read that as a sign the route could not see the image without testing that directly. The start defaults already use
+  `deepseek-flash` for dsh everywhere, so no model id changes; a dsh set to `deepseek-v4-pro` gets dsh's placeholder
+  instead of the image and still has the path.
+- **Other options:** A `modelOverrides` entry declaring image input, which is unnecessary because the listing already
+  declares it; moving dsh to another model id, which the account does not offer for images.
