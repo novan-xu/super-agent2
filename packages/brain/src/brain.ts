@@ -34,6 +34,7 @@ export interface Brain {
   running(): RunningTurn[];
   status(): BrainProviders;
   readonly providers: ProviderChoice;
+  maintenance(action: () => Promise<void>): Promise<void>;
   settled(): Promise<void>;
   close(): Promise<void>;
 }
@@ -135,6 +136,8 @@ export function createBrain(options: BrainOptions): Brain {
   const work = new Set<Promise<void>>();
   let uses = 0;
   let closing = false;
+  let maintenance: { action: () => Promise<void>; done: () => void } | undefined;
+  let maintaining = false;
 
   const track = (promise: Promise<void>) => {
     const tracked = promise.catch(() => undefined).finally(() => work.delete(tracked));
@@ -190,6 +193,7 @@ export function createBrain(options: BrainOptions): Brain {
     state.turn = undefined;
     transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason });
     startTurn(state);
+    tryMaintenance();
   };
 
   const nextProvider = (turn: TurnRun): Provider | undefined => providers.candidates().find((provider) => !turn.tried.has(provider));
@@ -393,7 +397,7 @@ export function createBrain(options: BrainOptions): Brain {
   };
 
   const startTurn = (state: State) => {
-    if (closing || state.turn !== undefined || state.queue.length === 0) {
+    if (closing || maintenance !== undefined || maintaining || state.turn !== undefined || state.queue.length === 0) {
       return;
     }
     const inputs = state.queue.splice(0);
@@ -453,8 +457,41 @@ export function createBrain(options: BrainOptions): Brain {
     }
   };
 
+  const tryMaintenance = () => {
+    if (closing || maintaining || maintenance === undefined || [...states.values()].some((state) => state.turn !== undefined)) {
+      return;
+    }
+    const task = maintenance;
+    maintenance = undefined;
+    maintaining = true;
+    for (const state of states.values()) {
+      dropLive(state);
+    }
+    track((async () => {
+      try {
+        await Promise.all([...work]);
+        await task.action();
+      } finally {
+        maintaining = false;
+        task.done();
+        for (const state of states.values()) {
+          startTurn(state);
+        }
+        tryMaintenance();
+      }
+    })());
+  };
+
   return {
     providers,
+    maintenance: (action) => new Promise<void>((done) => {
+      if (closing || maintenance !== undefined || maintaining) {
+        done();
+        return;
+      }
+      maintenance = { action, done };
+      tryMaintenance();
+    }),
     status,
     receive: (message) => {
       if (closing) {
@@ -487,6 +524,8 @@ export function createBrain(options: BrainOptions): Brain {
     },
     close: async () => {
       closing = true;
+      maintenance?.done();
+      maintenance = undefined;
       for (const state of states.values()) {
         dropLive(state);
       }

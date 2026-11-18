@@ -3937,3 +3937,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Chosen:** Automatically update verified npm global installations of Codex, Claude Code and dsh from the stable npm `latest` tag. Leave other channels, including native Claude Code, Homebrew and Antigravity, untouched and report them as unrecognised. Disable the check per machine with `SUPERAGENT2_PROGRAM_AUTO_UPDATE=0`.
 - **Why:** The installed executable must be tied to the package being updated, and a failed installation must be recoverable without replacing another installation. The known npm installations can be verified and backed up; the other channels need their own detection and recovery procedures. The switch allows a machine owner to control local changes without a new page control.
 - **Other options:** Update native and Homebrew installations with channel-specific recovery; reinstall an unrecognised program through npm; provide no opt-out.
+
+## 2026-11-18 ? Brain program updates
+
+- **Chosen:** Check npm latest at startup and every six hours; queue new turns while all three programs are checked and
+  installed, and activate each successful installation separately from a persistent volume. The image versions are
+  the floor, including the dsh prerelease. Failed updates leave the previous version active and retry on the next check.
+- **Why:** This keeps the brain current without a deployment, avoids changing files under running programs, and allows
+  one provider to update even if another fails. Sessions resume using the hub's existing saved session IDs.
+- **Other options:** Scheduled image rebuilds and deployments; updating all programs as one transaction.
