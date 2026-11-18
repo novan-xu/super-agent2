@@ -327,7 +327,7 @@ type VisibleEntry = Exclude<ConversationEntry, { kind: "tool" }>;
 
 function previewOf(entry: VisibleEntry): string {
   const fallback = entry.kind === "owner" ? entry.attachments[0]?.name : entry.kind === "delivery" ? entry.title.zh : undefined;
-  return (entry.text?.trim() || fallback || text("conversation.quote")).slice(0, 240);
+  return ((entry.kind === "question" ? entry.questions.map((question) => question.prompt).join("；") : entry.text?.trim()) || fallback || text("conversation.quote")).slice(0, 240);
 }
 
 function toneOf(id: string): number {
@@ -441,7 +441,7 @@ export function TopicStream({ state, stream, scope, list, online, now, following
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
           return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
-            quote={entry === undefined ? undefined : () => selectQuote(entry)}
+            quote={entry === undefined || entry.kind === "question" ? undefined : () => selectQuote(entry)}
             move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
             quoted={entry?.kind === "owner" && entry.quotedMessage !== undefined ? (
               <div className="sent-quote od-truncate">{source === undefined ? text("conversation.quote") : previewOf(source)}</div>

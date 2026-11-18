@@ -139,6 +139,8 @@ export function unsettled(entry: ConversationEntry, finished: ReadonlySet<string
       return entry.state === "running" || !finished.has(entry.turn);
     case "text":
       return !finished.has(entry.turn);
+    case "question":
+      return entry.answer === null;
     case "notice":
     case "delivery":
       return false;

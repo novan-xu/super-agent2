@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Attachment } from "./attachments.js";
 import { ConversationId, MessageId, Provider, TopicScope } from "./conversations.js";
+import { QuestionAnswers } from "./questions.js";
 import { MemoryBrief } from "./memory.js";
 import { RepositoryName } from "./repositories.js";
 import { ProtocolVersion } from "./version.js";
@@ -37,6 +38,7 @@ export const BrainInput = z.object({
   text: z.string(),
   attachments: z.array(BrainAttachment).default([]),
   quote: BrainQuote.optional(),
+  questionResponse: z.object({ card: MessageId, answers: QuestionAnswers }).optional(),
   needsRepository: z.literal(true).optional(),
 });
 export type BrainInput = z.infer<typeof BrainInput>;

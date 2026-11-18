@@ -23,6 +23,7 @@ import {
   type ConversationList,
   type ConversationResponse,
   type EntryResponse,
+  QuestionAnswers,
   type StreamEntry,
   StreamMessage,
   type StreamPage,
@@ -172,7 +173,7 @@ export const ownerStopReason = { en: "The owner stopped it", zh: text("ticket.re
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
-const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt|\/rename|\/archive|\/merge|\/move)?$/;
+const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/questions|\/interrupt|\/rename|\/archive|\/merge|\/move)?$/;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -1142,6 +1143,15 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return false;
       }
       sendJson(response, 200, detail);
+      return true;
+    }
+    if (id !== undefined && action === "/questions" && method === "POST") {
+      if (!isJson(request)) { request.resume(); sendJson(response, 415, { error: "unsupported_media_type" }); return true; }
+      const given = parseJson(await readBody(request), z.object({ id: z.string().min(1), answers: QuestionAnswers }));
+      if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return true; }
+      const entry = conversations.answerQuestions(id, given.id, given.answers);
+      if (entry === undefined) sendJson(response, 409, { error: "conflict" });
+      else sendJson(response, 202, { entry });
       return true;
     }
     if ((path === streamPath || action === "/messages") && method === "POST") {

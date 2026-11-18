@@ -1,3 +1,4 @@
+import { QuestionCard } from "./QuestionCard.js";
 import { FileViewer } from "../parts/FileViewer.js";
 import { text } from "@super-agent2/catalog";
 import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, Turn } from "@super-agent2/protocol";
@@ -185,6 +186,8 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move 
         </button>
       );
       switch (entry.kind) {
+        case "question":
+          return <div>{topic}<QuestionCard entry={entry} /></div>;
         case "owner":
           return <OwnerMessage entry={entry} topic={topic} action={<>
             {action}

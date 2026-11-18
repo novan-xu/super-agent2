@@ -1,4 +1,5 @@
 import {
+  Questions,
   CodeEngineChoice,
   ProgramId,
   DifficultyRow,
@@ -839,6 +840,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
       ...(options.memories === undefined ? [] : memoryDefinitions()),
+      { name: "ask_owner", title: "Ask the owner", description: "Show all questions of a choice together. The owner's answer arrives later in this topic.", inputSchema: z.toJSONSchema(z.object({ questions: Questions }), { io: "input" }) },
       ...topicDefinitions(),
     ];
   };
@@ -1296,6 +1298,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const args = QuoteArguments.safeParse(parsed.data.arguments);
         const part = conversation === undefined || !args.success ? undefined : conversations.readQuote(conversation, args.data.id, args.data.offset);
         result = part === undefined ? { text: "No quote at that offset in this topic.", isError: true } : { text: JSON.stringify(part) };
+        break;
+      }
+      case "ask_owner": {
+        const args = z.object({ questions: Questions }).safeParse(parsed.data.arguments);
+        const id = conversation !== undefined && turn !== undefined && !aborted.aborted && args.success ? conversations.askOwner(conversation, turn, args.data.questions) : undefined;
+        result = id === undefined ? { text: "An active topic turn and valid questions are required.", isError: true } : { text: `Question card ${id} shown. The answer will arrive as the owner's next input in this topic.` };
         break;
       }
       case "handover": {

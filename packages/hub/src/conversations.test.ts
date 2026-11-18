@@ -151,7 +151,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -831,5 +831,60 @@ describe("topic corrections and archive policy", () => {
     expect(await oldLink.json()).toMatchObject({ conversation: { id: destination, repository: "owner/new" } });
     const notice = service.entries(destination)[0]!;
     expect(service.send(source, "Reply using the old address", [], notice.id)).toMatchObject({ conversation: destination, quotedMessage: notice.id });
+  });
+});
+
+describe("question cards", () => {
+  const questions = [
+    { id: "scope", prompt: "选择范围", required: true, multiple: false, options: [{ id: "a", label: "甲", recommended: true }, { id: "b", label: "乙" }] },
+    { id: "extras", prompt: "选择附加项", required: false, multiple: true, options: [{ id: "x", label: "一" }, { id: "y", label: "二" }] },
+  ];
+  it("sends structured answers in the same topic, with text overriding options, and rejects a second submission", async () => {
+    const running = await start();
+    const topic = running.conversations.create();
+    const sent: HubToBrain[] = [];
+    const brain = running.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    const turn = { conversation: topic.id, turn: "question-turn" };
+    brain.receive({ type: "turn.started", ...turn, provider: "gpt", model: "test", inputs: [] });
+    const response = await fetch(`${base(running)}${brainToolsPath}`, { method: "POST", headers: { authorization: `Bearer ${brainToken()}`, "content-type": "application/json", "x-super-agent-conversation": topic.id, "x-super-agent-turn": turn.turn }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ask_owner", arguments: { questions } } }) });
+    expect(await response.json()).toMatchObject({ result: { isError: false } });
+    const card = running.conversations.entries(topic.id).find((entry) => entry.kind === "question");
+    expect(card?.kind === "question" && card.questions).toHaveLength(2);
+    const headers = { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json" };
+    const incomplete = await fetch(`${base(running)}/api/conversations/${topic.id}/questions`, { method: "POST", headers, body: JSON.stringify({ id: card!.id, answers: [] }) });
+    expect(incomplete.status).toBe(409);
+    const request = () => fetch(`${base(running)}/api/conversations/${topic.id}/questions`, { method: "POST", headers, body: JSON.stringify({ id: card!.id, answers: [{ question: "scope", options: ["a"], text: "自己写" }, { question: "extras", options: ["x", "y"], text: "" }] }) });
+    expect((await request()).status).toBe(202);
+    expect((await request()).status).toBe(409);
+    expect(running.conversations.entries(topic.id).find((entry) => entry.id === card?.id)).toMatchObject({ answer: { kind: "card", answers: [{ question: "scope", options: [], text: "自己写" }, { question: "extras", options: ["x", "y"] }] } });
+    expect(sent).toContainEqual(expect.objectContaining({ type: "input", conversation: topic.id, input: expect.objectContaining({ text: expect.stringContaining('"question":"scope"'), questionResponse: { card: card!.id, answers: [{ question: "scope", options: [], text: "自己写" }, { question: "extras", options: ["x", "y"], text: "" }] } }) }));
+    expect(running.conversations.entries(topic.id).at(-1)).toMatchObject({ kind: "owner", text: "1. 自己写；2. 一、二" });
+  });
+
+  it("keeps earlier cards open when a later card is answered", async () => {
+    const running = await start();
+    const topic = running.conversations.create();
+    const brain = running.conversations.attach({ send: () => undefined, close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    brain.receive({ type: "turn.started", conversation: topic.id, turn: "t", provider: "gpt", model: "test", inputs: [] });
+    const first = running.conversations.askOwner(topic.id, "t", questions)!;
+    const second = running.conversations.askOwner(topic.id, "t", questions)!;
+    expect(running.conversations.answerQuestions(topic.id, second, [{ question: "scope", options: ["a"], text: "" }])).toBeDefined();
+    expect(running.conversations.entries(topic.id).find((entry) => entry.id === first)).toMatchObject({ answer: null });
+    running.conversations.send(topic.id, "回复第一张");
+    expect(running.conversations.entries(topic.id).find((entry) => entry.id === first)).toMatchObject({ answer: { kind: "message", text: "回复第一张" } });
+  });
+
+  it("marks the card answered when the owner replies in the composer", async () => {
+    const running = await start();
+    const topic = running.conversations.create();
+    const brain = running.conversations.attach({ send: () => undefined, close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    brain.receive({ type: "turn.started", conversation: topic.id, turn: "t", provider: "gpt", model: "test", inputs: [] });
+    const id = running.conversations.askOwner(topic.id, "t", questions)!;
+    running.conversations.send(topic.id, "我想换一个方案");
+    expect(running.conversations.entries(topic.id).find((entry) => entry.id === id)).toMatchObject({ answer: { kind: "message", text: "我想换一个方案" } });
+    expect(running.conversations.answerQuestions(topic.id, id, [])).toBeUndefined();
   });
 });
