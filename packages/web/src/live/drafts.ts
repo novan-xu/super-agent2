@@ -46,7 +46,5 @@ export function saveComposerDraft(key: string, draft: ComposerDraft, now = Date.
   else all[key] = { updatedAt: now, draft };
   try {
     target.setItem(storageKey, JSON.stringify(all));
-  } catch {
-    // Draft persistence is best effort when browser storage is unavailable or full.
-  }
+  } catch {}
 }
