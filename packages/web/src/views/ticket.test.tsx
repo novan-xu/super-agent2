@@ -137,6 +137,28 @@ describe("a ticket's detail", () => {
     expect(text(html)).not.toContain("|停止|");
   });
 
+  it("shows a deployment's commit, and a failed hand-back as a failure with the worker's report", () => {
+    const deployment = ticket(3, {
+      state: "working",
+      form: "task",
+      kind: "operation",
+      deploys: true,
+      issues: [],
+      commitRef: "merged",
+      commit: "abc1234def5678abc1234def5678abc1234def56",
+      title: { en: "Deploy", zh: "部署沙盒" },
+      work: workStatus({ state: "failed", failure: "task-failed", reason: "It did not come up" }),
+    });
+    const html = render(
+      detailOf(deployment, [workEvent(1, { kind: "delivered", outcome: "failed", text: null, files: [], report: { en: "It did not come up", zh: "没起来，已回滚" } }, { ticket: 3 })]),
+    );
+    expect(text(html)).toContain("|部署|");
+    expect(html).toContain('href="https://github.com/novan-xu/super-agent-sandbox/commit/abc1234def5678abc1234def5678abc1234def56"');
+    expect(html).not.toContain("分支");
+    expect(html).toContain("工作者报告任务没有完成");
+    expect(html).toContain("没起来，已回滚");
+  });
+
   it("shows which verification rule applied, the pipeline, and what verification waits for", () => {
     const merged = { ...running, state: "merged" as const, pullRequest: 12, work: workStatus({ state: "finished" }), verification: verification({ rule: "documentation", state: "merged", waiting: null, level: "documentation" }) };
     expect(text(render(detailOf(merged)))).toContain("|验证|只改了文本和文档|");

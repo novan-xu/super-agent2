@@ -33,7 +33,6 @@ let begun: number[];
 let sentBack: { readonly ticket: number; readonly note: string }[];
 let ticks: (() => void)[];
 let withWoodpecker: boolean;
-let ownRepository: string;
 let allowanceMinutes: number | undefined;
 
 const noDefaults: ChainDefaults = {
@@ -73,7 +72,6 @@ function open(): void {
     credentials,
     fetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
-    ownRepository,
     ...(allowanceMinutes === undefined ? {} : { firstAllowanceMinutes: allowanceMinutes }),
     ticker: (tick) => {
       ticks.push(tick);
@@ -111,7 +109,6 @@ beforeEach(() => {
   sentBack = [];
   ticks = [];
   withWoodpecker = true;
-  ownRepository = "novan-xu/super-agent2";
   allowanceMinutes = undefined;
   open();
 });
@@ -557,20 +554,30 @@ describe("after the merge", () => {
     expect(plainReport?.prompt).toContain("the repository has no deployment");
     expect(deployedReport?.notice).toBe(`工单 ${deployed.id} 已合并，这次改动需要部署`);
     expect(deployedReport?.prompt).toContain("so this change needs deploying");
-    expect(deployedReport?.prompt).toContain("The ticket deployed nothing");
+    expect(deployedReport?.prompt).toContain("no task ticket is arranged to deploy it");
+    expect(deployedReport?.prompt).toContain(`open_task_ticket (deploy true, after ${deployed.id}`);
+    expect(deployedReport?.prompt).not.toContain("deploy_repository");
   });
 
-  it("says a merge of Super-agent2 itself is deployed by hand, even when its tree still holds a deployment file", async () => {
-    await shut();
-    ownRepository = repository.toUpperCase();
-    open();
-    const own = verifying([83], 30, "p3", ["src/app.ts"], ["src/app.ts", ".superagent2/deployment.json"]);
+  it("says the task ticket arranged after a chain deploys it, and begins by itself, for Super-agent2 as for any repository", async () => {
+    const chain = verifying([83], 30, "p3", ["src/app.ts"], ["src/app.ts", ".superagent2/deployment.json"]);
+    const deployment = tickets.open({
+      form: "task",
+      repository,
+      issues: [],
+      title: { en: "Deploy it", zh: "部署" },
+      summary: { en: "Deploy the merged chain", zh: "部署合并的改动" },
+      kind: "operation",
+      conversation: "c-1",
+      waitsFor: [chain.id],
+      task: { task: "Deploy the repository by its deployment file.", materials: [], commitRef: "merged", deploys: true },
+    });
+    tickets.change((writes) => writes.move(deployment.id, "waiting"));
     await settle();
-    const report = told.find((entry) => entry.prompt.includes(`Ticket ${own.id} (`));
-    expect(report?.notice).toBe(`工单 ${own.id} 已合并，Super-agent2 的新版本等你部署`);
-    expect(report?.prompt).toContain("this is Super-agent2 itself, which the hub does not deploy");
-    expect(report?.prompt).toContain("report it with report_deployment");
-    expect(report?.prompt).not.toContain("deploy_repository");
+    const report = told.find((entry) => entry.prompt.includes(`Ticket ${chain.id} (`));
+    expect(report?.notice).toBe(`工单 ${chain.id} 已合并，接着部署`);
+    expect(report?.prompt).toContain(`task ticket ${deployment.id} deploys it, arranged after this chain: it begins by itself now`);
+    expect(report?.prompt).not.toContain("report_deployment");
   });
 
   it("stops polling a ticket that is no longer verifying", async () => {

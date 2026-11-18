@@ -55,7 +55,6 @@ export interface VerificationOptions {
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
   readonly report?: (report: FailureReport) => void;
-  readonly ownRepository?: string;
   readonly firstAllowanceMinutes?: number;
 }
 
@@ -505,9 +504,9 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
     const rule = VerificationRule.catch("outside").parse(row.rule ?? "outside");
     const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
-    const own = options.ownRepository !== undefined && (ticket.repository ?? "").toLowerCase() === options.ownRepository.toLowerCase();
-    const deployed = row.deployment === 1 && !own;
+    const deployed = row.deployment === 1;
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
+    const deploying = tickets.waitingFor(id).filter((after) => after.form === "task" && after.deploys && after.waits.some((entry) => entry.ticket === id && !entry.waived) && (after.state === "waiting" || after.state === "working"));
     const merged = ticket.pullRequests.filter((pull) => pull.state === "merged");
     const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
     const lines = [
@@ -515,18 +514,18 @@ export function createVerification(options: VerificationOptions): VerificationSe
       `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
       `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
-      own
-        ? "Deployment: this is Super-agent2 itself, which the hub does not deploy, since it cannot reach the NAS host. It is deployed on the NAS by hand, or by a worker when the owner files work for it. Tell the owner the new version is merged and waits to be deployed; once the owner says it is deployed, report it with report_deployment."
-        : deployed
-          ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying. The ticket deployed nothing. Deploy it with deploy_repository at ${row.merge_commit ?? "the merge commit"} unless the owner said otherwise.`
-          : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
-      ...((deployed || own) && waitingForDeployment.length > 0
-        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a deployment that contains this commit succeeds.`]
+      deployed
+        ? deploying.length > 0
+          ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${after.id}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
+          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner said otherwise, open one with open_task_ticket (deploy true, after ${ticket.id}, commit ${row.merge_commit ?? "merged"}) and state its defaults; the owner starts it.`
+        : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
+      ...(deployed && waitingForDeployment.length > 0
+        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]
         : []),
       "Tell the owner in Chinese, in a line or two.",
     ];
     save(id, { reported_at: clock.now() });
-    tell(ticket.conversation, text(own ? "notice.ticketMergedSelf" : deployed ? "notice.ticketMergedDeploy" : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
+    tell(ticket.conversation, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
   };
 
   const finish = async (ticket: Ticket, gitHub: GitHubApi, pull: PullRequestState, rule: VerificationRule): Promise<void> => {

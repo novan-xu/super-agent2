@@ -216,23 +216,27 @@ describe("a writing ticket's delivery", () => {
     const conversation = running.conversations.create();
     const opened = await callTool(
       running,
-      "open_writing_ticket",
+      "open_task_ticket",
       {
         title: { en: "Translate a notice", zh: "翻译一则通知" },
         summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
         task: "Translate input/notice.txt into English. Keep the tone.",
+        kind: "writing",
         material: [{ name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" }],
       },
       conversation.id,
     );
     expect(opened.isError).toBe(false);
-    expect(opened.text).toContain("Opened writing ticket 1");
+    expect(opened.text).toContain("Opened task ticket 1");
     expect(opened.text).toContain("choose_defaults");
     const ticket = running.tickets.get(1);
     expect(ticket).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id });
-    expect(running.tickets.writing(1)).toEqual({
+    expect(running.tickets.task(1)).toEqual({
       task: "Translate input/notice.txt into English. Keep the tone.",
       materials: [{ name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" }],
+      commitRef: null,
+      commit: null,
+      deploys: false,
     });
     const stated = await callTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
@@ -245,7 +249,7 @@ describe("a writing ticket's delivery", () => {
       writes.move(1, "working");
     });
     running.work.begin(running.tickets.get(1) ?? (ticket as Ticket));
-    expect(sent.filter((message) => message.type === "work.write")).toHaveLength(1);
+    expect(sent.filter((message) => message.type === "work.task")).toHaveLength(1);
     event(runner, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
     event(runner, 1, 2, {
       kind: "delivered",

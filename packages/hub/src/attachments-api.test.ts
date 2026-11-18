@@ -250,11 +250,12 @@ describe("attachments for a ticket's worker", () => {
         id: 1,
         method: "tools/call",
         params: {
-          name: "open_writing_ticket",
+          name: "open_task_ticket",
           arguments: {
             title: { en: "Summarise the contract", zh: "总结合同" },
             summary: { en: "A summary", zh: "一份总结" },
             task: "Summarise input/contract.pdf in Chinese.",
+            kind: "writing",
             material: [{ name: "contract.pdf", source: "attached by the owner in the conversation", attachment: id }],
           },
         },
@@ -262,7 +263,7 @@ describe("attachments for a ticket's worker", () => {
     });
     const reply = (await response.json()) as { result: { isError: boolean; content: { text: string }[] } };
     expect(reply.result.isError).toBe(false);
-    expect(running.tickets.writing(1)?.materials).toEqual([{ name: "contract.pdf", source: "attached by the owner in the conversation", text: null, attachment: running.attachments.get(id) }]);
+    expect(running.tickets.task(1)?.materials).toEqual([{ name: "contract.pdf", source: "attached by the owner in the conversation", text: null, attachment: running.attachments.get(id) }]);
     expect(running.attachments.granted(1, id)).toBe(true);
     expect(existsSync(running.attachments.root)).toBe(true);
   });

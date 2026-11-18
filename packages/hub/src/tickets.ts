@@ -20,9 +20,11 @@ import {
   openTicketStates,
   type Platform,
   RepositoryName,
+  fitsForm,
   Ticket,
   type TicketDetail,
   TicketIssue,
+  type TicketForm,
   type TicketKind,
   TicketMove,
   TicketPullRequest,
@@ -31,20 +33,32 @@ import {
   type OwnerChoice,
   type ProgramId,
   WorkStatus,
-  WritingMaterial,
+  TaskMaterial,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 import { verificationOf } from "./verification-record.js";
 
-export interface TicketWriting {
+export interface TaskToOpen {
   readonly task: string;
-  readonly materials: readonly WritingMaterial[];
+  readonly materials: readonly TaskMaterial[];
+  readonly commitRef?: string | null | undefined;
+  readonly deploys?: boolean | undefined;
+}
+
+export interface TicketTask {
+  readonly task: string;
+  readonly materials: readonly TaskMaterial[];
+  readonly commitRef: string | null;
+  readonly commit: string | null;
+  readonly deploys: boolean;
 }
 
 export interface TicketToOpen {
-  readonly writing?: TicketWriting | undefined;
+  readonly form?: TicketForm | undefined;
+  readonly task?: TaskToOpen | undefined;
+  readonly requiredMachine?: string | null | undefined;
   readonly repository: string | null;
   readonly issues: readonly TicketIssue[];
   readonly title: GeneratedText;
@@ -155,6 +169,7 @@ export interface TicketWrites {
   pullRequestMerged(id: number, merged: MergedPullRequest): void;
   nextPiece(id: number, branch: string): void;
   setReport(id: number, report: GeneratedText): void;
+  setCommit(id: number, commit: string): void;
   startRound(id: number, round: RoundToStart): TicketRound;
   stick(id: number, failure: LoopFailure): Ticket;
   describeStuck(id: number, where: GeneratedText): Ticket;
@@ -169,7 +184,7 @@ export interface TicketService {
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
   rounds(id: number): TicketRound[];
-  writing(id: number): TicketWriting | undefined;
+  task(id: number): TicketTask | undefined;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
   move(id: number, to: TicketState, reason?: GeneratedText): MoveResult;
@@ -188,6 +203,8 @@ export class TicketError extends Error {}
 
 const TicketRow = z.object({
   id: z.number().int(),
+  form: z.string(),
+  required_machine: z.string().nullable(),
   repository: z.string().nullable(),
   kind: z.string(),
   title_en: z.string(),
@@ -327,7 +344,7 @@ const IdRow = z.object({ ticket_id: z.number().int() });
 
 const FoundRow = z.object({ id: z.number().int() });
 
-const WritingRow = z.object({ task: z.string(), materials: z.string() });
+const TaskRow = z.object({ task: z.string(), materials: z.string(), commit_ref: z.string().nullable(), commit_sha: z.string().nullable(), deploys: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int().nullable() });
 
@@ -386,7 +403,7 @@ const defaultLimit = 200;
 
 const issueTexts = "i.title_en || char(10) || i.title_zh || char(10) || i.summary_en || char(10) || i.summary_zh";
 
-const searchedText = `t.title_en || char(10) || t.title_zh || char(10) || t.summary_en || char(10) || t.summary_zh || char(10) || COALESCE(t.repository, '') || char(10) || COALESCE((SELECT w.task FROM ticket_writing w WHERE w.ticket_id = t.id), '') || char(10) || COALESCE((SELECT group_concat(${issueTexts}, char(10)) FROM ticket_issues i WHERE i.ticket_id = t.id), '')`;
+const searchedText = `t.title_en || char(10) || t.title_zh || char(10) || t.summary_en || char(10) || t.summary_zh || char(10) || COALESCE(t.repository, '') || char(10) || COALESCE((SELECT w.task FROM ticket_tasks w WHERE w.ticket_id = t.id), '') || char(10) || COALESCE((SELECT group_concat(${issueTexts}, char(10)) FROM ticket_issues i WHERE i.ticket_id = t.id), '')`;
 
 const escapeCharacter = "\\";
 
@@ -422,8 +439,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
-  const selectWriting = connection.prepare("SELECT task, materials FROM ticket_writing WHERE ticket_id = ?");
-  const insertWriting = connection.prepare("INSERT INTO ticket_writing (ticket_id, task, materials) VALUES (?, ?, ?)");
+  const selectTask = connection.prepare("SELECT task, materials, commit_ref, commit_sha, deploys FROM ticket_tasks WHERE ticket_id = ?");
+  const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys) VALUES (?, ?, ?, ?, ?)");
+  const updateCommit = connection.prepare("UPDATE ticket_tasks SET commit_sha = ? WHERE ticket_id = ?");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets ORDER BY created_at DESC, id DESC LIMIT ?");
   const selectOpen = connection.prepare(
@@ -432,8 +450,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    `INSERT INTO tickets (form, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -504,8 +522,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const attempt = selectAttempt.get(value.id);
     const verification = selectVerification.get(value.id);
     const pullRequests = selectPullRequests.all(value.id).map(pullRequestOf);
+    const task = taskOf(value.id);
     return Ticket.parse({
       id: value.id,
+      form: value.form,
       repository: value.repository,
       issues,
       title: { en: value.title_en, zh: value.title_zh },
@@ -514,6 +534,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       difficulty: value.difficulty,
       difficultyReason: pair(value.difficulty_reason_en, value.difficulty_reason_zh),
       platform: value.platform,
+      requiredMachine: value.required_machine,
+      commitRef: task?.commitRef ?? null,
+      commit: task?.commit ?? null,
+      deploys: task?.deploys ?? false,
       brainEngine: value.brain_engine,
       ownerChoice: { machine: value.owner_machine, engine: value.owner_engine, model: value.owner_model, effort: value.owner_effort },
       state: value.state,
@@ -579,18 +603,30 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     }
   };
 
+  const formOf = (request: TicketToOpen): TicketForm => request.form ?? (request.task !== undefined || request.kind === "writing" ? "task" : "code");
+
   const check = (request: TicketToOpen) => {
-    if (request.writing !== undefined && request.kind !== "writing") {
-      throw new TicketError("Only a writing ticket has a writing task");
+    const form = formOf(request);
+    if (!fitsForm(form, request.kind)) {
+      throw new TicketError(`A ${form} ticket cannot be of kind ${request.kind}`);
     }
-    if (request.kind === "writing") {
-      if (request.repository !== null || request.issues.length > 0) {
-        throw new TicketError("A writing ticket has no repository and no issues");
+    if (request.task !== undefined && form !== "task") {
+      throw new TicketError("Only a task ticket has a task");
+    }
+    if (form === "task") {
+      if (request.issues.length > 0) {
+        throw new TicketError("A task ticket has no issues");
       }
-      if (request.writing !== undefined) {
-        z.array(WritingMaterial).parse(request.writing.materials);
-        if (request.writing.task.trim() === "") {
-          throw new TicketError("A writing ticket needs its task");
+      if (request.repository !== null && !RepositoryName.safeParse(request.repository).success) {
+        throw new TicketError("A task ticket's repository is owner/name");
+      }
+      if (request.task !== undefined) {
+        z.array(TaskMaterial).parse(request.task.materials);
+        if (request.task.task.trim() === "") {
+          throw new TicketError("A task ticket needs its task");
+        }
+        if (request.repository === null && ((request.task.commitRef ?? null) !== null || request.task.deploys === true)) {
+          throw new TicketError("A task ticket names a commit or a deployment only with its repository");
         }
       }
     } else {
@@ -611,13 +647,19 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     }
   };
 
-  const writingOf = (id: number): TicketWriting | undefined => {
-    const row = selectWriting.get(id);
+  const taskOf = (id: number): TicketTask | undefined => {
+    const row = selectTask.get(id);
     if (row === undefined) {
       return undefined;
     }
-    const value = WritingRow.parse(row);
-    return { task: value.task, materials: z.array(WritingMaterial).parse(JSON.parse(value.materials)) };
+    const value = TaskRow.parse(row);
+    return {
+      task: value.task,
+      materials: z.array(TaskMaterial).parse(JSON.parse(value.materials)),
+      commitRef: value.commit_ref,
+      commit: value.commit_sha,
+      deploys: value.deploys === 1,
+    };
   };
 
   const checkIssues = (repository: string | null, issues: readonly TicketIssue[]) => {
@@ -662,6 +704,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         check(request);
         const now = clock.now();
         const result = insertTicket.run(
+          formOf(request),
+          request.requiredMachine ?? null,
           request.repository,
           request.kind,
           request.title.en.trim(),
@@ -676,8 +720,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         );
         const id = Number(result.lastInsertRowid);
         insertIssues(id, request.issues);
-        if (request.writing !== undefined) {
-          insertWriting.run(id, request.writing.task.trim(), JSON.stringify(request.writing.materials));
+        if (request.task !== undefined) {
+          insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0);
         }
         for (const before of new Set(request.waitsFor ?? [])) {
           insertWait.run(id, before, 0);
@@ -739,7 +783,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       },
       move: (id, to, reason) => {
         const current = existing(id);
-        if (!canMoveTicket(current.kind, current.state, to)) {
+        if (!canMoveTicket(current.form, current.state, to)) {
           throw new TicketError(`Ticket ${id} is ${current.state} and cannot become ${to}`);
         }
         const now = clock.now();
@@ -767,8 +811,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       state: (id, statement) => {
         const current = existing(id);
         const reason = GeneratedText.parse(statement.difficultyReason);
-        if ((statement.kind === "writing") !== (current.kind === "writing")) {
-          throw new TicketError(`Ticket ${id} is ${current.kind === "writing" ? "writing" : "code work"} and cannot become ${statement.kind}`);
+        if (!fitsForm(current.form, statement.kind)) {
+          throw new TicketError(`Ticket ${id} is a ${current.form} ticket and cannot be of kind ${statement.kind}`);
         }
         updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, statement.brainEngine, id);
         touch(id);
@@ -843,6 +887,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         updateReport.run(given.en, given.zh, id);
         touch(id);
       },
+      setCommit: (id, commit) => {
+        existing(id);
+        updateCommit.run(commit, id);
+        touch(id);
+      },
       startRound: (id, start) => {
         const current = existing(id);
         if (current.state !== "working") {
@@ -865,7 +914,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       stick: (id, given) => {
         const current = existing(id);
         const from = StuckFrom.safeParse(current.state);
-        if (!from.success || !canMoveTicket(current.kind, current.state, "stuck")) {
+        if (!from.success || !canMoveTicket(current.form, current.state, "stuck")) {
           throw new TicketError(`Ticket ${id} is ${current.state} and cannot stop for the owner`);
         }
         const failure = LoopFailure.parse(given);
@@ -892,7 +941,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           throw new TicketError(`Ticket ${id} is ${current.state}, not stopped for the owner`);
         }
         const to = current.stuck.from;
-        if (!canMoveTicket(current.kind, "stuck", to)) {
+        if (!canMoveTicket(current.form, "stuck", to)) {
           throw new TicketError(`Ticket ${id} cannot go back to ${to}`);
         }
         const now = clock.now();
@@ -931,7 +980,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     if (current === undefined) {
       return { ok: false, error: "not_found" };
     }
-    if (!canMoveTicket(current.kind, current.state, to)) {
+    if (!canMoveTicket(current.form, current.state, to)) {
       return { ok: false, error: "refused", ticket: current };
     }
     const ticket = change((writes) => writes.move(id, to, reason));
@@ -978,7 +1027,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const ticket = get(id);
       return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf) };
     },
-    writing: writingOf,
+    task: taskOf,
     rounds: (id) => selectRounds.all(id).map(roundOf),
     forIssue: (repository, number) =>
       selectByIssue.all(repository, number).flatMap((row) => {

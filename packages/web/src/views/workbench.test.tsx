@@ -70,21 +70,6 @@ describe("工作台", () => {
     expect(html).not.toContain("‮");
   });
 
-  it("shows the environment a held command runs with, each name and value below the command, in order of name", () => {
-    const html = render(
-      state(holdCard("a1", { command: "node rollback.mjs", environment: { SUPERAGENT2_PREVIOUS_COMMIT: "1111111", SUPERAGENT2_COMMIT: "2222222" } })),
-    );
-    const command = html.indexOf("node rollback.mjs");
-    const shown = html.indexOf("SUPERAGENT2_COMMIT=2222222\nSUPERAGENT2_PREVIOUS_COMMIT=1111111");
-    expect(command).toBeGreaterThan(0);
-    expect(shown).toBeGreaterThan(command);
-    expect(html).toContain('aria-label="命令收到的环境变量"');
-  });
-
-  it("leaves out the environment when there is none", () => {
-    expect(render(state(holdCard("a1")))).not.toContain("raw-environment");
-  });
-
   it("leaves out the folder when there is none", () => {
     expect(render(state(holdCard("a1", { cwd: null })))).not.toContain("raw-folder");
   });
@@ -171,7 +156,7 @@ describe("the open tickets in 工作台", () => {
     expect(html.indexOf("工作 2")).toBeLessThan(html.indexOf("启动时打印问候"));
   });
 
-  it("groups the tickets by repository, with writing tickets in a group of their own, last", () => {
+  it("groups the tickets by repository, a task ticket with its repository's, and task tickets without one in a group of their own, last", () => {
     const html = render(
       state(),
       "hidden",
@@ -181,12 +166,14 @@ describe("the open tickets in 工作台", () => {
         ticket(2, { state: "working", repository: "nuofan-island/alpha", work: workStatus() }),
         ticket(3, { state: "working", kind: "writing", repository: null, issues: [], title: { en: "Write", zh: "写一封信" }, work: workStatus({ engine: "antigravity" }) }),
         ticket(4, { state: "working", repository: "novan-xu/zeta", work: workStatus() }),
+        ticket(5, { state: "waiting", form: "task", kind: "operation", deploys: true, repository: "novan-xu/zeta", issues: [], title: { en: "Deploy", zh: "部署泽塔" }, waits: [{ ticket: 4, deployment: false, waived: false }], waitsFor: [4] }),
       ]),
     );
-    const order = ["novan-xu/zeta", "nuofan-island/alpha", "写作", "写一封信"].map((part) => html.indexOf(part));
+    const order = ["novan-xu/zeta", "部署泽塔", "nuofan-island/alpha", "任务", "写一封信"].map((part) => html.indexOf(part));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html.match(/class="ticket-group"/g)).toHaveLength(3);
+    expect(html).toContain(">部署<");
   });
 
   it("links each row to the ticket's own address", () => {

@@ -18,10 +18,10 @@ a computer.
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues, arranges and starts work, evaluates failures, deploys other repositories, and operates through the hub |
-| Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container and on the runners, keeps ticket state, enforces the code constraints, serves the front door |
-| Runner | One process on each work machine (PC, Mac mini, others later) | Starts workers and runs the commands the hub sends |
-| Worker | On a runner | One LLM session per ticket, in full-access mode, in its own git worktree |
+| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues and opens task tickets, arranges work, evaluates failures, and operates through the hub |
+| Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container, keeps ticket state, enforces the code constraints, serves the front door |
+| Runner | One process on each work machine (PC, Mac mini, others later) | Starts the workers of the tickets the owner started; runs nothing else |
+| Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (and a checkout when a repository is named) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
 The front door is unchanged: Cloudflare Access with the owner's Google account. The new system takes over the existing
@@ -36,7 +36,7 @@ API directly.
 | --- | --- |
 | Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
 | Worker, code | Codex, Claude Code and `dsh`. |
-| Worker, writing | Antigravity: translation, articles, emails and other text work. Any writing that concerns code is code work and stays with the code workers. |
+| Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
 
 ## The brain's session
 
@@ -53,22 +53,21 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 
 ## The brain's reach
 
-The hub gives the brain one general capability: run a shell command on a target and return its output. The target is the
-hub's own container or a runner. Commands run with the owner's credentials: both GitHub accounts with administrator
-rights, Woodpecker, Cloudflare, and deployment access through runners.
+The hub gives the brain one general capability: run a shell command in the hub's own container and return its output.
+Commands run with the owner's credentials: both GitHub accounts with administrator rights, Woodpecker and Cloudflare.
 
-The reach ends at this project's containers on the NAS. Administrator rights inside the hub's container are intended;
-administrator rights over the NAS host are not. No target runs on the NAS host, the hub's container holds no key to
-sign in to it and no Docker socket, and the hub does not deploy Super-agent2 itself, which is deployed on the NAS by
-hand.
+The reach ends at the hub's container. Administrator rights inside it are intended; rights over the NAS host and over the
+work machines are not the brain's. No command of the brain's runs on the NAS host or on a runner: the hub's container
+holds no key to sign in to the NAS and no Docker socket, and a runner runs nothing but the workers of tickets the owner
+started. Anything done on a machine, a deployment included, is a task ticket for a worker there.
 
-Shortcuts for frequent operations (file an issue, arrange chains, merge, deploy) are built on that same path. They are
+Shortcuts for frequent operations (file an issue, open a task ticket, arrange chains, merge) are built on that same path. They are
 conveniences and never the boundary: anything without a shortcut is still possible through a command.
 
 Two things follow:
 
-- The hub container is not hardened in ways that block operations inside it. It has a writable file system, passwordless
-  `sudo`, and shell access to every runner. Its mounts are its own volumes, the instance's project folders, and nothing
+- The hub container is not hardened in ways that block operations inside it. It has a writable file system and
+  passwordless `sudo`. Its mounts are its own volumes, the instance's project folders, and nothing
   else of the host.
 - GitHub carries no rule the owner's token cannot bypass. Merging with checks skipped is an ordinary operation.
 
@@ -97,8 +96,12 @@ Two things follow:
 10. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
    tries again. What is already merged stays merged.
 
-A writing ticket has no repository: the worker's text is delivered to the owner in the conversation, with no pull
-request and no verification.
+There are two kinds of ticket. Everything above is a code ticket. Everything else a worker does is a task ticket: a task
+in words, with material and attachments, and a repository and a commit when it needs one. The worker does it in a
+scratch folder, beside a checkout of the repository at that commit when one is named, and hands back an outcome (done
+or failed), a report and any text and files. Done, the result is delivered to the owner in the conversation and the
+ticket is done (`delivered`); failed, it goes through the failure loop. Nothing is verified. A task ticket can be
+arranged after a code chain and take that chain's final merge commit as its commit, filled in when it begins.
 
 ## Chains
 
@@ -132,12 +135,13 @@ The brain decides from four things.
 
 | Input | Values | Decides |
 | --- | --- | --- |
-| Kind | `writing`, `parameter` (a value, constant or copy change with no logic change), `fix`, `feature`, `refactor`, `maintenance` (dependencies and CI) | Pure prose goes to Antigravity; everything else to a code engine |
+| Kind | Code tickets: `parameter` (a value, constant or copy change with no logic change), `fix`, `feature`, `refactor`, `maintenance` (dependencies and CI). Task tickets: `writing` (prose), `operation` (anything done on a machine) | Prose goes to Antigravity; everything else to a code engine |
 | Difficulty | Mechanical: a fixed procedure with a known result. Standard: bounded implementation or diagnosis. Complex: reasoning across modules, state or concurrency changes, or an open design decision. A chain takes the highest of its issues. | The model and effort, through the table below |
 | Platform | macOS, Windows, or any | The machine |
 | Subscription allowance | What is left on the GPT and Claude subscriptions | The engine. DeepSeek is chosen automatically only when both are used up. |
 
-Light personal tasks and deployments are not tickets: the brain does them itself.
+What the brain can do in the hub's container needs no ticket; anything on a work machine is a task ticket. A deployment's
+machine is the one its deployment file names, and the owner cannot choose another.
 
 Model and effort by engine and difficulty. These are the starting values, taken from the first Super-agent's settings;
 the owner edits them in 设置.
@@ -181,13 +185,21 @@ The memory carries what the owner wants kept from one conversation to the next. 
 
 ## Deployment
 
-A ticket never deploys. When merged work needs deploying, the brain deploys it through the hub. After a deployment the
-hub checks that the service answers its health check, and rolls back to the previous version when it does not. A
-deployment's commands run in the hub's container or on a runner; a deployment file that names the NAS host is refused.
+A deployment is done by a worker, through a task ticket, as the owner would tell Codex or Claude Code at the machine to
+deploy the project. A repository declares its deployment in `.superagent2/deployment.json`: the machine it runs on
+(`target`, a runner's name, never the hub's container or the NAS host), the folder, and the deploy, health and rollback
+commands. It is the worker's recipe. The hub reads it when the ticket is opened and runs the ticket only on that
+machine; the runner refuses to deploy where the file at the deployed commit does not point.
 
-Super-agent2 itself is the exception. The hub cannot reach the NAS host it runs on, so it does not deploy itself: the
-owner deploys a new version on the NAS with `deploy/deploy.sh`, or files work for a worker to do it, and the brain
-records the deployment once the owner says it is done.
+When the brain files work that will need deploying, it arranges the deployment's task ticket after the chain at filing
+time, so the owner's one 开始 starts both; the deployment begins by itself when the chain has merged, at the chain's
+final merge commit. The worker deploys, checks health, rolls back when the new version does not come up, and reports.
+Done, the merged tickets it contains are marked deployed and what waits for that deployment begins; failed, it is a
+failed ticket like any other.
+
+Super-agent2 deploys itself the same way: its file names a machine of the owner's that can sign in to the NAS, whose
+worker runs `deploy/deploy.sh release` there. The hub and the brain restart underneath the ticket; the worker goes on,
+its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 
 ## Verification rules
 
@@ -232,8 +244,9 @@ This is the complete list.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
-6. **No reach into the NAS host.** The hub has no target on the NAS host, mounts nothing of it but its own folders,
-   and holds no key to sign in to it.
+6. **No reach into the NAS host or the work machines.** The brain's commands run only in the hub's container. The hub
+   has no target on the NAS host, mounts nothing of it but its own folders, and holds no key to sign in to it; a runner
+   runs no command the hub sends, only the workers of tickets the owner started.
 
 ## Tests
 
@@ -259,7 +272,7 @@ composer on a computer. A message may be attachments alone.
   brain's container reads at the same place, so the brain is told only the file's path inside it.
 - The brain's program is told each file's type, size, attachment id and path under the owner's message, and is given
   the images as images where its program takes them (Claude Code, Codex and dsh). It reads other files with its own
-  tools. It hands a file on to a worker by its attachment id, as material of a writing ticket or with a message.
+  tools. It hands a file on to a worker by its attachment id, as material of a task ticket or with a message.
 - A file sent to a worker travels to its machine over the runner's link, in parts the runner asks for, and lands in the
   ticket's folder outside the worktree, so it is never committed by accident. A message for a worker whose machine is
   away is kept by the hub and given again whenever the machine comes back, until the worker has it.
@@ -270,9 +283,9 @@ composer on a computer. A message may be attachments alone.
 ## Limits
 
 Nothing the owner, the brain or a worker sends has an upper limit of its own: not a message, a task, material, a
-reason, a command, a list, or the number and size of a writing worker's files. What remains is physical. One request
+reason, a command, a list, or the number and size of a task worker's files. What remains is physical. One request
 body or live message is at most 64 MiB, and a request past it is refused with a plain statement that this is the
-system's physical limit. A writing worker's text result too long for one message reaches the owner whole, as a file.
+system's physical limit. A task worker's text result too long for one message reaches the owner whole, as a file.
 Delivered files go from the runner to the hub in parts the hub asks for, and are kept as files beside the hub's
 database. The owner's attachments go to the hub in parts the page sends, and from the hub to a runner in parts the runner
 asks for. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
@@ -364,8 +377,7 @@ logins of the command-line programs already present on each runner.
 
 The confirmation lock does not guard credentials. Changing or deleting one, a secret, a key, a token, a grant or a
 login, runs without confirmation; a credential file is deleted under the same rule as any file. The hub still refuses
-credential names as a command's environment variables and credential-looking text in a memory, and still injects the
-credentials into each command itself.
+credential-looking text in a memory, and still injects the credentials into each command itself.
 
 ## Build order
 

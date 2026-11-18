@@ -120,7 +120,10 @@ export function fitsPlatform(platform: Platform, system: MachinePlatform): boole
   return platform === "macos" ? system === "darwin" : system === "win32";
 }
 
-export function machinesFor(platform: Platform | null, machines: readonly MachineChoice[]): MachineChoice[] {
+export function machinesFor(platform: Platform | null, machines: readonly MachineChoice[], required: string | null = null): MachineChoice[] {
+  if (required !== null) {
+    return machines.filter((machine) => machine.name === required);
+  }
   return platform === null ? [...machines] : machines.filter((machine) => fitsPlatform(platform, machine.platform));
 }
 
@@ -157,6 +160,7 @@ export interface StartInput {
   readonly kind: TicketKind;
   readonly difficulty: Difficulty | null;
   readonly platform: Platform | null;
+  readonly requiredMachine?: string | null;
   readonly brainEngine: ProgramId | null;
   readonly stated: boolean;
   readonly owner: OwnerChoice;
@@ -165,7 +169,8 @@ export interface StartInput {
 export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], allowance: AllowanceStates): StartChoice {
   const { owner } = input;
   const engine = owner.engine ?? (input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance) : null);
-  const machine = owner.machine ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines) : null);
+  const required = input.requiredMachine ?? null;
+  const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines) : null);
   const fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
   const model = owner.model ?? fromTable?.model ?? null;
   const effort = owner.effort ?? fromTable?.effort ?? null;
@@ -178,6 +183,8 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     if (engine !== null && input.platform !== null) {
       missing.add(machinesFor(input.platform, machines).length === 0 ? "machine" : "engine");
     }
+  } else if (required !== null && machine !== required) {
+    missing.add("machine");
   } else if (chosen === undefined) {
     missing.add("machine");
   } else if (engine !== null && engineOn(chosen, engine) === undefined) {
@@ -227,8 +234,11 @@ export function applyChange(owner: OwnerChoice, change: ChoiceChange): OwnerChoi
   };
 }
 
-export function ownerGivesUnoffered(owner: OwnerChoice, choice: StartChoice, machines: readonly MachineChoice[]): boolean {
+export function ownerGivesUnoffered(owner: OwnerChoice, choice: StartChoice, machines: readonly MachineChoice[], required: string | null = null): boolean {
   if (owner.machine !== null && !machines.some((machine) => machine.name === owner.machine)) {
+    return true;
+  }
+  if (owner.machine !== null && required !== null && owner.machine !== required) {
     return true;
   }
   const machine = machines.find((entry) => entry.name === choice.machine);

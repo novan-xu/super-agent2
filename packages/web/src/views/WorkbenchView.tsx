@@ -3,7 +3,7 @@ import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type Stuck
 import { type CSSProperties, useEffect, useMemo } from "react";
 import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
-import { ticketGroups, ticketPhase, ticketProblem, whereOf } from "../live/phase.js";
+import { kindKey, ticketGroups, ticketPhase, ticketProblem, whereOf } from "../live/phase.js";
 import type { TicketsState } from "../live/tickets.js";
 import { type Verdict, type WaitingState, useOf, waitingCount } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
@@ -79,7 +79,7 @@ function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Tick
       <span className="lrow-main">
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
-          <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+          <span className="chip">{text(kindKey(ticket))}</span>
           {ticket.issues.length === 0 ? null : <ChainNumbers ticket={ticket} />}
           {where === null ? null : (
             <span className="chip chip--mono">
@@ -115,10 +115,10 @@ function Tickets({ tickets, hrefOf, open, now }: { readonly tickets: TicketsStat
         </div>
       ) : null}
       {groups.map((group) => (
-        <div key={group.key} className="ticket-group" aria-label={group.repository ?? text("tickets.writing")}>
+        <div key={group.key} className="ticket-group" aria-label={group.repository ?? text("tickets.tasks")}>
           <div className="chain-head">
             {group.repository === null ? (
-              <h3>{text("tickets.writing")}</h3>
+              <h3>{text("tickets.tasks")}</h3>
             ) : (
               <h3 className="mono">
                 <Icon name="repo" />

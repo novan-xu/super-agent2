@@ -1,6 +1,8 @@
 import {
   CodeEngineChoice,
   codeEngineChoices,
+  codeKinds,
+  CommitRef,
   type CommandRecord,
   CommandRequest,
   Difficulty,
@@ -10,8 +12,8 @@ import {
   gitHubAccounts,
   defaultGitHubAccount,
   deploymentFile,
-  deploymentOutcomeMarker,
   MaterialName,
+  mergedCommit,
   AttachmentId,
   type Attachment,
   openIssueNumbers,
@@ -22,12 +24,12 @@ import {
   type TicketRound,
   TicketKind,
   ticketKinds,
+  taskKinds,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
-import { short, type DeploymentService } from "./deployments.js";
 import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop.js";
 import type { ConversationService } from "./conversations.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -36,6 +38,8 @@ import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
 import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import type { TaskTickets } from "./task-tickets.js";
+import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
 
@@ -57,7 +61,7 @@ const InitializeParams = z.looseObject({ protocolVersion: z.string().optional() 
 const CallParams = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional() });
 
 const RunArguments = z.object({
-  target: z.string().min(1),
+  target: z.string().min(1).optional(),
   command: z.string().min(1),
   account: z.enum(gitHubAccounts).optional(),
   folder: z.string().min(1).optional(),
@@ -70,14 +74,14 @@ const ReadArguments = z.object({
 
 const StopArguments = z.object({ id: z.string().min(1) });
 
-const codeKinds = ticketKinds.filter((kind) => kind !== "writing");
+const CodeKind = z.enum(codeKinds);
 
 const FileArguments = z.object({
   repository: RepositoryName,
   title: GeneratedText,
   summary: GeneratedText,
   body: z.string().trim().min(1),
-  kind: TicketKind,
+  kind: CodeKind,
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
   account: z.enum(gitHubAccounts).optional(),
@@ -88,7 +92,7 @@ const OpenArguments = z.object({
   issue: z.number().int().positive(),
   title_zh: z.string().trim().min(1),
   summary: GeneratedText,
-  kind: TicketKind,
+  kind: CodeKind,
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
   account: z.enum(gitHubAccounts).optional(),
@@ -101,11 +105,16 @@ const MaterialArgument = z.object({
   attachment: AttachmentId.optional(),
 });
 
-const WritingArguments = z.object({
+const TaskArguments = z.object({
   title: GeneratedText,
   summary: GeneratedText,
   task: z.string().trim().min(1),
+  kind: z.enum(taskKinds),
   material: z.array(MaterialArgument).optional(),
+  repository: RepositoryName.optional(),
+  commit: z.union([z.literal(mergedCommit), CommitRef]).optional(),
+  deploy: z.boolean().optional(),
+  after: z.array(z.number().int().positive()).optional(),
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
 });
@@ -129,7 +138,7 @@ const ChainArgument = z.object({
   after_deployment: z.boolean().optional(),
   title: GeneratedText.optional(),
   summary: GeneratedText.optional(),
-  kind: TicketKind.optional(),
+  kind: CodeKind.optional(),
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
 });
@@ -155,17 +164,6 @@ const DefaultsArgument = z.object({
 });
 
 const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) });
-
-const DeployArguments = z.object({
-  repository: RepositoryName,
-  commit: z.string().trim().min(1).max(200),
-  previous: z.string().trim().min(1).max(200).optional(),
-});
-
-const ReadDeploymentArguments = z.object({
-  deployment: z.number().int().positive().optional(),
-  repository: RepositoryName.optional(),
-});
 
 const generatedSchema = (what: string) => ({
   type: "object",
@@ -203,10 +201,7 @@ export interface ToolServer {
 export interface ToolServerOptions {
   readonly commands: CommandService;
   readonly conversations: ConversationService;
-  readonly targets: () => readonly string[];
-  readonly machines?: () => string;
   readonly tickets?: TicketTools;
-  readonly deployments?: DeploymentService;
   readonly memories?: MemoryService;
   readonly attachments?: AttachmentStore;
 }
@@ -214,6 +209,7 @@ export interface ToolServerOptions {
 export interface TicketTools {
   readonly tickets: TicketService;
   readonly filer: IssueFiler;
+  readonly tasks?: TaskTickets;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
   readonly work?: WorkService;
@@ -227,7 +223,7 @@ function loopDefinitions() {
       name: "guide_ticket",
       title: "Guide a failed ticket's worker into another round",
       description: [
-        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
+        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a task worker that handed back that its task failed, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again, on the same branch or in the same folders, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
         "A failure of the machine (lost, prepare) starts a retry that is not counted, once in a row.",
         "Refused for a ticket whose worker still runs (use message_worker), for a ticket with nothing failed, and for a ticket stopped for the owner.",
       ].join(" "),
@@ -296,52 +292,6 @@ function verificationDefinitions() {
   ];
 }
 
-function deploymentDefinitions() {
-  return [
-    {
-      name: "deploy_repository",
-      title: "Deploy a repository at a commit",
-      description: [
-        `Deploy a repository at a commit as its deployment file ${deploymentFile} at that commit declares, read from GitHub so that what runs is what was merged.`,
-        "The hub runs the file's deploy command on the file's target through the command channel, as any command (a command the confirmation lock holds waits for the owner, and the deployment waits with it), then runs its health check command every few seconds until it passes or the file's period is over.",
-        "When the service does not pass, or the deploy command fails, the hub runs the rollback command, which restores the previously deployed commit, and checks health again. A first deployment through the hub has no previous commit to restore and is not rolled back, unless you give `previous`.",
-        `A deployment that checks and rolls itself back reports how it ended by printing a line \`${deploymentOutcomeMarker} {"result": …, "reason": …}\` from any of its commands; the hub then ends it with that result.`,
-        "The commands get SUPERAGENT2_REPOSITORY, SUPERAGENT2_COMMIT (the commit deployed), SUPERAGENT2_PREVIOUS_COMMIT (the commit deployed before, unset when there is none) and SUPERAGENT2_DEPLOYMENT in their environment, besides the owner's credentials.",
-        "No target runs on the NAS host: a file that names the target nas is refused, and Super-agent2 itself is not deployed through the hub but on the NAS by hand.",
-        "It returns once the deployment has started; the result comes to this conversation as a [hub] message. read_deployment shows its state and each step's output meanwhile. One deployment per repository at a time.",
-        "A successful deployment marks every merged ticket of the repository whose merge commit it contains as deployed, so tickets waiting for that deployment begin, as report_deployment does. Only you deploy: no ticket and no merge deploys anything.",
-      ].join(" "),
-      inputSchema: {
-        type: "object",
-        properties: {
-          repository: { type: "string", description: "The repository as owner/name" },
-          commit: { type: "string", description: "The commit to deploy: a SHA, or a branch such as main for its latest commit; the merge commit a [hub] message names after a merge" },
-          previous: {
-            type: "string",
-            description: "Only when the hub has never deployed this repository: the commit that runs now, deployed by other means, so a failure can be rolled back to it. Ignored once the hub has a successful deployment on record.",
-          },
-        },
-        required: ["repository", "commit"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "read_deployment",
-      title: "Read a deployment",
-      description:
-        "Read a deployment: its repository, commit, previous commit, state, result, and each step with its command's state and the end of its output. Give a deployment number, or a repository for its latest deployment; with neither, the recent deployments are listed.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          deployment: { type: "integer", minimum: 1, description: "The deployment number" },
-          repository: { type: "string", description: "The repository as owner/name, for its latest deployment" },
-        },
-        additionalProperties: false,
-      },
-    },
-  ];
-}
-
 function mergedText(outcome: SkipOutcome): ToolResult {
   if (!outcome.ok) {
     return { text: `Nothing was merged: ${outcome.reason}`, isError: true };
@@ -377,9 +327,9 @@ function defaultsDefinitions() {
       name: "choose_defaults",
       title: "State each chain's kind, difficulty, platform and engine",
       description: [
-        "For each chain you arranged, and for each writing ticket you opened (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the chain's card; its platform (macos, windows or any); and, for code work, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
+        "For each chain you arranged, and for each task ticket you opened (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest, or for a task ticket its difficulty; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the card; its platform (macos, windows or any); and, for anything but writing, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
         "Difficulty: mechanical is a fixed procedure with a known result; standard is bounded implementation or diagnosis; complex is reasoning across modules, state or concurrency changes, or an open design decision.",
-        "The hub then resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty. dsh is used only when both subscriptions are used up; writing goes to Antigravity.",
+        "The hub then resolves the rest: the machine from the platform (a deployment's machine is the one its deployment file names, and only that one), the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty. dsh is used only when both subscriptions are used up; writing goes to Antigravity, which never runs a code ticket.",
         "These are defaults: the owner can change the machine, engine, model and effort on the card, and the owner's choice wins. Rearranging a chain's issues clears what was stated for it; state it again.",
       ].join(" "),
       inputSchema: {
@@ -392,7 +342,11 @@ function defaultsDefinitions() {
               type: "object",
               properties: {
                 ticket: { type: "integer", minimum: 1, description: "The chain's ticket number" },
-                kind: { type: "string", enum: [...ticketKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI; writing: pure prose" },
+                kind: {
+                  type: "string",
+                  enum: [...ticketKinds],
+                  description: "For a code ticket: parameter (a value, constant or copy change with no logic change), fix, feature, refactor, maintenance (dependencies and CI). For a task ticket: writing (prose with nothing to do with code) or operation (anything done on a machine)",
+                },
                 issues: {
                   type: "array",
                   items: {
@@ -406,10 +360,10 @@ function defaultsDefinitions() {
                   },
                   description: "Every issue of the chain with its difficulty",
                 },
-                difficulty: { type: "string", enum: [...difficulties], description: "Only for a chain without issues (writing), where it does not change the model: standard when omitted" },
+                difficulty: { type: "string", enum: [...difficulties], description: "For a task ticket, which has no issues: its difficulty (standard when omitted for writing, whose model does not depend on it)" },
                 reason: generatedSchema("one-line reason for the chain's difficulty"),
                 platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
-                engine: { type: "string", enum: [...codeEngineChoices], description: "For code work: codex (GPT) or claude (Claude Code), by what is left on each subscription" },
+                engine: { type: "string", enum: [...codeEngineChoices], description: "For anything but writing: codex (GPT) or claude (Claude Code), by what is left on each subscription" },
               },
               required: ["ticket", "kind", "reason", "platform"],
               additionalProperties: false,
@@ -440,8 +394,8 @@ function chainDefinitions() {
       description: [
         "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: its issues, worked on in the order given, handed once to one worker, which opens as many pull requests for them as it sees fit; the hub merges each one and gives the worker the rest, and the chain is merged when every issue of it is closed.",
         "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
-        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a deploy_repository that contains it succeeds, or you report the deployment with report_deployment).",
-        "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again.",
+        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a task ticket that deploys it is done, or you record the deployment with report_deployment). A chain may also come after a task ticket, such as the deployment, by its number: it begins once that ticket is done.",
+        "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again. A task ticket arranged after a chain you rearrange follows the chains its issues went to.",
         "Every issue of a pending ticket you touch must be named. A chain of several issues needs its own title and summary in English and Chinese; a chain that keeps one ticket's issues keeps that ticket's title. Tickets whose issues all went to other chains are closed as joined.",
         "The whole arrangement is checked first: one that has a cycle, or names an issue or ticket that does not exist, is refused and nothing changes. Calling it again with a new arrangement rearranges.",
         "Only the owner starts a chain, with 开始 on its card in 工作台; you cannot start one.",
@@ -461,12 +415,12 @@ function chainDefinitions() {
                 after: {
                   type: "array",
                   items: { anyOf: [{ type: "string" }, { type: "integer", minimum: 1 }] },
-                  description: "What must merge before this chain begins: chain names of this call, or ticket numbers",
+                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket numbers",
                 },
-                after_deployment: { type: "boolean", description: "Also wait until you report the earlier work deployed" },
+                after_deployment: { type: "boolean", description: "Also wait until the earlier work is deployed: a task ticket that deploys it is done, or you record it with report_deployment" },
                 title: generatedSchema("chain title"),
                 summary: generatedSchema("one or two sentence chain summary"),
-                kind: { type: "string", enum: codeKinds, description: "The chain's kind, if not its first ticket's" },
+                kind: { type: "string", enum: [...codeKinds], description: "The chain's kind, if not its first ticket's" },
                 ...startChoices,
               },
               required: ["name", "repository", "issues"],
@@ -480,9 +434,9 @@ function chainDefinitions() {
     },
     {
       name: "report_deployment",
-      title: "Report merged work deployed",
+      title: "Record merged work as deployed",
       description:
-        "Report that you deployed the merged work of a ticket by other means than deploy_repository (which marks what it deploys by itself). Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
+        "Record that the merged work of a code ticket is deployed by other means than a task ticket that deploys it (which marks what it deploys by itself): the owner deployed it by hand, say. Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
       inputSchema: {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The merged ticket whose work is deployed" } },
@@ -494,7 +448,7 @@ function chainDefinitions() {
       name: "proceed_ticket",
       title: "Let a waiting ticket go ahead",
       description:
-        "A ticket the owner started waits for others to merge. When one of those stops, you are told, and decide: stop the waiting ticket with stop_ticket, or let it go ahead with this tool, which drops its wait on every stopped ticket; it then begins once what it still waits for has merged.",
+        "A ticket the owner started waits for others to merge or be done. When one of those stops, you are told, and decide: stop the waiting ticket with stop_ticket, or let it go ahead with this tool, which drops its wait on every stopped ticket; it then begins once what it still waits for has merged or is done.",
       inputSchema: {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The waiting ticket" } },
@@ -542,7 +496,7 @@ function ticketDefinitions() {
         "One issue per piece of work. Write the title and body in English so the issue stands alone: the worker knows only its issues and the repository. Put the assumptions you made in the body.",
         "The title and the summary also carry a Chinese copy, which is what the owner sees.",
         "Calling it again with the same repository, title and body after a failure does not create a second issue: an issue already there is used.",
-        "This is a shortcut over run_command with gh; anything it does not cover can still be done that way, and open_ticket makes a ticket for an issue filed otherwise.",
+        "This is a shortcut over run_command with gh; anything it does not cover can still be done that way, and open_ticket makes a ticket for an issue filed otherwise. A code ticket is for repository work that ends in pull requests; anything else a worker does on a machine is a task ticket (open_task_ticket).",
       ].join(" "),
       inputSchema: {
         type: "object",
@@ -551,7 +505,7 @@ function ticketDefinitions() {
           title: generatedSchema("issue title"),
           summary: generatedSchema("one or two sentence summary"),
           body: { type: "string", description: "The issue body in English Markdown: goal, scope, assumptions and when it is done" },
-          kind: { type: "string", enum: codeKinds, description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
+          kind: { type: "string", enum: [...codeKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
           ...startChoices,
         },
         required: ["repository", "title", "summary", "body", "kind"],
@@ -570,7 +524,7 @@ function ticketDefinitions() {
           issue: { type: "integer", minimum: 1, description: "The issue number" },
           title_zh: { type: "string", description: "The issue title in Simplified Chinese, for the owner" },
           summary: generatedSchema("one or two sentence summary"),
-          kind: { type: "string", enum: codeKinds, description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
+          kind: { type: "string", enum: [...codeKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
           ...startChoices,
         },
         required: ["repository", "issue", "title_zh", "summary", "kind"],
@@ -578,22 +532,26 @@ function ticketDefinitions() {
       },
     },
     {
-      name: "open_writing_ticket",
-      title: "Open a ticket for writing work",
+      name: "open_task_ticket",
+      title: "Open a task ticket",
       description: [
-        "Open a pending ticket for writing work that is prose unrelated to code: a translation, an article, an email, a summary, a letter, or other text work. It has no repository, no issue, no branch and no pull request; Antigravity does it on a work machine in a scratch folder, and its result, the text and any files, is delivered to the owner in the conversation you opened it from, with no verification.",
-        "Decide by purpose and substance, never by file type. A README, developer documentation, code comments, a changelog or release notes for a repository, and the translation of engineering documents (specifications, design documents, API references) are code work: file an issue for them with file_issue and let a code engine do it. A text file is not code work just because it is a file, and a document is not writing work just because it is long.",
-        "Give the task in English, with a Chinese title and summary for the owner. State the language of the result and any requirement on tone, length or format. The worker knows only this task and the material, not this conversation.",
-        "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`: for example pasted by the owner in this conversation, a link, or a path on a machine), and its text when you have it, verbatim. A piece without `text` is described to the worker by its source only, and the worker gets it from there. Material the owner pasted in the conversation is passed on as `text`; you are the only way it reaches the worker.",
-        "A file the owner attached in this conversation is passed on as the file itself: give its attachment id in `attachment` (and no `text`), with a name that keeps its extension. The file is put in the worker's input folder under that name.",
-        "Afterwards state its defaults with choose_defaults (kind writing), as for any ticket. The owner starts it with 开始 on its card; you cannot start it.",
+        "Open a pending task ticket: anything a worker does on a work machine that is not a code ticket's pull requests. Prose (a translation, an article, an email, a summary), an operation on a machine (deploying a repository, running a script, setting something up, checking something there), and anything else in words. A worker does it on a machine, in a scratch folder, and hands back an outcome (done or failed), a report, and any text and files; the result is delivered to the owner in the conversation you opened it from, and nothing is verified. A task ticket whose worker hands back failed goes through the failure loop like any failed work.",
+        "Decide by purpose and substance, never by file type. A README, developer documentation, code comments, a changelog or release notes for a repository, and the translation of engineering documents (specifications, design documents, API references) are code work: file an issue for them with file_issue. A text file is not code work just because it is a file, and a document is not prose just because it is long.",
+        "kind is writing for prose with nothing to do with code, which Antigravity does by default, or operation for anything done on a machine, which a code engine does by default.",
+        "Give the task in English, with a Chinese title and summary for the owner: what to do, the result wanted, what done means, and anything the owner said that matters. The worker knows only this task, the material and, when one is named, the repository; not this conversation.",
+        "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`), and its text when you have it, verbatim; a piece without `text` is described by its source only. A file the owner attached in this conversation is passed on as the file itself, by its attachment id in `attachment`, with a name that keeps its extension.",
+        `When the task needs a repository (a deployment, a script that lives in it), name it in \`repository\`, and the worker gets a checkout of it beside its scratch folder, at \`commit\`: a SHA, a branch (its head when the work begins), or "${mergedCommit}", the final merge commit of the code chain of that repository this ticket comes \`after\`, filled in by the hub when the work begins. Without \`commit\`, the default branch's head when the work begins.`,
+        `With \`deploy\` true the task is to deploy the repository by its ${deploymentFile} (where it runs, how to deploy, how to check health, how to roll back): the hub reads the file on the default branch and runs the ticket only on the machine it names; the worker deploys, checks health, rolls back when the new version does not come up, and reports what happened. Opened after a code chain of that repository, its commit is "${mergedCommit}" unless you name another.`,
+        "`after` names tickets this one waits for, by number: it begins by itself once they have merged or are done. Arranged after a chain that is not started yet, the owner's one 开始 on that chain starts both, and the work begins when the chain has merged. Arranged after a ticket already started, it waits for its own 开始.",
+        "Afterwards state its defaults with choose_defaults (kind writing or operation), as for any ticket. The owner starts it; you cannot start it.",
       ].join(" "),
       inputSchema: {
         type: "object",
         properties: {
           title: generatedSchema("ticket title"),
           summary: generatedSchema("one or two sentence summary"),
-          task: { type: "string", description: "What to do, in English: the work, the language and form of the result, tone, length, anything the owner said that matters" },
+          task: { type: "string", description: "What to do, in English: the work, the result wanted and what done means, anything the owner said that matters" },
+          kind: { type: "string", enum: [...taskKinds], description: "writing: prose with nothing to do with code; operation: anything done on a machine" },
           material: {
             type: "array",
             items: {
@@ -609,10 +567,14 @@ function ticketDefinitions() {
             },
             description: "The material to work from",
           },
+          repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
+          commit: { type: "string", description: `The commit of the checkout: a SHA, a branch, or "${mergedCommit}" for the final merge commit of the code chain it comes after` },
+          deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
+          after: { type: "array", items: { type: "integer", minimum: 1 }, description: "Ticket numbers this one waits for" },
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
         },
-        required: ["title", "summary", "task"],
+        required: ["title", "summary", "task", "kind"],
         additionalProperties: false,
       },
     },
@@ -728,40 +690,29 @@ function heldText(command: CommandRecord): string {
   ].join("\n");
 }
 
-function machineText(described: string): string[] {
-  return described === ""
-    ? []
-    : [
-        `${described}.`,
-        "A work machine runs the command as its user through its own shell (cmd.exe on Windows, /bin/sh on macOS), with no sandbox; a machine that is offline cannot run it.",
-      ];
-}
-
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
 
   const definitions = () => {
-    const targets = options.targets();
     return [
       {
         name: "run_command",
         title: "Run a shell command",
         description: [
-          "Run a shell command on a target through the hub, with the owner's credentials, and wait until it ends.",
-          `Targets now: ${targets.join(", ")}. "hub" runs in the hub's own container on the NAS; no target runs on the NAS host itself.`,
-          ...machineText(options.machines?.() ?? ""),
+          "Run a shell command in the hub's own container on the NAS, with the owner's credentials, and wait until it ends.",
+          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Work on a machine is a task ticket for a worker there, which the owner starts.",
           `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
           "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
         ].join(" "),
         inputSchema: {
           type: "object",
           properties: {
-            target: { type: "string", description: `Where to run it: ${targets.join(", ")}` },
+            target: { type: "string", enum: [hubTargetName], description: "Where it runs: always hub, the hub's own container" },
             command: { type: "string", description: "The shell command line" },
             account: { type: "string", enum: [...gitHubAccounts], description: "The GitHub account whose token the command gets" },
             folder: { type: "string", description: "The working folder on the target" },
           },
-          required: ["target", "command"],
+          required: ["command"],
           additionalProperties: false,
         },
       },
@@ -795,57 +746,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
-      ...(options.deployments === undefined ? [] : deploymentDefinitions()),
       ...(options.memories === undefined ? [] : memoryDefinitions()),
     ];
-  };
-
-  const deploymentCall = async (name: string, raw: unknown, conversation: string | undefined): Promise<ToolResult | undefined> => {
-    const deployments = options.deployments;
-    if (deployments === undefined) {
-      return undefined;
-    }
-    if (name === "deploy_repository") {
-      const parsed = DeployArguments.safeParse(raw);
-      if (!parsed.success) {
-        return invalid(parsed.error);
-      }
-      const started = await deployments.start({ ...parsed.data, conversation: conversation ?? null });
-      if (!started.ok) {
-        return { text: started.reason, isError: true };
-      }
-      const deployment = started.deployment;
-      return {
-        text: [
-          `Started deployment ${deployment.id} of ${deployment.repository} at commit ${deployment.commit} on target ${deployment.target}.`,
-          `Previously deployed commit: ${deployment.previous ?? "none recorded, so a failure is not rolled back"}.`,
-          `Health check: every ${deployment.file.health.everySeconds} s for up to ${deployment.file.health.withinSeconds} s.`,
-          "The result comes to this conversation as a [hub] message; read_deployment shows its steps meanwhile. Tell the owner in a line that it is deploying.",
-        ].join("\n"),
-      };
-    }
-    if (name === "read_deployment") {
-      const parsed = ReadDeploymentArguments.safeParse(raw);
-      if (!parsed.success) {
-        return invalid(parsed.error);
-      }
-      if (parsed.data.deployment !== undefined) {
-        const found = deployments.get(parsed.data.deployment);
-        return found === undefined ? { text: `There is no deployment ${parsed.data.deployment}.`, isError: true } : { text: deployments.report(found) };
-      }
-      if (parsed.data.repository !== undefined) {
-        const found = deployments.latest(parsed.data.repository);
-        return found === undefined ? { text: `${parsed.data.repository} has never been deployed through the hub.` } : { text: deployments.report(found) };
-      }
-      const recent = deployments.list(20);
-      return {
-        text:
-          recent.length === 0
-            ? "There are no deployments."
-            : recent.map((entry) => `Deployment ${entry.id}: ${entry.repository} at ${short(entry.commit)} on ${entry.target}, ${entry.result ?? `running (${entry.phase})`}, started ${new Date(entry.startedAt).toISOString()}`).join("\n"),
-      };
-    }
-    return undefined;
   };
 
   const wait = (id: string, aborted: AbortSignal): Promise<CommandRecord | undefined> =>
@@ -886,8 +788,15 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     if (!parsed.success) {
       return { text: `The arguments are not valid: ${parsed.error.message}`, isError: true };
     }
+    const target = parsed.data.target ?? hubTargetName;
+    if (target !== hubTargetName) {
+      return {
+        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker through a task ticket (open_task_ticket), which the owner starts.`,
+        isError: true,
+      };
+    }
     const request: CommandRequest = {
-      target: parsed.data.target,
+      target,
       command: parsed.data.command,
       ...(parsed.data.account === undefined ? {} : { account: parsed.data.account }),
       ...(parsed.data.folder === undefined ? {} : { cwd: parsed.data.folder }),
@@ -958,8 +867,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const { issue, title_zh, ...rest } = parsed.data;
         return filingText(await tools.filer.open({ ...rest, number: issue, titleZh: title_zh, conversation }));
       }
-      case "open_writing_ticket": {
-        const parsed = WritingArguments.safeParse(raw);
+      case "open_task_ticket": {
+        if (tools.tasks === undefined) {
+          return undefined;
+        }
+        const parsed = TaskArguments.safeParse(raw);
         if (!parsed.success) {
           return invalid(parsed.error);
         }
@@ -981,35 +893,40 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           }
           attached.set(piece.name, chosen.attachments[0]);
         }
-        try {
-          const ticket = tools.tickets.open({
-            repository: null,
-            issues: [],
-            title: parsed.data.title,
-            summary: parsed.data.summary,
-            kind: "writing",
-            difficulty: parsed.data.difficulty,
-            platform: parsed.data.platform,
-            conversation,
-            writing: {
-              task: parsed.data.task,
-              materials: material.map((piece) => {
-                const attachment = attached.get(piece.name);
-                return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
-              }),
-            },
-          });
-          options.attachments?.grant(ticket.id, [...attached.values()]);
-          return {
-            text: [
-              `Opened writing ticket ${ticket.id}.`,
-              ticketReport(ticket),
-              "Now state its defaults with choose_defaults (kind writing, its platform, a one-line reason). The owner starts it with 开始 on its card in 工作台; tell them in Chinese what it is and that it waits for their start.",
-            ].join("\n"),
-          };
-        } catch (error) {
-          return { text: `Nothing was opened: ${error instanceof Error ? error.message : String(error)}`, isError: true };
+        const opened = await tools.tasks.open({
+          title: parsed.data.title,
+          summary: parsed.data.summary,
+          task: parsed.data.task,
+          kind: parsed.data.kind,
+          repository: parsed.data.repository,
+          commit: parsed.data.commit,
+          deploy: parsed.data.deploy,
+          after: parsed.data.after,
+          difficulty: parsed.data.difficulty,
+          platform: parsed.data.platform,
+          conversation,
+          materials: material.map((piece) => {
+            const attachment = attached.get(piece.name);
+            return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
+          }),
+        });
+        if (!opened.ok) {
+          return { text: opened.reason, isError: true };
         }
+        const ticket = opened.ticket;
+        options.attachments?.grant(ticket.id, [...attached.values()]);
+        const pendingBefore = ticket.waits.some((wait) => tools.tickets.get(wait.ticket)?.state === "pending");
+        return {
+          text: [
+            `Opened task ticket ${ticket.id}.`,
+            ticketReport(ticket),
+            ...opened.notes,
+            `Now state its defaults with choose_defaults (kind ${ticket.kind}, its difficulty and platform, a one-line reason${ticket.kind === "writing" ? "" : ", and its engine"}).`,
+            pendingBefore
+              ? "It is arranged after a ticket that is not started: the owner's 开始 on that ticket's card starts both, and this one begins once what it waits for has merged. Tell the owner in Chinese what you arranged; do not ask for a second start."
+              : "The owner starts it with 开始 on its card in 工作台; tell them in Chinese what it is and that it waits for their start.",
+          ].join("\n"),
+        };
       }
       case "list_tickets": {
         const parsed = ListArguments.safeParse(raw);
@@ -1029,7 +946,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
         }
         const output = tools.work?.output(detail.ticket.id) ?? "";
-        const writing = detail.ticket.kind === "writing" ? tools.tickets.writing(detail.ticket.id) : undefined;
+        const task = detail.ticket.form === "task" ? tools.tickets.task(detail.ticket.id) : undefined;
         const logs = tools.verification?.logs(detail.ticket.id) ?? [];
         const waited = tools.verification?.waitedFor(detail.ticket.id) ?? null;
         const stuck = detail.ticket.stuck;
@@ -1044,11 +961,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
                 stuck.where === null ? "You have not said where it is stuck yet; do it with describe_stuck." : `Where it is stuck, as you said: ${stuck.where.en}`,
               ]),
           ...logs.flatMap((log) => [`The log of the failing workflow ${log.workflow}, step ${log.step}, ends with:`, clip(log.log || "(empty)", 8_000)]),
-          ...(writing === undefined
+          ...(task === undefined
             ? []
             : [
-                `Task: ${writing.task}`,
-                ...writing.materials.map(
+                `Task: ${task.task}`,
+                ...(detail.ticket.repository === null
+                  ? []
+                  : [
+                      `Checkout of ${detail.ticket.repository} at ${task.commit ?? (task.commitRef === null ? "the default branch's head when the work begins" : task.commitRef === mergedCommit ? "the final merge commit of the chain it comes after, once that has merged" : `${task.commitRef} when the work begins`)}${task.deploys ? `; it deploys it by its ${deploymentFile}` : ""}.`,
+                    ]),
+                ...task.materials.map(
                   (piece) =>
                     `Material ${piece.name}, from ${piece.source}${piece.attachment !== null && piece.attachment !== undefined ? ` (the attached file ${piece.attachment.name}, ${piece.attachment.size} bytes)` : piece.text === null ? " (by its source only)" : ` (${piece.text.length} characters given)`}`,
                 ),
@@ -1217,7 +1139,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       default: {
         const ticketResult =
           (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
-          (await deploymentCall(parsed.data.name, parsed.data.arguments ?? {}, conversation)) ?? (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
+          (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
         if (ticketResult === undefined) {
           return { status: 200, body: errorBody(id, -32602, `Unknown tool: ${parsed.data.name}`) };
         }

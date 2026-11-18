@@ -43,6 +43,10 @@ export const leftoverSuffix = "-unfinished";
 
 const locks = new Locks();
 
+export function withClone<T>(clone: string, body: () => Promise<T>): Promise<T> {
+  return locks.with(clone, body);
+}
+
 async function exists(git: Git, ref: string, cwd: string): Promise<boolean> {
   return (await git.run(["rev-parse", "--verify", "--quiet", ref], cwd)).code === 0;
 }

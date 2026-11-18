@@ -41,7 +41,7 @@ describe("a worker's log", () => {
     const log = receiveWork(emptyLog(1), [
       workEvent(1, { kind: "delivered", text: "Hello", files: [{ name: "a.txt", size: 3, mediaType: "text/plain" }], report: { en: "Sent", zh: "交了" } }),
     ]);
-    expect(log.attempts[0]?.items[0]).toEqual({ kind: "delivered", key: "1:end:1", at: 10_001, text: "Hello", files: [{ name: "a.txt", size: 3 }], report: { en: "Sent", zh: "交了" } });
+    expect(log.attempts[0]?.items[0]).toEqual({ kind: "delivered", key: "1:end:1", at: 10_001, failed: false, text: "Hello", files: [{ name: "a.txt", size: 3 }], report: { en: "Sent", zh: "交了" } });
   });
 
   it("takes each event once, whether it comes by the socket or by a page of the history", () => {

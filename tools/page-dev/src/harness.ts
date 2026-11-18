@@ -210,6 +210,7 @@ export interface HarnessOptions {
   readonly brainToken: () => string;
   readonly scripted: ScriptedRunners;
   readonly deployments?: Map<string, string>;
+  readonly forge?: FakeForge;
   readonly cloudflare?: FakeServiceTokens;
 }
 
@@ -391,19 +392,20 @@ export function createHarness(options: HarnessOptions): Harness {
     }
     const steps: { readonly step: string; readonly text: string }[] = [];
     const opened = await callTool(
-      "open_writing_ticket",
+      "open_task_ticket",
       {
         title: { en: "A test piece of writing", zh: "测试写作" },
         summary: { en: "A tiny writing task for testing", zh: "一个很小的写作测试任务" },
         task,
+        kind: "writing",
         ...(material === null ? {} : { material: [{ name: "material.txt", source: "pasted by the owner in the conversation", text: material }] }),
       },
       conversation,
     );
-    steps.push({ step: "open_writing_ticket", text: opened.text });
-    const ticket = opened.isError ? undefined : /writing ticket (\d+)/.exec(opened.text)?.[1];
+    steps.push({ step: "open_task_ticket", text: opened.text });
+    const ticket = opened.isError ? undefined : /task ticket (\d+)/.exec(opened.text)?.[1];
     if (ticket === undefined) {
-      json(response, 409, { error: "open_writing_ticket failed", steps });
+      json(response, 409, { error: "open_task_ticket failed", steps });
       return;
     }
     const stated = await callTool("choose_defaults", {
@@ -454,6 +456,57 @@ export function createHarness(options: HarnessOptions): Harness {
 
   const scenario = (response: ServerResponse): Promise<void> => startPlans(scenarioPlan, response);
 
+  const arrangeDeployment = async (url: URL, response: ServerResponse): Promise<void> => {
+    const forge = options.forge;
+    const repository = url.searchParams.get("repository") ?? "novan-xu/garden-notes";
+    if (forge === undefined || options.deployments === undefined) {
+      json(response, 400, { error: "needs --forge fake: the chain merges in the fake forge, and the deployment file is read from it" });
+      return;
+    }
+    options.scripted.connect();
+    const recipe = JSON.stringify({ target: "studio", deploy: "node scripts/deploy.mjs", health: { command: "curl -fsS http://127.0.0.1:8080/health" }, rollback: "node scripts/rollback.mjs" });
+    const known = forge.repository(repository);
+    const head = createHash("sha1").update(`${repository}:${Date.now()}`).digest("hex");
+    known.mainline.push(head);
+    forge.tree(repository, head, ["src/parser.ts"]);
+    forge.file(repository, head, deploymentFile, recipe);
+    options.deployments.set(repository, recipe);
+    nextIssue += 1;
+    known.issues.set(nextIssue, "open");
+    const chain = options.hub.tickets.open({
+      repository,
+      issues: [{ repository, number: nextIssue, url: `https://github.com/${repository}/issues/${nextIssue}`, title: { en: "Show the next watering day", zh: "显示下次浇水的日子" }, summary: { en: "Show it on the front page", zh: "在首页显示" } }],
+      title: { en: "Show the next watering day", zh: "显示下次浇水的日子" },
+      summary: { en: "Show it on the front page", zh: "在首页显示" },
+      kind: "feature",
+    });
+    options.scripted.behave(chain.id, "finish");
+    const steps: { readonly step: string; readonly text: string }[] = [];
+    const opened = await callTool("open_task_ticket", {
+      title: { en: `Deploy ${repository}`, zh: `部署 ${repository}` },
+      summary: { en: "Deploy the merged change by the repository's deployment file", zh: "按仓库的部署配置部署合并后的改动" },
+      task: "Deploy the repository at the commit of your checkout by its deployment file, check its health, roll back if the new version does not come up, and report what happened.",
+      kind: "operation",
+      repository,
+      deploy: true,
+      after: [chain.id],
+    });
+    steps.push({ step: "open_task_ticket", text: opened.text });
+    const deployment = opened.isError ? undefined : Number(/task ticket (\d+)/.exec(opened.text)?.[1]);
+    if (deployment === undefined || Number.isNaN(deployment)) {
+      json(response, 409, { error: "open_task_ticket failed", steps });
+      return;
+    }
+    const stated = await callTool("choose_defaults", {
+      chains: [
+        { ticket: chain.id, kind: "feature", issues: [{ number: nextIssue, difficulty: "standard" }], reason: { en: "A small change on one page", zh: "一个页面上的小改动" }, platform: "any", engine: "claude" },
+        { ticket: deployment, kind: "operation", difficulty: "mechanical", reason: { en: "A deployment by a known recipe", zh: "按现成配方部署" }, platform: "any", engine: "claude" },
+      ],
+    });
+    steps.push({ step: "choose_defaults", text: stated.text });
+    json(response, stated.isError ? 409 : 200, { chain: chain.id, deployment, steps });
+  };
+
   const fillHistory = (url: URL, response: ServerResponse): void => {
     const asked = Number(url.searchParams.get("count") ?? "70");
     const count = Number.isInteger(asked) && asked >= 1 && asked <= 500 ? asked : undefined;
@@ -493,7 +546,7 @@ export function createHarness(options: HarnessOptions): Harness {
         title: { en: label[0], zh: label[1] },
         summary: { en: `${label[0]}, a finished ticket made by the page harness`, zh: `${label[1]}：页面测试用的已结束工单` },
         kind: writing ? "writing" : (kinds[index % kinds.length] ?? "fix"),
-        ...(writing ? { writing: { task: `Write a short note about: ${label[0]}`, materials: [] } } : {}),
+        ...(writing ? { task: { task: `Write a short note about: ${label[0]}`, materials: [] } } : {}),
       });
       const how = index % 6;
       if (how === 4 || how === 5) {
@@ -581,7 +634,7 @@ export function createHarness(options: HarnessOptions): Harness {
         summary: { en: `${plan.title[0]}, a scripted ticket of the page harness`, zh: `${plan.title[1]}：页面测试用的脚本工单` },
         kind: plan.repository === null ? "writing" : "feature",
         ...(after === undefined ? {} : { waitsFor: [after] }),
-        ...(plan.task === undefined ? {} : { writing: { task: plan.task, materials: [] } }),
+        ...(plan.task === undefined ? {} : { task: { task: plan.task, materials: [] } }),
       });
       ids.set(plan.name, ticket.id);
       options.scripted.behave(ticket.id, plan.behaviour);
@@ -710,6 +763,10 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/history") {
         fillHistory(url, response);
+        return true;
+      }
+      if (path === "/__harness/deploy") {
+        await arrangeDeployment(url, response);
         return true;
       }
       if (path === "/__harness/scenario") {

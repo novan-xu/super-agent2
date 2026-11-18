@@ -2,7 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { type ChoiceChange, chineseOf, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
-import { panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
+import { kindKey, panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
 import { draftOptions, draftWithEffort, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, type ReassignDraft, reassignChange, reassignMachines } from "../live/reassign.js";
 import type { LogItem } from "../live/work.js";
 import { AttachButton, PendingList, SentAttachments, useAttachments } from "../parts/Attachments.js";
@@ -66,7 +66,12 @@ const WorkItem = memo(function WorkItem({ item, live, last, ticket }: { readonly
         </div>
       );
     case "delivered":
-      return (
+      return item.failed ? (
+        <div className="reason">
+          <strong>{text("work.failure.task-failed")}</strong>
+          {item.report.zh === "" ? null : <span>{chineseOf(item.report)}</span>}
+        </div>
+      ) : (
         <div className="work-end">
           <DeliveryBody ticket={ticket.id} title={chineseOf(ticket.title)} at={item.at} text={item.text} files={item.files} />
           {item.report.zh === "" ? null : <p className="work-report">{chineseOf(item.report)}</p>}
@@ -486,16 +491,33 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
                   {ticket.repository}
                 </a>
               </dd>
-              <dt>{text("ticket.branch")}</dt>
-              <dd className="mono">
-                {ticket.branch === null ? (
-                  "—"
-                ) : (
-                  <a href={`${githubRepository(ticket.repository)}/tree/${ticket.branch}`} target="_blank" rel="noreferrer">
-                    {ticket.branch}
-                  </a>
-                )}
-              </dd>
+              {ticket.form === "task" ? (
+                <>
+                  <dt>{text("ticket.commit")}</dt>
+                  <dd className="mono">
+                    {ticket.commit === null ? (
+                      (ticket.commitRef ?? "—")
+                    ) : (
+                      <a href={`${githubRepository(ticket.repository)}/commit/${ticket.commit}`} target="_blank" rel="noreferrer">
+                        {ticket.commit.slice(0, 7)}
+                      </a>
+                    )}
+                  </dd>
+                </>
+              ) : (
+                <>
+                  <dt>{text("ticket.branch")}</dt>
+                  <dd className="mono">
+                    {ticket.branch === null ? (
+                      "—"
+                    ) : (
+                      <a href={`${githubRepository(ticket.repository)}/tree/${ticket.branch}`} target="_blank" rel="noreferrer">
+                        {ticket.branch}
+                      </a>
+                    )}
+                  </dd>
+                </>
+              )}
             </dl>
           </div>
         )}
@@ -701,7 +723,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, now
               {ticket.repository}
             </span>
           )}
-          <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+          <span className="chip">{text(kindKey(ticket))}</span>
         </div>
         <h2>{chineseOf(ticket.title)}</h2>
       </div>

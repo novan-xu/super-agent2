@@ -8,6 +8,7 @@ function ticket(id: number): Ticket {
   const repository = "novan-xu/super-agent-sandbox";
   return {
     id,
+    form: "code",
     repository,
     issues: [{ repository, number: id, url: `https://github.com/${repository}/issues/${id}`, title, summary: title }],
     title,
@@ -16,6 +17,10 @@ function ticket(id: number): Ticket {
     difficulty: null,
     difficultyReason: null,
     platform: null,
+    requiredMachine: null,
+    commitRef: null,
+    commit: null,
+    deploys: false,
     brainEngine: null,
     ownerChoice: { machine: null, engine: null, model: null, effort: null },
     state: "pending",
@@ -78,7 +83,7 @@ describe("notifying about chains", () => {
   });
 });
 
-function hold(command: string, environment: Readonly<Record<string, string>> = {}): HoldCard {
+function hold(command: string): HoldCard {
   return {
     kind: "hold",
     key: "hold:c1",
@@ -89,7 +94,6 @@ function hold(command: string, environment: Readonly<Record<string, string>> = {
       command,
       account: "novan-xu",
       cwd: null,
-      environment: { ...environment },
       state: "held",
       exitCode: null,
       signal: null,
@@ -120,12 +124,6 @@ describe("notifying about a held command", () => {
       url: "/workbench?card=hold%3Ac1",
       tag: "hold:c1",
     });
-  });
-
-  it("never shows the command's environment", () => {
-    const payload = payloadOf(hold("rm -rf \"$TARGET\"", { TARGET: "/srv/secret-value-1234" }));
-    expect(payload.body).toContain("rm -rf");
-    expect(payload.body).not.toContain("secret-value-1234");
   });
 
   it("clips a command too long for a push message, visibly, so that the message still goes", () => {

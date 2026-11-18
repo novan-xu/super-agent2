@@ -17,6 +17,7 @@ export type LogItem =
       readonly kind: "delivered";
       readonly key: string;
       readonly at: number;
+      readonly failed: boolean;
       readonly text: string | null;
       readonly files: readonly Pick<DeliveredFile, "name" | "size">[];
       readonly report: GeneratedText;
@@ -125,7 +126,7 @@ function foldItems(items: readonly LogItem[], stored: StoredWorkEvent): readonly
     case "delivered":
       return [
         ...items,
-        { kind: "delivered", key: `${attempt}:end:${stored.seq}`, at, text: event.text, files: event.files.map((file) => ({ name: file.name, size: file.size })), report: event.report },
+        { kind: "delivered", key: `${attempt}:end:${stored.seq}`, at, failed: event.outcome === "failed", text: event.text, files: event.files.map((file) => ({ name: file.name, size: file.size })), report: event.report },
       ];
     case "failed":
       return [...items, { kind: "failed", key: `${attempt}:end:${stored.seq}`, at, failure: event.failure, reason: event.reason }];

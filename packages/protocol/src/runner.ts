@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { AllowanceReading } from "./allowance.js";
-import { OutputStream, TargetName } from "./commands.js";
+import { TargetName } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
-import { AttachmentPart, FetchAttachment, FetchFile, FilePart, MessageWork, RunnerWorkEvent, StartWork, StartWriting, StopWork, SyncWork, WorkHeld } from "./work.js";
+import { AttachmentPart, FetchAttachment, FetchFile, FilePart, MessageWork, RunnerWorkEvent, StartTask, StartWork, StopWork, SyncWork, WorkHeld } from "./work.js";
 
 export const runnerLinkPath = "/runner/link";
 export const runnerReleasePath = "/runner/release";
@@ -72,30 +72,7 @@ export const RunnerReport = z.object({
 });
 export type RunnerReport = z.infer<typeof RunnerReport>;
 
-export const RunnerOutput = z.object({
-  type: z.literal("output"),
-  id: z.string().min(1),
-  stream: OutputStream,
-  data: z.base64(),
-});
-export type RunnerOutput = z.infer<typeof RunnerOutput>;
-
-export const RunnerEnded = z.object({
-  type: z.literal("ended"),
-  id: z.string().min(1),
-  exitCode: z.number().int().nullable(),
-  signal: z.string().nullable(),
-});
-export type RunnerEnded = z.infer<typeof RunnerEnded>;
-
-export const RunnerFailed = z.object({
-  type: z.literal("failed"),
-  id: z.string().min(1),
-  reason: z.string(),
-});
-export type RunnerFailed = z.infer<typeof RunnerFailed>;
-
-export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerOutput, RunnerEnded, RunnerFailed, RunnerWorkEvent, FilePart, FetchAttachment]);
+export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerWorkEvent, FilePart, FetchAttachment]);
 export type RunnerToHub = z.infer<typeof RunnerToHub>;
 
 export const RunnerWelcome = z.object({
@@ -106,22 +83,7 @@ export const RunnerWelcome = z.object({
 });
 export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 
-export const RunCommand = z.object({
-  type: z.literal("run"),
-  id: z.string().min(1),
-  command: z.string().min(1),
-  cwd: z.string().min(1).nullable(),
-  environment: z.record(z.string(), z.string()),
-});
-export type RunCommand = z.infer<typeof RunCommand>;
-
-export const StopCommand = z.object({
-  type: z.literal("stop"),
-  id: z.string().min(1),
-});
-export type StopCommand = z.infer<typeof StopCommand>;
-
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RunCommand, StopCommand, StartWork, StartWriting, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {

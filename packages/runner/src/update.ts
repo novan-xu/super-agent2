@@ -64,6 +64,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const retry = options.retryMilliseconds ?? defaultRetryMilliseconds;
   let preparing: Promise<void> | undefined;
   let ready: { readonly version: string; readonly main: string } | undefined;
+  let wanted: string | undefined;
   let switched = false;
   let told = "";
 
@@ -75,7 +76,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
   };
 
   const trySwitch = () => {
-    if (ready === undefined || switched) {
+    if (ready === undefined || switched || ready.version !== wanted) {
       return;
     }
     const busy = options.busy();
@@ -152,6 +153,10 @@ export function createUpdater(options: UpdaterOptions): Updater {
 
   return {
     announced: (version) => {
+      wanted = version;
+      if (version === options.version && ready !== undefined && !switched) {
+        once(`The hub runs ${short(version)} again, the version of this runner, so it does not switch to ${short(ready.version)}`);
+      }
       if (version === undefined || version === options.version || switched) {
         return;
       }

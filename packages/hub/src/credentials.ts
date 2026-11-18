@@ -17,10 +17,6 @@ export const forwardedVariables = [
 
 export const credentialVariables: readonly string[] = ["GH_TOKEN", "GITHUB_TOKEN", ...Object.values(accountTokenVariable), ...forwardedVariables];
 
-export function isCredentialVariable(name: string): boolean {
-  return credentialVariables.includes(name.toUpperCase());
-}
-
 export const secretVariables: readonly string[] = [
   ...credentialVariables,
   "ACCESS_CLIENT_ID",

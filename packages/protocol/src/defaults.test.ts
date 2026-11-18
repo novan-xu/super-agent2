@@ -8,6 +8,7 @@ import {
   isComplete,
   type MachineChoice,
   machineChoices,
+  machinesFor,
   offers,
   ownerGivesUnoffered,
   resolveStart,
@@ -195,5 +196,33 @@ describe("a change on the card", () => {
     const owner = { machine: "pc", engine: "codex" as const, model: "m", effort: "e" };
     expect(applyChange(owner, { engine: "claude", model: null, effort: null })).toEqual({ machine: "pc", engine: "claude", model: null, effort: null });
     expect(applyChange(noOwnerChoice, { machine: "mini" })).toEqual({ ...noOwnerChoice, machine: "mini" });
+  });
+});
+
+describe("a ticket that must run on one machine", () => {
+  it("defaults to that machine whatever the platform says, and lists no other", () => {
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc, mini], available);
+    expect(choice.machine).toBe("mini");
+    expect(choice.missing).toEqual([]);
+    expect(machinesFor("any", [pc, mini], "mini").map((machine) => machine.name)).toEqual(["mini"]);
+  });
+
+  it("is missing its machine while that machine is away, rather than taking another", () => {
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc], available);
+    expect(choice.machine).toBe("mini");
+    expect(choice.missing).toEqual(["machine"]);
+  });
+
+  it("refuses the owner's choice of another machine instead of running there", () => {
+    const owner = { ...noOwnerChoice, machine: "pc" };
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini", owner }), startingEngineTable, [pc, mini], available);
+    expect(choice.missing).toContain("machine");
+    expect(ownerGivesUnoffered(owner, choice, [pc, mini], "mini")).toBe(true);
+    expect(ownerGivesUnoffered({ ...noOwnerChoice, machine: "mini" }, choice, [pc, mini], "mini")).toBe(false);
+  });
+
+  it("gives an operation a code engine by difficulty, and prose Antigravity", () => {
+    expect(defaultEngine("operation", "codex", available)).toBe("codex");
+    expect(defaultEngine("writing", "codex", available)).toBe("antigravity");
   });
 });

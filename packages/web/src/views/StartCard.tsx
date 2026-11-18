@@ -2,6 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
 import { canStartCard, changeOfEffort, changeOfEngine, changeOfMachine, changeOfModel, choiceOptions } from "../live/choice.js";
+import { kindKey } from "../live/phase.js";
 import { type CardUse, type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
@@ -118,7 +119,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
             {ticket.repository}
           </span>
         )}
-        <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+        <span className="chip">{text(kindKey(ticket))}</span>
         {ticket.difficulty === null ? null : <span className="chip">{text(`ticket.difficulty.${ticket.difficulty}`)}</span>}
         {ticket.platform === null ? null : <span className="chip">{text(`ticket.platform.${ticket.platform}`)}</span>}
       </div>

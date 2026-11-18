@@ -101,13 +101,14 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     },
     subscriptions,
     machines,
-    machinesFor: (ticket) => machinesFor(ticket.platform, machines()),
+    machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.requiredMachine),
     resolve: (ticket, owner = ticket.ownerChoice) =>
       resolveStart(
         {
           kind: ticket.kind,
           difficulty: ticket.difficulty,
           platform: ticket.platform,
+          requiredMachine: ticket.requiredMachine,
           brainEngine: ticket.brainEngine,
           stated: ticket.difficultyReason !== null && ticket.platform !== null && ticket.difficulty !== null,
           owner,

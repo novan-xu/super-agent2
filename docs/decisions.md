@@ -3129,3 +3129,173 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   instead of the image and still has the path.
 - **Other options:** A `modelOverrides` entry declaring image input, which is unnecessary because the listing already
   declares it; moving dsh to another model id, which the account does not offer for images.
+
+## 2026-11-17 — Two kinds of ticket: code and task
+
+- **Chosen:** At the owner's review, a ticket is one of two forms, `Ticket.form`: `code` (a chain of GitHub issues of one
+  repository, unchanged) or `task` (everything else). A task ticket is a task in words with material and attachments,
+  optionally a repository, a commit and `deploys`; a worker does it on a machine and hands back an outcome, a report and
+  any text and files, and nothing is verified. The writing ticket is a task ticket and not a third shape: the brain opens
+  it with `open_task_ticket` (which replaces `open_writing_ticket`), `kind` `writing`. The attributes stay inputs to the
+  start defaults only: kinds are `writing` and `operation` for a task ticket (prose goes to Antigravity by default, an
+  operation to a code engine by difficulty, with the engine the brain states) and the five code kinds for a code ticket;
+  the hub refuses a kind of the other form. `canMoveTicket` reads the form, so a task ticket never verifies or merges and
+  a code ticket is never delivered. Antigravity still never runs a code ticket, on the card, in 改派 or at the start. A
+  wait is met when the ticket before it has merged (code) or is done (`delivered`, task). Renamed: `WritingTask` to
+  `TaskAssignment`, `work.write` to `work.task`, `WritingMaterial` to `TaskMaterial`, `WritingHandback` to `TaskHandback`,
+  the table `ticket_writing` to `ticket_tasks`, `guidance/WRITER.md` to `guidance/TASK.md` (one guidance for every task
+  ticket, prose advice a part of it), `writing.ts` to `task.ts` in the runner. Migration 24 adds `tickets.form` (`task`
+  for every ticket of kind `writing`, `code` otherwise), `tickets.required_machine`, and `commit_ref`, `commit_sha` and
+  `deploys` to `ticket_tasks`, so every writing ticket in the live database is a task ticket with its task and material
+  as they were. This overturns the writing parts of "The ticket and its states", "A writing ticket's task and material",
+  "The scratch folder and the hand-back of a writing worker", "Delivering the text and files into the conversation",
+  "Which engine may run which ticket", "Where the brain is told to open writing tickets, and what was verified" and "The
+  brain hands an attachment to a writing worker by its id" where they name a writing ticket as a kind of its own; what
+  they say of material, attachments, the scratch folder and delivery still holds for task tickets.
+- **Why:** The owner's words: apart from code tickets, which need pull requests, the others have no such restriction.
+  A separate field keeps the form from depending on an attribute the brain states and may restate.
+- **Other options:** Deriving the form from the kind (`writing` and `operation`), which ties the shape to an attribute;
+  a third form for deployments; keeping `open_writing_ticket` beside a new tool.
+
+## 2026-11-17 — What a task worker hands back, and what a failed outcome is
+
+- **Chosen:** `{"outcome": "done" | "failed", "report": {"en", "zh"}, "text"?: <file>, "files"?: [...]}` at the
+  hand-back path; `outcome` defaults to `done`, and a hand-back that still says `summary` is read as the report, so a
+  worker briefed by the previous version is not refused. A report alone is a valid hand-back. The runner sends it as the
+  `delivered` event with the new optional fields `outcome` and `commit` (the checkout's commit), so a hub and a runner
+  one version apart still read each other's events. Done: as before, the files are fetched, the ticket becomes
+  `delivered` (shown as 已完成), and the result goes into the conversation, now with the worker's Chinese report, which
+  the page shows when there is no text. Failed: the attempt fails with the new failure `task-failed` and the report as
+  its reason, the report is kept on the ticket, files are not fetched, and the failure loop takes it like any failed
+  work: the brain guides, it counts toward `roundCap` (it is not a failure of the machine), and at the cap the ticket
+  stops for the owner.
+- **Why:** The brief: a failed deployment is a failed task ticket through the existing loop. Optional fields rather
+  than a new event kind keep a mixed-version hub and runner from closing their link on each other.
+- **Other options:** A new `outcome` event; delivering a failed result into the conversation as well; fetching the files
+  of a failed outcome.
+
+## 2026-11-17 — What the runner prepares for a task ticket with a repository
+
+- **Chosen:** Always the scratch folder `work/t<n>/scratch` with `input/` and `output/`. When the ticket names a
+  repository, also a checkout of it, detached at the commit, at `worktrees/<name>-t<n>` from the shared clone (`git
+  worktree add --detach`, under the same per-clone lock as code worktrees), and the program works in the checkout, so the
+  repository's own instructions are read; the brief names both folders and the machine's name. The worker gets the
+  owning account's token, as a code worker does; a task without a repository gets none. The commit is: a SHA or a branch
+  the brain named (a branch is resolved by the runner when it checks out, so it means its head when the work begins),
+  the default branch's head when none was named, or `merged`, the final merge commit of the code chain of that
+  repository the ticket waits for, which the hub fills in from its own record when the ticket begins (the latest-merged
+  such chain when there are several, since its merge commit contains the others). The runner reports the commit it
+  checked out with the hand-back, and the hub keeps it on the ticket. A new attempt keeps the checkout when it is at the
+  same commit. Stopping removes the checkout and the scratch folder.
+- **Why:** The suggested option. Filling `merged` from the hub's record needs no GitHub call at begin, so a begin cannot
+  fail on GitHub; a branch resolved by the runner is the head at the moment the work starts.
+- **Other options:** Resolving every commit through GitHub at begin; the checkout inside the scratch folder; the program
+  in the scratch folder with the checkout beside it.
+
+## 2026-11-17 — A deployment is a task ticket, done by a worker
+
+- **Chosen:** At the owner's review, the brain no longer deploys. `deploy_repository`, `read_deployment`, the hub's
+  deployment service with its health loop, rollback and outcome-line parsing, and the tables `deployments` and
+  `deployment_steps` are removed (migration 24 drops the tables; the commands they ran stay in the command history). A
+  deployment is `open_task_ticket` with `deploy: true`, `kind` `operation` and the repository, usually `after` the chain
+  it deploys, at filing time, so the owner's one 开始 starts both and the deployment begins by itself when the chain has
+  merged, at `merged`. `.superagent2/deployment.json` stays as the worker's recipe with the same keys; `target` now names
+  the work machine the ticket must run on (a runner's name; `hub` and `nas` are refused, since no worker runs in the
+  hub's container or on the NAS host). The hub reads the file on the default branch when the ticket is opened: a valid
+  file pins the ticket to that machine (`requiredMachine`, the card's only machine; the owner choosing another is refused
+  with 422 rather than silently replaced), an invalid one refuses the ticket, and a missing or unreadable one opens it
+  with no pin and a note. The runner reads the file at the checked-out commit and fails the attempt as `prepare`,
+  before any program starts, when it is missing, invalid or names another machine. When a deploying task ticket is
+  done, the hub marks deployed itself, the merged code tickets it waited for, and every other merged ticket of the
+  repository whose final merge commit the deployed commit contains (GitHub's compare, as before); one it could not check
+  is left unmarked and the brain is told. `after_deployment` keeps its meaning (merged and marked deployed), and a chain
+  may also come after the deployment's ticket by number. `report_deployment` stays, for work deployed by other means
+  (the owner by hand). The merge report now says which task ticket deploys the chain, or that none is arranged and how to
+  open one. This overturns "A ticket never deploys" in the design, "What the deployment file holds" (the `hub` and `nas`
+  targets), "The previous version, and a first deployment", "How a deployment runs, and what ends it", "A restart of the
+  hub during a deployment", "What a successful deployment marks deployed" (now done when the task ticket is done), "Where
+  the owner sees deployments", "Deployments in the development harness, and what was verified", "Super-agent2's
+  deployment file, and why its shape did not change" and the deployment parts of "The brain's reach ends at the hub's
+  container" (`deploy_repository` refusing the hub's repository, the outcome line).
+- **Why:** The owner's words: deploying is the same as telling Codex or Claude Code to deploy the project, and a ticket
+  needs the owner's release anyway. Pinning at opening is what helps the brain arrange; the runner's check is what holds
+  when the file changed in the chain.
+- **Other options:** The brain opening the deployment after the merge (a second start); a `target` meaning a platform;
+  refusing a deployment whose file is not on the default branch yet.
+
+## 2026-11-17 — A pinned machine must be online at the start
+
+- **Chosen:** A deployment's machine is resolved as any machine is: the start of the chain it follows is refused as
+  incomplete while that machine is offline, as for any ticket whose machine is away, and a begun ticket waits in the
+  queue for it.
+- **Why:** The rule every ticket already follows; showing the machine as missing is the truthful card.
+- **Other options:** Accepting an offline pinned machine at the start from its last report.
+
+## 2026-11-17 — The brain's commands run only in the hub's container
+
+- **Chosen:** At the owner's review, `run_command` has one target, `hub`; `target` is optional and anything else is
+  refused with the reason. Runners are no longer targets of the command service, and the runner no longer runs commands
+  at all: `run`, `stop`, `output`, `ended` and `failed` are gone from the runner protocol, with the runner's shell
+  runner. A runner ignores a message type it does not know (and logs it once) instead of dropping its link, so a newer
+  hub cannot make an older runner reconnect in a loop. The command environment, which only deployments set, is removed
+  with its part of the hold fingerprint (a command without environment keeps the fingerprint it always had) and the hold
+  card's environment block; migration 24 withdraws any deployment command still held and drops `commands.environment`.
+  This overturns runner targets in "Targets, shells and stopping", "Commands on a runner, and when the connection is
+  lost", the runner targets kept by "The brain's reach ends at the hub's container", "What the commands of a deployment
+  receive" and "A held command's environment is part of what the owner confirms".
+- **Why:** The owner's words: the brain itself must not reach the NAS, and its own rights are kept small because it will
+  get automation that needs no nod. A runner that can run nothing but workers is the strongest form of that.
+- **Other options:** Keeping the runner's command channel unused; keeping runner targets behind the confirmation lock.
+
+## 2026-11-17 — Super-agent2 deploys itself through a ticket
+
+- **Chosen:** `.superagent2/deployment.json` is restored as a recipe: `target` `pc` (the owner's Windows PC, whose SSH
+  alias `novan-nas-maintenance` reaches the NAS), `deploy` `ssh novan-nas-maintenance "bash
+  /share/Container/superagent2/deploy.sh release $(git rev-parse HEAD)"` run in the checkout, `health` `deploy.sh
+  health`, `rollback` `deploy.sh rollback`, health every 10 seconds for up to 10 minutes. `deploy.sh` is unchanged: the
+  release runs in the foreground of the worker's SSH session and goes back by itself on failure. The machine's name is
+  an assumption: the owner names the PC's runner `pc`, or changes the file through a code ticket.
+- **Why:** The worker uses its own machine's access, as the owner would; nothing of the hub's reaches the NAS. `$(...)`
+  works in both Bash and PowerShell, the shells the workers use.
+- **Other options:** A Mac mini as the target; a recipe in words instead of commands.
+
+## 2026-11-17 — What broke when the hub was replaced under a running task ticket
+
+- **Chosen:** Two things, both fixed and covered by `packages/runner/src/end-to-end.test.ts`, which runs a real hub and a
+  real runner, starts a task ticket, closes the hub and starts a new hub at another version on the same database and
+  port. (1) The runner's updater prepared the version a new hub announced and switched to it once its worker ended even
+  when the hub had meanwhile gone back to the runner's own version (a release that rolled back); it now switches only to
+  the version the hub announces at that moment, and says when it does not. (2) A runner dropped its link on any message
+  it could not parse, so a newer hub sending a new message type made it reconnect in a loop; it now ignores unknown
+  types. Verified as sound, with nothing to change: the link drops and comes back, the worker keeps running, its events
+  are kept on disk and synced to the new hub, the hand-back is delivered there and the ticket ends done, and the runner
+  then switches to the new hub's version.
+- **Why:** The brief asked to make the self-deployment sound and to find what breaks.
+- **Other options:** Holding the switch until the hub acknowledges the hand-back, which would hold updates while any
+  ticket stays failed or stuck.
+
+## 2026-11-17 — Task tickets on the page
+
+- **Chosen:** 工作台 groups open tickets by repository, a task ticket with a repository in its repository's group (so a
+  deployment follows the chain it deploys), and task tickets without one last under 任务. A deploying task ticket's kind
+  chip says 部署; an operation 操作. 已交付 is now 已完成 for a done task ticket. The ticket's panel shows a task
+  ticket's commit, linked to GitHub, where a code ticket shows its branch. A failed hand-back shows in the timeline as
+  工作者报告任务没有完成 with the report. In 对话 a delivery shows its text as before, or the worker's report when there is
+  no text, which is how a deployment reads there. No new labels.
+- **Why:** The owner's interface rule: the layout explains itself.
+- **Other options:** A separate group for deployments; showing the report under every delivery.
+
+## 2026-11-17 — A chain and its deployment in the development harness, and what was verified
+
+- **Chosen:** With `--forge fake`, `/__harness/deploy?repository=` puts a deployment file naming `studio` on the fake
+  default branch, opens a one-issue chain and, through the brain's tools, a deploying task ticket after it, and states
+  both defaults; nothing is started. The scripted worker deploys a `work.task` with `deploys` and delivers a report. The
+  demo brain no longer deploys. Verified in the page: the 之后 card of the deployment showed 部署 and only `studio`; one
+  开始 on the chain's card started both; the chain merged green, the deployment began at the merge commit, delivered, and
+  marked the chain deployed; 对话 showed the merge notice 工单 1 已合并，接着部署 and the deployment's report; the ticket
+  page showed the commit and the run; 历史 listed both. Hub tests cover filing, the pin and its refusal, the start, the
+  begin at `merged`, done and failed outcomes, the marking, `after_deployment`, `run_command`'s refusal and the
+  migration; runner tests cover the checkout, the hand-back, the machine check and the hub restart. Not verified: a real
+  worker, a real deployment, and the NAS.
+- **Why:** The brief asked to keep the harness able to show a chain followed by its deployment.
+- **Other options:** Starting the pair from the harness.

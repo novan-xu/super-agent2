@@ -1,3 +1,5 @@
+import { text } from "@super-agent2/catalog";
+
 export interface Migration {
   readonly version: number;
   readonly sql: string;
@@ -581,4 +583,27 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_verifications ADD COLUMN notice_count INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 24,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN form TEXT NOT NULL DEFAULT 'code';
+      UPDATE tickets SET form = 'task' WHERE kind = 'writing';
+      ALTER TABLE tickets ADD COLUMN required_machine TEXT;
+      ALTER TABLE ticket_writing RENAME TO ticket_tasks;
+      ALTER TABLE ticket_tasks ADD COLUMN commit_ref TEXT;
+      ALTER TABLE ticket_tasks ADD COLUMN commit_sha TEXT;
+      ALTER TABLE ticket_tasks ADD COLUMN deploys INTEGER NOT NULL DEFAULT 0;
+      UPDATE holds SET answer = 'withdrawn', answered_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+        WHERE answer IS NULL AND command_id IN (SELECT id FROM commands WHERE state = 'held' AND environment IS NOT NULL AND environment NOT IN ('', '{}'));
+      UPDATE commands SET state = 'dropped', reason = '${sqlText(text("command.reason.deploymentRetired"))}', ended_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+        WHERE state = 'held' AND environment IS NOT NULL AND environment NOT IN ('', '{}');
+      ALTER TABLE commands DROP COLUMN environment;
+      DROP TABLE deployment_steps;
+      DROP TABLE deployments;
+    `,
+  },
 ];
+
+function sqlText(value: string): string {
+  return value.replaceAll("'", "''");
+}

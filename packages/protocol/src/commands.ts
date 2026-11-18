@@ -12,18 +12,11 @@ export const TargetName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
 
 export type TargetName = z.infer<typeof TargetName>;
 
-export const VariableName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(100);
-
-export const CommandEnvironment = z.record(VariableName, z.string());
-
-export type CommandEnvironment = z.infer<typeof CommandEnvironment>;
-
 export const CommandRequest = z.object({
   target: TargetName,
   command: z.string().min(1),
   account: GitHubAccount.default(defaultGitHubAccount),
   cwd: z.string().min(1).optional(),
-  environment: CommandEnvironment.optional(),
 });
 
 export type CommandRequest = z.input<typeof CommandRequest>;
@@ -40,7 +33,6 @@ export const CommandRecord = z.object({
   command: z.string(),
   account: GitHubAccount,
   cwd: z.string().nullable(),
-  environment: CommandEnvironment.default({}),
   state: CommandState,
   exitCode: z.number().int().nullable(),
   signal: z.string().nullable(),

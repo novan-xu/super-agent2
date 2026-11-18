@@ -158,8 +158,8 @@ export function ticketGroups(open: readonly Ticket[]): TicketGroup[] {
     if (ticket.state === "pending") {
       continue;
     }
-    const repository = ticket.kind === "writing" ? null : ticket.repository;
-    const key = repository === null ? "writing" : `repository:${repository}`;
+    const repository = ticket.repository;
+    const key = repository === null ? "tasks" : `repository:${repository}`;
     const group = groups.get(key) ?? { repository, tickets: [] };
     group.tickets.push(ticket);
     groups.set(key, group);
@@ -172,6 +172,10 @@ export function ticketGroups(open: readonly Ticket[]): TicketGroup[] {
       }
       return a.repository.toLowerCase() < b.repository.toLowerCase() ? -1 : a.repository.toLowerCase() > b.repository.toLowerCase() ? 1 : 0;
     });
+}
+
+export function kindKey(ticket: Pick<Ticket, "kind" | "deploys">): "ticket.kind.deploy" | `ticket.kind.${Ticket["kind"]}` {
+  return ticket.deploys ? "ticket.kind.deploy" : `ticket.kind.${ticket.kind}`;
 }
 
 export function whereOf(ticket: Ticket): { readonly machine: string; readonly engine: Ticket["engine"] } | null {

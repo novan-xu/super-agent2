@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type Attachment, attachmentLine, type WorkSender, type WorkTask, type WritingTask } from "@super-agent2/protocol";
-import { type WritingPlace, writingTaskText } from "./writing.js";
+import { type Attachment, attachmentLine, type TaskAssignment, type WorkSender, type WorkTask } from "@super-agent2/protocol";
+import { assignmentText, type TaskPlace } from "./task.js";
 
 export const workerGuidanceFile = fileURLToPath(new URL("../guidance/WORKER.md", import.meta.url));
 
@@ -94,38 +94,38 @@ export function lostSessionNote(): string {
   return "An earlier worker on this ticket was cut off and its session could not be resumed. Work from earlier may already be in this folder, on the branch, and in an open pull request: check `git status`, `git log` and `gh pr list --head <branch>` first and continue from there.";
 }
 
-export const writerGuidanceFile = fileURLToPath(new URL("../guidance/WRITER.md", import.meta.url));
+export const taskGuidanceFile = fileURLToPath(new URL("../guidance/TASK.md", import.meta.url));
 
-let writer: string | undefined;
+let taskGuide: string | undefined;
 
-export function writerGuidance(): string {
-  writer ??= readFileSync(writerGuidanceFile, "utf8").trim();
-  return writer;
+export function taskGuidance(): string {
+  taskGuide ??= readFileSync(taskGuidanceFile, "utf8").trim();
+  return taskGuide;
 }
 
-export function writingBrief(task: WritingTask, place: WritingPlace): string {
-  const parts = [writerGuidance(), writingTaskText(task, place)];
+export function taskBrief(task: TaskAssignment, place: TaskPlace): string {
+  const parts = [taskGuidance(), assignmentText(task, place)];
   if (task.note !== null) {
     parts.push(`# A note from the hub\n\n${task.note}`);
   }
   return parts.join("\n\n");
 }
 
-export function writingResumeText(task: WritingTask, place: WritingPlace): string {
+export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
   return [
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
-    `Look at what is already in your output folder ${place.output} first.`,
-    `Hand back by writing the JSON file at ${place.handback} when your result is in the output folder, as described at the start.`,
+    `Look at what is already in your output folder ${place.output}${place.checkout === null ? "" : ` and in the checkout ${place.checkout}`} first, and check the state of anything you were changing on this machine before you do it again.`,
+    `Hand back by writing the JSON file at ${place.handback} when you are done or know the task failed, as described at the start.`,
     task.note === null ? "" : `\n${task.note}`,
   ]
     .join("\n")
     .trim();
 }
 
-export function writingContinueText(place: WritingPlace, note: string): string {
+export function taskContinueText(place: TaskPlace, note: string): string {
   return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`].join("\n");
 }
 
-export function writingLostSessionNote(): string {
-  return "An earlier worker on this task was cut off and its session could not be resumed. Work from earlier may already be in the output folder: look there first and continue from it.";
+export function taskLostSessionNote(): string {
+  return "An earlier worker on this task was cut off and its session could not be resumed. Work from earlier may already be done: look in the output folder, in the checkout if there is one, and at the state of what the task changes on this machine, and continue from there.";
 }

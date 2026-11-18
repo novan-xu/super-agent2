@@ -18,6 +18,7 @@ const delivery: ConversationEntry = {
   ticket: 4,
   title: { en: "Translate a notice", zh: "翻译一则通知" },
   text: "Hello, <b>world</b>.\n\nSecond paragraph.",
+  report: { en: "Translated it", zh: "翻译好了" },
   files: [
     { name: "译文 1.pdf", size: 4_300_000 },
     { name: "notes.txt", size: 12 },
@@ -40,6 +41,7 @@ describe("a delivery in the conversation", () => {
     expect(html).toContain("Hello, &lt;b&gt;world&lt;/b&gt;.");
     expect(html).not.toContain("<b>world</b>");
     expect(html).toContain('class="msg-text msg-plain delivery-text"');
+    expect(html).not.toContain("翻译好了");
     expect(html).toContain('href="/api/tickets/4/files/%E8%AF%91%E6%96%87%201.pdf"');
     expect(html).toContain('download="译文 1.pdf"');
     expect(html).toContain("4.1 MB");
@@ -51,7 +53,16 @@ describe("a delivery in the conversation", () => {
       <StreamEntry item={{ kind: "entry", key: "d2", entry: { ...delivery, text: null, files: [{ name: "a.docx", size: 2048 }] }, lead: false, live: false }} thisYear={2026} />,
     );
     expect(html).not.toContain("delivery-text");
+    expect(html).toContain("翻译好了");
     expect(html).toContain("2 KB");
+  });
+
+  it("reads a deployment's report in the conversation, with no text and no files", () => {
+    const deployed = { ...delivery, title: { en: "Deploy the app", zh: "部署应用" }, text: null, files: [], report: { en: "Deployed abc1234", zh: "部署好了 abc1234，健康检查通过" } };
+    const html = renderToString(<StreamEntry item={{ kind: "entry", key: "d3", entry: deployed, lead: false, live: false }} thisYear={2026} />);
+    expect(html).toContain("部署应用");
+    expect(html).toContain("部署好了 abc1234，健康检查通过");
+    expect(html).not.toContain("msg-files");
   });
 
   it("writes sizes in the nearest unit", () => {

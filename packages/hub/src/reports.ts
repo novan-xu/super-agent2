@@ -72,7 +72,8 @@ export function ticketLine(ticket: Ticket): string {
   const merged = new Set(mergedIssueNumbers(ticket));
   const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : ""}`).join(", ");
   const pulls = ticket.pullRequests.map((pull) => `#${pull.number} ${pull.state}`).join(", ");
-  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}: ${ticket.title.en}`;
+  const task = ticket.form === "task" ? ` task${ticket.deploys ? " deploying" : ""}${ticket.commit === null ? (ticket.commitRef === null ? "" : ` at ${ticket.commitRef}`) : ` at ${ticket.commit.slice(0, 12)}`}` : "";
+  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind}${task} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}: ${ticket.title.en}`;
 }
 
 export function chainProgress(ticket: Ticket): string[] {
@@ -92,7 +93,7 @@ export function chainProgress(ticket: Ticket): string[] {
   if (last !== undefined && last.deployment !== null) {
     lines.push(
       last.deployment
-        ? `Deployment: the repository has a deployment (${deploymentFile}), so what is merged needs deploying; the last merge commit is ${last.mergeCommit ?? "unknown"}, and it contains every earlier one.`
+        ? `Deployment: the repository has a deployment (${deploymentFile}), so what is merged needs deploying, through a task ticket that deploys it; the last merge commit is ${last.mergeCommit ?? "unknown"}, and it contains every earlier one.`
         : "Deployment: the repository has no deployment, so nothing needs deploying.",
     );
   }
@@ -122,7 +123,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     }
   }
   lines.push(
-    `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}`,
+    `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}${ticket.requiredMachine === null ? "" : `; it runs only on ${ticket.requiredMachine}, the machine its deployment file names`}`,
     `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}; engine you chose: ${chosen(ticket.brainEngine)}`,
     `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}${
       ticket.chosenBy === null
@@ -168,7 +169,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     lines.push(`${parts.join("; ")}${verification.reason === null ? "" : `. ${verification.reason}`}`);
   }
   if (ticket.deployedAt !== null) {
-    lines.push(`Deployed: reported at ${new Date(ticket.deployedAt).toISOString()}`);
+    lines.push(`Deployed: recorded at ${new Date(ticket.deployedAt).toISOString()}`);
   }
   if (ticket.beginFailure !== null) {
     lines.push(`Its work could not begin: ${ticket.beginFailure}`);

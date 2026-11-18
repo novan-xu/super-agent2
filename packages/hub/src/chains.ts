@@ -11,6 +11,7 @@ import {
   type ChoiceChange,
   type Difficulty,
   findCycle,
+  fitsForm,
   isComplete,
   type MachineChoice,
   noOwnerChoice,
@@ -148,7 +149,11 @@ export function chainFingerprint(shown: readonly ShownChain[]): string {
   const shape = shown.map(({ ticket, choice }) => [
     ticket.id,
     ticket.state,
+    ticket.form,
     ticket.repository,
+    ticket.requiredMachine,
+    ticket.commitRef,
+    ticket.deploys,
     ticket.kind,
     ticket.difficulty,
     ticket.platform,
@@ -175,8 +180,8 @@ export function chosenRun(choice: StartChoice | undefined): ChosenRun | undefine
 
 const BeginRow = z.object({ ticket_id: z.number().int() });
 
-function writingEngineForCode(ticket: Ticket, owner: OwnerChoice): boolean {
-  return ticket.kind !== "writing" && owner.engine === "antigravity";
+function antigravityForCode(ticket: Ticket, owner: OwnerChoice): boolean {
+  return ticket.form === "code" && owner.engine === "antigravity";
 }
 
 function reasonOf(error: unknown): string {
@@ -333,7 +338,7 @@ export function createChains(options: ChainsOptions): Chains {
       tellStopped(ticket);
       return;
     }
-    if (ticket.state === "merged" || ticket.state === "waiting") {
+    if (ticket.state === "merged" || ticket.state === "delivered" || ticket.state === "waiting") {
       advance();
     }
   });
@@ -442,7 +447,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(ticket.ownerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines()) || writingEngineForCode(ticket, owner)) {
+    if (ownerGivesUnoffered(owner, choice, defaults.machines(), ticket.requiredMachine) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     try {
@@ -475,7 +480,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(noOwnerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines()) || writingEngineForCode(ticket, owner)) {
+    if (ownerGivesUnoffered(owner, choice, defaults.machines(), ticket.requiredMachine) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     const run = chosenRun(choice);
@@ -528,8 +533,12 @@ export function createChains(options: ChainsOptions): Chains {
       if (ticket.state !== "pending") {
         return refuse(`ticket ${spec.ticket} is ${ticket.state}; defaults are stated for chains that have not started`);
       }
-      if ((spec.kind === "writing") !== (ticket.kind === "writing")) {
-        return refuse(`ticket ${spec.ticket} is ${ticket.kind === "writing" ? "writing" : "code work"} and cannot be stated as ${spec.kind}`);
+      if (!fitsForm(ticket.form, spec.kind)) {
+        return refuse(
+          ticket.form === "task"
+            ? `ticket ${spec.ticket} is a task ticket: its kind is writing (prose) or operation (anything done on a machine), not ${spec.kind}`
+            : `ticket ${spec.ticket} is a code ticket and cannot be stated as ${spec.kind}`,
+        );
       }
       if (!GeneratedText.safeParse(spec.reason).success || /[\r\n]/.test(spec.reason.en) || /[\r\n]/.test(spec.reason.zh)) {
         return refuse(`the reason for ticket ${spec.ticket} must be one line in English with a one-line Chinese copy`);
@@ -552,7 +561,9 @@ export function createChains(options: ChainsOptions): Chains {
         return refuse(`ticket ${spec.ticket} needs a difficulty`);
       }
       if (spec.kind !== "writing" && spec.engine !== "codex" && spec.engine !== "claude") {
-        return refuse(`ticket ${spec.ticket} is code work: choose its engine, codex or claude, from what is left on each subscription`);
+        return refuse(
+          `ticket ${spec.ticket} ${spec.kind === "operation" ? "is an operation on a machine" : "is code work"}: choose its engine, codex or claude, from what is left on each subscription`,
+        );
       }
       statements.set(spec.ticket, {
         kind: spec.kind,
@@ -907,7 +918,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const stopped = ticket.waits.filter((wait) => !wait.waived && tickets.get(wait.ticket)?.state === "stopped").map((wait) => wait.ticket);
     if (stopped.length === 0) {
-      return { ok: false, reason: `Nothing ticket ${id} waits for has stopped; it begins by itself when what it waits for has merged.` };
+      return { ok: false, reason: `Nothing ticket ${id} waits for has stopped; it begins by itself when what it waits for has merged or is done.` };
     }
     tickets.change((writes) => {
       for (const before of stopped) {

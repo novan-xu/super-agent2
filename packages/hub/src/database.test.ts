@@ -102,6 +102,53 @@ describe("applyMigrations", () => {
     connection.close();
   });
 
+  it("turns writing tickets into task tickets, drops the hub's deployments, and withdraws a deployment command still held", () => {
+    const connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    const tasks = migrations.find((migration) => migration.sql.includes("RENAME TO ticket_tasks"))?.version ?? 0;
+    expect(tasks).toBeGreaterThan(22);
+    applyMigrations(
+      connection,
+      migrations.filter((migration) => migration.version < tasks),
+      clock,
+    );
+    const ticket = connection.prepare(
+      "INSERT INTO tickets (id, repository, kind, title_en, title_zh, summary_en, summary_zh, state, created_at, updated_at) VALUES (?, ?, ?, 't', 't', 's', 's', ?, 1, 1)",
+    );
+    ticket.run(1, null, "writing", "pending");
+    ticket.run(2, "novan-xu/a", "fix", "merged");
+    connection.prepare("INSERT INTO ticket_writing (ticket_id, task, materials) VALUES (1, 'Translate it.', '[]')").run();
+    const command = connection.prepare("INSERT INTO commands (id, target, command, account, cwd, environment, state, created_at) VALUES (?, 'hub', ?, 'novan-xu', NULL, ?, 'held', 1)");
+    command.run("deploy", "rm -rf releases/$SUPERAGENT2_PREVIOUS_COMMIT", JSON.stringify({ SUPERAGENT2_COMMIT: "abc1234" }));
+    command.run("plain", "gh repo delete novan-xu/a --yes", null);
+    const hold = connection.prepare("INSERT INTO holds (command_id, form, description, evidence, fingerprint, held_at) VALUES (?, 'file-deletion', 'd', 'e', 'f', 1)");
+    hold.run("deploy");
+    hold.run("plain");
+    connection.prepare("INSERT INTO deployments (repository, commit_sha, target, file, phase, started_at) VALUES ('novan-xu/a', 'abc1234', 'hub', '{}', 'deploy', 1)").run();
+    connection.prepare("INSERT INTO deployment_steps (deployment_id, seq, kind, command_id) VALUES (1, 1, 'deploy', 'deploy')").run();
+    applyMigrations(connection, migrations, clock);
+    expect(connection.prepare("SELECT id, form, kind, required_machine FROM tickets ORDER BY id").all().map((row) => ({ ...row }))).toEqual([
+      { id: 1, form: "task", kind: "writing", required_machine: null },
+      { id: 2, form: "code", kind: "fix", required_machine: null },
+    ]);
+    expect(connection.prepare("SELECT ticket_id, task, commit_ref, commit_sha, deploys FROM ticket_tasks").all().map((row) => ({ ...row }))).toEqual([
+      { ticket_id: 1, task: "Translate it.", commit_ref: null, commit_sha: null, deploys: 0 },
+    ]);
+    const commands = connection.prepare("SELECT id, state, reason FROM commands ORDER BY id").all().map((row) => ({ ...row }));
+    expect(commands).toEqual([
+      { id: "deploy", state: "dropped", reason: expect.stringContaining("部署") },
+      { id: "plain", state: "held", reason: null },
+    ]);
+    expect(connection.prepare("SELECT command_id, answer FROM holds ORDER BY command_id").all().map((row) => ({ ...row }))).toEqual([
+      { command_id: "deploy", answer: "withdrawn" },
+      { command_id: "plain", answer: null },
+    ]);
+    const tables = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'deployment%'").all();
+    expect(tables).toEqual([]);
+    expect(connection.prepare("SELECT name FROM pragma_table_info('commands') WHERE name = 'environment'").all()).toEqual([]);
+    connection.close();
+  });
+
   it("refuses migrations that are not numbered in sequence", () => {
     const connection = new DatabaseSync(":memory:");
     expect(() => applyMigrations(connection, [{ version: 2, sql: "SELECT 1;" }], new TestClock())).toThrow(/numbered/);

@@ -22,15 +22,16 @@ import {
   type MessageWork,
   storedName,
   filePartBytes,
+  type GitHubAccount,
   type HubToRunner,
   type RunnerToHub,
+  type TaskAssignment,
   WorkEngine,
   type WorkEvent,
   type WorkHeld,
   WorkIssue,
   type WorkSender,
   type WorkTask,
-  type WritingTask,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import {
@@ -42,10 +43,10 @@ import {
   lostSessionNote,
   messageText,
   resumeText,
-  writingBrief,
-  writingContinueText,
-  writingLostSessionNote,
-  writingResumeText,
+  taskBrief,
+  taskContinueText,
+  taskLostSessionNote,
+  taskResumeText,
 } from "./brief.js";
 import { createGit, type Git, type ProcessRunner, runProcess } from "./git.js";
 import { type Identity, readIdentity, shimFolder, withoutCredentials, workerEnvironment, writeGhShims } from "./identity.js";
@@ -55,11 +56,11 @@ import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
 import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
-import { checkWritingHandback, clearOutput, outputFolder, prepareScratch, writingPaths, writingPlace } from "./writing.js";
+import { checkTaskHandback, clearOutput, deploymentProblem, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
   HubToRunner,
-  { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" | "work.attachment.part" }
+  { readonly type: "work.start" | "work.task" | "work.sync" | "work.message" | "work.stop" | "work.file" | "work.attachment.part" }
 >;
 
 export type AdapterFactory = (engine: WorkEngine, settings: ProgramSettings) => WorkerAdapter;
@@ -97,6 +98,7 @@ export interface WorksOptions {
   readonly ledger?: Ledger;
   readonly log?: (line: string) => void;
   readonly changed?: () => void;
+  readonly machine?: string;
 }
 
 export interface Works {
@@ -109,7 +111,10 @@ export interface Works {
 }
 
 const WorkRecord = z.object({
-  kind: z.enum(["code", "writing"]).default("code"),
+  kind: z
+    .enum(["code", "task", "writing"])
+    .default("code")
+    .transform((kind) => (kind === "writing" ? "task" : kind)),
   ticket: z.number().int().positive(),
   attempt: z.number().int().positive(),
   repository: z.string(),
@@ -121,9 +126,10 @@ const WorkRecord = z.object({
   effort: z.string(),
   session: z.string().nullable(),
   base: z.string().nullable(),
+  commit: z.string().nullable().default(null),
   ended: z.boolean(),
 });
-type WorkRecord = z.infer<typeof WorkRecord>;
+type WorkRecord = z.output<typeof WorkRecord>;
 
 const EventLine = z.object({ seq: z.number().int().positive(), at: z.number().int(), event: z.unknown() });
 
@@ -155,7 +161,7 @@ interface Work {
   seq: number;
   live: boolean;
   task: WorkTask | undefined;
-  writing: WritingTask | undefined;
+  assignment: TaskAssignment | undefined;
   handle: ProgramHandle | undefined;
   turn: boolean;
   queue: Prompt[];
@@ -252,7 +258,7 @@ export function createWorks(options: WorksOptions): Works {
     for (const name of readdirSync(folder)) {
       try {
         const record = WorkRecord.parse(JSON.parse(readFileSync(join(folder, name, "work.json"), "utf8")));
-        const paths = record.kind === "writing" ? writingPaths(options.home, record.ticket) : workPaths(options.home, record.repository, record.ticket);
+        const paths = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository) : workPaths(options.home, record.repository, record.ticket);
         works.set(record.ticket, blank(record, paths));
       } catch {
         continue;
@@ -266,7 +272,7 @@ export function createWorks(options: WorksOptions): Works {
     seq: lastSeq(paths, record.attempt),
     live: false,
     task: undefined,
-    writing: undefined,
+    assignment: undefined,
     handle: undefined,
     turn: false,
     queue: [],
@@ -295,19 +301,29 @@ export function createWorks(options: WorksOptions): Works {
     }
   };
 
-  const tokenOf = (task: WorkTask): string => task.environment["GH_TOKEN"] ?? task.environment["GITHUB_TOKEN"] ?? "";
+  interface Credentialed {
+    readonly environment: Readonly<Record<string, string>>;
+    readonly account: GitHubAccount;
+  }
 
-  const environmentOf = (task: WorkTask): Record<string, string> =>
+  const tokenOf = (task: Credentialed): string => task.environment["GH_TOKEN"] ?? task.environment["GITHUB_TOKEN"] ?? "";
+
+  const environmentOf = (task: Credentialed): Record<string, string> =>
     mergeEnvironment(clean, { ...task.environment, ...workerEnvironment(options.environment, tokenOf(task), shims, identities.get(task.account)) });
 
-  const learnIdentity = async (task: WorkTask) => {
+  const credentialedOf = (assignment: TaskAssignment): Credentialed | undefined =>
+    assignment.checkout === null ? undefined : { environment: assignment.environment, account: assignment.checkout.account };
+
+  const learnIdentity = async (task: Credentialed) => {
     if (identities.get(task.account) !== undefined) {
       return;
     }
     identities.set(task.account, await readIdentity(run, gh, environmentOf(task), options.home));
   };
 
-  const gitFor = (task: WorkTask): Git => createGit(run, environmentOf(task), find("git") ?? "git");
+  const gitFor = (task: Credentialed): Git => createGit(run, environmentOf(task), find("git") ?? "git");
+
+  const placeOf = (work: Work, assignment: TaskAssignment) => taskPlace(work.paths, assignment.checkout, work.record.commit, options.machine);
 
   const place = (work: Work): BriefPlace => ({ worktree: work.paths.worktree, base: work.record.base ?? "the default branch", handback: work.paths.handback });
 
@@ -364,9 +380,22 @@ export function createWorks(options: WorksOptions): Works {
   type Checked = { readonly ok: true; readonly event: WorkEvent } | { readonly ok: false; readonly problem: string };
 
   const checked = async (work: Work): Promise<Checked | undefined> => {
-    if (work.writing !== undefined) {
-      const outcome = checkWritingHandback({ paths: work.paths });
-      return outcome.ok ? { ok: true, event: { kind: "delivered", text: outcome.text, files: [...outcome.files], report: outcome.report } } : outcome;
+    if (work.assignment !== undefined) {
+      const outcome = checkTaskHandback({ paths: work.paths });
+      if (!outcome.ok) {
+        return outcome;
+      }
+      return {
+        ok: true,
+        event: {
+          kind: "delivered",
+          outcome: outcome.outcome,
+          ...(work.record.commit === null ? {} : { commit: work.record.commit }),
+          text: outcome.text,
+          files: [...outcome.files],
+          report: outcome.report,
+        },
+      };
     }
     const task = work.task;
     if (task === undefined) {
@@ -386,14 +415,14 @@ export function createWorks(options: WorksOptions): Works {
   };
 
   const check = async (work: Work) => {
-    if (work.task === undefined && work.writing === undefined) {
+    if (work.task === undefined && work.assignment === undefined) {
       return;
     }
     const generation = work.generation;
     emit(work, {
       kind: "phase",
       phase: "checking",
-      detail: work.writing === undefined ? "Checking the hand-back and the pull request" : "Checking the hand-back and the files to deliver",
+      detail: work.assignment === undefined ? "Checking the hand-back and the pull request" : "Checking the hand-back and the files to deliver",
     });
     const outcome = await checked(work);
     if (outcome === undefined || generation !== work.generation || work.record.ended || work.stopping) {
@@ -407,8 +436,9 @@ export function createWorks(options: WorksOptions): Works {
     startTurn(work, `[hub] ${outcome.problem}`);
   };
 
-  const openProgram = (work: Work, task: WorkTask | WritingTask, session: string | null): void => {
-    const environment = "repository" in task ? environmentOf(task) : mergeEnvironment(clean, {});
+  const openProgram = (work: Work, task: WorkTask | TaskAssignment, session: string | null): void => {
+    const credentialed = "repository" in task ? task : credentialedOf(task);
+    const environment = credentialed === undefined ? mergeEnvironment(clean, {}) : environmentOf(credentialed);
     const program = find(engineExecutables[task.engine]);
     if (program === undefined) {
       throw new Error(`${engineExecutables[task.engine]} is not installed on this machine`);
@@ -478,18 +508,18 @@ export function createWorks(options: WorksOptions): Works {
         return;
       }
       case "failed":
-        if (event.lostSession && !work.freshTried && (work.task !== undefined || work.writing !== undefined)) {
+        if (event.lostSession && !work.freshTried && (work.task !== undefined || work.assignment !== undefined)) {
           work.freshTried = true;
           const task = work.task;
-          const writing = work.writing;
+          const assignment = work.assignment;
           track(
             (async () => {
               await closeHandle(work);
               work.record = { ...work.record, session: null };
               save(work);
-              if (writing !== undefined) {
-                openProgram(work, writing, null);
-                startTurn(work, writingBrief({ ...writing, note: writingLostSessionNote() }, writingPlace(work.paths)));
+              if (assignment !== undefined) {
+                openProgram(work, assignment, null);
+                startTurn(work, taskBrief({ ...assignment, note: taskLostSessionNote() }, placeOf(work, assignment)));
               } else if (task !== undefined) {
                 openProgram(work, task, null);
                 startTurn(work, brief({ ...task, note: lostSessionNote() }, place(work)));
@@ -560,8 +590,9 @@ export function createWorks(options: WorksOptions): Works {
     withWaiting(task.note === null ? resumeText(task, where) : continueText(task, where, task.note));
   };
 
-  const beginWriting = async (work: Work, task: WritingTask) => {
-    emit(work, { kind: "phase", phase: "preparing", detail: `Preparing the scratch folder ${work.paths.worktree}` });
+  const beginTask = async (work: Work, task: TaskAssignment) => {
+    emit(work, { kind: "phase", phase: "preparing", detail: `Preparing the scratch folder ${scratchFolder(work.paths)}${task.checkout === null ? "" : ` and a checkout of ${task.checkout.repository}`}` });
+    const details: string[] = [];
     try {
       const files = new Map<string, string>();
       for (const material of task.materials) {
@@ -569,18 +600,37 @@ export function createWorks(options: WorksOptions): Works {
           files.set(material.name, await fetchAttachment(work, task.attempt, material.attachment));
         }
       }
-      if (work.writing !== task || work.stopping) {
+      if (work.assignment !== task || work.stopping) {
         return;
       }
       prepareScratch(work.paths, task.materials, files);
+      details.push(`Prepared the scratch folder ${scratchFolder(work.paths)} with ${task.materials.length} material(s)`);
+      const credentialed = credentialedOf(task);
+      if (task.checkout !== null && credentialed !== undefined) {
+        await learnIdentity(credentialed).catch(() => undefined);
+        const checkout = await prepareCheckout(gitFor(credentialed), remote, task.checkout, work.paths);
+        if (work.assignment !== task || work.stopping) {
+          return;
+        }
+        work.record = { ...work.record, commit: checkout.commit, base: checkout.base };
+        save(work);
+        details.push(`${checkout.created ? "Checked out" : "Kept the checkout of"} ${task.checkout.repository} at ${checkout.commit} in ${work.paths.worktree}`);
+        if (task.deploys) {
+          const problem = deploymentProblem(readDeploymentAt(work.paths.worktree), options.machine, checkout.commit);
+          if (problem !== undefined) {
+            await end(work, { kind: "failed", failure: "prepare", reason: problem });
+            return;
+          }
+        }
+      }
     } catch (error) {
       await end(work, { kind: "failed", failure: "prepare", reason: messageOf(error) });
       return;
     }
-    if (work.writing !== task || work.stopping) {
+    if (work.assignment !== task || work.stopping) {
       return;
     }
-    emit(work, { kind: "phase", phase: "prepared", detail: `Prepared the scratch folder ${work.paths.worktree} with ${task.materials.length} material(s)` });
+    emit(work, { kind: "phase", phase: "prepared", detail: details.join("; ") });
     const session = task.session ?? work.record.session;
     try {
       openProgram(work, task, session);
@@ -588,7 +638,7 @@ export function createWorks(options: WorksOptions): Works {
       await end(work, { kind: "failed", failure: "program", reason: messageOf(error) });
       return;
     }
-    const where = writingPlace(work.paths);
+    const where = placeOf(work, task);
     const waiting = work.queue.splice(0);
     const withWaiting = (prompt: string) => {
       const next = joined(waiting, prompt);
@@ -596,15 +646,15 @@ export function createWorks(options: WorksOptions): Works {
     };
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
-      withWaiting(writingBrief(task, where));
+      withWaiting(taskBrief(task, where));
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    withWaiting(task.note === null ? writingResumeText(task, where) : writingContinueText(where, task.note));
+    withWaiting(task.note === null ? taskResumeText(task, where) : taskContinueText(where, task.note));
   };
 
-  const start = async (given: { readonly code: WorkTask } | { readonly writing: WritingTask }) => {
-    const task = "code" in given ? given.code : given.writing;
+  const start = async (given: { readonly code: WorkTask } | { readonly assignment: TaskAssignment }) => {
+    const task = "code" in given ? given.code : given.assignment;
     const existing = works.get(task.ticket);
     if (existing !== undefined && existing.record.attempt === task.attempt && (existing.live || existing.record.ended)) {
       return;
@@ -615,7 +665,7 @@ export function createWorks(options: WorksOptions): Works {
       await closeHandle(existing);
       existing.live = false;
     }
-    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket) : writingPaths(options.home, task.ticket);
+    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket) : taskPaths(options.home, task.ticket, given.assignment.checkout?.repository ?? null);
     const sameAttempt = existing !== undefined && existing.record.attempt === task.attempt;
     if (existing !== undefined && !sameAttempt) {
       for (const name of existsSync(paths.folder) ? readdirSync(paths.folder) : []) {
@@ -624,15 +674,15 @@ export function createWorks(options: WorksOptions): Works {
         }
       }
       rmSync(paths.handback, { force: true });
-      if ("writing" in given) {
+      if ("assignment" in given) {
         clearOutput(paths);
       }
     }
     const record: WorkRecord = {
-      kind: "code" in given ? "code" : "writing",
+      kind: "code" in given ? "code" : "task",
       ticket: task.ticket,
       attempt: task.attempt,
-      repository: "code" in given ? given.code.repository : "",
+      repository: "code" in given ? given.code.repository : (given.assignment.checkout?.repository ?? ""),
       branch: "code" in given ? given.code.branch : "",
       title: task.title,
       issues: "code" in given ? given.code.issues : [],
@@ -641,6 +691,7 @@ export function createWorks(options: WorksOptions): Works {
       effort: task.effort,
       session: sameAttempt ? existing.record.session : null,
       base: sameAttempt ? existing.record.base : null,
+      commit: existing === undefined ? null : existing.record.commit,
       ended: false,
     };
     const work = blank(record, paths);
@@ -648,7 +699,7 @@ export function createWorks(options: WorksOptions): Works {
     if ("code" in given) {
       work.task = given.code;
     } else {
-      work.writing = given.writing;
+      work.assignment = given.assignment;
     }
     works.set(task.ticket, work);
     save(work);
@@ -656,7 +707,7 @@ export function createWorks(options: WorksOptions): Works {
     if ("code" in given) {
       await begin(work, given.code);
     } else {
-      await beginWriting(work, given.writing);
+      await beginTask(work, given.assignment);
     }
   };
 
@@ -689,8 +740,8 @@ export function createWorks(options: WorksOptions): Works {
     const reply = (data: string | null, problem: string | null) =>
       options.send({ type: "work.file.part", ticket: asked.ticket, attempt: asked.attempt, name: asked.name, offset: asked.offset, data, problem });
     const work = works.get(asked.ticket);
-    if (work === undefined || work.record.attempt !== asked.attempt || work.record.kind !== "writing") {
-      reply(null, `This machine has no writing work for ticket ${asked.ticket}, attempt ${asked.attempt}`);
+    if (work === undefined || work.record.attempt !== asked.attempt || work.record.kind !== "task") {
+      reply(null, `This machine has no task work for ticket ${asked.ticket}, attempt ${asked.attempt}`);
       return;
     }
     const length = Math.min(asked.length, filePartBytes);
@@ -837,7 +888,11 @@ export function createWorks(options: WorksOptions): Works {
     if (remove) {
       const git = task === undefined ? createGit(run, mergeEnvironment(clean, {}), find("git") ?? "git") : gitFor(task);
       await removeWorktree(git, work.record.branch, work.paths).catch((error: unknown) => log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`));
-      emit(work, { kind: "phase", phase: "removed", detail: `Removed the ${work.record.kind === "writing" ? "scratch folder" : "worktree"} ${work.paths.worktree}` });
+      emit(work, {
+        kind: "phase",
+        phase: "removed",
+        detail: work.record.kind === "task" ? `Removed the scratch folder${work.record.repository === "" ? "" : ` and the checkout ${work.paths.worktree}`}` : `Removed the worktree ${work.paths.worktree}`,
+      });
       rmSync(work.paths.folder, { recursive: true, force: true });
       if (works.get(ticket) === work) {
         works.delete(ticket);
@@ -866,8 +921,8 @@ export function createWorks(options: WorksOptions): Works {
         case "work.start":
           track(start({ code: incoming.task }));
           return;
-        case "work.write":
-          track(start({ writing: incoming.task }));
+        case "work.task":
+          track(start({ assignment: incoming.task }));
           return;
         case "work.sync":
           sync(incoming.ticket, incoming.attempt, incoming.after);

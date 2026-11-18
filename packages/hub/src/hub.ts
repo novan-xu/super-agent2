@@ -1,9 +1,9 @@
 import type { AddressInfo } from "node:net";
+import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
-import { type Clock, type Sleep, systemClock } from "./clock.js";
-import { createDeployments, type DeploymentService } from "./deployments.js";
+import { type Clock, systemClock } from "./clock.js";
 import { allowEverything, type CommandGate, type CommandService, createCommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import { type ConversationService, createConversationService } from "./conversations.js";
@@ -20,13 +20,14 @@ import { createHubServer, type HubServer } from "./server.js";
 import { createWaiting, type Waiting } from "./waiting.js";
 import { createMachineStore, type MachineStore } from "./machines.js";
 import { createRunners, type Runners } from "./runners.js";
-import { combinedTargets, type Environment, fixedTargets, localTarget, type Target } from "./targets.js";
+import { type Environment, fixedTargets, localTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
 import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
+import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
 import { type AttachmentStore, attachmentsFolder, createAttachmentStore } from "./attachments.js";
 import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
@@ -55,7 +56,6 @@ export interface HubOptions {
   readonly gitHubBase?: string;
   readonly verificationTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
-  readonly deploymentSleep?: Sleep;
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
 }
@@ -79,7 +79,7 @@ export interface Hub {
   readonly work: WorkService | undefined;
   readonly verification: VerificationService;
   readonly loop: FailureLoop;
-  readonly deployments: DeploymentService;
+  readonly taskTickets: TaskTickets;
   readonly memories: MemoryService;
   readonly admin: MachineAdmin;
   readonly repositories: RepositoryAccounts;
@@ -105,7 +105,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let chains: Chains;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
-  let deployments: DeploymentService;
+  let taskTickets: TaskTickets;
   let memories: MemoryService;
   let settings: Settings;
   const machines = createMachineStore(database, clock);
@@ -145,7 +145,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const files = createTicketFiles(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
   const credentials = options.credentials ?? environmentCredentials(environment);
-  const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(environment)), runners);
+  const targets = fixedTargets(options.targets ?? defaultTargets(environment));
   try {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
     const brainToken = brainTokenCheck(brainSecret);
@@ -218,7 +218,6 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       report: (report) => loop?.failed(report),
       accountOf,
       ...(config.firstPipelineAllowanceMinutes === undefined ? {} : { firstAllowanceMinutes: config.firstPipelineAllowanceMinutes }),
-      ...(config.sourceRepository === undefined ? {} : { ownRepository: config.sourceRepository }),
       ...(worker === undefined
         ? {}
         : {
@@ -245,22 +244,22 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ownerEmail: config.ownerEmail,
     });
     loop = failures;
-    const arranger = chains.arranger;
-    deployments = createDeployments({
+    taskTickets = createTaskTickets({
       database,
-      clock,
-      commands,
+      tickets,
       credentials,
-      targets: () => targets.names(),
       fetch: options.forgeFetch ?? fetch,
       ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
-      ...(options.deploymentSleep === undefined ? {} : { sleep: options.deploymentSleep }),
-      tell: (conversation, notice, prompt) => {
-        told.tell(conversation, notice, prompt);
-      },
-      deployed: (ticket) => arranger.deployed(ticket),
       accountOf,
-      ...(config.sourceRepository === undefined ? {} : { ownRepository: config.sourceRepository }),
+      marked: (ticket, _deployed, notes) => {
+        if (notes.length > 0) {
+          told.tell(
+            ticket.conversation,
+            text("notice.deploymentUnclear", { ticket: ticket.id }),
+            [`[hub] Task ticket ${ticket.id} (${ticket.title.en}) deployed ${ticket.repository ?? ""}, but not every merged ticket could be checked against what it deployed:`, ...notes, "Those tickets stay unmarked; if they are in fact deployed, record it with report_deployment so what waits for them begins."].join("\n"),
+          );
+        }
+      },
     });
     const linkedConversations = conversations;
     settings = createSettings({
@@ -295,13 +294,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tools: createToolServer({
         commands,
         conversations,
-        targets: () => targets.names(),
-        machines: () => runners.describe(),
-        deployments,
         memories,
         attachments,
         tickets: {
           tickets,
+          tasks: taskTickets,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,
@@ -355,7 +352,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const address = await server.listen(config.port, config.host);
     chains.resume();
     verification.resume();
-    deployments.resume();
+    taskTickets.resume();
     return {
       database,
       commands,
@@ -371,7 +368,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       work,
       verification,
       loop: failures,
-      deployments,
+      taskTickets,
       memories,
       admin,
       repositories,
@@ -384,8 +381,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           runners.close();
           await server.close();
         } finally {
-          deployments.close();
-          await deployments.idle();
+          taskTickets.close();
+          await taskTickets.idle();
           failures.close();
           verification.close();
           await verification.idle();
@@ -402,8 +399,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
-    deployments.close();
-    await deployments.idle();
+    taskTickets.close();
+    await taskTickets.idle();
     verification.close();
     await verification.idle();
     work?.close();
