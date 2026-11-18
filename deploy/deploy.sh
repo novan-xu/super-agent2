@@ -263,6 +263,9 @@ healthy() {
 
 start_services() {
   local expected=$1
+  if compose config --services | grep -qx converter; then
+    compose up -d --no-deps converter || return 1
+  fi
   compose up -d --no-deps hub || return 1
   if ! wait_for_hub "$expected"; then
     say "the hub on 127.0.0.1:$hub_port did not answer its health check${expected:+ as $expected}"

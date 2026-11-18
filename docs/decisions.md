@@ -4135,6 +4135,24 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   sets an override.
 - **Other options:** Keep the default at 2 and configure each machine separately.
 
+## 2026-11-18 — Ticket storage across settings changes (#117)
+
+- **Chosen.** Keep the worktree or scratch folder allocated to a ticket, including across restarts and repairs.
+  Apply the current artifacts setting when starting a session. Leave outputs from an unavailable share in the local
+  artifacts directory.
+- **Why.** A running ticket or a repair can have uncommitted work and depend on its workspace path. Keeping local
+  outputs in place also avoids overwriting files a later session may create on the NAS.
+- **Other options.** Move retained workspaces when settings change, or add a background process to copy local
+  outputs to the NAS after an outage.
+
+## 2026-11-18 — NAS probes run in a separate process (#117)
+
+- **Chosen.** Check the artifacts share and prepare its ticket directory in a short-lived process with a timeout.
+- **Why.** A disconnected SMB mount can stall inside a filesystem call. Isolating the call keeps the runner's
+  filesystem thread pool available for work, including local fallback.
+- **Other options.** Race filesystem promises against a timeout inside the runner, where timed-out calls would
+  still hold filesystem threads until the mount responds.
+
 ## 2026-11-18 — Read the DeepSeek account balance through dsh
 
 - **Chosen:** The runner invokes dsh's account service `getBalance` inside dsh, using the existing login. It combines normal and bonus wallets per currency; the hub labels totals below the configurable `HUB_DEEPSEEK_LOW_BALANCE` (30 by default) low, and holds dsh unavailable when all totals are nonpositive until a later successful reading shows money. A failed reading is unknown and does not clear that hold.
@@ -4161,20 +4179,4 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   established destinations for work and notices.
 - **Other options** Restrict merges to one project, or let the combined topic acquire the source's project.
 
-## 2026-11-18 — Ticket storage across settings changes (#117)
-
-- **Chosen.** Keep the worktree or scratch folder allocated to a ticket, including across restarts and repairs.
-  Apply the current artifacts setting when starting a session. Leave outputs from an unavailable share in the local
-  artifacts directory.
-- **Why.** A running ticket or a repair can have uncommitted work and depend on its workspace path. Keeping local
-  outputs in place also avoids overwriting files a later session may create on the NAS.
-- **Other options.** Move retained workspaces when settings change, or add a background process to copy local
-  outputs to the NAS after an outage.
-
-## 2026-11-18 — NAS probes run in a separate process (#117)
-
-- **Chosen.** Check the artifacts share and prepare its ticket directory in a short-lived process with a timeout.
-- **Why.** A disconnected SMB mount can stall inside a filesystem call. Isolating the call keeps the runner's
-  filesystem thread pool available for work, including local fallback.
-- **Other options.** Race filesystem promises against a timeout inside the runner, where timed-out calls would
-  still hold filesystem threads until the mount responds.
+Office preview conversion is limited to 64 MiB for both input and output, with at most four distinct conversions in progress and a 90-second timeout. This bounds hub memory and converter load; larger originals remain downloadable. Streaming larger files was an alternative, but would require a separate resource-control design.

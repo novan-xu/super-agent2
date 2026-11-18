@@ -1,3 +1,5 @@
+import { Previews, previewFile } from "./previews.js";
+import { join } from "node:path";
 import { sendFile } from "./file-response.js";
 import { serveTransfer } from "./transfer.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -179,6 +181,7 @@ const maximumListLimit = 500;
 
 export interface HubServerOptions {
   readonly database: HubDatabase;
+  readonly converterUrl?: string;
   readonly commands: CommandService;
   readonly verify: AccessVerifier;
   readonly verifyRunner?: AccessVerifier;
@@ -403,6 +406,7 @@ function refuseSocket(socket: Duplex, status: 403 | 404): void {
 }
 
 export function createHubServer(options: HubServerOptions): HubServer {
+  const previews = new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
 
@@ -607,6 +611,23 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if ((path === streamPath || path.startsWith(conversationsPath)) && (await serveConversations(request, response, path, method))) {
       return;
+    }
+    if (method === "GET" && path.endsWith("/preview")) {
+      const attachment = /^\/api\/attachments\/([0-9a-f]{32})\/preview$/.exec(path);
+      const ticket = /^\/api\/tickets\/([1-9][0-9]{0,15})\/files\/([^/]{1,400})\/preview$/.exec(path);
+      let file;
+      if (attachment?.[1] && options.attachments?.complete(attachment[1])) {
+        const id = attachment[1]; const item = options.attachments.get(id);
+        if (item) file = { ...item, open: () => options.attachments!.open(id)! };
+      } else if (ticket?.[1] && ticket[2]) {
+        try { file = options.files?.get(Number(ticket[1]), decodeURIComponent(ticket[2])); } catch { file = undefined; }
+      }
+      if (attachment || ticket) {
+        if (!file) { sendJson(response, 404, { error: "not_found" }); return; }
+        try { const pdf = previewFile(await previews.pdf(file)); sendFile(request, response, pdf, 'attachment; filename="preview.pdf"', "private, no-store"); }
+        catch (error) { response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" }); response.end(JSON.stringify({ message: error instanceof Error && error.name === "TimeoutError" ? "The conversion took too long." : error instanceof Error ? error.message : "The converter is unavailable." })); }
+        return;
+      }
     }
     if (
       path.startsWith(attachmentsPath) &&
