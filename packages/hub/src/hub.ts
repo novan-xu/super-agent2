@@ -300,6 +300,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         ? undefined
         : createPushService({ database, clock, settings: config.vapid, fetch: options.pushFetch ?? fetch, waiting });
     server = createHubServer({
+      ...(config.converterUrl === undefined ? {} : { converterUrl: config.converterUrl }),
       database,
       commands,
       verify,

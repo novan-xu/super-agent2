@@ -8,7 +8,7 @@ const KINDS: [FileKind, string][] = [
   ['video', 'mp4 m4v webm mov ogv'],
   ['audio', 'mp3 m4a aac wav ogg oga opus flac weba'],
   ['pdf', 'pdf'],
-  ['office', 'doc docx docm dot dotx rtf odt xls xlsx xlsm xlt xltx ods ppt pptx pptm pps ppsx pot potx odp'],
+  ['office', 'doc docx docm dot dotx dotm rtf odt ott xls xlsx xlsm xlsb xlt xltx xltm ods ots ppt pptx pptm pps ppsx ppsm pot potx potm odp otp'],
   ['markdown', 'md markdown'],
   ['table', 'csv tsv'],
   ['text', 'txt text log json jsonl ndjson xml yaml yml toml ini conf cfg env properties sh bash zsh bat cmd ps1 py js mjs cjs ts mts cts tsx jsx css scss less '

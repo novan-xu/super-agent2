@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -115,6 +116,29 @@ describe("attachments for the owner", () => {
     const anonymous = await fetch(`${base(running)}/api/attachments/${id}/upload?offset=0`, { method: "PUT", body: data, headers: { "content-type": "application/octet-stream", origin: base(running) } });
     expect(anonymous.status).toBe(403);
     expect(running.attachments.get(id)?.mediaType).toBe("application/octet-stream");
+  });
+
+  it("converts an Office attachment through the preview endpoint and caches it", async () => {
+    let calls = 0;
+    const converter = createServer((request, response) => {
+      calls++;
+      request.resume();
+      request.on("end", () => { response.writeHead(200); response.end("%PDF-test"); });
+    });
+    await new Promise<void>(resolve => converter.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = converter.address();
+      if (!address || typeof address === "string") throw new Error("No converter address");
+      const running = await startTestHub({ config: { ...testConfig(dataDir), converterUrl: `http://127.0.0.1:${address.port}` }, keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials });
+      hub = running;
+      const id = await uploaded(running, "private.docx", Buffer.from("document"), "application/octet-stream");
+      const first = await owner(running, `/api/attachments/${id}/preview`);
+      expect(first.status).toBe(200);
+      expect(first.headers.get("content-disposition")).toContain("attachment");
+      expect(await first.text()).toBe("%PDF-test");
+      expect((await owner(running, `/api/attachments/${id}/preview`)).status).toBe(200);
+      expect(calls).toBe(1);
+    } finally { await new Promise<void>(resolve => converter.close(() => resolve())); }
   });
 
   it("serves byte ranges and rejects unsatisfiable ranges", async () => {

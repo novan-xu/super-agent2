@@ -368,3 +368,5 @@ folder, and changes nothing on the agent. GitHub shows their statuses as `ci/woo
 The repository is activated on the server under the owner's account; activation made the GitHub webhook. Its settings
 are the server's defaults: pull requests allowed, approval only for forks, a 60-minute limit, and a running pipeline
 cancelled by a newer push or pull request commit.
+
+The hub uses `gotenberg/gotenberg:9.8.0-libreoffice` for Office previews. The converter has no published port or volumes and is attached only to the internal `converter` network shared with the hub. Preview PDFs are cached under the hub data volume in `previews/`. Release and rollback start the converter before the hub.

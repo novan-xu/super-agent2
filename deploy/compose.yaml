@@ -19,9 +19,13 @@ services:
     hostname: ${SUPERAGENT2_PROJECT}-hub
     restart: unless-stopped
     init: true
+    depends_on:
+      converter:
+        condition: service_started
     env_file:
       - ${SUPERAGENT2_ROOT:?run this file through deploy.sh}/secrets/hub.env
     environment:
+      HUB_CONVERTER_URL: http://converter:3000
       HUB_DATA_DIR: /var/lib/superagent2/hub
       HUB_PORT: "8080"
       HUB_HOST: 0.0.0.0
@@ -29,6 +33,9 @@ services:
       HUB_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
       HUB_PROJECT_FOLDERS: ${SUPERAGENT2_ROOT}/projects
       HUB_SOURCE_REPOSITORY: novan-xu/super-agent2
+    networks:
+      - default
+      - converter
     extra_hosts:
       - novanstorage.tail62dd17.ts.net:100.72.209.101
     ports:
@@ -45,6 +52,13 @@ services:
       retries: 4
       start_period: 30s
       start_interval: 2s
+    logging: *logging
+
+  converter:
+    image: gotenberg/gotenberg:9.8.0-libreoffice
+    restart: unless-stopped
+    networks:
+      - converter
     logging: *logging
 
   brain:
@@ -114,5 +128,7 @@ volumes:
     name: ${SUPERAGENT2_PROJECT}-brain-workspace
 
 networks:
+  converter:
+    internal: true
   default:
     name: ${SUPERAGENT2_PROJECT}_default
