@@ -2,13 +2,14 @@ import { text } from "@super-agent2/catalog";
 import type { QuestionAnswer, QuestionEntry } from "@super-agent2/protocol";
 import { useState } from "react";
 import { hubApi } from "../hub/api.js";
+import { localQuestionAnswer } from "../live/question-answer.js";
 
 export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
   const [draft, setDraft] = useState<Readonly<Record<string, QuestionAnswer>>>({});
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [submitted, setSubmitted] = useState<readonly QuestionAnswer[] | null>(null);
-  const resolved = entry.answer ?? (submitted === null ? null : { kind: "card" as const, answers: submitted });
+  const resolved = entry.answer ?? (submitted === null ? null : localQuestionAnswer(submitted));
   const answers = entry.questions.map((question) => draft[question.id] ?? { question: question.id, options: [], text: "" });
   const ready = entry.questions.every((question, index) => !question.required || !!answers[index]?.text.trim() || (answers[index]?.options.length ?? 0) > 0);
   const update = (answer: QuestionAnswer) => setDraft((current) => ({ ...current, [answer.question]: answer }));
