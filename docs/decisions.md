@@ -3766,3 +3766,161 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   push of a real folder, a repair on another real machine, and macOS.
 - **Why:** The brief asks to say what was and was not checked.
 - **Other options:** None.
+
+## 2026-11-18 — Adding a machine without an unauthenticated route
+
+- **Chosen:** The owner decided that nothing of the hub may be reachable without a signed Access assertion, so
+  `POST /runner/enroll`, the install codes, their table (dropped by migration 28) and the protocol's `enrollPath`,
+  `installCodeHeader`, `installCodeLifetime`, `installCodePattern` and `Enrollment` are gone. This overturns "How a
+  machine with no credentials reaches the hub to be added" (2026-11-17) and the parts of "How the install line puts the
+  runner on the machine", "Revoking a machine from the page" (forgetting a pending code) and "The build is complete, and
+  what is left for the owner" (the Bypass application) that rest on it. 添加机器 now creates the machine's Access service
+  token through `AccessServiceTokens` and its runner token at once, registers the machine with its system and the page's
+  origin as its hub address, and answers `{ name, system, command }`; the command is the install line carrying both. The
+  hub keeps the service token's id and client id, and the runner token's SHA-256 as before; neither secret is stored.
+  When Cloudflare refuses, nothing is added and the page shows Cloudflare's own reason (`502 cloudflare_refused` with
+  `reason`); when Cloudflare's credentials hold a character the line cannot carry, the token is deleted again and the
+  same refusal says so. A second press for a name already being added, or for an active name, is `409`.
+- **Why:** The owner's reasoning: the machine's credentials end up in its own settings file anyway, so having them also
+  in the terminal's history adds little, while an unauthenticated entry on the public internet is attack surface that
+  has to be defended for as long as it exists; the default is to tighten.
+- **Other options:** Keeping the Bypass route with its single-use code (the design it replaces); a second host name for
+  enrolment; creating the service token only when the line is first run, which needs an open route again.
+
+## 2026-11-18 — The install line and where its secrets can leak
+
+- **Chosen:** Windows PowerShell:
+  `& { $access = @{ 'cf-access-client-id' = '<id>'; 'cf-access-client-secret' = '<secret>'; 'x-runner-token' = '<token>' }; irm -MaximumRedirection 0 -Headers $access -Uri '<hub>/runner/install' | iex }`.
+  macOS (zsh, bash or sh):
+  `( id='<id>'; secret='<secret>'; token='<token>'; script="$(printf 'cf-access-client-id: %s\ncf-access-client-secret: %s\nx-runner-token: %s\n' "$id" "$secret" "$token" | curl -fsSL --max-redirs 0 -H @- '<hub>/runner/install')" && printf '%s\n%s\n%s\n' "$id" "$secret" "$token" | /bin/sh -c "$script" )`.
+  `GET /runner/install` is a runner route like `/runner/release`: it answers only a service identity whose runner token
+  belongs to that service token's machine, and gives the script for the machine's stored system (404 for a machine added
+  from the command line, which has none). The script holds no secret: its setup line names only the hub, the machine
+  and the client id, and the runner's `setup` now asks, after the client secret, for the runner token on the next line
+  (`RunnerSetup.runnerToken` is optional). On Windows the script reads `$access` from the line's scope and pipes the
+  setup line, the secret and the token to `setup`; on macOS it reads the three values from its standard input and hands
+  them to `curl` as `-H @-` and to `setup` on standard input. Everything else of the install is as before: the release
+  download, `pnpm install` and the build, `setup`, `install`, and `SUPERAGENT2_RUNNER_FOREGROUND=1` for `run`. What was
+  closed: the page shows the line once with a copy control, keeps it only in the form's own state and drops it when the
+  machine first connects or the section is left; the answer is `no-store`; the hub writes nothing of it to its log; the
+  script prints no credential; neither line puts a secret in a child process's arguments or environment (the
+  PowerShell variable lives in the `& { }` block and is gone afterwards; the macOS values are unexported variables of a
+  subshell, and `/bin/sh -c` gets only the script); a redirect (Cloudflare refusing) fails the fetch instead of running
+  a login page; every value is checked against `[A-Za-z0-9._-]` and the hub against an `http(s)://host[:port]` origin
+  before it goes into the line. What is not closed: the line itself is in the clipboard and, unless the shell leaves it
+  out, in the terminal's history, as the owner accepted; Windows PowerShell's PSReadLine by default keeps lines naming
+  `secret` or `token` out of its history file, but that was not relied on.
+- **Why:** Without an open route the credentials can only arrive in the line, so the remaining work is keeping them from
+  spreading further on the machine than the settings file they end in.
+- **Other options:** Exporting the values as environment variables, which every package script of `pnpm install`
+  would inherit; passing them to `/bin/sh -c` as arguments, visible in the process list for the whole install; a leading
+  space to keep the line out of a history that is set up to honour it, which zsh on macOS is not by default.
+
+## 2026-11-18 — What the owner sets in Cloudflare, and what the hub checks
+
+- **Chosen:** A separate self-hosted Access application for the host name with the path `runner`, with one policy:
+  action Service Auth, Include Service Token Tag `superagent2` = `runner`. The hub creates every service token with that
+  tag, so no change is needed per machine and only tokens the hub made pass, not every service token of the account
+  ("Any Access Service Token" is the fallback if the selector is not offered). The host's own application keeps only the
+  owner's Allow policy; any Service Auth policy it had for runners is removed. The steps, the API token's single
+  permission (Access: Service Tokens, Edit) and the removal of an old `runner/enroll` Bypass application are in
+  `docs/deploy.md`. The hub reads the new application's audience tag as `ACCESS_RUNNER_AUD` and then takes an assertion
+  for it only on `/runner/` and only as a service identity (the runner token check is unchanged), and one for
+  `ACCESS_AUD` only elsewhere. Without `ACCESS_RUNNER_AUD` the hub keeps the arrangement before (runners through the
+  host's application), so releasing this version changes nothing for a runner that already connects; the value must
+  differ from `ACCESS_AUD`.
+- **Why:** Cloudflare gives the more specific path precedence and a path covers the paths below it, so one application
+  decides all of `/runner/` and a service token never reaches the owner's pages at Cloudflare's level. Each Access
+  application has its own audience tag, which lets the hub hold the same line. Cloudflare's real API and a real
+  application were not used: the tag selector, the audience in a path application's assertion and the answers of the two
+  API calls come from Cloudflare's documentation and are checked only against fakes.
+- **Other options:** A Service Auth policy on the host's own application (service tokens would reach the owner's pages
+  at Cloudflare, refused only by the hub); "Any Access Service Token"; a policy naming each machine's token, which needs
+  a change at Cloudflare per machine; a second host name for runners; making `ACCESS_RUNNER_AUD` required, which would
+  stop the hub at its first start after the release until the owner set it.
+
+## 2026-11-18 — How long a machine's service token lasts
+
+- **Chosen:** Cloudflare documents that a service token created through the API without a duration lasts one year
+  (`8760h`) and that `forever` makes one that does not expire. When a token runs out Cloudflare refuses it: the runner
+  keeps retrying, the machine shows offline in 设置, and nothing says why. The hub now asks for `duration: "forever"`.
+  It keeps an expiry when Cloudflare's answer gives one anyway (an `expires_at` with a duration other than `forever`),
+  and migration 28 dates every token the hub made before this version at one year after the machine was added. A dated
+  token shows 令牌 <date> 到期 on the machine's card, in red within thirty days and as 令牌已过期 after; thirty days
+  before, the hub writes a notice into the latest conversation and tells the brain, once per token, checked at start and
+  every hour. The fix it names is to revoke and add the machine again.
+- **Why:** The longest duration Cloudflare allows is no expiry, which removes the silent failure for every new machine;
+  a token is still only half of what a runner needs, and revoking a machine in 设置 deletes it at Cloudflare. Older
+  tokens are the ones that can still run out, so they get the date and the warning.
+- **Other options:** One year, with the hub refreshing each token through Cloudflare's refresh call before it runs out;
+  one year, shown and warned about, refreshed by the owner; asking Cloudflare for each token's expiry, which needs one
+  more call the real API was not tried with.
+
+## 2026-11-18 — 设置 › 机器 for the new flow
+
+- **Chosen:** A machine that was added but never connected is an ordinary card: a grey dot, its name, its system (from
+  what was chosen at 添加机器 until the runner reports its own), 还没连上过, and 撤销, which revokes it and deletes its
+  service token at Cloudflare like any other. The pending-code card and 等待安装 are gone. Under the add form, the line
+  with its copy control and one sentence, 在新机器的终端里运行，只显示这一次; it disappears when the machine first
+  connects. A Cloudflare refusal shows inline under the form with Cloudflare's reason; the missing-credentials and
+  missing-release refusals stay passing notices as before. The token's date shows only for a dated token.
+- **Why:** The owner's rule: the layout explains itself. The one sentence stays because "only this once" is not
+  something the layout can say, and the reason for a refusal is the one thing the owner needs to act on.
+- **Other options:** A dialog for the line; keeping the line until dismissed; a separate list of machines not yet
+  connected.
+
+## 2026-11-18 — What the hub answers without an assertion, and a seventh code constraint
+
+- **Chosen:** A test (`packages/hub/src/front-door.test.ts`) walks every route the server knows (every exported path
+  constant of the hub's server and of the protocol, every page address, a sample of every parameterised route, the old
+  `/runner/enroll`, `/runner`, `/runnerx` and an unknown path), with GET, HEAD, POST, PUT and DELETE and socket upgrades,
+  without an assertion: everything is 403 except `GET` and `HEAD /health`, which answer status and version only. The
+  brain's routes are 403 without the brain's token. `/health` stays open at the hub because `deploy.sh` checks it on the
+  NAS without Cloudflare; through the host name it is behind the owner's sign-in. `docs/design.md` gains code constraint
+  7, nothing without the front door.
+- **Why:** The owner's rule needs to hold for any route added later, so the test reads the route constants instead of a
+  list of its own.
+- **Other options:** Requiring an assertion for `/health` too, which the release's health check cannot give.
+
+## 2026-11-18 — Adding and revoking a machine by hand on the NAS
+
+- **Chosen:** The hub's command line of #9 (`node dist/machines-cli.js` in the hub's container, run with `docker exec`
+  by whoever signs in to the NAS) now does what 添加机器 and 撤销 do, through the same `MachineAdmin`:
+  `add <name> --system <windows|macos> --hub <url>` creates the service token through `AccessServiceTokens` (named,
+  not expiring and tagged as the page's are), makes the runner token, registers the machine with its system and address,
+  and prints the install line for that system once; `revoke <name>` revokes and deletes the service token the hub made.
+  A missing Cloudflare setting, a missing version or Cloudflare's refusal is refused with the page's reasons, in English,
+  with a non-zero exit, and nothing is added. `add <name> --access-client-id <id>` keeps the setup line of #9 for an
+  existing token. The command is not a route: neither the server nor the hub imports it, which a test checks besides the
+  front-door walk. This overturns, in "Adding and revoking a machine" (2026-11-17), that `revoke` keeps the token at
+  Cloudflare, that a new token gets Cloudflare's default lifetime and that `add` prints the setup line with the secret.
+- **Why:** The owner asked for the deployment and the runners to be set up while asleep, and 添加机器 needs the owner's
+  own sign-in. One mechanism, reached two ways, keeps the hand-made machine identical to one added from the page.
+- **Other options:** A separate script that writes the database directly; an HTTP route for the orchestrator, which
+  would be the kind of entry the owner just removed; printing both systems' lines, which would leave the machine's
+  stored system, and so the script it is served, undecided.
+
+## 2026-11-18 — What was verified of adding a machine without an open route
+
+- **Chosen:** Tests: the front-door walk above; the line for each system, its refusal of unsafe values, and running
+  it for real in Windows PowerShell on Windows and in `/bin/sh`, zsh and bash elsewhere against a local server, which
+  checks the headers sent, that the script receives the three values, that they are not in its environment and that
+  the PowerShell variable is gone afterwards; adding from the page (the stored hashes and ids, no secret in the database
+  file, the never-connected card), the install route's refusals (no assertion, the owner's, the host's audience, another
+  machine's token, a machine without a system), Cloudflare refusing and a credential the line cannot carry, revoking a
+  machine that never connected, migration 28 on a database at 27, the expiry warning once a month ahead and none for a
+  token that does not expire, the runner's setup taking the secret and the token on the next lines, and the Cloudflare
+  client's request body. In `tools/page-dev` (fake Cloudflare, `--announce` at this branch's first commit,
+  `--credentials environment` for the release), on this PC: 添加机器 with the fake Cloudflare refusing showed its reason
+  under the form and added nothing; with it accepting, the never-connected card appeared with its system and
+  还没连上过, and the Windows line, run in Windows PowerShell with a scratch runner home and
+  `SUPERAGENT2_RUNNER_FOREGROUND=1`, fetched the script and the release, built the runner, saved the settings and
+  connected; the card turned online and the line disappeared. Neither the install's output nor the harness's log held
+  the secret or the runner token; the runner's settings file did. The macOS line, run in Git Bash on the same PC, did the
+  same for a second machine. Revoking each closed its runner (4003) and deleted its token in the fake Cloudflare, after
+  which the same credentials got no assertion and `/runner/install` answered 403; `/runner/enroll` answered 403.
+  Nothing was installed to start at login; the scratch runners, their folders and the harness were removed. Not
+  verified: Cloudflare's real API and a real Access application (see the entry on what the owner sets), a real Mac, and
+  the live system.
+- **Why:** The brief asks to say what was and was not checked.
+- **Other options:** None.

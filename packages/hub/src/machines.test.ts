@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cloudflareServiceTokens, cloudflareSettings, expiryOf, type ServiceToken } from "./cloudflare.js";
 import { type HubDatabase, openDatabase } from "./database.js";
-import { runMachineCommand } from "./machine-commands.js";
+import { missingCloudflare, missingRelease, runMachineCommand } from "./machine-commands.js";
+import { installCommand } from "./machine-admin.js";
 import { createMachineStore, MachineError, runnerTokenHash } from "./machines.js";
 import { decodeRunnerSetup } from "@super-agent2/protocol";
 import { TestClock } from "./testing/access.js";
@@ -115,11 +116,14 @@ describe("creating an Access service token", () => {
   });
 });
 
+const release = { SUPERAGENT2_REVISION: "0123456789abcdef0123456789abcdef01234567", HUB_SOURCE_REPOSITORY: "novan-xu/super-agent2" };
+
 describe("the machines command line", () => {
-  async function run(argv: string[], environment: Record<string, string> = {}, created: ServiceToken = { id: "token-id", clientId: "made.access", clientSecret: "made-secret", expiresAt: null }) {
+  async function run(argv: string[], environment: Record<string, string> = release, created: ServiceToken = { id: "token-id", clientId: "made.access", clientSecret: "made0secret", expiresAt: null }) {
     const out: string[] = [];
     const err: string[] = [];
     const names: string[] = [];
+    const removed: string[] = [];
     const code = await runMachineCommand({
       argv,
       environment: { HUB_DATA_DIR: dataDir, ...environment },
@@ -131,24 +135,31 @@ describe("the machines command line", () => {
           names.push(name);
           return created;
         },
-        remove: async () => undefined,
+        remove: async (id) => {
+          removed.push(id);
+        },
       },
     });
-    return { code, out, err, names };
+    return { code, out, err, names, removed };
   }
 
-  it("adds a machine with a new service token and prints the setup line once", async () => {
-    const result = await run(["add", "mac-mini", "--hub", "https://agent.example.com/anything"]);
+  it("adds a machine as the page does and prints its install line once", async () => {
+    const result = await run(["add", "mac-mini", "--system", "macos", "--hub", "https://agent.example.com/anything"]);
     expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
     expect(result.names).toEqual(["superagent2-runner-mac-mini"]);
-    const line = result.out.find((item) => item.startsWith("superagent2-runner-setup:"));
-    const setup = decodeRunnerSetup(line ?? "");
-    expect(setup).toMatchObject({ hub: "https://agent.example.com", name: "mac-mini", accessClientId: "made.access", accessClientSecret: "made-secret" });
+    const line = result.out[1] ?? "";
+    expect(line).toBe(installCommand("macos", { hub: "https://agent.example.com", clientId: "made.access", clientSecret: "made0secret", runnerToken: /token='([^']+)'/.exec(line)?.[1] ?? "" }));
+    expect(result.out[0]).toContain("macOS");
     const machines = createMachineStore(database, clock);
-    expect(machines.byToken(setup?.runnerToken ?? "")).toMatchObject({ name: "mac-mini", accessClientId: "made.access", accessTokenId: "token-id" });
+    const token = /token='([^']+)'/.exec(line)?.[1] ?? "";
+    expect(machines.byToken(token)).toMatchObject({ name: "mac-mini", accessClientId: "made.access", accessTokenId: "token-id", system: "macos", hub: "https://agent.example.com" });
+    const windows = await run(["add", "pc", "--system", "windows", "--hub", "https://agent.example.com"]);
+    expect(windows.out[1]).toMatch(/^& \{ \$access = @\{ 'cf-access-client-id' = 'made\.access'/);
     const listed = await run(["list"]);
-    expect(listed.out.join("\n")).toContain("mac-mini\tactive\taccess client made.access");
-    expect(listed.out.join("\n")).not.toContain(setup?.runnerToken ?? "missing");
+    expect(listed.out.join("\n")).toContain("mac-mini\tactive\tmacos\taccess client made.access");
+    expect(listed.out.join("\n")).not.toContain(token);
+    expect(listed.out.join("\n")).not.toContain("made0secret");
   });
 
   it("reuses an existing service token and says the secret is asked for", async () => {
@@ -157,39 +168,64 @@ describe("the machines command line", () => {
     expect(result.names).toEqual([]);
     const setup = decodeRunnerSetup(result.out.find((item) => item.startsWith("superagent2-runner-setup:")) ?? "");
     expect(setup?.accessClientSecret).toBeUndefined();
+    expect(setup?.runnerToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(result.out.join("\n")).toContain("client secret");
   });
 
-  it("needs Cloudflare's settings to create a token", async () => {
+  it("refuses for the same reasons as the page, and adds nothing", async () => {
     const out: string[] = [];
     const err: string[] = [];
     const code = await runMachineCommand({
-      argv: ["add", "pc", "--hub", "https://agent.example.com"],
-      environment: { HUB_DATA_DIR: dataDir },
+      argv: ["add", "pc", "--system", "windows", "--hub", "https://agent.example.com"],
+      environment: { HUB_DATA_DIR: dataDir, ...release },
       out: (line) => out.push(line),
       err: (line) => err.push(line),
       clock,
     });
     expect(code).toBe(2);
-    expect(err.join("\n")).toContain("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_ACCESS_API_TOKEN");
+    expect(err).toEqual([missingCloudflare]);
+    expect(out).toEqual([]);
+    const noRelease = await run(["add", "pc", "--system", "windows", "--hub", "https://agent.example.com"], {});
+    expect(noRelease.code).toBe(2);
+    expect(noRelease.err).toEqual([missingRelease]);
+    expect(noRelease.names).toEqual([]);
+    const refused = await runMachineCommand({
+      argv: ["add", "pc", "--system", "windows", "--hub", "https://agent.example.com"],
+      environment: { HUB_DATA_DIR: dataDir, ...release },
+      out: (line) => out.push(line),
+      err: (line) => err.push(line),
+      clock,
+      serviceTokens: { create: () => Promise.reject(new Error("Cloudflare refused to create the service token (HTTP 403)")), remove: async () => undefined },
+    });
+    expect(refused).toBe(1);
+    expect(err.at(-1)).toBe("Cloudflare did not make the access token, so nothing was added: Cloudflare refused to create the service token (HTTP 403)");
     expect(createMachineStore(database, clock).list()).toEqual([]);
   });
 
-  it("refuses a bad name, a missing address and a duplicate before creating anything", async () => {
-    expect((await run(["add", "nas", "--hub", "https://a.example.com"])).code).toBe(2);
-    expect((await run(["add", "pc"])).code).toBe(2);
-    expect((await run(["add", "pc", "--hub", "https://a.example.com"])).code).toBe(0);
-    const again = await run(["add", "pc", "--hub", "https://a.example.com"]);
+  it("refuses a bad name, a missing system or address and a duplicate before creating anything", async () => {
+    expect((await run(["add", "nas", "--system", "windows", "--hub", "https://a.example.com"])).code).toBe(2);
+    expect((await run(["add", "pc", "--hub", "https://a.example.com"])).code).toBe(2);
+    expect((await run(["add", "pc", "--system", "linux", "--hub", "https://a.example.com"])).code).toBe(2);
+    expect((await run(["add", "pc", "--system", "windows"])).code).toBe(2);
+    expect((await run(["add", "pc", "--system", "windows", "--access-client-id", "x", "--hub", "https://a.example.com"])).code).toBe(2);
+    expect((await run(["add", "pc", "--system", "windows", "--hub", "https://a.example.com"])).code).toBe(0);
+    const again = await run(["add", "pc", "--system", "windows", "--hub", "https://a.example.com"]);
     expect(again.code).toBe(1);
     expect(again.names).toEqual([]);
   });
 
-  it("revokes a machine", async () => {
-    await run(["add", "pc", "--hub", "https://a.example.com"]);
+  it("revokes a machine and deletes the service token the hub made", async () => {
+    await run(["add", "pc", "--system", "windows", "--hub", "https://a.example.com"]);
     const revoked = await run(["revoke", "pc"]);
     expect(revoked.code).toBe(0);
+    expect(revoked.removed).toEqual(["token-id"]);
+    expect(revoked.out.join("\n")).toContain("deleted its Access service token at Cloudflare");
     expect(createMachineStore(database, clock).active("pc")).toBeUndefined();
     expect((await run(["revoke", "pc"])).code).toBe(1);
     expect((await run(["list"])).out.join("\n")).toContain("pc\trevoked");
+    await run(["add", "old", "--access-client-id", "old.access", "--hub", "https://a.example.com"]);
+    const reused = await run(["revoke", "old"]);
+    expect(reused.removed).toEqual([]);
+    expect(reused.out.join("\n")).toContain("not made by the hub");
   });
 });

@@ -136,6 +136,95 @@ This version is released by hand once, as above, from the running version, which
 - `secrets/brain.env` and `secrets/hub.env` need no change. `NAS_SSH_*`, `HUB_CREDENTIAL_PATHS` and any deployment
   settings an older hub was given are ignored.
 
+## Updating the live system to the version without an open route
+
+This version (#78) removes `POST /runner/enroll`; the hub now answers nothing without a signed Access assertion except
+`/health`, which through the host name is behind the owner's sign-in like everything else. It is released like any
+version. Then:
+
+- Migration 28 drops `install_codes` (any unused install code is gone with it) and adds four columns to `machines`: the
+  machine's system and hub address, when its service token runs out, and when the owner was told so. A machine whose
+  service token the hub made before this version (`access_token_id` set) is dated one year after it was added, which is
+  the lifetime Cloudflare gave a token created without a duration; one added with `--access-client-id` is not dated.
+- The hub keeps admitting runners through the host's own application until `ACCESS_RUNNER_AUD` is set, so the update
+  alone changes nothing for a runner that already connects. Set up Cloudflare as in the next section, then put the new
+  application's audience tag in `secrets/hub.env` as `ACCESS_RUNNER_AUD=<tag>` and recreate the hub with
+  `bash /share/Container/superagent2/deploy.sh up`. Runners cannot connect between saving the application and
+  recreating the hub, so do the two together; each runner reconnects by itself.
+- A service token the hub made before this version has no tag, so the runner application's policy refuses it. For each
+  service token named `superagent2-runner-<name>` in Zero Trust › Access controls › Service credentials › Service Tokens,
+  open it, add the tag `superagent2` = `runner` and save; Cloudflare's documentation says editing only the tags neither
+  rotates the secret nor changes the expiry. Or revoke the machine in 设置 and add it again, which also gives it a token
+  that does not expire.
+- `secrets/brain.env` and the rest of `secrets/hub.env` need no change.
+
+## Cloudflare Access
+
+The host name has two Access applications. Nothing in them changes when a machine is added or revoked.
+
+| Application | Covers | Policy | Audience tag in `secrets/hub.env` |
+| --- | --- | --- | --- |
+| The host's own (exists) | The host name, empty path | Allow: the owner's email, through Google | `ACCESS_AUD` |
+| Super-agent2 runners (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
+
+Cloudflare gives the more specific path precedence, and a path covers the paths below it, so `/runner/link`,
+`/runner/release` and `/runner/install` are decided by the runner application alone: a service token never reaches the
+owner's pages or API at Cloudflare, and the owner's sign-in never reaches the runner paths. The hub checks the same
+thing again: it takes an assertion for `ACCESS_RUNNER_AUD` only on `/runner/` and only as a service token, and one for
+`ACCESS_AUD` only elsewhere; and on `/runner/` it also needs the machine's own runner token, bound to that service token.
+
+Steps, once, in the Cloudflare dashboard (Zero Trust):
+
+1. **The host's own application.** Access controls › Applications › the application for the hub's host name › Policies.
+   Keep only the owner's Allow policy. If it has a policy whose action is Service Auth (added earlier for runners),
+   remove that policy from this application and save.
+2. **The runner application.** Access controls › Applications › Add an application › Self-hosted. Name it
+   `Super-agent2 runners`. Under the public hostname, enter the hub's host name (the same subdomain and domain as the
+   host's own application) and the path `runner`. Leave the identity providers and session settings as they come;
+   no person signs in here.
+3. **Its policy.** Add one policy, named `Runner service tokens`, with the action **Service Auth** and one Include rule:
+   selector **Service Token Tag**, tag key `superagent2`, tag value `runner`. Add no other rule and no other policy. Save
+   the application. If the account does not offer the Service Token Tag selector, use **Any Access Service Token**
+   instead; that also needs no change per machine, but lets every service token of the account through to the runner
+   paths, where the hub still refuses any that is not a machine's.
+4. **Its audience tag.** Access controls › Applications › Edit on the new application › Additional settings: copy its
+   Application Audience (AUD) Tag. Put it in `/share/Container/superagent2/secrets/hub.env` as `ACCESS_RUNNER_AUD=<tag>`
+   and run `bash /share/Container/superagent2/deploy.sh up`. The hub refuses to start if it equals `ACCESS_AUD`.
+5. **The hub's API token.** `CLOUDFLARE_ACCESS_API_TOKEN` must be an API token of the account `CLOUDFLARE_ACCOUNT_ID`
+   with the one permission Account › **Access: Service Tokens** › **Edit** (Cloudflare's documentation calls it
+   "Access: Service Tokens Write"), for that account only. The hub uses it for two calls and nothing else:
+   `POST /accounts/<id>/access/service_tokens` with the name `superagent2-runner-<machine>`, the duration `forever`
+   and the tag `superagent2` = `runner` when 添加机器 is pressed, and `DELETE /accounts/<id>/access/service_tokens/<token id>`
+   when a machine is revoked. It needs no permission on applications or policies.
+6. **The old Bypass application, if it was ever made.** The versions before #78 asked for an application for the path
+   `runner/enroll` with a Bypass policy; on the live system it was never made. If it exists: Access controls ›
+   Applications, find the application whose public hostname is the hub's host name with the path `runner/enroll`
+   (usually named after enrolment), open it and delete it. Delete any policy that was made only for it under Access
+   controls › Policies as well. Until it is deleted it would let anyone reach `/runner/enroll`, which the hub now
+   refuses with 403.
+
+To check, from a machine with no credentials: `curl -sS -o /dev/null -w '%{http_code}\n' https://<host>/runner/install`
+must not print 200 (Cloudflare refuses it before the hub sees it), and the same address opened in the owner's signed-in
+browser must not show a script either. A machine added after the set-up shows as online in 设置 once its install line has
+run.
+
+Not checked against the real Cloudflare: the hub's two API calls (in particular that `duration: "forever"` and `tags`
+are accepted and what the answer then says about expiry), that a path application's assertion carries that
+application's own audience tag, that the Service Token Tag selector is offered on this account, and what Cloudflare
+answers to a refused request (a redirect to the sign-in or a 403). All of this comes from Cloudflare's documentation and
+is exercised only against a fake in the tests and in `tools/page-dev`; if adding a machine fails, 设置 shows Cloudflare's
+own reason.
+
+## Service tokens and their lifetime
+
+A service token created through the API without a duration lasts one year (`8760h`, Cloudflare's default); when it runs
+out, Cloudflare refuses the machine, its runner keeps trying, and 设置 shows the machine offline with nothing else to say
+why. The hub therefore asks for `duration: "forever"`, which Cloudflare documents as a token that does not expire. If
+Cloudflare answers with an expiry anyway, the hub keeps it. A machine whose token has an expiry shows 令牌 … 到期 on its
+card in 设置, in red within thirty days; thirty days before, the hub writes a notice into the latest conversation for
+the owner and tells the brain, once per token. The fix is to revoke the machine and add it again (a new install line on
+that machine), or to refresh the token in Cloudflare's dashboard, after which the card still shows the old date.
+
 ## Runners
 
 A runner moves to the version its hub runs by itself. The hub's image carries its commit (`SUPERAGENT2_REVISION`, set
@@ -149,6 +238,40 @@ named there. The new runner reconnects, the hub resumes whatever it holds, and i
 that stops three times before reaching the hub is replaced by the previous one again and never retried. An update that
 fails leaves the running runner as it is and is tried again after an hour. Only a runner started by its supervisor or
 launch agent updates itself; one started by hand with `run` says that an update is available.
+
+### Adding or revoking a machine by hand on the NAS
+
+添加机器 in 设置 needs the owner's sign-in. The same thing can be done on the NAS, as `novanxu`, by the hub's own command
+line inside its container; it is a local command and no route of the hub reaches it. It uses the hub's environment
+(`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN`, `SUPERAGENT2_REVISION`, `HUB_SOURCE_REPOSITORY`, `HUB_DATA_DIR`)
+and does exactly what the button does: it creates the machine's Access service token through the same Cloudflare call
+(named `superagent2-runner-<name>`, not expiring, tagged `superagent2` = `runner`), makes its runner token, registers the
+machine and prints, once, the install line for the system given. With `<host>` the hub's host name:
+
+```sh
+docker=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
+$docker exec superagent2-hub node dist/machines-cli.js add pc --system windows --hub https://<host>
+$docker exec superagent2-hub node dist/machines-cli.js add mac-mini --system macos --hub https://<host>
+```
+
+The line reaches the hub through Cloudflare, so it works only once Cloudflare lets the new token through to `/runner/`:
+through the runner application of [Cloudflare Access](#cloudflare-access), or, before that exists and while
+`ACCESS_RUNNER_AUD` is unset, through a Service Auth policy on the host's own application that admits the new token
+(for example Any Access Service Token). Run the printed line once on that machine: in Windows PowerShell for `windows`,
+in the terminal for `macos`. The line
+holds the machine's credentials; it is printed only this once and is not kept anywhere, so copy it straight to the machine.
+The running hub admits the machine at once, and it appears in 设置 as not yet connected until the line has run. When
+the hub's Cloudflare settings or its version are missing, or Cloudflare refuses, the command says so, exits non-zero and
+adds nothing, for the same reasons the page gives. To list and to revoke:
+
+```sh
+$docker exec superagent2-hub node dist/machines-cli.js list
+$docker exec superagent2-hub node dist/machines-cli.js revoke pc
+```
+
+`revoke` refuses the machine from then on, has the running hub close its connection within a few seconds, and deletes the
+service token at Cloudflare, as 撤销 does; it says so if the token could not be deleted. `add <name> --access-client-id
+<id> --hub https://<host>` still adds a machine with an existing service token and prints the setup line of #9 instead.
 
 A runner installed before this scheme starts `main.js` of its checkout directly; run `install` once from a checkout that
 contains #18 to move it to `start.mjs`.

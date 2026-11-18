@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -142,6 +142,12 @@ describe("the front door", () => {
     expect(answered).toEqual(["GET /health 200", "HEAD /health 200"]);
     const health = await fetch(`${base()}/health`);
     expect(Object.keys((await health.json()) as object).sort()).toEqual(["status", "version"]);
+  });
+
+  it("leaves adding and revoking a machine by hand to the local command, which no route reaches", () => {
+    for (const file of ["server.ts", "hub.ts"]) {
+      expect(readFileSync(join(import.meta.dirname, file), "utf8")).not.toMatch(/machine-commands|machines-cli/);
+    }
   });
 
   it("opens no socket without a signed Access assertion", async () => {
