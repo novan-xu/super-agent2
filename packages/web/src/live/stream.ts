@@ -45,8 +45,15 @@ function endedTurns(turns: readonly Turn[]): readonly Turn[] {
 }
 
 export function streamItems(state: ConversationState, now: number): readonly StreamItem[] {
+  return itemsOf(state, now, isWorking(state), false);
+}
+
+export function combinedStreamItems(entries: readonly ConversationEntry[], turns: readonly Turn[], now: number): readonly StreamItem[] {
+  return itemsOf({ entries, turns }, now, false, true);
+}
+
+function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: number, working: boolean, combined: boolean): readonly StreamItem[] {
   const items: StreamItem[] = [];
-  const working = isWorking(state);
   const running = new Set(state.turns.filter((turn) => turn.state === "running").map((turn) => turn.id));
   const ended = endedTurns(state.turns);
   const lastOfTurn = new Map<string, string>();
@@ -60,18 +67,18 @@ export function streamItems(state: ConversationState, now: number): readonly Str
   const loose: Turn[] = [];
   for (const turn of ended) {
     const last = lastOfTurn.get(turn.id);
-    if (last === undefined) {
+    if (last === undefined && !combined) {
       loose.push(turn);
-    } else {
+    } else if (last !== undefined) {
       endings.set(last, [...(endings.get(last) ?? []), turn]);
     }
   }
   let previousDay: ReturnType<typeof dayOf> | undefined;
   let previous: ConversationEntry | undefined;
-  const pushDay = (at: number) => {
+  const pushDay = (at: number, anchor: string) => {
     const day = dayOf(at);
     if (previousDay === undefined || !sameDay(previousDay, day)) {
-      items.push({ kind: "day", key: `day-${day.year}-${day.month}-${day.day}`, day: describeDay(at, now) });
+      items.push({ kind: "day", key: `day-${anchor}`, day: describeDay(at, now) });
       previousDay = day;
     }
   };
@@ -79,7 +86,7 @@ export function streamItems(state: ConversationState, now: number): readonly Str
     while (loose.length > 0 && (loose[0]?.startedAt ?? 0) < before) {
       const turn = loose.shift();
       if (turn !== undefined) {
-        pushDay(turn.endedAt ?? turn.startedAt);
+        pushDay(turn.endedAt ?? turn.startedAt, `ended-${turn.id}`);
         items.push({ kind: "ended", key: `ended-${turn.id}`, turn });
         previous = undefined;
       }
@@ -89,15 +96,14 @@ export function streamItems(state: ConversationState, now: number): readonly Str
   for (const entry of state.entries) {
     pushLoose(entry.at);
     if (entry.kind !== "tool") {
-      pushDay(entry.at);
+      pushDay(entry.at, entry.id);
       const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry));
-      const turn = turnOf(entry);
-      const live = entry === lastEntry && entry.kind === "text" && turn !== null && running.has(turn) && working;
+      const live = entry.kind === "text" && running.has(entry.turn) && (combined ? lastOfTurn.get(entry.turn) === entry.id : entry === lastEntry && working);
       items.push({ kind: "entry", key: entry.id, entry, lead, live });
       previous = entry;
     }
     for (const turnEnded of endings.get(entry.id) ?? []) {
-      pushDay(entry.at);
+      pushDay(entry.at, entry.id);
       items.push({ kind: "ended", key: `ended-${turnEnded.id}`, turn: turnEnded });
       previous = undefined;
     }

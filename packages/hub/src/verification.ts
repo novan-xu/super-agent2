@@ -272,7 +272,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     save(ticket.id, { told: key });
-    tell(ticket.conversation, notice, prompt);
+    tell(ticket.id, notice, prompt);
   };
 
   const reportOnce = (ticket: Ticket, key: string, report: FailureReport, notice: string, prompt: string) => {
@@ -351,7 +351,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       usual.milliseconds === null
         ? text("notice.pipelineLongFirst", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(firstAllowance) })
         : text("notice.pipelineLong", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(usual.milliseconds) });
-    tell(ticket.conversation, notice, prompt);
+    tell(ticket.id, notice, prompt);
   };
 
   const entryOf = (id: number): number => SeqRow.parse(selectEntry.get(id)).seq ?? 0;
@@ -526,7 +526,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       ...decisionReport(ticket),
     ];
     save(id, { reported_at: clock.now() });
-    tell(ticket.conversation, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
+    tell(ticket.id, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
   };
 
   const finish = async (ticket: Ticket, gitHub: GitHubApi, pull: PullRequestState, rule: VerificationRule): Promise<void> => {

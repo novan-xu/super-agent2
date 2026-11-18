@@ -18,6 +18,7 @@ import { resumeAfter } from "../live/conversation.js";
 import { needsMoves } from "../live/detail.js";
 import { canLoadMore, needsCatchUp } from "../live/history.js";
 import { createPageStore, type PageStore } from "../live/page.js";
+import { resumeStream } from "../live/topic-stream.js";
 import { lastEventId } from "../live/work.js";
 import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
 import type { Answer, Failure, HubApi } from "./api.js";
@@ -45,6 +46,7 @@ export class PageController {
         const current = this.store.getState().current;
         return current?.id === conversation ? resumeAfter(current) : 0;
       },
+      resumeStream: () => resumeStream(this.store.getState().stream),
       resumeTicket: (ticket) => {
         const detail = this.store.getState().detail;
         return detail?.id === ticket ? lastEventId(detail.log) : 0;
@@ -82,7 +84,9 @@ export class PageController {
     this.socket.reconnect(force);
   }
 
-  open(conversation: string | null): void {
+  open(conversation: string | null, stream = false): void {
+    this.store.dispatch({ type: "stream.open", watching: stream });
+    this.socket.watchStream(stream);
     if (conversation === this.opened) {
       return;
     }
@@ -91,6 +95,14 @@ export class PageController {
     this.socket.watch(conversation);
     if (conversation !== null) {
       void this.readDetail(conversation);
+    }
+  }
+
+  loadOlderStream(): void {
+    const { status, stream } = this.store.getState();
+    if (status === "open" && !stream.loading && stream.before !== null) {
+      this.store.dispatch({ type: "stream.more" });
+      this.socket.readStream(stream.before);
     }
   }
 
@@ -360,18 +372,24 @@ export class PageController {
     }
   }
 
-  async send(text: string, onCreated: (conversation: string) => void, attachments: readonly string[] = []): Promise<boolean> {
-    let conversation = this.opened;
+  async createTopic(): Promise<string | undefined> {
+    const created = await this.options.api.create();
+    if (!created.ok) {
+      this.options.onFailure(created.error);
+      return undefined;
+    }
+    this.store.dispatch({ type: "created", conversation: created.value.conversation });
+    return created.value.conversation.id;
+  }
+
+  async send(text: string, attachments: readonly string[] = []): Promise<boolean> {
+    const conversation = this.opened;
     if (conversation === null) {
-      const created = await this.options.api.create();
-      if (!created.ok) {
-        this.options.onFailure(created.error);
-        return false;
+      const sent = await this.options.api.sendToStream(text, attachments);
+      if (!sent.ok) {
+        this.options.onFailure(sent.error);
       }
-      conversation = created.value.conversation.id;
-      this.store.dispatch({ type: "created", conversation: created.value.conversation });
-      onCreated(conversation);
-      this.open(conversation);
+      return sent.ok;
     }
     const sent = await this.options.api.send(conversation, text, attachments);
     if (!sent.ok) {

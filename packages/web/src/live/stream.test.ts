@@ -1,7 +1,8 @@
-import type { ConversationEntry, Turn } from "@super-agent2/protocol";
+import type { ConversationEntry, StreamEntry, TextEntry, Turn } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationState } from "./conversation.js";
 import { streamItems } from "./stream.js";
+import { initialTopicStream, receiveStream, resumeStream } from "./topic-stream.js";
 
 const id = "c1";
 const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 0).getTime();
@@ -15,7 +16,7 @@ function owner(seq: number, time: number): ConversationEntry {
   return { id: `o${seq}`, conversation: id, seq, at: time, kind: "owner", text: "hi", attachments: [], taken: true };
 }
 
-function text(seq: number, time: number, turnId = "t1"): ConversationEntry {
+function text(seq: number, time: number, turnId = "t1"): TextEntry {
   return { id: `x${seq}`, conversation: id, seq, at: time, kind: "text", turn: turnId, text: "a" };
 }
 
@@ -26,7 +27,7 @@ function tool(seq: number, time: number, state: "running" | "done" = "done"): Co
 function state(entries: ConversationEntry[], turns: Turn[], working = false): ConversationState {
   return {
     id,
-    conversation: { id, title: "", state: working ? "working" : "idle", provider: null, createdAt: 0, updatedAt: 0 },
+    conversation: { id, title: "", state: working ? "working" : "idle", topicState: "active", repository: null, provider: null, createdAt: 0, updatedAt: 0 },
     turns,
     entries,
   };
@@ -81,4 +82,25 @@ describe("streamItems", () => {
     const items = streamItems(state([tool(1, at(17, 9)), text(2, at(17, 9)), tool(3, at(17, 9)), text(4, at(17, 9)), text(5, at(17, 9), "t2")], [turn()]), now);
     expect(items.filter((item) => item.kind === "entry").map((item) => [item.key, item.lead])).toEqual([["x2", true], ["x4", false], ["x5", true]]);
   });
+});
+
+it("replays unfinished text across topics without changing position or duplicating deltas", () => {
+  const time = at(17, 9);
+  const item = (position: number, entry: ConversationEntry): StreamEntry => ({
+    position, entry, topic: { id: entry.conversation, title: entry.conversation, repository: null },
+  });
+  const first = item(5, text(2, time));
+  const second = item(6, { ...owner(1, time), conversation: "c2" });
+  const running = turn({ state: "running", endedAt: null });
+  const page = receiveStream(initialTopicStream, { type: "stream.page", entries: [first, second], turns: [running], before: 5 });
+  expect(resumeStream(page)).toBe(4);
+  const delta = { type: "delta", conversation: id, entry: first.entry.id, field: "text", text: "b" } as const;
+  const streamed = receiveStream(page, delta);
+  expect(streamed.entries[0]?.entry).toMatchObject({ text: "ab" });
+  const finished = receiveStream(streamed, { type: "turn", turn: turn() });
+  const replay = receiveStream(finished, { ...item(5, { ...text(2, time), text: "ab" }), type: "stream.entry" });
+  const older = receiveStream(replay, { type: "stream.page", entries: [item(4, owner(1, time))], turns: [], before: null });
+  expect(older.entries.map(({ position }) => position)).toEqual([4, 5, 6]);
+  expect(older.entries[1]?.entry).toMatchObject({ text: "ab" });
+  expect(resumeStream(older)).toBe(6);
 });

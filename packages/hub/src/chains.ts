@@ -116,7 +116,7 @@ export interface ChainStarter {
   reassign(given: OwnerChange): Promise<StartOutcome>;
 }
 
-export type Tell = (conversation: string | null, notice: string, prompt: string) => void;
+export type Tell = (ticket: number, notice: string, prompt: string) => void;
 
 export interface Chains {
   readonly arranger: ChainArranger;
@@ -261,7 +261,7 @@ export function createChains(options: ChainsOptions): Chains {
           if (!closed) {
             tickets.change((writes) => writes.touched(id));
             tell(
-              ticket.conversation,
+              ticket.id,
               text("notice.ticketBeginFailed", { ticket: id }),
               [
                 `[hub] The owner started ${described(ticket)}, but its work could not begin: ${reason}`,
@@ -326,7 +326,7 @@ export function createChains(options: ChainsOptions): Chains {
           ? `The owner already started it, and it waits for ${described(stopped)}. Decide what happens to it: let it go ahead without ticket ${stopped.id} with proceed_ticket, or stop it with stop_ticket.`
           : `It is not started yet and is arranged after ticket ${stopped.id}. Arrange it again with arrange_chains, or stop it with stop_ticket.`;
       tell(
-        after.conversation ?? stopped.conversation,
+        after.id,
         text("notice.ticketBeforeStopped", { before: stopped.id, ticket: after.id }),
         [`[hub] ${described(stopped)} stopped${why}.`, `${described(after)} is ${after.state}. ${choice}`, "Tell the owner what you decided."].join("\n"),
       );
@@ -509,7 +509,7 @@ export function createChains(options: ChainsOptions): Chains {
         await work?.reassign?.(now);
       } catch (error) {
         tell(
-          now.conversation,
+          now.id,
           text("notice.ticketBeginFailed", { ticket: now.id }),
           `[hub] The owner reassigned ${described(now)} to ${run.machine} with ${run.engine} ${run.model} ${run.effort}, but its work could not restart there: ${reasonOf(error)}. Decide what happens to it and tell the owner.`,
         );

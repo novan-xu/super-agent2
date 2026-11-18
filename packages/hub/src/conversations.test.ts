@@ -3,11 +3,13 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationState, type HubToBrain, largestMessageBytes, ServerMessage, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
+import { openDatabase } from "./database.js";
 import type { Hub } from "./hub.js";
+import { migrations } from "./migrations.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { fakeTarget, testCredentials } from "./testing/commands.js";
 import { startTestHub } from "./testing/http.js";
@@ -46,6 +48,27 @@ async function start(): Promise<Hub> {
 
 function base(running: Hub): string {
   return `http://127.0.0.1:${running.address.port}`;
+}
+
+async function streamRequest(running: Hub, query = "", body?: unknown): Promise<Response> {
+  return fetch(`${base(running)}/api/stream${query}`, {
+    headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json" },
+    ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+  });
+}
+
+function openTicket(running: Hub, conversation?: string, repository: string | null = null) {
+  const title = { en: "Translate a notice", zh: "翻译一则通知" };
+  return running.tickets.open({
+    form: "task",
+    kind: "writing",
+    repository,
+    issues: [],
+    title,
+    summary: title,
+    conversation,
+    task: { task: title.en, materials: [] },
+  });
 }
 
 function brainToken(): string {
@@ -229,17 +252,18 @@ describe("conversations for the page", () => {
   it("delivers a result as an entry the page watches and an input for the brain, and keeps it in the history for another model", async () => {
     const running = await start();
     const conversation = running.conversations.create();
+    const ticket = openTicket(running, conversation.id);
     const { socket, received } = await pageSocket(running);
     const brain = await brainSocket(running);
     brain.socket.send(JSON.stringify({ type: "hello", protocol: 1, running: [] }));
     socket.send(JSON.stringify({ type: "watch", conversation: conversation.id }));
     await until(() => received.some((message) => message.type === "brain"), socket);
-    const id = running.conversations.deliver(conversation.id, {
-      ticket: 4,
+    const id = running.conversations.deliver({
+      ticket: ticket.id,
       title: { en: "Translate a notice", zh: "翻译一则通知" },
       text: "Hello, world.\n",
       files: [{ name: "notes.pdf", size: 4 }],
-      prompt: "[hub] The result of writing ticket 4 was delivered.",
+      prompt: `[hub] The result of writing ticket ${ticket.id} was delivered.`,
     });
     expect(id).toBe(conversation.id);
     await until(() => received.some((message) => message.type === "entry" && message.entry.kind === "delivery"), socket);
@@ -247,7 +271,7 @@ describe("conversations for the page", () => {
     expect(entry).toMatchObject({
       kind: "delivery",
       turn: null,
-      ticket: 4,
+      ticket: ticket.id,
       title: { en: "Translate a notice", zh: "翻译一则通知" },
       text: "Hello, world.\n",
       files: [{ name: "notes.pdf", size: 4 }],
@@ -263,7 +287,7 @@ describe("conversations for the page", () => {
     expect(brain.received.find((message) => message.type === "input")).toMatchObject({
       type: "input",
       conversation: conversation.id,
-      input: { source: "hub", text: "[hub] The result of writing ticket 4 was delivered." },
+      input: { source: "hub", text: `[hub] The result of writing ticket ${ticket.id} was delivered.` },
     });
     brain.socket.send(JSON.stringify({ type: "prepare", request: "r-1", conversation: conversation.id, provider: "claude", fresh: false, exclude: [] }));
     await new Promise<void>((resolve) => {
@@ -276,9 +300,8 @@ describe("conversations for the page", () => {
     });
     const prepared = brain.received.find((message) => message.type === "prepared");
     expect(prepared?.type === "prepared" && prepared.history).toEqual([
-      { kind: "notice", text: expect.stringContaining("The result of task ticket 4 (Translate a notice) was delivered") },
+      { kind: "notice", text: expect.stringContaining(`The result of task ticket ${ticket.id} (Translate a notice) was delivered`) },
     ]);
-    expect(running.conversations.deliver(null, { ticket: 5, title: { en: "A", zh: "甲" }, text: null, files: [], prompt: "p" })).toBe(conversation.id);
   });
 
   it("has a label for every state of a conversation and a turn", () => {
@@ -288,5 +311,164 @@ describe("conversations for the page", () => {
     for (const state of TurnState.options) {
       expect(Object.hasOwn(messages, `turn.state.${state}`), state).toBe(true);
     }
+  });
+});
+
+describe("the topic stream", () => {
+  it("migrates saved topics, histories and provider sessions with their original IDs and per-topic sequences", async () => {
+    const earlier = openDatabase({ dataDir, clock, migrations: migrations.filter(({ version }) => version < 29) });
+    earlier.connection.exec(`
+      INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES
+        ('first', 'First', 'idle', 100, 101), ('second', 'Second', 'idle', 100, 100), ('mixed', 'Mixed', 'idle', 100, 100);
+      INSERT INTO turns (id, conversation_id, provider, model, state, started_at, ended_at)
+        VALUES ('turn-1', 'first', 'claude', 'model', 'completed', 100, 101);
+      INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, body, taken, created_at) VALUES
+        ('one', 'first', 1, 'owner', 'turn-1', '{"text":"one"}', 1, 100),
+        ('two', 'second', 1, 'owner', NULL, '{"text":"two"}', 1, 100),
+        ('three', 'first', 2, 'text', 'turn-1', '{"text":"three"}', NULL, 101);
+      INSERT INTO program_sessions (conversation_id, provider, session, through, updated_at)
+        VALUES ('first', 'claude', 'saved-session', 2, 101);
+      INSERT INTO tickets (id, form, repository, kind, title_en, title_zh, summary_en, summary_zh, state, conversation_id, created_at, updated_at) VALUES
+        (1, 'task', 'owner/project', 'writing', 'Copy', '文案', 'Copy', '文案', 'pending', 'first', 100, 100),
+        (2, 'task', 'Owner/Project', 'writing', 'Copy', '文案', 'Copy', '文案', 'pending', 'first', 100, 100),
+        (3, 'task', 'owner/project', 'writing', 'Copy', '文案', 'Copy', '文案', 'pending', 'mixed', 100, 100),
+        (4, 'task', NULL, 'writing', 'Copy', '文案', 'Copy', '文案', 'pending', 'mixed', 100, 100);
+    `);
+    earlier.close();
+    const running = await start();
+    expect(running.conversations.get("first")).toMatchObject({ title: "First", topicState: "active", repository: "Owner/Project" });
+    expect(running.conversations.get("second")).toMatchObject({ repository: null });
+    expect(running.conversations.get("mixed")).toMatchObject({ repository: null });
+    expect(running.tickets.get(1)?.conversation).toBe("first");
+    expect(running.conversations.detail("first")?.entries.map((entry) => entry.id)).toEqual(["one", "three"]);
+    expect(running.conversations.stream().entries.map(({ position, entry }) => [position, entry.id, entry.seq])).toEqual([[1, "one", 1], [2, "two", 1], [3, "three", 2]]);
+    const sent: HubToBrain[] = [];
+    const brain = running.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    const next = running.conversations.send("first", "four");
+    expect(next?.seq).toBe(3);
+    brain.receive({ type: "prepare", request: "resume", conversation: "first", provider: "claude", fresh: false, exclude: [next?.id ?? ""] });
+    expect(sent.at(-1)).toMatchObject({ type: "prepared", session: "saved-session", history: [] });
+    expect(running.conversations.stream().entries.at(-1)).toMatchObject({ position: 4, entry: { id: next?.id } });
+  });
+
+  it("pages by arrival, filters by repository, and sends to explicit or recently active topics", async () => {
+    const running = await start();
+    const firstResponse = await streamRequest(running, "", { text: "First" });
+    expect(firstResponse.status).toBe(202);
+    const first = StreamEntry.parse(await firstResponse.json());
+    expect(first.topic).toMatchObject({ title: "First", repository: null });
+    const second = running.conversations.create();
+    expect(openTicket(running, second.id, "owner/project").conversation).toBe(second.id);
+    const secondEntry = StreamEntry.parse(await (await streamRequest(running, "", { text: "Second", topic: second.id })).json());
+    expect(secondEntry.topic).toEqual({ id: second.id, title: "Second", repository: "owner/project" });
+    clock.advance(-10);
+    const explicit = StreamEntry.parse(await (await streamRequest(running, "", { text: "Back to first", topic: first.topic.id })).json());
+    expect(explicit.topic.id).toBe(first.topic.id);
+    clock.advance(10);
+    const implicit = StreamEntry.parse(await (await streamRequest(running, "", { text: "Back to latest" })).json());
+    expect(implicit.topic.id).toBe(second.id);
+
+    const latest = StreamPage.parse(await (await streamRequest(running, "?limit=2")).json());
+    expect(latest.entries.map(({ position }) => position)).toEqual([3, 4]);
+    expect(latest.before).toBe(3);
+    const older = StreamPage.parse(await (await streamRequest(running, `?limit=2&before=${latest.before}`)).json());
+    expect(older.entries.map(({ position }) => position)).toEqual([1, 2]);
+    expect(older.before).toBeNull();
+    const project = StreamPage.parse(await (await streamRequest(running, "?repository=OWNER%2FProject&limit=1")).json());
+    expect(project.entries).toEqual([implicit]);
+    expect(project.before).toBe(implicit.position);
+    const olderProject = StreamPage.parse(await (await streamRequest(running, `?repository=owner%2Fproject&before=${project.before}`)).json());
+    expect(olderProject.entries).toEqual([secondEntry]);
+    const daily = StreamPage.parse(await (await streamRequest(running, "?repository=")).json());
+    expect(daily.entries).toEqual([first, explicit]);
+    expect((await streamRequest(running, "?repository=missing-owner")).status).toBe(400);
+    expect((await streamRequest(running, "", { text: "Unknown", topic: "missing" })).status).toBe(404);
+
+    running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(second.id);
+    expect(StreamEntry.parse(await (await streamRequest(running, "", { text: "Skip archived" })).json()).topic.id).toBe(first.topic.id);
+    expect((await streamRequest(running, "", { text: "Reopen", topic: second.id })).status).toBe(202);
+    expect(running.conversations.get(second.id)?.topicState).toBe("active");
+  });
+
+  it("watches all topics together, replays by global cursor and continues with deltas", async () => {
+    const running = await start();
+    const first = running.conversations.create().id;
+    const second = running.conversations.create().id;
+    running.conversations.send(first, "First");
+    running.conversations.send(second, "Second");
+    const { socket, received } = await pageSocket(running);
+    socket.send(JSON.stringify({ type: "watch.stream" }));
+    await until(() => received.some(({ type }) => type === "stream.page"), socket);
+    expect(received.find(({ type }) => type === "stream.page")).toMatchObject({
+      entries: [{ position: 1, topic: { id: first, title: "First" } }, { position: 2, topic: { id: second, title: "Second" } }],
+    });
+    const brain = running.conversations.attach({ send: () => undefined, close: () => undefined });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    for (const conversation of [second, first]) {
+      const turn = `turn-${conversation}`;
+      brain.receive({ type: "turn.started", conversation, turn, provider: "claude", model: "model", inputs: [] });
+      brain.receive({ type: "text", conversation, turn, block: "reply", delta: "Part one. " });
+      brain.receive({ type: "text", conversation, turn, block: "reply", delta: "Part two." });
+    }
+    await until(() => received.filter(({ type }) => type === "delta").length === 2, socket);
+    const live = received.filter((message) => message.type === "stream.entry");
+    expect(live.map(({ position, topic }) => [position, topic.id])).toEqual([[3, second], [4, first]]);
+    expect(received.filter((message) => message.type === "delta").map(({ conversation }) => conversation)).toEqual([second, first]);
+
+    const resumed = await pageSocket(running);
+    resumed.socket.send(JSON.stringify({ type: "watch.stream", after: 3 }));
+    await until(() => resumed.received.some(({ type }) => type === "stream.entry"), resumed.socket);
+    expect(resumed.received.filter((message) => message.type === "stream.entry")).toMatchObject([
+      { position: 4, topic: { id: first }, entry: { text: "Part one. Part two." } },
+    ]);
+    expect(resumed.received.find(({ type }) => type === "turn")).toMatchObject({ turn: { conversation: first } });
+  });
+
+  it("persists topic ownership for old tickets and repairs, and routes new-model notices into one System topic", async () => {
+    const running = await start();
+    const topic = running.conversations.create();
+    const original = openTicket(running, topic.id, "owner/project");
+    const unrelated = running.conversations.create();
+    const conflicting = openTicket(running, topic.id, "owner/other");
+    expect(original.conversation).toBe(topic.id);
+    expect(conflicting.conversation).not.toBe(topic.id);
+    expect(running.conversations.get(conflicting.conversation ?? "")?.repository).toBe("owner/other");
+    expect(running.conversations.tell(original.id, "Ticket notice", "[hub] Ticket notice")).toBe(topic.id);
+    expect(running.conversations.entries(unrelated.id)).toEqual([]);
+
+    running.database.connection.prepare("UPDATE tickets SET conversation_id = NULL WHERE id = ?").run(original.id);
+    const assigned = running.conversations.tell(original.id, "Legacy notice", "[hub] Legacy notice");
+    expect(running.tickets.get(original.id)?.conversation).toBe(assigned);
+    expect(running.conversations.get(assigned)).toMatchObject({ title: original.title.zh, repository: original.repository });
+    expect(running.conversations.tell(original.id, "Another notice", "[hub] Another notice")).toBe(assigned);
+    running.tickets.stop(original.id, { en: "Stopped", zh: "停止" });
+    expect(running.tickets.repair(original.id, "owner", "Carry on")).toMatchObject({ ok: true, ticket: { conversation: assigned } });
+
+    const report = (model: string) => MachineReport.parse({
+      hostname: "pc", platform: "darwin", release: "", arch: "", user: "", slots: { total: 1, free: 1 },
+      programs: [{ id: "codex", installed: true, path: null, version: null, models: [{ id: model, efforts: ["high"] }], source: "program", problem: null }],
+    });
+    const runnerFor = (name: string, model: string) => {
+      running.machines.add({ name, accessClientId: `${name}.access` });
+      const machine = running.machines.get(name);
+      if (machine === undefined) {
+        throw new Error("Missing test machine");
+      }
+      running.runners.attach(machine, { send: () => undefined, close: () => undefined }).receive({
+        type: "hello", protocol: protocolVersion, machine: report(model), works: [],
+      });
+    };
+    runnerFor("pc", "old");
+    expect(running.conversations.list().some(({ title }) => title === "System")).toBe(false);
+    runnerFor("mac", "new");
+    runnerFor("studio", "newer");
+    const systems = running.conversations.list().filter(({ title }) => title === "System");
+    expect(systems).toMatchObject([{ repository: null }]);
+    expect(systems).toHaveLength(1);
+    expect(running.conversations.entries(systems[0]?.id ?? "")).toMatchObject([
+      { kind: "notice", text: expect.stringContaining("new") },
+      { kind: "notice", text: expect.stringContaining("newer") },
+    ]);
   });
 });

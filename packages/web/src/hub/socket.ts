@@ -34,6 +34,7 @@ export interface HubSocketOptions {
   readonly create: (url: string, events: SocketEvents) => SocketLike;
   readonly schedule: Schedule;
   readonly resume: (conversation: string) => number;
+  readonly resumeStream?: () => number | undefined;
   readonly resumeTicket?: (ticket: number) => number;
   readonly onMessage: (message: ServerMessage) => void;
   readonly onStatus: (status: SocketStatus) => void;
@@ -45,6 +46,7 @@ export class HubSocket {
   private attempt = 0;
   private cancelRetry: (() => void) | undefined;
   private watching: string | null = null;
+  private watchingStream = false;
   private watchingTicket: number | null = null;
   private running = false;
 
@@ -93,6 +95,27 @@ export class HubSocket {
     }
   }
 
+  watchStream(watching: boolean): void {
+    if (watching === this.watchingStream) {
+      return;
+    }
+    this.watchingStream = watching;
+    if (watching) {
+      this.followStream();
+    } else {
+      this.send({ type: "unwatch.stream" });
+    }
+  }
+
+  readStream(before: number): void {
+    this.send({ type: "read.stream", before });
+  }
+
+  private followStream(): void {
+    const after = this.options.resumeStream?.();
+    this.send({ type: "watch.stream", ...(after === undefined ? {} : { after }) });
+  }
+
   private ticketAfter(ticket: number): number {
     return this.options.resumeTicket?.(ticket) ?? 0;
   }
@@ -136,6 +159,9 @@ export class HubSocket {
         }
         this.attempt = 0;
         this.options.onStatus("open");
+        if (this.watchingStream) {
+          this.followStream();
+        }
         if (this.watching !== null) {
           this.send({ type: "watch", conversation: this.watching, after: this.options.resume(this.watching) });
         }

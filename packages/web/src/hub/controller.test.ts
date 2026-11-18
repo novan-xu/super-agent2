@@ -6,7 +6,7 @@ import { useOf } from "../live/waiting.js";
 import { PageController } from "./controller.js";
 import type { SocketEvents } from "./socket.js";
 
-const conversation: Conversation = { id: "c9", title: "", state: "idle", provider: null, createdAt: 1, updatedAt: 1 };
+const conversation: Conversation = { id: "c9", title: "", state: "idle", topicState: "active", repository: null, provider: null, createdAt: 1, updatedAt: 1 };
 const entry: OwnerEntry = { id: "o1", conversation: "c9", seq: 1, at: 2, kind: "owner", text: "你好", attachments: [], taken: false };
 
 function record(id: string): CommandRecord {
@@ -26,6 +26,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
     create: () => answer("create", { conversation }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
+    sendToStream: (text) => answer(`stream ${text}`, { entry, topic: conversation, position: 1 }),
     interrupt: (id) => answer(`interrupt ${id}`, { conversation }),
     release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),
     refuse: (id, fingerprint) => answer(`refuse ${id} ${fingerprint}`, { command: record(id) }),
@@ -70,13 +71,22 @@ function controller(hub: HubApi, failures: Failure[] = []): PageController {
 }
 
 describe("PageController", () => {
-  it("opens a conversation for the first message of a new one", async () => {
+  it("sends to the stream without opening a topic", async () => {
     const hub = api();
     const page = controller(hub);
-    const created: string[] = [];
-    page.open(null);
-    expect(await page.send("你好", (id) => created.push(id))).toBe(true);
-    expect(created).toEqual(["c9"]);
+    page.open(null, true);
+    expect(await page.send("你好")).toBe(true);
+    expect(hub.calls).toEqual(["stream 你好"]);
+    expect(page.store.getState().current).toBeNull();
+  });
+
+  it("opens an explicitly created topic and sends directly to it", async () => {
+    const hub = api();
+    const page = controller(hub);
+    const created = await page.createTopic();
+    expect(created).toBe("c9");
+    page.open(created ?? null);
+    expect(await page.send("你好")).toBe(true);
     expect(hub.calls).toEqual(["create", "detail c9", "send c9 你好"]);
     expect(page.store.getState().list.map((item) => item.id)).toEqual(["c9"]);
     expect(page.store.getState().current?.entries).toEqual([entry]);
@@ -86,7 +96,7 @@ describe("PageController", () => {
     const failures: Failure[] = [];
     const page = controller(api({ send: () => Promise.resolve({ ok: false, error: "network" }) }), failures);
     page.open("c9");
-    expect(await page.send("你好", () => undefined)).toBe(false);
+    expect(await page.send("你好")).toBe(false);
     expect(failures).toEqual(["network"]);
     expect(page.store.getState().current?.entries).toEqual([]);
   });

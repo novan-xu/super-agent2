@@ -34,6 +34,7 @@ const sandbox = "novan-xu/super-agent-sandbox";
 function setUp(gate?: CommandGate): void {
   const clock = new TestClock();
   database = openDatabase({ dataDir, clock });
+  database.connection.prepare("INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES ('c-1', 'Code', 'idle', ?, ?)").run(clock.now(), clock.now());
   github = fakeGitHub();
   github.repositories.set(sandbox, []);
   github.repositories.set("nuofan-island/notes", []);

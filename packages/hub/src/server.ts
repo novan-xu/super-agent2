@@ -18,7 +18,12 @@ import {
   type ConversationList,
   type ConversationResponse,
   type EntryResponse,
-  OwnerMessage,
+  type StreamEntry,
+  StreamMessage,
+  type StreamPage,
+  streamLargestPage,
+  streamPageSize,
+  streamPath,
   type CommandList,
   type CommandResponse,
   type Health,
@@ -51,6 +56,7 @@ import {
   positionOfCursor,
   protocolVersion,
   releaseVersionHeader,
+  RepositoryName,
   runnerInstallPath,
   runnerLinkPath,
   runnerReleasePath,
@@ -218,6 +224,8 @@ type Body =
   | ConversationList
   | ConversationResponse
   | ConversationDetail
+  | StreamEntry
+  | StreamPage
   | EntryResponse
   | WaitingList
   | PushKey
@@ -332,12 +340,12 @@ function parseJson<Schema extends z.ZodType>(text: string | undefined, schema: S
 
 const answerStatus: Readonly<Record<AnswerError, 403 | 404 | 409>> = { forbidden: 403, not_found: 404, conflict: 409 };
 
-function parseOwnerMessage(text: string | undefined): OwnerMessage | undefined {
+function parseOwnerMessage(text: string | undefined): StreamMessage | undefined {
   if (text === undefined) {
     return undefined;
   }
   try {
-    const parsed = OwnerMessage.safeParse(JSON.parse(text));
+    const parsed = StreamMessage.safeParse(JSON.parse(text));
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
@@ -560,7 +568,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(commandsPath) && (await serveCommands(request, response, path, method))) {
       return;
     }
-    if (path.startsWith(conversationsPath) && (await serveConversations(request, response, path, method))) {
+    if ((path === streamPath || path.startsWith(conversationsPath)) && (await serveConversations(request, response, path, method))) {
       return;
     }
     if (
@@ -1036,6 +1044,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return false;
     }
     const url = new URL(request.url ?? "/", "http://hub");
+    if (path === streamPath && method === "GET") {
+      const before = integerParameter(url, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+      const limit = integerParameter(url, "limit", streamPageSize, streamLargestPage);
+      const filter = url.searchParams.get("repository");
+      const repository = filter === null ? undefined : filter === "" ? null : filter;
+      if (before === undefined || before === 0 || limit === undefined || limit === 0 || (typeof repository === "string" && !RepositoryName.safeParse(repository).success)) {
+        sendJson(response, 400, { error: "bad_request" });
+      } else {
+        sendJson(response, 200, conversations.stream(before, limit, repository));
+      }
+      return true;
+    }
     if (path === conversationsPath && method === "GET") {
       const limit = integerParameter(url, "limit", defaultListLimit, maximumListLimit);
       if (limit === undefined) {
@@ -1055,11 +1075,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     const match = conversationRoute.exec(path);
     const id = match?.[1];
-    if (match === null || id === undefined || conversations.get(id) === undefined) {
+    if (path !== streamPath && (id === undefined || conversations.get(id) === undefined)) {
       return false;
     }
-    const action = match[2];
-    if (action === undefined && method === "GET") {
+    const action = match?.[2];
+    if (id !== undefined && action === undefined && method === "GET") {
       const detail = conversations.detail(id);
       if (detail === undefined) {
         return false;
@@ -1067,7 +1087,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, detail);
       return true;
     }
-    if (action === "/messages" && method === "POST") {
+    if ((path === streamPath || action === "/messages") && method === "POST") {
       if (!isJson(request)) {
         request.resume();
         sendJson(response, 415, { error: "unsupported_media_type" });
@@ -1083,14 +1103,22 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 409, { error: "conflict" });
         return true;
       }
-      const entry = conversations.send(id, message.text, chosen.attachments);
-      if (entry === undefined) {
-        return false;
+      if (id === undefined) {
+        const item = conversations.sendToStream(message.topic, message.text, chosen.attachments);
+        if (item === undefined) {
+          return false;
+        }
+        sendJson(response, 202, item);
+      } else {
+        const entry = conversations.send(id, message.text, chosen.attachments);
+        if (entry === undefined) {
+          return false;
+        }
+        sendJson(response, 202, { entry });
       }
-      sendJson(response, 202, { entry });
       return true;
     }
-    if (action === "/interrupt" && method === "POST") {
+    if (id !== undefined && action === "/interrupt" && method === "POST") {
       request.resume();
       if (!isJson(request)) {
         sendJson(response, 415, { error: "unsupported_media_type" });
@@ -1365,6 +1393,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const followed = new Set<string>();
     const watched = new Set<string>();
     const watchedTickets = new Set<number>();
+    let watchingStream = false;
     const send = (message: ServerMessage) => {
       if (client.readyState === client.OPEN) {
         client.send(JSON.stringify(message));
@@ -1377,8 +1406,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
     });
     const unsubscribeConversations =
       options.conversations?.subscribe((event) => {
-        const conversation = event.type === "entry" ? event.entry.conversation : event.type === "delta" ? event.conversation : undefined;
-        if (conversation === undefined || watched.has(conversation)) {
+        if (event.type === "entry") {
+          if (watched.has(event.topic.id)) {
+            send({ type: "entry", entry: event.entry });
+          }
+          if (watchingStream) {
+            send({ ...event, type: "stream.entry" });
+          }
+        } else if (event.type !== "delta" || watchingStream || watched.has(event.conversation)) {
           send(event);
         }
       }) ?? (() => undefined);
@@ -1416,6 +1451,34 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       if (message.type === "unwatch") {
         watched.delete(message.conversation);
+        return;
+      }
+      if (message.type === "watch.stream") {
+        const conversations = options.conversations;
+        if (conversations !== undefined) {
+          watchingStream = true;
+          if (message.after === undefined) {
+            send({ type: "stream.page", ...conversations.stream() });
+          } else {
+            const { entries, turns } = conversations.streamAfter(message.after);
+            for (const turn of turns) {
+              send({ type: "turn", turn });
+            }
+            for (const item of entries) {
+              send({ type: "stream.entry", ...item });
+            }
+          }
+        }
+        return;
+      }
+      if (message.type === "unwatch.stream") {
+        watchingStream = false;
+        return;
+      }
+      if (message.type === "read.stream") {
+        if (watchingStream && options.conversations !== undefined) {
+          send({ type: "stream.page", ...options.conversations.stream(message.before) });
+        }
         return;
       }
       if (message.type === "watch.ticket") {

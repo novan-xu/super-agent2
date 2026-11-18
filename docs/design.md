@@ -87,6 +87,9 @@ the hub.
   answers as they arrive from parallel topics. A topic view shows the messages and work for that topic alone.
 - Each topic has its own long-lived program session. It answers one turn at a time, independently of other topics.
   Topics share the hub's confirmed memory, tickets, decisions and attachments.
+- Each topic belongs to one project, identified by its GitHub repository as `owner/name`. A topic without a repository
+  belongs to 日常. Confirmed memory is shared across projects. The stream can be read across all projects or filtered
+  to one repository or to topics without a repository.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - The brain gives each topic a title. The owner can rename, merge and archive topics. A merge combines the histories
@@ -95,6 +98,8 @@ the hub.
 - Archived topics stay in the stream and searchable history. The router leaves them out of automatic matching.
   A direct message, quoted reply, handover or ticket notice to an archived topic makes it active again.
 - Each existing conversation becomes a topic, keeping its history and saved program session IDs.
+  It takes a repository if every ticket linked to it belongs to that repository. Existing ticket links are preserved,
+  so a topic with tickets from different repositories or with a repository-free ticket stays in 日常.
 
 ### Routing
 
@@ -517,7 +522,7 @@ are.
 - Ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic
   and appear in the main stream. They skip the router. The first event for an older ticket without a topic creates
   one named after the ticket. Later events use that same topic.
-- Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use.
+- Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use in 日常.
   New-model notices link to Settings → Models and tell the brain the reported efforts, machines and current row.
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and

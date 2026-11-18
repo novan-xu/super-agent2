@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./commands.js";
-import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, TurnUpdate, UnwatchConversation, WatchConversation } from "./conversations.js";
+import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, ReadStreamPage, StreamEntryUpdate, StreamPageUpdate, TurnUpdate, UnwatchConversation, UnwatchStream, WatchConversation, WatchStream } from "./conversations.js";
 import { ProtocolVersion } from "./version.js";
 import { MemoriesUpdate } from "./memory.js";
 import { SettingsUpdate } from "./settings.js";
@@ -68,6 +68,8 @@ export const ServerMessage = z.discriminatedUnion("type", [
   TurnUpdate,
   EntryUpdate,
   EntryDelta,
+  StreamEntryUpdate,
+  StreamPageUpdate,
   BrainUpdate,
   WaitingUpdate,
   TicketsUpdate,
@@ -79,5 +81,5 @@ export const ServerMessage = z.discriminatedUnion("type", [
 
 export type ServerMessage = z.infer<typeof ServerMessage>;
 
-export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand, WatchConversation, UnwatchConversation, WatchTicket, UnwatchTicket]);
+export const ClientMessage = z.discriminatedUnion("type", [FollowCommand, UnfollowCommand, WatchConversation, UnwatchConversation, WatchStream, UnwatchStream, ReadStreamPage, WatchTicket, UnwatchTicket]);
 export type ClientMessage = z.infer<typeof ClientMessage>;

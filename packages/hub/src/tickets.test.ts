@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
 import { type HistoryPosition, positionOfCursor, type Ticket, ticketKinds, ticketStates } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { storeTopic } from "./conversations.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { TestClock } from "./testing/access.js";
 import { createTicketService, type TicketToOpen } from "./tickets.js";
@@ -47,10 +48,12 @@ function request(number = 7, overrides: Partial<TicketToOpen> = {}): TicketToOpe
 
 describe("tickets", () => {
   it("opens a pending ticket with its issue, records that it was filed, and announces it", () => {
-    const tickets = createTicketService({ database: open(), clock });
+    const database = open();
+    const tickets = createTicketService({ database, clock });
+    const conversation = storeTopic(database, clock.now(), "Code");
     const seen: Ticket[] = [];
     tickets.subscribe((ticket) => seen.push(ticket));
-    const ticket = tickets.open(request(7, { difficulty: "standard", platform: "any", conversation: "c-1" }));
+    const ticket = tickets.open(request(7, { difficulty: "standard", platform: "any", conversation }));
     expect(ticket).toMatchObject({
       repository,
       state: "pending",
@@ -69,7 +72,7 @@ describe("tickets", () => {
       stuck: null,
       waitsFor: [],
       stopReason: null,
-      conversation: "c-1",
+      conversation,
     });
     expect(ticket.issues.map((issue) => issue.number)).toEqual([7]);
     expect(tickets.moves(ticket.id)).toEqual([{ ticket: ticket.id, seq: 1, from: null, to: "pending", reason: null, at: clock.now() }]);

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ConversationId } from "./conversations.js";
+import { RepositoryName } from "./repositories.js";
 import { TicketDecision, TicketReviewCount } from "./decisions.js";
 import { GeneratedText } from "./generated.js";
 import { ProgramId } from "./runner.js";
@@ -72,11 +73,7 @@ export function canMoveTicket(form: TicketForm, from: TicketState, to: TicketSta
   return ticketMoves[from].includes(to) && !statesOutsideForm[form].includes(to);
 }
 
-export const RepositoryName = z
-  .string()
-  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/)
-  .refine((name) => !name.endsWith("/.") && !name.endsWith("/.."), { message: "is not a repository name" });
-export type RepositoryName = z.infer<typeof RepositoryName>;
+export { RepositoryName } from "./repositories.js";
 
 export const IssueNumber = z.number().int().positive();
 

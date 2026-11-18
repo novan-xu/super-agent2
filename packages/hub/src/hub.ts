@@ -136,7 +136,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     stop: (ticket) => work?.stop(ticket),
     reassign: (ticket) => work?.reassign(ticket),
   };
-  const tickets = createTicketService({ database, clock, work: ticketWork });
+  const tickets = createTicketService({ database, clock, work: ticketWork, topicChanged: (id) => conversations.announce(id) });
   const repositories = createRepositoryAccounts(database, clock, config.sourceRepository);
   const accountOf = (repository: string) => repositories.accountOf(repository);
   let settingsChanged = () => undefined as void;
@@ -179,7 +179,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    conversations = createConversationService({ database, clock, commands, memory: memories, order: () => storedOrder() });
+    conversations = createConversationService({ database, clock, commands, tickets, memory: memories, order: () => storedOrder() });
     const told = conversations;
     const modelDiscovery = createModelDiscovery(database, defaults, (notice, prompt) => told.tell(null, notice, prompt));
     modelDiscovery.scan(runners.statuses());
@@ -198,12 +198,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         attachments,
         defaults,
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
-        tell: (conversation, notice, prompt) => {
-          told.tell(conversation, notice, prompt);
-        },
-        deliver: (conversation, delivery) => {
-          told.deliver(conversation, delivery);
-        },
+        tell: told.tell,
+        deliver: told.deliver,
         report: (report) => loop?.failed(report),
         accountOf,
       });
@@ -215,9 +211,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       verify,
       ownerEmail: config.ownerEmail,
       defaults,
-      tell: (conversation, notice, prompt) => {
-        told.tell(conversation, notice, prompt);
-      },
+      tell: told.tell,
       work: ticketWork,
     });
     const worker = work;
@@ -230,9 +224,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
       ...(options.verificationTicker === undefined ? {} : { ticker: options.verificationTicker }),
       ...(options.verificationPollMilliseconds === undefined ? {} : { pollMilliseconds: options.verificationPollMilliseconds }),
-      tell: (conversation, notice, prompt) => {
-        told.tell(conversation, notice, prompt);
-      },
+      tell: told.tell,
       report: (report) => loop?.failed(report),
       accountOf,
       ...(config.firstPipelineAllowanceMinutes === undefined ? {} : { firstAllowanceMinutes: config.firstPipelineAllowanceMinutes }),
@@ -255,18 +247,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       tickets,
       work: () => worker,
       verification: () => checked,
-      tell: (conversation, notice, prompt) => {
-        told.tell(conversation, notice, prompt);
-      },
+      tell: told.tell,
       verify,
       ownerEmail: config.ownerEmail,
     });
     loop = failures;
     reviews = createDecisionReviews({
       tickets,
-      tell: (conversation, notice, prompt) => {
-        told.tell(conversation, notice, prompt);
-      },
+      tell: told.tell,
     });
     taskTickets = createTaskTickets({
       database,
@@ -278,7 +266,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       marked: (ticket, _deployed, notes) => {
         if (notes.length > 0) {
           told.tell(
-            ticket.conversation,
+            ticket.id,
             text("notice.deploymentUnclear", { ticket: ticket.id }),
             [`[hub] Task ticket ${ticket.id} (${ticket.title.en}) deployed ${ticket.repository ?? ""}, but not every merged ticket could be checked against what it deployed:`, ...notes, "Those tickets stay unmarked; if they are in fact deployed, record it with report_deployment so what waits for them begins."].join("\n"),
           );

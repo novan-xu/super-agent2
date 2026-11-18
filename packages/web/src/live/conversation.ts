@@ -18,7 +18,7 @@ function newer(current: Conversation | undefined, incoming: Conversation, ties: 
   return current;
 }
 
-function mergeTurn(turns: readonly Turn[], incoming: Turn): readonly Turn[] {
+export function mergeTurn(turns: readonly Turn[], incoming: Turn): readonly Turn[] {
   const index = turns.findIndex((turn) => turn.id === incoming.id);
   if (index === -1) {
     return [...turns, incoming].sort((a, b) => a.startedAt - b.startedAt);
@@ -58,7 +58,7 @@ function placeEntry(entries: readonly ConversationEntry[], incoming: Conversatio
   return [...entries.slice(0, position), incoming, ...entries.slice(position)];
 }
 
-function appendTo(entry: ConversationEntry, field: "text" | "output", text: string): ConversationEntry | undefined {
+export function appendTo(entry: ConversationEntry, field: "text" | "output", text: string): ConversationEntry | undefined {
   if (field === "text" && entry.kind === "text") {
     return { ...entry, text: entry.text + text };
   }
@@ -131,7 +131,7 @@ export function receiveOwn(state: ConversationState, entry: ConversationEntry): 
   return entries === state.entries ? state : { ...state, entries };
 }
 
-function unsettled(entry: ConversationEntry, finished: ReadonlySet<string>): boolean {
+export function unsettled(entry: ConversationEntry, finished: ReadonlySet<string>): boolean {
   switch (entry.kind) {
     case "owner":
       return !entry.taken;

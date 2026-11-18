@@ -27,7 +27,7 @@ let defaults: StartDefaults;
 let work: WorkService;
 let statuses: Map<string, MachineStatus>;
 let order: Provider[] | undefined;
-let told: { readonly conversation: string | null; readonly notice: string; readonly prompt: string }[];
+let told: { readonly ticket: number; readonly notice: string; readonly prompt: string }[];
 let tick: (() => void) | undefined;
 let seqs: Map<string, number>;
 
@@ -93,7 +93,7 @@ beforeEach(() => {
         tick = undefined;
       };
     },
-    tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
+    tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }),
     branchSuffix: () => "beef",
   });
   bound = work;
@@ -308,7 +308,7 @@ describe("a worker whose program becomes unavailable", () => {
 
   it("does nothing special when the hub has no start defaults to route with: the attempt fails as before", () => {
     work.close();
-    work = createWorkService({ database, clock, tickets, runners, credentials: testCredentials, tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }), branchSuffix: () => "beef" });
+    work = createWorkService({ database, clock, tickets, runners, credentials: testCredentials, tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }), branchSuffix: () => "beef" });
     machine("pc", "win32", complex);
     const ticket = working();
     work.begin(ticket);

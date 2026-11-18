@@ -4,7 +4,7 @@ import { mergeConversations, upsertConversation } from "./list.js";
 import { reconnectDelay } from "./reconnect.js";
 
 function conversation(id: string, updatedAt: number, title = id): Conversation {
-  return { id, title, state: "idle", provider: null, createdAt: 0, updatedAt };
+  return { id, title, state: "idle", topicState: "active", repository: null, provider: null, createdAt: 0, updatedAt };
 }
 
 describe("upsertConversation", () => {

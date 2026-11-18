@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Attachment, AttachmentId } from "./attachments.js";
 import { GeneratedText } from "./generated.js";
+import { RepositoryName } from "./repositories.js";
 
 export const providers = ["gpt", "claude", "deepseek"] as const;
 export const Provider = z.enum(providers);
@@ -15,6 +16,8 @@ export const Conversation = z.object({
   id: ConversationId,
   title: z.string(),
   state: ConversationState,
+  topicState: z.enum(["active", "archived"]).default("active"),
+  repository: RepositoryName.nullable().default(null),
   provider: Provider.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -122,6 +125,36 @@ export const OwnerMessage = z
   })
   .refine((message) => message.text !== "" || message.attachments.length > 0, { message: "needs text or an attachment" });
 export type OwnerMessage = z.infer<typeof OwnerMessage>;
+
+export const StreamMessage = OwnerMessage.safeExtend({ topic: ConversationId.optional() });
+export type StreamMessage = z.infer<typeof StreamMessage>;
+
+export const StreamEntry = z.object({
+  position: z.number().int().positive(),
+  topic: Conversation.pick({ id: true, title: true, repository: true }),
+  entry: ConversationEntry,
+});
+export type StreamEntry = z.infer<typeof StreamEntry>;
+
+export const streamPath = "/api/stream";
+export const streamPageSize = 50;
+export const streamLargestPage = 500;
+export const StreamPage = z.object({
+  entries: z.array(StreamEntry),
+  turns: z.array(Turn),
+  before: z.number().int().positive().nullable(),
+});
+export type StreamPage = z.infer<typeof StreamPage>;
+
+export const StreamPageUpdate = StreamPage.extend({ type: z.literal("stream.page") });
+export const StreamEntryUpdate = StreamEntry.extend({ type: z.literal("stream.entry") });
+
+export const WatchStream = z.object({
+  type: z.literal("watch.stream"),
+  after: z.number().int().nonnegative().optional(),
+});
+export const UnwatchStream = z.object({ type: z.literal("unwatch.stream") });
+export const ReadStreamPage = z.object({ type: z.literal("read.stream"), before: z.number().int().positive() });
 
 export const EntryResponse = z.object({
   entry: ConversationEntry,

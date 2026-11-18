@@ -25,6 +25,9 @@ import {
   type OwnerEntry,
   Provider,
   protocolVersion,
+  type StreamEntry,
+  type StreamPage,
+  streamPageSize,
   Turn,
   type TurnOutcome,
   type TurnUpdate,
@@ -34,8 +37,9 @@ import type { Clock } from "./clock.js";
 import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { commandReport } from "./reports.js";
+import type { TicketService } from "./tickets.js";
 
-export type ConversationEvent = ConversationUpdate | TurnUpdate | EntryUpdate | EntryDelta | BrainUpdate;
+export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate;
 
 export type ConversationListener = (event: ConversationEvent) => void;
 
@@ -53,13 +57,17 @@ export interface ConversationService {
   create(): Conversation;
   get(id: string): Conversation | undefined;
   list(limit?: number): Conversation[];
+  announce(id: string): void;
   detail(id: string): ConversationDetail | undefined;
   entries(id: string, after?: number): ConversationEntry[];
+  stream(before?: number, limit?: number, repository?: string | null): StreamPage;
+  streamAfter(after: number): StreamPage;
   send(id: string, message: string, attachments?: readonly Attachment[]): OwnerEntry | undefined;
+  sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[]): StreamEntry | undefined;
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
-  tell(conversation: string | null, notice: string, prompt: string): string;
-  deliver(conversation: string | null, delivery: Delivery): string;
+  tell(ticket: number | null, notice: string, prompt: string): string;
+  deliver(delivery: Delivery): string;
   linked(): boolean;
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
@@ -82,6 +90,7 @@ export interface ConversationServiceOptions {
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly commands: CommandService;
+  readonly tickets: TicketService;
   readonly memory?: MemoryBriefing;
   readonly order?: () => readonly Provider[] | undefined;
 }
@@ -89,6 +98,14 @@ export interface ConversationServiceOptions {
 export interface MemoryBriefing {
   brief(conversation: string, seen: number | null): MemoryBrief | null;
   revision(): number;
+}
+
+export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean } = {}): string {
+  const id = randomUUID();
+  database.connection
+    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository) VALUES (?, ?, 'idle', ?, ?, ?, ?)")
+    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null);
+  return id;
 }
 
 export const providerNames: Readonly<Record<Provider, string>> = { gpt: "GPT", claude: "Claude", deepseek: "DeepSeek" };
@@ -102,6 +119,8 @@ const ConversationRow = z.object({
   id: z.string(),
   title: z.string(),
   state: z.string(),
+  topic_state: z.string(),
+  repository: z.string().nullable(),
   provider: z.string().nullable(),
   created_at: z.number().int(),
   updated_at: z.number().int(),
@@ -150,6 +169,7 @@ const SessionRow = z.object({ session: z.string().nullable(), through: z.number(
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int() });
+const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable() });
 
 function toConversation(row: unknown): Conversation {
   const value = ConversationRow.parse(row);
@@ -157,10 +177,17 @@ function toConversation(row: unknown): Conversation {
     id: value.id,
     title: value.title,
     state: value.state,
+    topicState: value.topic_state,
+    repository: value.repository,
     provider: value.provider,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
   });
+}
+
+function toStreamEntry(row: unknown): StreamEntry {
+  const value = StreamRow.parse(row);
+  return { position: value.stream_seq, topic: { id: value.conversation_id, title: value.topic_title, repository: value.repository }, entry: toEntry(value) };
 }
 
 function toTurn(row: unknown): Turn {
@@ -226,9 +253,10 @@ function deliveryHistory(entry: DeliveryEntry): string {
   return `[hub] The result of task ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
-function heldPrompt(command: CommandRecord, output: string): string {
+function heldPrompt(command: CommandRecord, output: string, conversation: string): string {
   return [
     `[hub] The command ${command.id} that was held for the owner's confirmation has an outcome.`,
+    `The command was originally requested in topic ${conversation}.`,
     commandReport(command, output),
     "Tell the owner what happened and carry on from there.",
   ].join("\n");
@@ -236,7 +264,7 @@ function heldPrompt(command: CommandRecord, output: string): string {
 
 export function createConversationService(options: ConversationServiceOptions): ConversationService {
   const { connection } = options.database;
-  const { clock, commands } = options;
+  const { clock, commands, tickets } = options;
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
   let brainProviders: BrainProviders | undefined;
@@ -251,11 +279,15 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
-  const insertConversation = connection.prepare(
-    "INSERT INTO conversations (id, title, state, provider, created_at, updated_at) VALUES (?, '', 'idle', NULL, ?, ?)",
-  );
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
   const selectConversations = connection.prepare("SELECT * FROM conversations ORDER BY updated_at DESC, rowid DESC LIMIT ?");
+  const selectActive = connection.prepare(
+    `SELECT * FROM conversations AS c WHERE topic_state = 'active'
+     ORDER BY updated_at DESC, (
+       SELECT max(stream_seq) FROM conversation_entries WHERE conversation_id = c.id
+     ) DESC, c.rowid DESC LIMIT 1`,
+  );
+  const selectSystem = connection.prepare("SELECT * FROM conversations WHERE system = 1");
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
   const selectTurns = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? ORDER BY started_at, rowid");
   const selectRunningTurns = connection.prepare("SELECT * FROM turns WHERE state = 'running' ORDER BY rowid");
@@ -272,8 +304,14 @@ export function createConversationService(options: ConversationServiceOptions): 
   const selectWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE taken = 0 ORDER BY created_at, rowid");
   const selectLastSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ?");
   const insertEntry = connection.prepare(
-    "INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
+  const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
+  const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
+  const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
+  const selectStreamProject = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? AND c.repository IS ? COLLATE NOCASE ORDER BY e.stream_seq DESC LIMIT ?`);
+  const selectStreamAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ORDER BY e.stream_seq`);
   const updateBody = connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?");
   const markTaken = connection.prepare(
     "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE id = ? AND conversation_id = ? AND taken = 0",
@@ -315,19 +353,36 @@ export function createConversationService(options: ConversationServiceOptions): 
     return row === undefined ? undefined : toTurn(row);
   };
 
+  const streamTurns = (entries: readonly StreamEntry[]): Turn[] => {
+    const turns = new Map<string, Turn>();
+    for (const { entry } of entries) {
+      if (entry.kind !== "owner" && entry.turn !== null && !turns.has(entry.turn)) {
+        const turn = getTurn(entry.turn);
+        if (turn !== undefined) {
+          turns.set(turn.id, turn);
+        }
+      }
+    }
+    return [...turns.values()];
+  };
+
   const getEntry = (id: string): ConversationEntry | undefined => {
     const row = selectEntry.get(id);
     return row === undefined ? undefined : toEntry(EntryRow.parse(row));
+  };
+
+  const announce = (id: string) => {
+    const conversation = get(id);
+    if (conversation !== undefined) {
+      emit({ type: "conversation", conversation });
+    }
   };
 
   const updateConversation = (id: string, fields: Readonly<Record<string, string | number | null>>) => {
     const names = Object.keys(fields);
     const assignments = [...names.map((name) => `${name} = ?`), "updated_at = ?"].join(", ");
     connection.prepare(`UPDATE conversations SET ${assignments} WHERE id = ?`).run(...names.map((name) => fields[name] ?? null), clock.now(), id);
-    const conversation = get(id);
-    if (conversation !== undefined) {
-      emit({ type: "conversation", conversation });
-    }
+    announce(id);
   };
 
   const emitTurn = (id: string) => {
@@ -338,9 +393,9 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const emitEntry = (id: string) => {
-    const entry = getEntry(id);
-    if (entry !== undefined) {
-      emit({ type: "entry", entry });
+    const row = selectStreamEntry.get(id);
+    if (row !== undefined) {
+      emit({ type: "entry", ...toStreamEntry(row) });
     }
   };
 
@@ -652,18 +707,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       .output(command.id)
       .map((chunk) => chunk.data)
       .join("");
-    const id = addEntry({
-      conversation: value.conversation_id,
-      kind: "notice",
-      turn: null,
-      body: { text: text("notice.heldOutcome", { state: text(`command.state.${command.state}`), command: command.command }) },
-      prompt: heldPrompt(command, output),
-    });
-    const stored = selectEntry.get(id);
-    if (stored !== undefined) {
-      deliver(EntryRow.parse(stored));
-    }
-    updateConversation(value.conversation_id, {});
+    tell(null, text("notice.heldOutcome", { state: text(`command.state.${command.state}`), command: command.command }), heldPrompt(command, output, value.conversation_id));
   };
 
   const unsubscribeCommands = commands.subscribe((event) => {
@@ -672,10 +716,8 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   });
 
-  const create = (): Conversation => {
-    const id = randomUUID();
-    const now = clock.now();
-    insertConversation.run(id, now, now);
+  const create = (title = "", system = false): Conversation => {
+    const id = storeTopic(options.database, clock.now(), title, { system });
     const conversation = get(id);
     if (conversation === undefined) {
       throw new Error(`Conversation ${id} was not stored`);
@@ -684,32 +726,50 @@ export function createConversationService(options: ConversationServiceOptions): 
     return conversation;
   };
 
-  const tell = (conversation: string | null, notice: string, prompt: string): string => {
-    const target = (conversation === null ? undefined : get(conversation)) ?? selectConversations.all(1).map(toConversation)[0] ?? create();
-    const id = addEntry({ conversation: target.id, kind: "notice", turn: null, body: { text: notice }, prompt });
+  const noticeTarget = (ticket: number | null): string => {
+    if (ticket === null) {
+      const system = selectSystem.get();
+      return system === undefined ? create("System", true).id : toConversation(system).id;
+    }
+    return tickets.topic(ticket);
+  };
+
+  const postHubEntry = (entry: NewEntry): string => {
+    const id = addEntry(entry);
     const stored = selectEntry.get(id);
+    updateConversation(entry.conversation, { topic_state: "active" });
     if (stored !== undefined) {
       deliver(EntryRow.parse(stored));
     }
-    updateConversation(target.id, {});
-    return target.id;
+    return entry.conversation;
   };
 
-  const deliverResult = (conversation: string | null, delivery: Delivery): string => {
-    const target = (conversation === null ? undefined : get(conversation)) ?? selectConversations.all(1).map(toConversation)[0] ?? create();
-    const id = addEntry({
-      conversation: target.id,
+  function tell(ticket: number | null, notice: string, prompt: string): string {
+    return postHubEntry({ conversation: noticeTarget(ticket), kind: "notice", turn: null, body: { text: notice }, prompt });
+  }
+
+  const deliverResult = (delivery: Delivery): string =>
+    postHubEntry({
+      conversation: noticeTarget(delivery.ticket),
       kind: "delivery",
       turn: null,
       body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, report: delivery.report ?? null, files: delivery.files },
       prompt: delivery.prompt,
     });
-    const stored = selectEntry.get(id);
-    if (stored !== undefined) {
-      deliver(EntryRow.parse(stored));
+
+  const send = (id: string, message: string, attachments: readonly Attachment[] = []): OwnerEntry | undefined => {
+    const conversation = get(id);
+    if (conversation === undefined) {
+      return undefined;
     }
-    updateConversation(target.id, {});
-    return target.id;
+    updateConversation(id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
+    const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message });
+    const row = selectEntry.get(entryId);
+    if (row !== undefined) {
+      deliver(EntryRow.parse(row));
+    }
+    const entry = getEntry(entryId);
+    return entry?.kind === "owner" ? entry : undefined;
   };
 
   return {
@@ -717,6 +777,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     tell,
     deliver: deliverResult,
     get,
+    announce,
     list: (limit = 50) => selectConversations.all(limit).map(toConversation),
     detail: (id) => {
       const conversation = get(id);
@@ -730,19 +791,22 @@ export function createConversationService(options: ConversationServiceOptions): 
       };
     },
     entries: (id, after = 0) => selectEntries.all(id, after, id).map((row) => toEntry(EntryRow.parse(row))),
-    send: (id, message, attachments = []) => {
-      const conversation = get(id);
-      if (conversation === undefined) {
-        return undefined;
-      }
-      const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message });
-      updateConversation(id, conversation.title === "" ? { title: titleOf(message, attachments) } : {});
-      const row = selectEntry.get(entryId);
-      if (row !== undefined) {
-        deliver(EntryRow.parse(row));
-      }
-      const entry = getEntry(entryId);
-      return entry?.kind === "owner" ? entry : undefined;
+    stream: (before = Number.MAX_SAFE_INTEGER, limit = streamPageSize, repository) => {
+      const rows = repository === undefined ? selectStreamPage.all(before, limit + 1) : selectStreamProject.all(before, repository, limit + 1);
+      const entries = rows.slice(0, limit).reverse().map(toStreamEntry);
+      const next = rows.length > limit ? (entries[0]?.position ?? null) : null;
+      return { entries, turns: streamTurns(entries), before: next };
+    },
+    streamAfter: (after) => {
+      const entries = selectStreamAfter.all(after).map(toStreamEntry);
+      return { entries, turns: streamTurns(entries), before: null };
+    },
+    send,
+    sendToStream: (topic, message, attachments) => {
+      const latest = topic === undefined ? selectActive.get() : undefined;
+      const id = topic ?? (latest === undefined ? create().id : toConversation(latest).id);
+      const entry = send(id, message, attachments);
+      return entry === undefined ? undefined : toStreamEntry(selectStreamEntry.get(entry.id));
     },
     interrupt: (id) => {
       const conversation = get(id);

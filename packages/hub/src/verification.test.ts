@@ -15,7 +15,7 @@ const repository = "novan-xu/super-agent-sandbox";
 const twoWorkflows = [".woodpecker/check-macos.yaml", ".woodpecker/check-windows.yaml"];
 
 interface Told {
-  readonly conversation: string | null;
+  readonly ticket: number;
   readonly notice: string;
   readonly prompt: string;
 }
@@ -77,7 +77,7 @@ function open(): void {
       ticks.push(tick);
       return () => undefined;
     },
-    tell: (conversation, notice, prompt) => void told.push({ conversation, notice, prompt }),
+    tell: (ticket, notice, prompt) => void told.push({ ticket, notice, prompt }),
     sendBack: (ticket, note, reason) => {
       sentBack.push({ ticket, note });
       const moved = tickets.move(ticket, "working", reason);
