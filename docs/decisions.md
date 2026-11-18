@@ -2591,3 +2591,32 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   `session/event` hook with `turn/start` and `turn/end`. If a newer dsh fails to load the plugin, it logs the error and
   runs without it, and the adapter falls back to queueing and killing. The brain's image pins dsh 0.2.1-rc.2; a runner
   uses whichever dsh its machine has.
+
+## 2026-11-17 — Credentials are out of the confirmation lock
+
+- **Chosen:** The lock has five forms: `repository-deletion`, `repository-publication`, `default-branch-rewrite`,
+  `data-deletion` and `file-deletion`. `credential-change` is gone, with its command rules (`gh secret`, `gh auth
+  logout`, deleting SSH, GPG and deploy keys, `docker secret rm`, `kubectl delete secret`, `wrangler secret`,
+  `cloudflared tunnel delete`, `woodpecker-cli secret`, `gpg --delete-*`, `security delete-*`, `cmdkey /delete`), its API
+  rules (secrets, keys, tokens, grants, Cloudflare tokens, service tokens and tunnels), the effect rule over credential
+  files with its built-in list of credential paths, `HUB_CREDENTIAL_PATHS` (and `credentialPaths` in the hub's
+  configuration, `deploy/compose.yaml` and the harnesses) and the project `.env` exemption that only softened it. What
+  became dead went with them: the hub no longer reads what a command writes, copies or moves (redirects, `cp`, `mv`,
+  `tee`, `sed -i`, `ssh-keygen`, `openssl`, PowerShell's `Set-Content` and `Out-File` and the rest), only what it
+  deletes, pushes or sends to an API; the Cloudflare API is no longer read at all. This overturns the forms of "How the
+  confirmation lock reads a command" (six forms, and rules over what a command writes or moves), "Project folders and
+  credential paths" (`HUB_CREDENTIAL_PATHS`, the built-in credential list and everything it held), "Temporary folders and
+  a project's own `.env`" (the project `.env` exemption, and the credential file in a temporary folder that stayed held)
+  and "Project folders and credential paths in the deployment" (the value of `HUB_CREDENTIAL_PATHS`); those entries stay
+  as written, and what they say of project folders and temporary folders still holds. The consequences: writing,
+  appending to, overwriting or moving a credential file is not held anywhere. Deleting one is judged only by
+  `file-deletion`, like any other file, with no special case either way: held outside the project folders and the
+  temporary folders, free inside them, so a credential file in `/tmp` is now deleted without a hold. The other five
+  forms are unchanged. Not touched, because they are not this form: the refusal of credential names as a command's
+  environment variables, the refusal of credential-looking text in a memory, the way the hub injects credentials into
+  commands, and `packages/hub/src/credentials.ts`. The brain's guidance no longer lists credentials among what is held,
+  and `docs/design.md` says credentials are not on the list. A deployment that still sets `HUB_CREDENTIAL_PATHS` is not
+  refused: the hub ignores a variable it does not read.
+- **Why:** The owner's word: changing or deleting credentials is not within the confirmation lock's scope.
+- **Other options:** Keeping the lock's reading of writes and moves for a later form; holding a credential file's
+  deletion wherever it is; leaving `HUB_CREDENTIAL_PATHS` accepted and unused.

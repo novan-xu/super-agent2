@@ -221,7 +221,7 @@ describe("a front door that admits service tokens", () => {
         clock,
         verify,
         ownerEmail: testConfig(dataDir).ownerEmail,
-        settings: lockSettings({ projectFolders: [], credentialPaths: [] }),
+        settings: lockSettings({ projectFolders: [] }),
       });
       const commands = createCommandService({ database, clock, targets: [target], credentials: testCredentials, gate: lock.gate });
       server = createHubServer({ database, commands, verify, admit: () => true, lock });

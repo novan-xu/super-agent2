@@ -54,7 +54,7 @@ function create(): { running: CommandService; lock: ConfirmationLock; hub: Targe
     clock,
     verify,
     ownerEmail,
-    settings: lockSettings({ projectFolders: ["/srv/projects"], credentialPaths: [] }),
+    settings: lockSettings({ projectFolders: ["/srv/projects"] }),
   });
   const hub = fakeTarget("hub");
   const nas = fakeTarget("nas");
