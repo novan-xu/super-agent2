@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, PromptImage, SteerResult, WorkerAdapter } from "@super-agent2/programs";
@@ -10,6 +10,7 @@ import { tokenVariable } from "./identity.js";
 import { workPaths } from "./workplace.js";
 import { createWorks, type Works, type WorksOptions } from "./works.js";
 import { outputFolder, taskPaths } from "./task.js";
+import { artifactsVariable } from "./storage.js";
 
 class Recorder<T> {
   readonly items: T[] = [];
@@ -270,6 +271,75 @@ function handBack(ticket: number, pullRequest: number, closes: readonly number[]
 }
 
 describe("a worker on the runner", () => {
+  it("shares the owner's checkout between tickets and retains NAS outputs after restart and cleanup", async () => {
+    const root = realpathSync(scratch);
+    const projects = join(root, "Code Projects");
+    const nas = join(root, "NAS");
+    const owner = join(projects, "Sandbox in use");
+    mkdirSync(projects);
+    mkdirSync(nas);
+    const repo = git(projects);
+    await repo.must(["clone", remote, owner], projects);
+    await repo.must(["remote", "set-url", "origin", "git@GitHub.com:Novan-Xu/Super-Agent-Sandbox.git"], owner);
+    await repo.must(["switch", "-c", "owners-branch"], owner);
+    writeFileSync(join(owner, "README.md"), "owner's edit");
+    writeFileSync(join(owner, "notes.txt"), "owner's notes");
+    const config = readFileSync(join(owner, ".git", "config"), "utf8");
+    const status = await repo.must(["status", "--porcelain"], owner);
+    const seed = await repo.must(["rev-parse", "HEAD"], owner);
+
+    const works = start({ storage: () => ({ projectsDir: projects, artifactsDir: nas }) });
+    for (const ticket of [51, 52]) works.receive({ type: "work.start", task: task(ticket) });
+    await works.idle();
+    expect(programs.handles).toHaveLength(2);
+    for (const ticket of [51, 52]) {
+      const worktree = join(projects, "_agent", "Sandbox in use", `t${ticket}`);
+      const artifacts = join(nas, "super-agent-sandbox", "tickets", `t${ticket}`);
+      const handle = programs.handles.find((item) => item.options.workspace === worktree);
+      expect(handle?.settings.environment[artifactsVariable]).toBe(artifacts);
+      expect(handle?.settings.environment.GH_TOKEN).toBe(token);
+      expect(handle?.prompts[0]).toContain(`Artifacts folder: ${artifacts}`);
+      expect((await repo.must(["branch", "--show-current"], worktree)).trim()).toBe(task(ticket).branch);
+      expect(await repo.must(["rev-parse", "HEAD"], worktree)).toBe(seed);
+      writeFileSync(join(artifacts, "check.log"), `Checks for ${ticket}`);
+    }
+    expect(existsSync(join(projects, "super-agent-sandbox"))).toBe(false);
+    await works.close();
+    const restarted = start({ storage: () => ({}) });
+    for (const ticket of [51, 52]) restarted.receive({ type: "work.stop", ticket, save: false, remove: true });
+    await restarted.idle();
+    for (const ticket of [51, 52]) {
+      expect(existsSync(join(projects, "_agent", "Sandbox in use", `t${ticket}`))).toBe(false);
+      expect(existsSync(join(nas, "super-agent-sandbox", "tickets", `t${ticket}`, "check.log"))).toBe(true);
+      expect(await repo.must(["branch", "--list", task(ticket).branch], owner)).toBe("");
+    }
+    expect(await repo.must(["status", "--porcelain"], owner)).toBe(status);
+    expect((await repo.must(["branch", "--show-current"], owner)).trim()).toBe("owners-branch");
+    expect(await repo.must(["rev-parse", "HEAD"], owner)).toBe(seed);
+    expect(readFileSync(join(owner, ".git", "config"), "utf8")).toBe(config);
+    expect(readFileSync(join(owner, "README.md"), "utf8")).toBe("owner's edit");
+    expect(readFileSync(join(owner, "notes.txt"), "utf8")).toBe("owner's notes");
+  });
+
+  it("clones an absent checkout and leaves an unrelated directory at a worktree path alone", async () => {
+    const projects = join(realpathSync(scratch), "Projects");
+    const managed = join(projects, "_agent", "super-agent-sandbox");
+    const occupied = join(managed, "t53");
+    mkdirSync(occupied, { recursive: true });
+    writeFileSync(join(occupied, "keep.txt"), "owner file");
+    const works = start({ storage: () => ({ projectsDir: projects }) });
+    works.receive({ type: "work.start", task: task(53) });
+    works.receive({ type: "work.start", task: task(54) });
+    await works.idle();
+    expect(await ended(53)).toMatchObject({ kind: "failed", failure: "prepare", reason: expect.stringContaining("already occupied") });
+    expect(programs.handles).toHaveLength(1);
+    expect(programs.last().options.workspace).toBe(join(managed, "t54"));
+    expect(readFileSync(join(projects, "super-agent-sandbox", "README.md"), "utf8")).toContain("sandbox");
+    works.receive({ type: "work.stop", ticket: 53, save: false, remove: true });
+    await works.idle();
+    expect(readFileSync(join(occupied, "keep.txt"), "utf8")).toBe("owner file");
+  });
+
   it("prepares a worktree on a new branch, briefs the program, and hands back the pull request", async () => {
     const works = start();
     works.receive({ type: "work.start", task: task(5) });
@@ -602,6 +672,31 @@ function writeOutput(ticket: number, files: Readonly<Record<string, string | Buf
 const summary = { en: "Translated the notice", zh: "翻译了通知" };
 
 describe("a task worker on the runner", () => {
+  it("applies a new projects root without a restart and records local fallback when the NAS is missing", async () => {
+    const root = realpathSync(scratch);
+    const first = join(root, "First projects");
+    const second = join(root, "Second projects");
+    const nas = join(root, "Unreachable NAS");
+    mkdirSync(first);
+    mkdirSync(second);
+    let projectsDir = first;
+    const works = start({ storage: () => ({ projectsDir, artifactsDir: nas }) });
+    works.receive({ type: "work.task", task: writingTask(55) });
+    await works.idle();
+    const local = join(home, "artifacts", "_tasks", "tickets", "t55");
+    expect(programs.last().options.workspace).toBe(join(first, "_agent", "_tasks", "t55"));
+    expect(programs.last().settings.environment[artifactsVariable]).toBe(local);
+    expect(programs.last().prompts[0]).toContain(`Artifacts folder: ${local}`);
+    expect(events(55).some(({ event }) => event.kind === "phase" && event.detail.includes("is unavailable"))).toBe(true);
+    mkdirSync(nas);
+    projectsDir = second;
+    works.receive({ type: "work.task", task: writingTask(56) });
+    await works.idle();
+    expect(programs.handles[0]?.options.workspace).toBe(join(first, "_agent", "_tasks", "t55"));
+    expect(programs.last().options.workspace).toBe(join(second, "_agent", "_tasks", "t56"));
+    expect(programs.last().settings.environment[artifactsVariable]).toBe(join(nas, "_tasks", "tickets", "t56"));
+  });
+
   it("makes a scratch folder with the material, briefs the program without any repository, and delivers the text and files", async () => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(20) });

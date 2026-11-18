@@ -14,6 +14,8 @@ import {
   type Provider,
   type SettingsSection,
   type SettingsSnapshot,
+  storageFolders,
+  type StorageSettings,
   type Ticket,
   withCell,
 } from "@super-agent2/protocol";
@@ -46,6 +48,7 @@ import { momentOf } from "./TicketParts.js";
 export interface SettingsActions {
   readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | { readonly refused: string } | undefined>;
   readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
+  readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
   readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setTable: (table: SettingsSnapshot["table"]) => Promise<"saved" | "unsupported" | "failed">;
@@ -74,7 +77,57 @@ function routeOf(section: SettingsSection | null): PageRoute {
   return section === null ? { view: "settings" } : { view: "settings", section };
 }
 
-function MachineCard({ machine, running, revoke, now }: { readonly machine: MachineStatus; readonly running: number; readonly revoke: () => Promise<void>; readonly now: number }) {
+function MachineStorageFields({ machine, save }: { readonly machine: MachineStatus; readonly save: SettingsActions["setMachineStorage"] }) {
+  const [draft, setDraft] = useState<StorageSettings>({});
+  const [saving, setSaving] = useState(false);
+  const configured = machine.storage ?? {};
+  const changed = storageFolders.some((folder) => draft[folder] !== undefined && draft[folder]?.trim() !== (configured[folder] ?? ""));
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!changed || saving) return;
+    const storage: StorageSettings = {};
+    for (const folder of storageFolders) {
+      const value = (draft[folder] ?? configured[folder] ?? "").trim();
+      if (value !== "") storage[folder] = value;
+    }
+    setSaving(true);
+    try {
+      if (await save(machine.name, storage)) setDraft({});
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form className="machine-storage" onSubmit={(event) => void submit(event)}>
+      {storageFolders.map((folder) => {
+        const reported = machine.report?.storage?.[folder];
+        const id = `${machine.name}-${folder}`;
+        return (
+          <div className="machine-storage-field" key={folder}>
+            <label htmlFor={id}>{text(`machine.storage.${folder}`)}</label>
+            <input
+              className="field"
+              id={id}
+              value={draft[folder] ?? configured[folder] ?? ""}
+              placeholder={reported?.path}
+              onChange={(event) => setDraft({ ...draft, [folder]: event.currentTarget.value })}
+              maxLength={4096}
+              spellCheck={false}
+              autoComplete="off"
+              disabled={saving}
+              aria-describedby={reported?.problem === undefined ? undefined : `${id}-problem`}
+              aria-invalid={reported?.problem === undefined ? undefined : true}
+            />
+            {reported?.problem === undefined ? null : <p className="field-err" id={`${id}-problem`}>{text(`machine.storage.${reported.problem}`)}</p>}
+          </div>
+        );
+      })}
+      {changed ? <button className="btn btn-sm" type="submit" disabled={saving}>{text("machine.storage.save")}</button> : null}
+    </form>
+  );
+}
+
+function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly machine: MachineStatus; readonly running: number; readonly revoke: () => Promise<void>; readonly saveStorage: SettingsActions["setMachineStorage"]; readonly now: number }) {
   const [step, setStep] = useState<"idle" | "armed" | "sending">("idle");
   const slots = slotsOf(machine);
   const system = machine.report === null ? (machine.system ?? null) : machine.report.platform === "darwin" ? "macos" : machine.report.platform === "win32" ? "windows" : null;
@@ -119,6 +172,7 @@ function MachineCard({ machine, running, revoke, now }: { readonly machine: Mach
           ))}
         </div>
       )}
+      <MachineStorageFields machine={machine} save={saveStorage} />
       {step === "idle" ? (
         <div className="card-actions" key="idle">
           <span className="od-fill" />
@@ -291,7 +345,7 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
       ) : (
         <div className="machines">
           {settings.machines.map((machine) => (
-            <MachineCard key={machine.name} machine={machine} running={ticketsRunningOn(tickets, machine.name)} revoke={() => revoke(machine.name)} now={now} />
+            <MachineCard key={machine.name} machine={machine} running={ticketsRunningOn(tickets, machine.name)} revoke={() => revoke(machine.name)} saveStorage={actions.setMachineStorage} now={now} />
           ))}
         </div>
       )}

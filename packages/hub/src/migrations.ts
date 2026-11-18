@@ -810,6 +810,10 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 34,
+    sql: `ALTER TABLE machines ADD COLUMN storage TEXT;`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

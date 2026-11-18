@@ -4160,3 +4160,13 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why** The owner chooses the topic that will hold the combined history. Tickets and System retain their
   established destinations for work and notices.
 - **Other options** Restrict merges to one project, or let the combined topic acquire the source's project.
+
+## 2026-11-18 — Ticket storage across settings changes (#117)
+
+- **Chosen.** Keep the worktree or scratch folder allocated to a ticket, including across restarts and repairs.
+  Apply the current artifacts setting when starting a session. Leave outputs from an unavailable share in the local
+  artifacts directory.
+- **Why.** A running ticket or a repair can have uncommitted work and depend on its workspace path. Keeping local
+  outputs in place also avoids overwriting files a later session may create on the NAS.
+- **Other options.** Move retained workspaces when settings change, or add a background process to copy local
+  outputs to the NAS after an outage.

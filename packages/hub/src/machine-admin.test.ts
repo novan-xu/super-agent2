@@ -114,6 +114,24 @@ interface Line {
   readonly runnerToken: string;
 }
 
+it("lets the owner save storage for an offline machine and validates the request", async () => {
+  const running = await start();
+  running.machines.add({ name: "pc", accessClientId: "client.access" });
+  const path = "/api/machines/pc/storage";
+  const storage = { projectsDir: "C:\\My Projects", artifactsDir: "M:\\Zdir\\Super-agent" };
+  expect((await owner(running, path, "PUT", storage, { origin: "https://example.com" })).status).toBe(403);
+  expect((await owner(running, path, "PUT", { projectsDir: "path\nwith\nnewline" })).status).toBe(400);
+  expect((await owner(running, "/api/machines/missing/storage", "PUT", storage)).status).toBe(404);
+  const response = await owner(running, path, "PUT", storage);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(storage);
+  expect(running.settings.snapshot().machines[0]).toMatchObject({ name: "pc", online: false, storage });
+  await running.close();
+  hub = undefined;
+  const reopened = await start();
+  expect(reopened.machines.active("pc")?.storage).toEqual(storage);
+});
+
 function windowsLine(command: string): Line {
   const value = (header: string) => new RegExp(`'${header}' = '([^']+)'`).exec(command)?.[1] ?? "";
   return { clientId: value(accessClientIdHeader), clientSecret: value(accessClientSecretHeader), runnerToken: value(runnerTokenHeader) };

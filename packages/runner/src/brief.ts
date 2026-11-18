@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { type Attachment, attachmentLine, type TaskAssignment, type WorkSender, type WorkTask } from "@super-agent2/protocol";
 import { assignmentText, type TaskPlace } from "./task.js";
 import type { FolderState } from "./workplace.js";
+import type { ArtifactFolder } from "./storage.js";
 
 export const workerGuidanceFile = fileURLToPath(new URL("../guidance/WORKER.md", import.meta.url));
 
@@ -17,6 +18,17 @@ export interface BriefPlace {
   readonly worktree: string;
   readonly base: string;
   readonly handback: string;
+  readonly artifacts?: ArtifactFolder;
+  readonly shared?: true;
+}
+
+function artifactLines(artifacts: ArtifactFolder | undefined): string[] {
+  if (artifacts === undefined) return [];
+  return [
+    `Artifacts folder: ${artifacts.path}`,
+    "Write build outputs, test reports, and other large generated files here, outside the working folder. Scripts can use SUPERAGENT2_ARTIFACTS_DIR.",
+    ...(artifacts.unavailable === null ? [] : [`The shared artifacts folder ${artifacts.unavailable} is unavailable. These outputs are on this machine.`]),
+  ];
 }
 
 export function taskText(task: WorkTask, place: BriefPlace): string {
@@ -25,6 +37,8 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     "",
     `Repository: ${task.repository}`,
     `Working folder: ${place.worktree}`,
+    ...artifactLines(place.artifacts),
+    ...(place.shared ? [`This worktree shares the project's Git configuration. Use the session's Git identity and credentials. Push with \`git push https://github.com/${task.repository}.git HEAD\` and leave the repository's configuration and upstream settings alone.`] : []),
     `Branch: ${task.branch}, made from ${place.base}, which is the default branch`,
     `Chain: ${task.title}`,
     "",
@@ -48,6 +62,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
     "Check `git status` and `git log` in your working folder first, and look at what is already on the branch and in any open pull request from it.",
     `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
+    ...artifactLines(place.artifacts),
     task.note === null ? "" : `\n${task.note}`,
   ]
     .join("\n")
@@ -55,7 +70,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`].join("\n");
+  return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export interface LeftoverPlace {
@@ -129,7 +144,7 @@ export function taskGuidance(): string {
 }
 
 export function taskBrief(task: TaskAssignment, place: TaskPlace): string {
-  const parts = [taskGuidance(), assignmentText(task, place)];
+  const parts = [taskGuidance(), assignmentText(task, place), artifactLines(place.artifacts).join("\n")];
   if (task.note !== null) {
     parts.push(`# A note from the hub\n\n${task.note}`);
   }
@@ -141,6 +156,7 @@ export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
     `Look at what is already in your output folder ${place.output}${place.checkout === null ? "" : ` and in the checkout ${place.checkout}`} first, and check the state of anything you were changing on this machine before you do it again.`,
     `Hand back by writing the JSON file at ${place.handback} when you are done or know the task failed, as described at the start.`,
+    ...artifactLines(place.artifacts),
     task.note === null ? "" : `\n${task.note}`,
   ]
     .join("\n")
@@ -148,7 +164,7 @@ export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
 }
 
 export function taskContinueText(place: TaskPlace, note: string): string {
-  return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`].join("\n");
+  return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export function taskLostSessionNote(): string {

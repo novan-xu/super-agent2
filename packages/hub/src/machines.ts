@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { MachineName, MachineReport, MachineSystem } from "@super-agent2/protocol";
+import { MachineName, MachineReport, MachineSystem, StorageSettings } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
@@ -17,6 +17,7 @@ export interface Machine {
   readonly revokedAt: number | null;
   readonly lastSeenAt: number | null;
   readonly report: MachineReport | null;
+  readonly storage: StorageSettings;
 }
 
 export interface AddedMachine {
@@ -42,6 +43,7 @@ export interface MachineStore {
   byToken(token: string): Machine | undefined;
   seen(name: string, report?: MachineReport): void;
   warned(name: string): void;
+  setStorage(name: string, storage: StorageSettings): boolean;
   changed(): boolean;
 }
 
@@ -60,7 +62,13 @@ const MachineRow = z.object({
   revoked_at: z.number().int().nullable(),
   last_seen_at: z.number().int().nullable(),
   report: z.string().nullable(),
+  storage: z.string().nullable(),
 });
+
+const storageDefaults = new Map<string, StorageSettings>([
+  ["pc", { projectsDir: "C:\\01_Projects", artifactsDir: "M:\\Zdir\\Super-agent" }],
+  ["mac-mini", { projectsDir: "/Users/novan/Novan/Code Projects", artifactsDir: "/Volumes/NAS/Zdir/Super-agent" }],
+]);
 
 const DataVersion = z.object({ data_version: z.number().int() });
 
@@ -91,6 +99,7 @@ function toMachine(row: unknown): Machine {
     revokedAt: value.revoked_at,
     lastSeenAt: value.last_seen_at,
     report: parseReport(value.report),
+    storage: value.storage === null ? (storageDefaults.get(value.name) ?? {}) : StorageSettings.parse(JSON.parse(value.storage)),
   };
 }
 
@@ -115,6 +124,7 @@ export function createMachineStore(database: HubDatabase, clock: Clock): Machine
   const markRevoked = connection.prepare("UPDATE machines SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL");
   const markSeen = connection.prepare("UPDATE machines SET last_seen_at = ? WHERE name = ?");
   const markReport = connection.prepare("UPDATE machines SET last_seen_at = ?, report = ? WHERE name = ?");
+  const setStorage = connection.prepare("UPDATE machines SET storage = ? WHERE name = ? AND revoked_at IS NULL");
   const dataVersion = connection.prepare("PRAGMA data_version");
   const version = () => DataVersion.parse(dataVersion.get()).data_version;
   let lastVersion = version();
@@ -179,6 +189,7 @@ export function createMachineStore(database: HubDatabase, clock: Clock): Machine
     warned: (name) => {
       markWarned.run(clock.now(), name);
     },
+    setStorage: (name, storage) => setStorage.run(JSON.stringify(storage), name).changes !== 0,
     changed: () => {
       const current = version();
       if (current === lastVersion) {

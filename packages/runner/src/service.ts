@@ -7,6 +7,7 @@ import { machineReport } from "./machine.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { createProgramUpdater, systemProgramUpdateSteps, type ProgramUpdateSteps } from "./program-update.js";
 import { createUpdater, systemSteps, type Updater, type UpdateSteps } from "./update.js";
+import { MachineStorage } from "./storage.js";
 import { createWorks, type WorkMessage, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
@@ -70,6 +71,18 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     return undefined;
   }
   const { config } = loaded;
+  const storage = new MachineStorage(files.home, config.storage ?? {}, process.platform, log);
+  let storageReport = storage.initialReport();
+  let storageReading = 0;
+  const refreshStorage = () => {
+    const reading = ++storageReading;
+    void storage.report().then((current) => {
+      if (reading === storageReading && JSON.stringify(current) !== JSON.stringify(storageReport)) {
+        storageReport = current;
+        bound?.update();
+      }
+    });
+  };
   const ledger = createLedger({ path: files.running });
   const leftovers = await ledger.cleanup();
   if (leftovers.length > 0) {
@@ -89,6 +102,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     ledger,
     log,
     machine: config.name,
+    storage: () => storage.selection(),
     changed: () => {
       bound?.update();
       updater?.changed();
@@ -100,8 +114,9 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   let requestAllowance: () => void = () => undefined;
   const link = createRunnerLink({
     config,
+    setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
-    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
+    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
@@ -164,6 +179,9 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     });
   }
   link.start();
+  refreshStorage();
+  const storageTimer = setInterval(refreshStorage, 30000);
+  storageTimer.unref();
   const probed = probe().then(() => programUpdater?.check()).catch((error: unknown) => log(`Could not list the programs: ${error instanceof Error ? error.message : String(error)}`));
   const timer = setInterval(() => {
     if (!updatingPrograms) void probe().then(() => programUpdater?.check()).catch(() => undefined);
@@ -202,6 +220,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     close: async () => {
       clearInterval(timer);
       clearInterval(allowanceTimer);
+      clearInterval(storageTimer);
       await programUpdater?.close();
       await works.close();
       await link.close();

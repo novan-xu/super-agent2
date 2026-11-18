@@ -8,6 +8,7 @@ import {
   runnerLinkPath,
   type RunnerToHub,
   runnerTokenHeader,
+  type StorageSettings,
 } from "@super-agent2/protocol";
 import WebSocket from "ws";
 import type { RunnerConfig } from "./config.js";
@@ -46,6 +47,7 @@ export interface RunnerLinkOptions {
   readonly onEvent?: (event: LinkEvent) => void;
   readonly works?: () => Works | undefined;
   readonly refreshAllowance?: () => void;
+  readonly setStorage?: (settings: StorageSettings) => void;
 }
 
 export interface RunnerLink {
@@ -183,6 +185,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
           return;
         }
         if (message.type === "allowance.refresh") { options.refreshAllowance?.(); return; }
+        if (message.type === "storage.set") { options.setStorage?.(message.settings); return; }
         options.works?.()?.receive(message);
       },
       ping: () => {

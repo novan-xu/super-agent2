@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { MachineName, type ProgramId, type ProgramModel, programIds } from "@super-agent2/protocol";
+import { MachineName, type ProgramId, type ProgramModel, programIds, type StorageSettings } from "@super-agent2/protocol";
 
 export const homeVariable = "SUPERAGENT2_RUNNER_HOME";
 
@@ -38,6 +38,7 @@ export interface RunnerConfig {
   readonly runnerToken: string;
   readonly slots: number;
   readonly models: Readonly<Partial<Record<ProgramId, readonly ProgramModel[]>>>;
+  readonly storage?: StorageSettings;
 }
 
 export type ConfigResult = { readonly ok: true; readonly config: RunnerConfig } | { readonly ok: false; readonly problems: readonly string[] };
@@ -157,7 +158,9 @@ export function loadConfig(values: Readonly<Record<string, string | undefined>>)
   if (problems.length > 0) {
     return { ok: false, problems };
   }
-  return { ok: true, config: { hub, name, accessClientId, accessClientSecret, runnerToken, slots, models } };
+  const projectsDir = values.PROJECTS_DIR?.trim() || undefined;
+  const artifactsDir = values.ARTIFACTS_DIR?.trim() || undefined;
+  return { ok: true, config: { hub, name, accessClientId, accessClientSecret, runnerToken, slots, models, ...(projectsDir === undefined && artifactsDir === undefined ? {} : { storage: { projectsDir, artifactsDir } }) } };
 }
 
 export function readSettingsFile(path: string): Record<string, string> | undefined {

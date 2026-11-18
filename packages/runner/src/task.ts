@@ -15,7 +15,8 @@ import {
   type TaskOutcome,
 } from "@super-agent2/protocol";
 import type { Git } from "./git.js";
-import { type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
+import { checkWorktreePath, discardWorktree, prepareRepository, type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
+import type { ArtifactFolder } from "./storage.js";
 
 export function taskPaths(home: string, ticket: number, repository: string | null = null, folderOf: number = ticket): WorkPaths {
   const folder = join(home, "work", `t${ticket}`);
@@ -52,15 +53,9 @@ async function verified(git: Git, ref: string, cwd: string): Promise<string | un
 
 export async function prepareCheckout(git: Git, remote: RemoteUrl, checkout: NonNullable<TaskAssignment["checkout"]>, paths: WorkPaths): Promise<Checkout> {
   return withClone(paths.clone, async () => {
-    if (!existsSync(join(paths.clone, ".git"))) {
-      rmSync(paths.clone, { recursive: true, force: true });
-      mkdirSync(join(paths.clone, ".."), { recursive: true });
-      await git.must(["clone", "--no-checkout", remote(checkout.repository), paths.clone], join(paths.clone, ".."));
-    } else {
-      await git.must(["fetch", "--prune", "origin"], paths.clone);
-    }
-    await git.run(["remote", "set-head", "origin", "--auto"], paths.clone);
-    const base = (await git.must(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], paths.clone)).trim().replace(/^origin\//, "");
+    const url = remote(checkout.repository);
+    const base = await prepareRepository(git, url, checkout.repository, paths);
+    await checkWorktreePath(git, paths);
     const wanted = checkout.commit ?? checkout.ref;
     let commit: string | undefined;
     if (wanted === null) {
@@ -68,7 +63,7 @@ export async function prepareCheckout(git: Git, remote: RemoteUrl, checkout: Non
     } else {
       commit = (checkout.commit === null ? await verified(git, `origin/${wanted}`, paths.clone) : undefined) ?? (await verified(git, wanted, paths.clone));
       if (commit === undefined) {
-        await git.run(["fetch", "origin", wanted], paths.clone);
+        await git.run(paths.shared ? ["fetch", "--no-write-fetch-head", "--no-recurse-submodules", "--", url, wanted] : ["fetch", "origin", wanted], paths.clone);
         commit = await verified(git, wanted, paths.clone);
       }
     }
@@ -79,10 +74,8 @@ export async function prepareCheckout(git: Git, remote: RemoteUrl, checkout: Non
       if ((await verified(git, "HEAD", paths.worktree)) === commit) {
         return { commit, base, created: false };
       }
-      await git.run(["worktree", "remove", "--force", paths.worktree], paths.clone);
-      rmSync(paths.worktree, { recursive: true, force: true });
+      await discardWorktree(git, paths);
     }
-    await git.run(["worktree", "prune"], paths.clone);
     mkdirSync(join(paths.worktree, ".."), { recursive: true });
     await git.must(["worktree", "add", "--detach", paths.worktree, commit], paths.clone);
     return { commit, base, created: true };
@@ -286,6 +279,7 @@ export interface TaskPlace {
   readonly checkout: string | null;
   readonly commit: string | null;
   readonly machine: string | undefined;
+  readonly artifacts?: ArtifactFolder;
 }
 
 export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"], commit: string | null, machine: string | undefined): TaskPlace {
@@ -297,6 +291,7 @@ export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"]
     checkout: checkout === null ? null : paths.worktree,
     commit,
     machine,
+    ...(paths.artifacts === undefined ? {} : { artifacts: paths.artifacts }),
   };
 }
 

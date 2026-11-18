@@ -69,7 +69,7 @@ class FakeRunner {
   link: RunnerLink | undefined;
   private readonly waiting = new Set<() => void>();
 
-  connect(running: Hub, name: string): this {
+  connect(running: Hub, name: string, machineReport = report): this {
     const machine = running.machines.active(name);
     if (machine === undefined) {
       throw new Error(`no machine ${name}`);
@@ -85,7 +85,7 @@ class FakeRunner {
         this.wake();
       },
     });
-    this.link.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
+    this.link.receive({ type: "hello", protocol: protocolVersion, machine: machineReport, works: [] });
     return this;
   }
 
@@ -112,6 +112,29 @@ class FakeRunner {
 }
 
 describe("a runner's link", () => {
+  it("sends saved storage on connect and live changes only to runners that report storage support", async () => {
+    const running = await start();
+    running.machines.add({ name: "pc", accessClientId: clientId });
+    running.machines.add({ name: "mac-mini", accessClientId: clientId });
+    expect(running.runners.statuses().map((machine) => [machine.name, machine.storage])).toEqual([
+      ["mac-mini", { projectsDir: "/Users/novan/Novan/Code Projects", artifactsDir: "/Volumes/NAS/Zdir/Super-agent" }],
+      ["pc", { projectsDir: "C:\\01_Projects", artifactsDir: "M:\\Zdir\\Super-agent" }],
+    ]);
+    const stored = { projectsDir: "D:\\Projects", artifactsDir: "N:\\Artifacts" };
+    expect(running.runners.setStorage("pc", stored)).toBe(true);
+    const supported = { ...report, storage: { projectsDir: { path: "C:\\Previous" }, artifactsDir: { path: "N:\\Artifacts", reachable: true } } };
+    const runner = new FakeRunner().connect(running, "pc", supported);
+    expect(runner.sent.slice(0, 2)).toMatchObject([{ type: "welcome" }, { type: "storage.set", settings: stored }]);
+    const legacy = new FakeRunner().connect(running, "mac-mini");
+    expect(running.runners.setStorage("mac-mini", {})).toBe(true);
+    expect(legacy.sent.some((message) => message.type === "storage.set")).toBe(false);
+    expect(running.runners.setStorage("pc", {})).toBe(true);
+    expect(runner.sent.at(-1)).toEqual({ type: "storage.set", settings: {} });
+    runner.link?.closed();
+    const renewed = new FakeRunner().connect(running, "pc", supported);
+    expect(renewed.sent[1]).toEqual({ type: "storage.set", settings: {} });
+  });
+
   it("welcomes the machine and reports it online", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });

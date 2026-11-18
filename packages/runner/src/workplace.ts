@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Git } from "./git.js";
 import { Locks } from "./git.js";
+import type { ArtifactFolder } from "./storage.js";
 
 export interface WorkPaths {
   readonly clone: string;
@@ -9,6 +10,8 @@ export interface WorkPaths {
   readonly folder: string;
   readonly handback: string;
   readonly scratch?: string;
+  readonly shared?: true;
+  readonly artifacts?: ArtifactFolder;
 }
 
 export function workPaths(home: string, repository: string, ticket: number, folderOf: number = ticket): WorkPaths {
@@ -45,7 +48,101 @@ export const leftoverSuffix = "-unfinished";
 const locks = new Locks();
 
 export function withClone<T>(clone: string, body: () => Promise<T>): Promise<T> {
-  return locks.with(clone, body);
+  return locks.with(`checkout:${existsSync(clone) ? realpathSync(clone) : clone}`, body);
+}
+
+export function withRepository<T>(repository: string, body: () => Promise<T>): Promise<T> {
+  return locks.with(`repository:${repository.toLowerCase()}`, body);
+}
+
+export function githubRepository(url: string): string | undefined {
+  const scp = /^(?:[^@/]+@)?github\.com:(?!\/)(.+)$/i.exec(url);
+  let path = scp?.[1];
+  if (path === undefined) {
+    try {
+      const parsed = new URL(url);
+      if (!["github.com", "ssh.github.com"].includes(parsed.hostname)) return undefined;
+      path = parsed.pathname.replace(/^\/+/, "");
+    } catch {
+      return undefined;
+    }
+  }
+  const repository = path.replace(/\/+$/, "").replace(/\.git$/i, "").toLowerCase();
+  return /^[a-z0-9-]+\/[a-z0-9_.-]+$/.test(repository) ? repository : undefined;
+}
+
+function ownedDirectory(path: string): void {
+  try {
+    mkdirSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !lstatSync(path).isDirectory()) {
+      throw new Error(`The runner needs a directory at ${path}`, { cause: error });
+    }
+  }
+}
+
+export function taskFolderInProjects(projects: string, ticket: number): string {
+  const agent = join(realpathSync(projects), "_agent");
+  const tasks = join(agent, "_tasks");
+  ownedDirectory(agent);
+  ownedDirectory(tasks);
+  const folder = join(tasks, `t${ticket}`);
+  if (existsAt(folder)) throw new Error(`The runner's task folder is already occupied at ${folder}`);
+  return folder;
+}
+
+export async function pathsInProjects(
+  git: Git,
+  remote: RemoteUrl,
+  projects: string,
+  repository: string,
+  ticket: number,
+  paths: WorkPaths,
+): Promise<WorkPaths> {
+  const name = repository.split("/").at(-1)!;
+  const url = remote(repository);
+  const root = realpathSync(projects);
+  return locks.with(`projects:${join(root, name.toLowerCase())}`, async () => {
+    const names = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== "_agent")
+      .map((entry) => entry.name)
+      .sort((a, b) => a === name ? -1 : b === name ? 1 : a.localeCompare(b, "en"));
+    let clone: string | undefined;
+    for (const folder of names) {
+      const candidate = join(root, folder);
+      if (!existsSync(join(candidate, ".git"))) continue;
+      if (await matchesOrigin(git, candidate, url, repository.toLowerCase())) {
+        clone = candidate;
+        break;
+      }
+    }
+    if (clone === undefined) {
+      clone = join(root, name);
+      try {
+        lstatSync(clone);
+        throw new Error(`The projects folder already contains ${clone} with a different origin or without a checkout`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await git.must(["clone", "--origin", "origin", "--", url, clone], root);
+    }
+    const agent = join(root, "_agent");
+    const worktrees = join(agent, basename(clone));
+    ownedDirectory(agent);
+    ownedDirectory(worktrees);
+    return { ...paths, clone, worktree: join(worktrees, `t${ticket}`), shared: true };
+  });
+}
+
+async function matchesOrigin(git: Git, checkout: string, url: string, repository: string | undefined): Promise<boolean> {
+  for (const args of [["config", "--local", "--get", "remote.origin.url"], ["remote", "get-url", "origin"]]) {
+    const result = await git.run(args, checkout);
+    const origin = result.stdout.trim();
+    if (result.code === 0 && (origin === url || (repository !== undefined && githubRepository(origin) === repository))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function exists(git: Git, ref: string, cwd: string): Promise<boolean> {
@@ -56,6 +153,92 @@ async function defaultBranch(git: Git, clone: string): Promise<string> {
   await git.run(["remote", "set-head", "origin", "--auto"], clone);
   const head = (await git.must(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], clone)).trim();
   return head.replace(/^origin\//, "");
+}
+
+export async function prepareRepository(git: Git, url: string, repository: string, paths: WorkPaths): Promise<string> {
+  const { clone, shared } = paths;
+  if (shared) {
+    if (!existsSync(join(clone, ".git")) || !await matchesOrigin(git, clone, url, repository.toLowerCase())) {
+      throw new Error(`There is no checkout of ${repository} at ${clone}`);
+    }
+    const head = await git.must(["ls-remote", "--symref", url, "HEAD"], clone);
+    const base = /^ref: refs\/heads\/([^\t\r\n]+)\tHEAD\r?$/m.exec(head)?.[1];
+    if (base === undefined) throw new Error("The repository has no default branch");
+    await git.must(["fetch", "--prune", "--no-auto-maintenance", "--no-recurse-submodules", "--no-write-fetch-head", "--", url, "+refs/heads/*:refs/remotes/origin/*"], clone);
+    await git.must(["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${base}`], clone);
+    return base;
+  }
+  if (!existsSync(join(clone, ".git"))) {
+    rmSync(clone, { recursive: true, force: true });
+    mkdirSync(dirname(clone), { recursive: true });
+    await git.must(["clone", "--no-checkout", url, clone], dirname(clone));
+  } else {
+    await git.must(["fetch", "--prune", "origin"], clone);
+  }
+  return defaultBranch(git, clone);
+}
+
+async function worktrees(git: Git, clone: string): Promise<string[][]> {
+  return (await git.must(["worktree", "list", "--porcelain", "-z"], clone)).split("\0\0").map((record) => record.split("\0"));
+}
+
+function samePath(a: string, b: string): boolean {
+  return process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+}
+
+async function registeredWorktree(git: Git, paths: WorkPaths): Promise<boolean> {
+  const registrations = await worktrees(git, paths.clone);
+  return registrations.slice(1).some(([entry]) => entry?.startsWith("worktree ") && samePath(entry.slice("worktree ".length), paths.worktree));
+}
+
+function existsAt(path: string): boolean {
+  return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+}
+
+async function checkSharedWorktree(git: Git, paths: WorkPaths, registered: boolean): Promise<void> {
+  if (!existsAt(paths.worktree)) return;
+  if (registered && lstatSync(paths.worktree).isDirectory() && lstatSync(join(paths.worktree, ".git"), { throwIfNoEntry: false })?.isFile()) {
+    const common = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+    const worktree = await git.run(common, paths.worktree);
+    const clone = await git.run(common, paths.clone);
+    if (worktree.code === 0 && clone.code === 0 && samePath(worktree.stdout.trim(), clone.stdout.trim())) return;
+  }
+  throw new Error(`The runner's worktree path is already occupied at ${paths.worktree}`);
+}
+
+export async function discardWorktree(git: Git, paths: WorkPaths): Promise<void> {
+  if (paths.shared) {
+    const registered = await registeredWorktree(git, paths);
+    if (registered) {
+      await checkSharedWorktree(git, paths, registered);
+      await git.must(["worktree", "remove", "--force", paths.worktree], paths.clone);
+    }
+    return;
+  }
+  await git.run(["worktree", "remove", "--force", paths.worktree], paths.clone);
+  rmSync(paths.worktree, { recursive: true, force: true });
+}
+
+async function deleteBranch(git: Git, paths: WorkPaths, branch: string): Promise<void> {
+  if (branch === "") return;
+  if (!paths.shared) {
+    await git.run(["branch", "-D", branch], paths.clone);
+    return;
+  }
+  const ref = `refs/heads/${branch}`;
+  if (!(await worktrees(git, paths.clone)).some((fields) => fields.includes(`branch ${ref}`))) {
+    await git.must(["update-ref", "-d", ref], paths.clone);
+  }
+}
+
+export async function checkWorktreePath(git: Git, paths: WorkPaths): Promise<void> {
+  if (!paths.shared) {
+    await git.run(["worktree", "prune"], paths.clone);
+  } else {
+    const registered = await registeredWorktree(git, paths);
+    await checkSharedWorktree(git, paths, registered);
+    if (registered && !existsAt(paths.worktree)) await git.must(["worktree", "remove", "--force", paths.worktree], paths.clone);
+  }
 }
 
 async function currentBranch(git: Git, worktree: string): Promise<string | undefined> {
@@ -75,7 +258,7 @@ async function setAside(git: Git, worktree: string, current: string): Promise<{ 
     return null;
   }
   const branch = `${current}${leftoverSuffix}`;
-  await git.must(["switch", "-C", branch], worktree);
+  await git.must(["switch", "--no-track", "-C", branch], worktree);
   await git.must(["add", "-A"], worktree);
   await git.must(["commit", "--no-verify", "-m", `Work left uncommitted in the folder when it moved on from ${current}`], worktree);
   return { branch, commit: (await git.must(["rev-parse", "HEAD"], worktree)).trim() };
@@ -94,15 +277,9 @@ async function carryOver(git: Git, worktree: string, commit: string): Promise<bo
 }
 
 export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: string, branch: string, paths: WorkPaths): Promise<Prepared> {
-  return locks.with(paths.clone, async () => {
-    if (!existsSync(join(paths.clone, ".git"))) {
-      rmSync(paths.clone, { recursive: true, force: true });
-      mkdirSync(dirname(paths.clone), { recursive: true });
-      await git.must(["clone", "--no-checkout", remote(repository), paths.clone], dirname(paths.clone));
-    } else {
-      await git.must(["fetch", "--prune", "origin"], paths.clone);
-    }
-    const base = await defaultBranch(git, paths.clone);
+  return withClone(paths.clone, async () => {
+    const base = await prepareRepository(git, remote(repository), repository, paths);
+    await checkWorktreePath(git, paths);
     if (existsSync(paths.worktree)) {
       const current = await currentBranch(git, paths.worktree);
       if (current === branch) {
@@ -111,27 +288,26 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
       if (current !== undefined && current !== "HEAD") {
         const aside = await setAside(git, paths.worktree, current);
         const from = (await exists(git, `refs/heads/${branch}`, paths.clone)) ? branch : (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) ? `origin/${branch}` : `origin/${base}`;
-        const switching = from === branch ? ["switch", branch] : ["switch", from === `origin/${branch}` ? "--track" : "--no-track", "-C", branch, from];
+        const switching = from === branch ? ["switch", branch] : ["switch", !paths.shared && from === `origin/${branch}` ? "--track" : "--no-track", "-C", branch, from];
         const switched = await git.run(switching, paths.worktree);
         if (switched.code !== 0) {
           throw new Error(`git ${switching.join(" ")} failed in ${paths.worktree}${aside === null ? "" : `; the uncommitted work is kept on the local branch ${aside.branch}`}: ${`${switched.stderr}${switched.stdout}`.trim()}`);
         }
         const leftover = aside === null ? null : { ...aside, carried: await carryOver(git, paths.worktree, aside.commit) };
         if (current.startsWith("sa2/ticket-") && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/origin/${current}`, paths.clone))) {
-          await git.run(["branch", "-D", current], paths.clone);
+          await deleteBranch(git, paths, current);
         }
         return { base, created: false, switched: true, from, leftover };
       }
-      rmSync(paths.worktree, { recursive: true, force: true });
+      await discardWorktree(git, paths);
     }
-    await git.run(["worktree", "prune"], paths.clone);
     mkdirSync(dirname(paths.worktree), { recursive: true });
     if (await exists(git, `refs/heads/${branch}`, paths.clone)) {
       await git.must(["worktree", "add", paths.worktree, branch], paths.clone);
       return { base, created: true, switched: false, from: branch, leftover: null };
     }
     if (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) {
-      await git.must(["worktree", "add", "--track", "-b", branch, paths.worktree, `origin/${branch}`], paths.clone);
+      await git.must(["worktree", "add", paths.shared ? "--no-track" : "--track", "-b", branch, paths.worktree, `origin/${branch}`], paths.clone);
       return { base, created: true, switched: false, from: `origin/${branch}`, leftover: null };
     }
     await git.must(["worktree", "add", "--no-track", "-b", branch, paths.worktree, `origin/${base}`], paths.clone);
@@ -140,15 +316,12 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
 }
 
 export async function removeWorktree(git: Git, branch: string, paths: WorkPaths): Promise<void> {
-  await locks.with(paths.clone, async () => {
+  await withClone(paths.clone, async () => {
     if (existsSync(join(paths.clone, ".git"))) {
-      if (existsSync(paths.worktree)) {
-        await git.run(["worktree", "remove", "--force", paths.worktree], paths.clone);
-      }
-      rmSync(paths.worktree, { recursive: true, force: true });
-      await git.run(["worktree", "prune"], paths.clone);
-      await git.run(["branch", "-D", branch], paths.clone);
-    } else {
+      await discardWorktree(git, paths);
+      if (!paths.shared) await git.run(["worktree", "prune"], paths.clone);
+      await deleteBranch(git, paths, branch);
+    } else if (!paths.shared) {
       rmSync(paths.worktree, { recursive: true, force: true });
     }
   });
@@ -187,7 +360,7 @@ export async function folderState(git: Git, worktree: string, base: string | nul
   return { commits, status: status.text, unread };
 }
 
-export async function saveWork(git: Git, ticket: number, branch: string, paths: WorkPaths): Promise<Saved> {
+export async function saveWork(git: Git, ticket: number, branch: string, paths: WorkPaths, pushTo = "origin"): Promise<Saved> {
   if (!existsSync(paths.worktree)) {
     return { saved: false, detail: "The worktree is gone, so there was nothing to save" };
   }
@@ -196,7 +369,7 @@ export async function saveWork(git: Git, ticket: number, branch: string, paths: 
   if (staged.code === 1) {
     await git.must(["commit", "--no-verify", "-m", `Save work in progress of ticket ${ticket} so that it is on the branch`], paths.worktree);
   }
-  const pushed = await git.run(["push", "origin", `HEAD:refs/heads/${branch}`], paths.worktree);
+  const pushed = await git.run(["push", pushTo, `HEAD:refs/heads/${branch}`], paths.worktree);
   if (pushed.code !== 0) {
     return { saved: false, detail: `git push failed: ${`${pushed.stderr}${pushed.stdout}`.trim()}` };
   }

@@ -266,6 +266,7 @@ export function App() {
     () => ({
       addMachine: (name, system) => controller.addMachine(name, system),
       revokeMachine: (name) => controller.revokeMachine(name),
+      setMachineStorage: (name, storage) => controller.setMachineStorage(name, storage),
       setOrder: (order) => controller.setOrder(order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
       setTable: (table) => controller.setTable(table),

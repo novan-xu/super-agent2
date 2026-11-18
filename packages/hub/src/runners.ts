@@ -12,6 +12,7 @@ import {
   type WorkHeld,
 } from "@super-agent2/protocol";
 import type { Machine, MachineStore } from "./machines.js";
+import type { StorageSettings } from "@super-agent2/protocol";
 
 export interface RunnerConnection {
   send(message: HubToRunner): void;
@@ -38,6 +39,7 @@ export interface Runners {
   sendWork(machine: string, message: WorkMessageToRunner): boolean;
   refreshAllowance(): number;
   report(machine: string): MachineReport | undefined;
+  setStorage(machine: string, storage: StorageSettings): boolean;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
   attach(machine: Machine, connection: RunnerConnection): RunnerLink;
   revoke(name: string): Machine | undefined;
@@ -126,6 +128,7 @@ export function createRunners(options: RunnersOptions): Runners {
           createdAt: machine.createdAt,
           lastSeenAt: machine.lastSeenAt,
           report: link?.report ?? machine.report,
+          storage: machine.storage,
           ...(machine.system === null ? {} : { system: machine.system }),
           ...(machine.accessExpiresAt === null ? {} : { accessExpiresAt: machine.accessExpiresAt }),
         };
@@ -151,6 +154,17 @@ export function createRunners(options: RunnersOptions): Runners {
       return count;
     },
     report: (name) => links.get(name)?.report,
+    setStorage: (name, storage) => {
+      if (!machines.setStorage(name, storage)) {
+        return false;
+      }
+      const link = links.get(name);
+      if (link?.report?.storage !== undefined) {
+        link.connection.send({ type: "storage.set", settings: storage });
+      }
+      announce();
+      return true;
+    },
     admit: (identity, token) => {
       if (identity.kind !== "service" || token === undefined) {
         return undefined;
@@ -179,6 +193,9 @@ export function createRunners(options: RunnersOptions): Runners {
             machines.seen(machine.name, message.machine);
             if (first) {
               connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name, ...(options.version === undefined ? {} : { version: options.version }) });
+              if (message.machine.storage !== undefined) {
+                connection.send({ type: "storage.set", settings: machines.active(machine.name)?.storage ?? {} });
+              }
             }
             announce();
             if (message.type === "hello") {

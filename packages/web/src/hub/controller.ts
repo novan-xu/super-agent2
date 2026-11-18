@@ -10,6 +10,7 @@ import {
   machineChoices,
   type MachineRevoked,
   type MachineSystem,
+  type StorageSettings,
   type MemoryList,
   type Provider,
   type StoredWorkEvent,
@@ -263,6 +264,16 @@ export class PageController {
     }
     void this.loadSettings();
     return answer.value;
+  }
+
+  async setMachineStorage(name: string, storage: StorageSettings): Promise<boolean> {
+    const answer = await this.options.api.setMachineStorage(name, storage);
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+      return false;
+    }
+    await this.loadSettings();
+    return true;
   }
 
   async setOrder(order: readonly Provider[]): Promise<boolean> {
