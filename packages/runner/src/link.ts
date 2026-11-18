@@ -45,6 +45,7 @@ export interface RunnerLinkOptions {
   readonly silenceMilliseconds?: number;
   readonly onEvent?: (event: LinkEvent) => void;
   readonly works?: () => Works | undefined;
+  readonly refreshAllowance?: () => void;
 }
 
 export interface RunnerLink {
@@ -181,6 +182,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
           emit({ type: "connected", name: message.name, ...(message.version === undefined ? {} : { version: message.version }) });
           return;
         }
+        if (message.type === "allowance.refresh") { options.refreshAllowance?.(); return; }
         options.works?.()?.receive(message);
       },
       ping: () => {

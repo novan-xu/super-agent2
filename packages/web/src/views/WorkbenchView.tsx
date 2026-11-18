@@ -1,6 +1,6 @@
 import { text } from "@super-agent2/catalog";
 import { chineseOf, type ChoiceChange, type HoldCard as HoldCardData, type StuckAnswer, type Ticket } from "@super-agent2/protocol";
-import { type CSSProperties, useEffect, useMemo } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo } from "react";
 import { startView } from "../live/chains.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
 import { kindKey, ticketGroups, ticketPhase, ticketProblem, whereOf } from "../live/phase.js";
@@ -31,6 +31,7 @@ export interface WorkbenchViewProps {
   readonly ticketHref: (ticket: number) => string;
   readonly openTicket: (ticket: number) => void;
   readonly now: number;
+  readonly allowance?: ReactNode;
 }
 
 function Card({ card, waiting, actions, focus }: { readonly card: HoldCardData; readonly waiting: WaitingState; readonly actions: CardActions; readonly focus: string | null }) {
@@ -137,7 +138,7 @@ function Tickets({ tickets, hrefOf, open, now }: { readonly tickets: TicketsStat
   );
 }
 
-export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets, ticketHref, openTicket, now }: WorkbenchViewProps) {
+export function WorkbenchView({ waiting, actions, focus, focused, push, togglePush, tickets, ticketHref, openTicket, now, allowance }: WorkbenchViewProps) {
   const count = waitingCount(waiting);
   const holds = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "hold" ? [card] : [])), [waiting.cards]);
   const stuck = useMemo(() => waiting.cards.flatMap((card) => (card.kind === "stuck" ? [card] : [])), [waiting.cards]);
@@ -157,6 +158,7 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
 
   return (
     <div className="page page--narrow">
+      {allowance}
       <section className="section" aria-label={text("waiting.list")}>
         <div className="section-head">
           <h2>{text("waiting.title")}</h2>

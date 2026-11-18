@@ -47,7 +47,7 @@ describe("reading Codex's allowance", () => {
       state: "available",
       remainingPercent: 88,
       resetsAt: 1_800_500_000_000,
-      windows: [{ name: "primary", usedPercent: 12, resetsAt: 1_800_500_000_000 }],
+      windows: [{ name: "primary", usedPercent: 12, durationMinutes: 10080, resetsAt: 1_800_500_000_000 }],
       problem: null,
     });
   });

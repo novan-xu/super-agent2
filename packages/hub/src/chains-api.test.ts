@@ -537,7 +537,7 @@ async function stateOne(running: Hub, platform: "windows" | "macos" | "any", eng
   expect(stated.isError, stated.text).toBe(false);
 }
 
-function reading(program: "codex" | "claude", state: "available" | "exhausted", readAt: number): AllowanceReading {
+function reading(program: "codex" | "claude", state: "available" | "exhausted", readAt: number): import("@super-agent2/protocol").SubscriptionReading {
   return {
     program,
     readAt,
@@ -682,6 +682,22 @@ describe("start defaults", () => {
     expect(running.tickets.get(1)?.state).toBe("pending");
     connect(running, "mini", machineReport("darwin"));
     expect((await cardOf(running, 1)).choice).toMatchObject({ machine: "mini", engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: [] });
+  });
+
+  it("broadcasts fresh allowance windows and requests online runners to refresh", async () => {
+    const running = await start();
+    const inbox = await page(running);
+    expect(inbox.messages.some((message) => message.type === "allowance")).toBe(true);
+    expect((await ownerSend(running, allowancePath, {}, { headers: { origin: "https://elsewhere.example" } })).status).toBe(403);
+    expect((await ownerSend(running, allowancePath, {}, { headers: { "content-type": "text/plain" } })).status).toBe(415);
+    const response = await ownerSend(running, allowancePath, {});
+    expect(await response.json()).toEqual({ requested: 1 });
+    expect(sent).toContainEqual({ type: "allowance.refresh" });
+    const window = { name: "primary", usedPercent: 15, durationMinutes: 10080, resetsAt: clock.now() + 10000 };
+    connect(running, "pc", machineReport("win32", [{ ...reading("codex", "available", clock.now()), windows: [window] }]));
+    await inbox.until(() => inbox.messages.some((message) => message.type === "allowance" && message.allowance.subscriptions.some((entry) => entry.windows?.some((item) => item.durationMinutes === 10080))));
+    const latest = inbox.messages.filter((message) => message.type === "allowance").at(-1);
+    expect(latest?.type === "allowance" && latest.allowance.subscriptions[0]?.windows).toEqual([window]);
   });
 
   it("chooses dsh only when both subscriptions are used up by a current reading", async () => {

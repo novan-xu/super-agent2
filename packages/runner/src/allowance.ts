@@ -32,7 +32,7 @@ export const claudeAllowanceInput = [
   .map((message) => JSON.stringify(message))
   .join("\n");
 
-const CodexWindow = z.looseObject({ usedPercent: z.number(), resetsAt: z.number().nullable().optional() });
+const CodexWindow = z.looseObject({ usedPercent: z.number(), windowDurationMins: z.number().positive().nullable().optional(), resetsAt: z.number().nullable().optional() });
 
 const CodexAnswer = z.looseObject({
   id: z.literal(allowanceRequestId),
@@ -118,7 +118,7 @@ export function codexAllowance(output: string, readAt: number): SubscriptionRead
     ["secondary", limits.secondary],
   ] as const) {
     if (window !== null && window !== undefined) {
-      windows.push({ name, usedPercent: window.usedPercent, resetsAt: window.resetsAt === null || window.resetsAt === undefined ? null : window.resetsAt * 1000 });
+      windows.push({ name, usedPercent: window.usedPercent, ...(window.windowDurationMins == null ? {} : { durationMinutes: window.windowDurationMins }), resetsAt: window.resetsAt === null || window.resetsAt === undefined ? null : window.resetsAt * 1000 });
     }
   }
   const blocked = (limits.rateLimitReachedType ?? null) !== null || answer.result.ordinaryUsageAllowed === false;

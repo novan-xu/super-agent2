@@ -11,6 +11,7 @@ export type AllowanceState = z.infer<typeof AllowanceState>;
 export const AllowanceWindow = z.object({
   name: z.string().min(1),
   usedPercent: z.number().min(0),
+  durationMinutes: z.number().positive().optional(),
   resetsAt: z.number().int().nullable(),
 });
 export type AllowanceWindow = z.infer<typeof AllowanceWindow>;
@@ -82,6 +83,7 @@ export const Subscription = z.object({
   resetsAt: z.number().int().nullable(),
   readAt: z.number().int().nullable(),
   machine: z.string().nullable(),
+  windows: z.array(AllowanceWindow).optional(),
 });
 export type Subscription = z.infer<typeof Subscription>;
 
@@ -107,6 +109,7 @@ export function currentSubscription(program: AllowanceProgram, readings: readonl
     resetsAt: reading.resetsAt,
     readAt: reading.readAt,
     machine: current.machine,
+    windows: reading.windows,
   };
 }
 
