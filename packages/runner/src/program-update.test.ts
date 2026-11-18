@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,4 +78,81 @@ describe("program updates", () => {
     expect(events).toEqual(["lock true", "install", "probe", "lock false"]);
     expect(reports[0]?.models[0]?.id).toBe("new");
   });
+});
+
+import { selfUpdateFor } from "./program-update-self.js";
+
+describe("vendor self-updates", () => {
+  it("recognises Claude's native layout and restores its launcher on failure", async () => {
+    const home = await temp();
+    const bin = join(home, ".local", "bin");
+    const versions = join(home, ".local", "share", "claude", "versions");
+    await mkdir(bin, { recursive: true });
+    await mkdir(versions, { recursive: true });
+    const executable = join(bin, "claude.exe");
+    await writeFile(executable, "old");
+    const calls: string[][] = [];
+    const prober: Prober = { find: () => undefined, capture: async (_path, args) => {
+      calls.push([...args]);
+      await writeFile(executable, "broken");
+      throw new Error("failed");
+    } };
+    const update = await selfUpdateFor({ ...report, id: "claude", path: executable }, prober, home);
+    expect(update?.channel).toBe("Claude Code native");
+    await expect(update?.install()).rejects.toThrow("failed");
+    expect(await readFile(executable, "utf8")).toBe("old");
+    expect(calls).toEqual([["install", "stable"]]);
+    await rm(versions, { recursive: true });
+    expect(await selfUpdateFor({ ...report, id: "claude", path: executable }, prober, home)).toBeUndefined();
+  });
+
+  it("runs Antigravity's updater and rejects a downgrade or prerelease", async () => {
+    const home = await temp();
+    const bin = join(home, ".local", "bin");
+    await mkdir(bin, { recursive: true });
+    const executable = join(bin, "agy");
+    await writeFile(executable, "old");
+    let version = "2.0.0";
+    const prober: Prober = { find: () => undefined, capture: async (_path, args) => {
+      if (args[0] === "update") { await writeFile(executable, "new"); return ""; }
+      return version;
+    } };
+    const update = await selfUpdateFor({ ...report, id: "antigravity", path: executable }, prober, home);
+    expect(update?.channel).toBe("Antigravity CLI");
+    await update?.install();
+    expect(await readFile(executable, "utf8")).toBe("new");
+    await writeFile(executable, "old");
+    version = "2.0.0-beta.1";
+    await expect(update?.install()).rejects.toThrow("prerelease");
+    expect(await readFile(executable, "utf8")).toBe("old");
+    expect(await selfUpdateFor({ ...report, id: "antigravity", path: join(home, "other") }, prober, home)).toBeUndefined();
+  });
+
+  it("uses the npm prefix containing the resolved package", async () => {
+    if (process.platform === "win32") return;
+    const prefix = await temp();
+    const modules = join(prefix, "lib", "node_modules");
+    const folder = join(modules, "@openai", "codex");
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "cli.js"), "old");
+    const bin = join(prefix, "bin");
+    await mkdir(bin);
+    const executable = join(bin, "codex");
+    await symlink(join(folder, "cli.js"), executable);
+    const calls: string[][] = [];
+    const prober: Prober = { find: () => "npm", capture: async (_path, args) => {
+      calls.push([...args]);
+      return args[0] === "root" ? join(prefix, "elsewhere", "node_modules") : "2.0.0";
+    } };
+    const update = await systemProgramUpdateSteps(prober).check({ ...report, path: executable });
+    await update?.install();
+    expect(calls.at(-1)).toEqual(["install", "--global", "--prefix", await realpath(prefix), "@openai/codex@2.0.0"]);
+  });
+});
+
+it("passes npm prefix paths containing spaces as one argument", async () => {
+  const { systemProber } = await import("./programs.js");
+  const cwd = await temp();
+  const prober = systemProber({ cwd, environment: process.env });
+  expect((await prober.capture(process.execPath, ["-p", "process.argv[1]", "prefix with spaces"])).trim()).toBe("prefix with spaces");
 });
