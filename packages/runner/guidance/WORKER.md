@@ -42,8 +42,10 @@ them would leave the default branch in a state that does not build or makes no s
 - Commit as you go, with clear messages in English. Push the branch to `origin`.
 - Before handing a pull request in, bring the branch up to date with the default branch and resolve any conflict
   yourself, then run the tests again.
-- Keep work on the next piece out of a pull request you have handed in: after the merge your folder moves to a new
-  branch from the default branch, and changes left uncommitted in the folder may be discarded then.
+- Before handing in, it is better to commit or drop everything in the folder, so `git status` is clean, and to keep
+  work on the next piece out of the pull request you hand in. After the merge your folder moves to a new branch from the
+  default branch. Anything left uncommitted is not lost: it is set aside on a local branch named after your old one
+  with `-unfinished` at the end, and carried over to the new branch when it applies cleanly; you are told which.
 - Do not merge a pull request, do not push to the default branch, and do not close the issues by hand: a pull request
   closes its issues when it is merged, and only that counts.
 - If something in an issue is unclear, make a reasonable assumption, carry on, and say what you assumed in the pull

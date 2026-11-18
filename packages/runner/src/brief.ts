@@ -57,6 +57,21 @@ export function continueText(task: WorkTask, place: BriefPlace, note: string): s
   return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`].join("\n");
 }
 
+export interface LeftoverPlace {
+  readonly branch: string;
+  readonly commit: string;
+  readonly carried: boolean;
+  readonly into: string;
+  readonly base: string;
+}
+
+export function leftoverText(leftover: LeftoverPlace): string {
+  const kept = `the local branch ${leftover.branch} (commit ${leftover.commit})`;
+  return leftover.carried
+    ? `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They were carried over: they are uncommitted changes on ${leftover.into} now, and a copy is kept on ${kept}. Check that they still belong in the next pull request.`
+    : `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They did not apply cleanly on the updated ${leftover.base}, so ${leftover.into} starts clean, and they are kept on ${kept}. Take what you need from there, for example with \`git cherry-pick --no-commit ${leftover.commit}\` or \`git checkout ${leftover.commit} -- <path>\`.`;
+}
+
 export function messageText(from: WorkSender, text: string): string {
   const who = from === "owner" ? "the owner" : from === "brain" ? "the brain" : "the hub";
   return `[Message from ${who}] ${text}`;

@@ -21,6 +21,7 @@ import {
   brief,
   type BriefPlace,
   continueText,
+  leftoverText,
   lostSessionNote,
   messageText,
   resumeText,
@@ -463,7 +464,13 @@ export function createWorks(options: WorksOptions): Works {
       detail: prepared.created
         ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}`
         : prepared.switched
-          ? `Switched the worktree ${work.paths.worktree} to the new branch ${task.branch} from ${prepared.from}`
+          ? `Switched the worktree ${work.paths.worktree} to the new branch ${task.branch} from ${prepared.from}${
+              prepared.leftover === null
+                ? ""
+                : prepared.leftover.carried
+                  ? `, carrying over the uncommitted changes found there (a copy is on ${prepared.leftover.branch})`
+                  : `; the uncommitted changes found there did not apply cleanly and are kept on ${prepared.leftover.branch}`
+            }`
           : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
     });
     const session = task.session ?? work.record.session;
@@ -475,7 +482,8 @@ export function createWorks(options: WorksOptions): Works {
     }
     const where = place(work);
     const waiting = work.queue.splice(0);
-    const withWaiting = (prompt: string) => [prompt, ...waiting].join("\n\n");
+    const leftover = prepared.leftover === null ? [] : [leftoverText({ ...prepared.leftover, into: task.branch, base: prepared.base })];
+    const withWaiting = (prompt: string) => [prompt, ...leftover, ...waiting].join("\n\n");
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
       startTurn(work, withWaiting(brief(task, where)));

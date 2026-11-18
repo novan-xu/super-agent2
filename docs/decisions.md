@@ -2884,3 +2884,23 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   the GraphQL closing references against the real GitHub; the runner's `gh pr view` read of them was already live.
 - **Why:** The issue asks to see a chain of several issues go through two pull requests on the page.
 - **Other options:** A second scripted behaviour per chain size.
+
+## 2026-11-17 — Uncommitted work when the folder moves to the next piece
+
+- **Chosen:** Before the runner moves the worktree to the next piece's branch, it checks `git status` (untracked files
+  included, ignored ones not). Anything there is committed, without hooks, on a local branch named after the old branch
+  with `-unfinished` at the end; the worktree then switches to the new branch from the updated default branch, and the
+  runner tries to carry that commit over with `git cherry-pick --no-commit`, leaving the changes uncommitted on the new
+  branch. When it applies cleanly the changes are there and a copy stays on the `-unfinished` branch; when it does not,
+  the new branch starts clean and the work stays on that branch. The worker's continuation message says which, with the
+  branch and the commit, and the `prepared` line on the page says it too. If the switch itself fails, the attempt fails
+  (`prepare`) instead of the folder being made again, so nothing is thrown away. A run of the same step after a restart
+  finds the folder on the `-unfinished` branch and carries on from there. The `-unfinished` branch stays local and is
+  not pushed. `WORKER.md` advises committing or dropping everything before handing in. This replaces, in "Branches for
+  the pieces of a chain, and which pull request is the ticket's", switching with `--discard-changes`, which threw such
+  work away.
+- **Why:** A worker may start on the next issue before handing in, and nothing should disappear silently. A named
+  branch survives restarts and is not shared the way the stash list is between every worktree of one clone; carrying
+  the work over when it applies cleanly lets the worker continue as if nothing had happened.
+- **Other options:** A named stash; always carrying over and leaving conflict markers; refusing to switch until the
+  worker cleans up, which would block the chain.

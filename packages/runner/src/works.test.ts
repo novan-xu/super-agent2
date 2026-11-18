@@ -333,6 +333,7 @@ describe("a worker on the runner", () => {
     writeFileSync(join(paths.worktree, "first.txt"), "first");
     await git(paths.worktree).must(["add", "first.txt"], paths.worktree);
     await git(paths.worktree).must(["commit", "-m", "First"], paths.worktree);
+    writeFileSync(join(paths.clone, ".git", "info", "exclude"), "cache.txt\n");
     writeFileSync(join(paths.worktree, "cache.txt"), "kept");
     handBack(9, 50, [11], "sa2/ticket-9-abcd");
     handle.emit({ type: "turn.finished", outcome: "completed" });
@@ -364,6 +365,65 @@ describe("a worker on the runner", () => {
     handBack(9, 51, [12], "sa2/ticket-9-beef");
     handle.emit({ type: "turn.finished", outcome: "completed" });
     expect(await ended(9, 2)).toMatchObject({ kind: "finished", pullRequest: 51, closes: [12] });
+  });
+
+  async function nextPiece(ticket: number, mainFirst: string, leave: (worktree: string) => void): Promise<{ readonly handle: FakeHandle; readonly worktree: string }> {
+    const works = start();
+    works.receive({ type: "work.start", task: task(ticket) });
+    const first = await programs.prompted(1);
+    const paths = workPaths(home, repository, ticket);
+    first.emit({ type: "session", session: `thread-${ticket}` });
+    writeFileSync(join(paths.worktree, "first.txt"), "first");
+    await git(paths.worktree).must(["add", "first.txt"], paths.worktree);
+    await git(paths.worktree).must(["commit", "-m", "First"], paths.worktree);
+    leave(paths.worktree);
+    handBack(ticket, 60, [11], `sa2/ticket-${ticket}-abcd`);
+    first.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(ticket)).toMatchObject({ kind: "finished", pullRequest: 60 });
+    const seed = join(scratch, "seed");
+    await git(seed).must(["pull", "origin", "main"], seed);
+    writeFileSync(join(seed, "first.txt"), mainFirst);
+    await git(seed).must(["add", "first.txt"], seed);
+    await git(seed).must(["commit", "-m", "Squashed #60"], seed);
+    await git(seed).must(["push", "origin", "main"], seed);
+    works.receive({ type: "work.start", task: task(ticket, { attempt: 2, branch: `sa2/ticket-${ticket}-beef`, merged: [11], session: `thread-${ticket}`, note: "Pull request #60 is merged into main." }) });
+    await programs.changed.until(() => programs.handles.length === 2);
+    return { handle: await programs.prompted(1), worktree: paths.worktree };
+  }
+
+  it("carries uncommitted work over to the next branch when it applies cleanly, keeps a copy, and tells the worker", async () => {
+    const { handle, worktree } = await nextPiece(13, "first", (folder) => {
+      writeFileSync(join(folder, "README.md"), "sandbox, next step");
+      writeFileSync(join(folder, "notes.txt"), "started on #12");
+    });
+    expect((await git(worktree).must(["rev-parse", "--abbrev-ref", "HEAD"], worktree)).trim()).toBe("sa2/ticket-13-beef");
+    expect((await git(worktree).must(["log", "-1", "--format=%s"], worktree)).trim()).toBe("Squashed #60");
+    expect(readFileSync(join(worktree, "README.md"), "utf8")).toBe("sandbox, next step");
+    expect(readFileSync(join(worktree, "notes.txt"), "utf8")).toBe("started on #12");
+    expect((await git(worktree).must(["status", "--porcelain"], worktree)).split("\n").filter((line) => line !== "").sort()).toEqual([" M README.md", "?? notes.txt"]);
+    const kept = (await git(worktree).must(["show", "--stat", "--format=%s", "sa2/ticket-13-abcd-unfinished"], worktree)).trim();
+    expect(kept).toContain("Work left uncommitted in the folder when it moved on from sa2/ticket-13-abcd");
+    expect(kept).toContain("notes.txt");
+    expect(handle.prompts[0]).toContain("Pull request #60 is merged into main.");
+    expect(handle.prompts[0]).toContain("Uncommitted changes were found in your folder when it moved to the new branch sa2/ticket-13-beef. They were carried over");
+    expect(handle.prompts[0]).toContain("a copy is kept on the local branch sa2/ticket-13-abcd-unfinished");
+    expect(events(13, 2).find((message) => message.event.kind === "phase" && message.event.phase === "prepared")?.event).toMatchObject({
+      detail: expect.stringContaining("carrying over the uncommitted changes found there") as unknown as string,
+    });
+  });
+
+  it("keeps uncommitted work that does not apply on the updated default branch on a named branch, and tells the worker where", async () => {
+    const { handle, worktree } = await nextPiece(14, "theirs", (folder) => {
+      writeFileSync(join(folder, "first.txt"), "mine");
+    });
+    expect((await git(worktree).must(["rev-parse", "--abbrev-ref", "HEAD"], worktree)).trim()).toBe("sa2/ticket-14-beef");
+    expect(readFileSync(join(worktree, "first.txt"), "utf8")).toBe("theirs");
+    expect((await git(worktree).must(["status", "--porcelain"], worktree)).trim()).toBe("");
+    expect((await git(worktree).must(["show", "sa2/ticket-14-abcd-unfinished:first.txt"], worktree)).trim()).toBe("mine");
+    const commit = (await git(worktree).must(["rev-parse", "sa2/ticket-14-abcd-unfinished"], worktree)).trim();
+    expect(handle.prompts[0]).toContain("They did not apply cleanly on the updated main, so sa2/ticket-14-beef starts clean");
+    expect(handle.prompts[0]).toContain(`the local branch sa2/ticket-14-abcd-unfinished (commit ${commit})`);
+    expect(handle.prompts[0]).toContain(`git cherry-pick --no-commit ${commit}`);
   });
 
   it("takes a message into the running turn, or queues it for the next turn when the program cannot", async () => {
