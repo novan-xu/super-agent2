@@ -1,5 +1,6 @@
+import { sendFile } from "./file-response.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AttachmentCreate, attachmentsPath, isNativeImage } from "@super-agent2/protocol";
+import { AttachmentCreate, attachmentsPath } from "@super-agent2/protocol";
 import type { AttachmentStore } from "./attachments.js";
 
 const attachmentRoute = /^\/api\/attachments\/([0-9a-f]{32})(\/upload)?$/;
@@ -110,27 +111,7 @@ export async function serveAttachments(given: AttachmentRequest): Promise<boolea
     return false;
   }
   request.resume();
-  const body = method === "GET" ? store.open(id) : undefined;
-  if (method === "GET" && body === undefined) {
-    return false;
-  }
-  if (method === "HEAD" && !store.complete(id)) {
-    return false;
-  }
-  response.writeHead(200, {
-    "content-type": isNativeImage(attachment.mediaType) ? attachment.mediaType : "application/octet-stream",
-    "content-length": attachment.size,
-    "content-disposition": contentDisposition(attachment.name),
-    "cache-control": "private, max-age=31536000, immutable",
-    "x-content-type-options": "nosniff",
-    "content-security-policy": "sandbox",
-  });
-  if (body === undefined) {
-    response.end();
-    return true;
-  }
-  body.on("error", () => response.destroy());
-  response.on("close", () => body.destroy());
-  body.pipe(response);
+  if (!store.complete(id)) return false;
+  sendFile(request, response, { ...attachment, open: range => store.open(id, range)! }, contentDisposition(attachment.name), "private, max-age=31536000, immutable");
   return true;
 }

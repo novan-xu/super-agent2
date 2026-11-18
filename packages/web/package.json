@@ -10,6 +10,7 @@
   "dependencies": {
     "@super-agent2/catalog": "workspace:*",
     "@super-agent2/protocol": "workspace:*",
+    "pdfjs-dist": "5.4.624",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-markdown": "10.1.0",

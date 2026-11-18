@@ -1,3 +1,4 @@
+import { sendFile } from "./file-response.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
@@ -1188,7 +1189,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return false;
   };
 
-  const serveTicketFile = (response: ServerResponse, ticket: number, encoded: string): boolean => {
+  const serveTicketFile = (request: IncomingMessage, response: ServerResponse, ticket: number, encoded: string): boolean => {
     let name: string;
     try {
       name = decodeURIComponent(encoded);
@@ -1199,18 +1200,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (file === undefined) {
       return false;
     }
-    response.writeHead(200, {
-      "content-type": "application/octet-stream",
-      "content-length": file.size,
-      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-      "content-security-policy": "sandbox",
-    });
-    const body = file.open();
-    body.on("error", () => response.destroy());
-    response.on("close", () => body.destroy());
-    body.pipe(response);
+    sendFile(request, response, file, `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`, "no-store");
     return true;
   };
 
@@ -1228,11 +1218,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
 
   const serveTickets = (request: IncomingMessage, response: ServerResponse, path: string, method: string): boolean => {
     const tickets = options.tickets;
-    if (tickets === undefined || method !== "GET") {
+    if (tickets === undefined || (method !== "GET" && method !== "HEAD")) {
       return false;
     }
     const url = new URL(request.url ?? "/", "http://hub");
-    if (path === ticketsPath) {
+    if (path === ticketsPath && method === "GET") {
       const scope = url.searchParams.get("scope") ?? "open";
       if (scope === "ended") {
         return serveHistory(response, url, tickets);
@@ -1246,8 +1236,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     const fileRoute = ticketFileRoute.exec(path);
     if (fileRoute?.[1] !== undefined && fileRoute[2] !== undefined) {
-      return serveTicketFile(response, Number(fileRoute[1]), fileRoute[2]);
+      return serveTicketFile(request, response, Number(fileRoute[1]), fileRoute[2]);
     }
+    if (method !== "GET") return false;
     const id = ticketRoute.exec(path)?.[1];
     const detail = id === undefined ? undefined : tickets.detail(Number(id));
     if (detail === undefined) {
