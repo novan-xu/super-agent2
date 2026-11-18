@@ -331,7 +331,7 @@ describe("a worker on the runner", () => {
     works.receive({ type: "work.start", task: task(53) });
     works.receive({ type: "work.start", task: task(54) });
     await works.idle();
-    expect(await ended(53)).toMatchObject({ kind: "failed", failure: "prepare", reason: expect.stringContaining("already occupied") });
+    expect(events(53).at(-1)?.event).toMatchObject({ kind: "failed", failure: "prepare", reason: expect.stringContaining("already occupied") });
     expect(programs.handles).toHaveLength(1);
     expect(programs.last().options.workspace).toBe(join(managed, "t54"));
     expect(readFileSync(join(projects, "super-agent-sandbox", "README.md"), "utf8")).toContain("sandbox");

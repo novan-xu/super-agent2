@@ -31,7 +31,8 @@ function isDirectory(path: string): boolean {
 async function sharedPath<T>(operation: () => Promise<T>): Promise<T | undefined> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    return await Promise.race([operation(), new Promise<undefined>((resolve) => { timer = setTimeout(resolve, 3000); })]);
+    const timeout = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 3000); });
+    return await Promise.race([operation(), timeout]);
   } catch {
     return undefined;
   } finally {
@@ -110,10 +111,10 @@ export class MachineStorage {
       const problem = asked === undefined ? undefined : this.problem(folder, asked);
       const chosen = problem === undefined ? asked : before;
       if (chosen !== undefined) accepted[folder] = chosen;
-      const fallbackProblem = local === undefined ? undefined : this.problem(folder, local);
-      if (chosen !== undefined && this.problem(folder, chosen) === undefined) {
+      const fallbackProblem = local === undefined || chosen === local ? undefined : this.problem(folder, local);
+      if (chosen !== undefined && (chosen === asked || this.problem(folder, chosen) === undefined)) {
         selection[folder] = chosen;
-      } else if (local !== undefined && fallbackProblem === undefined) {
+      } else if (local !== undefined && chosen !== local && fallbackProblem === undefined) {
         selection[folder] = local;
       }
       const reported = problem ?? (asked === undefined ? fallbackProblem : undefined);
