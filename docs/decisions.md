@@ -4047,6 +4047,13 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   and programs that omit the window. The estimate accounts for Chinese text without adding model-specific tokenizers.
 - **Other options** Maintain a model catalogue or use a separate tokenizer for each provider.
 
+- **Chosen** Keep the provider's saved session and board cursor across turns while rebinding the program to each new
+  turn's tool authorization. Send board changes while the topic holds its slot. Send a full seed when the topic
+  acquires a slot again, switches provider, or needs a replacement session.
+- **Why** Late calls from an earlier process retain its turn identity and cannot acquire current ticket locks. A
+  topic still resumes the same conversation as long as the provider has its session.
+- **Other options** Add native MCP rebinding for each provider, or send a full seed on every turn.
+
 ## 2026-11-18 — Ticket lock and stale reads (#84)
 
 - **Chosen** Add the owner's required lock to the closed code-constraint list. Require the current ticket version

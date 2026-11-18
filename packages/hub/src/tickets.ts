@@ -48,6 +48,7 @@ import { z } from "zod";
 import type { Clock } from "./clock.js";
 import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import { createTicketVersions, type TicketTurn } from "./ticket-versions.js";
 import { verificationOf } from "./verification-record.js";
 
 export interface TaskToOpen {
@@ -217,7 +218,8 @@ export interface TicketWrites {
 }
 
 export interface TicketService {
-  open(request: TicketToOpen): Ticket;
+  readonly versions: Pick<ReturnType<typeof createTicketVersions>, "requireActive" | "seen">;
+  open(request: TicketToOpen, turn?: TicketTurn): Ticket;
   get(id: number): Ticket | undefined;
   topic(id: number): string;
   list(options?: ListOptions): Ticket[];
@@ -229,14 +231,14 @@ export interface TicketService {
   task(id: number): TicketTask | undefined;
   repairRecord(id: number): RepairRecord | undefined;
   lineage(id: number): Ticket[];
-  repair(id: number, by: RepairOpener, words: string): RepairOutcome;
+  repair(id: number, by: RepairOpener, words: string, turn?: TicketTurn): RepairOutcome;
   giveUp(id: number, reason: GeneratedText, words: string): GiveUpOutcome;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
   reviews(): TicketReviewCount[];
   move(id: number, to: TicketState, reason?: GeneratedText): MoveResult;
-  stop(id: number, reason: GeneratedText): MoveResult;
-  change<T>(body: (writes: TicketWrites) => T): T;
+  stop(id: number, reason: GeneratedText, turn?: TicketTurn): MoveResult;
+  change<T>(body: (writes: TicketWrites) => T, turn?: TicketTurn): T;
   subscribe(listener: TicketListener): () => void;
 }
 
@@ -570,6 +572,7 @@ function likePattern(term: string): string {
 
 export function createTicketService(options: TicketServiceOptions): TicketService {
   const { connection } = options.database;
+  const versions = createTicketVersions(options.database);
   const { clock } = options;
   const work = options.work ?? noTicketWork;
   const listeners = new Set<TicketListener>();
@@ -898,7 +901,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     });
   };
 
-  const change = <T>(body: (writes: TicketWrites) => T): T => {
+  const change = <T>(body: (writes: TicketWrites) => T, turn?: TicketTurn): T => {
     if (inside) {
       throw new Error("Ticket changes do not nest");
     }
@@ -1099,8 +1102,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         return changed;
       },
       deployed: (id) => {
-        updateDeployed.run(clock.now(), id);
-        touch(id);
+        if (updateDeployed.run(clock.now(), id).changes > 0) {
+          touch(id);
+        }
       },
       move: (id, to, reason) => {
         const current = existing(id);
@@ -1345,7 +1349,13 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     try {
       connection.exec("BEGIN IMMEDIATE");
       try {
+        if (turn !== undefined) {
+          versions.start(turn);
+        }
         result = body(writes);
+        if (turn !== undefined) {
+          versions.finish(turn);
+        }
         connection.exec("COMMIT");
       } catch (error) {
         connection.exec("ROLLBACK");
@@ -1366,7 +1376,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     return result;
   };
 
-  const move = (id: number, to: TicketState, reason?: GeneratedText): MoveResult => {
+  const move = (id: number, to: TicketState, reason?: GeneratedText, turn?: TicketTurn): MoveResult => {
     const current = get(id);
     if (current === undefined) {
       return { ok: false, error: "not_found" };
@@ -1374,14 +1384,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     if (!canMoveTicket(current.form, current.state, to)) {
       return { ok: false, error: "refused", ticket: current };
     }
-    const ticket = change((writes) => writes.move(id, to, reason));
+    const ticket = change((writes) => writes.move(id, to, reason), turn);
     return { ok: true, ticket: get(id) ?? ticket };
   };
 
   return {
-    open: (request) => {
+    versions,
+    open: (request, turn) => {
       check(request);
-      const id = change((writes) => writes.open(request));
+      const id = change((writes) => writes.open(request), turn);
       const ticket = get(id);
       if (ticket === undefined) {
         throw new Error(`Ticket ${id} was not stored`);
@@ -1428,13 +1439,13 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const ticket = get(before);
       return ticket === undefined ? [] : [ticket];
     }),
-    repair: (id, by, words) => {
+    repair: (id, by, words, turn) => {
       const before = get(id);
       if (before === undefined) {
         return { ok: false, reason: `There is no ticket ${id}.` };
       }
       try {
-        const repair = change((writes) => writes.get(writes.openRepair(id, by, words.trim())));
+        const repair = change((writes) => writes.get(writes.openRepair(id, by, words.trim())), turn);
         const opened = repair === undefined ? undefined : get(repair.id);
         return opened === undefined ? { ok: false, reason: `The repair of ticket ${id} was not stored.` } : { ok: true, ticket: opened, followers: followersOf(opened) };
       } catch (error) {
@@ -1484,9 +1495,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         return { ticket: value.ticket_id, count: value.count };
       }),
     move,
-    stop: (id, reason) => {
+    stop: (id, reason, turn) => {
       const given = GeneratedText.parse(reason);
-      const result = move(id, "stopped", given);
+      const result = move(id, "stopped", given, turn);
       if (result.ok) {
         work.stop(result.ticket);
       }

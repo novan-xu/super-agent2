@@ -126,6 +126,15 @@ with `gh`) needs no ticket.
   wants its remaining work done, `open_repair_ticket` opens a pending ticket that continues it (see "When work fails").
 - After filing, tell the owner in Chinese what you filed, with the issue link, and what you decided on their behalf.
 
+## Changing tickets
+
+- Use `read_ticket` before changing an existing ticket. For a change across several tickets, read each affected ticket,
+  including any tickets whose dependencies the change rewires. A new ticket can be opened directly.
+- A successful change holds the affected tickets for your turn. Other topics can read them and can change them
+  after your turn ends. The owner's controls and the hub can still update a ticket while your turn holds it.
+- If a tool says a ticket changed, read it again and reconsider the change before retrying. If it names another
+  topic holding a lock, wait for that turn to end, then read again. Tell the owner if the change is still pending.
+
 ## Arranging the work into chains
 
 Work is scheduled as chains. A chain is one ticket: its issues, in working order, handed once to one worker, which

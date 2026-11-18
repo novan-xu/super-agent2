@@ -38,6 +38,7 @@ import type { AccessVerifier } from "./access.js";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 import { type ChosenRun, type DefaultsStatement, TicketError, type TicketService, type TicketWork, type WaitToSet } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
 
 export interface ChainSpec {
   readonly name: string;
@@ -87,10 +88,10 @@ export type ArrangeOutcome =
 export type TicketOutcome = { readonly ok: true; readonly ticket: Ticket; readonly began: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
 
 export interface ChainArranger {
-  arrange(chains: readonly ChainSpec[]): ArrangeOutcome;
-  state(defaults: readonly DefaultsSpec[]): StateOutcome;
-  deployed(ticket: number): TicketOutcome;
-  proceed(ticket: number): TicketOutcome;
+  arrange(chains: readonly ChainSpec[], turn?: TicketTurn): ArrangeOutcome;
+  state(defaults: readonly DefaultsSpec[], turn?: TicketTurn): StateOutcome;
+  deployed(ticket: number, turn?: TicketTurn): TicketOutcome;
+  proceed(ticket: number, turn?: TicketTurn): TicketOutcome;
 }
 
 export interface OwnerStart {
@@ -518,7 +519,7 @@ export function createChains(options: ChainsOptions): Chains {
     return { ok: true, tickets: now === undefined ? [] : [now] };
   };
 
-  const state = (specs: readonly DefaultsSpec[]): StateOutcome => {
+  const state = (specs: readonly DefaultsSpec[], turn?: TicketTurn): StateOutcome => {
     const refuse = (reason: string): StateOutcome => ({ ok: false, reason: `Nothing was changed: ${reason}` });
     if (specs.length === 0) {
       return refuse("no chain was named");
@@ -583,7 +584,7 @@ export function createChains(options: ChainsOptions): Chains {
           }
           writes.state(id, statement);
         }
-      });
+      }, turn);
     } catch (error) {
       if (error instanceof TicketError) {
         return refuse(error.message);
@@ -599,7 +600,7 @@ export function createChains(options: ChainsOptions): Chains {
     };
   };
 
-  const arrange = (specs: readonly ChainSpec[]): ArrangeOutcome => {
+  const arrange = (specs: readonly ChainSpec[], turn?: TicketTurn): ArrangeOutcome => {
     const refuse = (reason: string): ArrangeOutcome => ({ ok: false, reason: `Nothing was changed: ${reason}` });
     if (specs.length === 0) {
       return refuse("the arrangement names no chain");
@@ -879,7 +880,7 @@ export function createChains(options: ChainsOptions): Chains {
           joined.push(source.id);
         }
         return { chains: real, joined };
-      });
+      }, turn);
     } catch (error) {
       if (error instanceof TicketError) {
         return refuse(error.message);
@@ -897,7 +898,7 @@ export function createChains(options: ChainsOptions): Chains {
     };
   };
 
-  const deployed = (id: number): TicketOutcome => {
+  const deployed = (id: number, turn?: TicketTurn): TicketOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
       return { ok: false, reason: `There is no ticket ${id}.` };
@@ -906,12 +907,12 @@ export function createChains(options: ChainsOptions): Chains {
       return { ok: false, reason: `Ticket ${id} is ${ticket.state}; only merged work is deployed.` };
     }
     const before = new Set(openTickets().filter((entry) => entry.state === "working").map((entry) => entry.id));
-    tickets.change((writes) => writes.deployed(id));
+    tickets.change((writes) => writes.deployed(id), turn);
     advance();
     return { ok: true, ticket: tickets.get(id) ?? ticket, began: openTickets().filter((entry) => entry.state === "working" && !before.has(entry.id)) };
   };
 
-  const proceed = (id: number): TicketOutcome => {
+  const proceed = (id: number, turn?: TicketTurn): TicketOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
       return { ok: false, reason: `There is no ticket ${id}.` };
@@ -933,7 +934,7 @@ export function createChains(options: ChainsOptions): Chains {
       for (const before of stopped) {
         writes.waive(id, before);
       }
-    });
+    }, turn);
     advance();
     const now = tickets.get(id) ?? ticket;
     return { ok: true, ticket: now, began: now.state === "working" ? [now] : [] };

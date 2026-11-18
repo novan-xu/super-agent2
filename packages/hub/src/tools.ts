@@ -43,6 +43,7 @@ import { memoryCall, memoryDefinitions } from "./memory-tools.js";
 import { topicCall, topicDefinitions } from "./topic-tools.js";
 import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import { type TicketTurn, TicketWriteRefused } from "./ticket-versions.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
@@ -198,6 +199,7 @@ export type ToolReply =
 export interface ToolCall {
   readonly body: string;
   readonly conversation: string | undefined;
+  readonly turn: string | undefined;
   readonly aborted: AbortSignal;
 }
 
@@ -607,7 +609,7 @@ function ticketDefinitions() {
     {
       name: "read_ticket",
       title: "Read a ticket",
-      description: "Read a ticket: its repository, issues in order, kind, state, choices, branch, pull request, guided round, what it waits for, its history of states, and the decisions recorded on the owner's behalf with the owner's review of each.",
+      description: "Read a ticket and remember its current version for this topic. Use this before making changes to the ticket. Shows its issues, state, choices, branch, pull request, dependencies, history, and decisions with the owner's reviews.",
       inputSchema: {
         type: "object",
         properties: { ticket: { type: "integer", minimum: 1, description: "The ticket number" } },
@@ -693,7 +695,7 @@ function filingText(outcome: FilingOutcome): ToolResult {
     return {
       text: outcome.held
         ? `${outcome.reason}\nNothing was filed yet. Tell the owner it waits for their confirmation; after they confirm, call the tool again with the same arguments.`
-        : `Nothing was filed: ${outcome.reason}`,
+        : outcome.reason,
       isError: !outcome.held,
     };
   }
@@ -896,18 +898,26 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
 
   const invalid = (error: z.ZodError): ToolResult => ({ text: `The arguments are not valid: ${error.message}`, isError: true });
 
-  const ticketCall = async (name: string, raw: unknown, conversation: string | undefined): Promise<ToolResult | undefined> => {
+  const ticketCall = async (name: string, raw: unknown, scope: TicketTurn | undefined): Promise<ToolResult | undefined> => {
     const tools = options.tickets;
     if (tools === undefined) {
       return undefined;
     }
+    const writeTurn = (): TicketTurn => {
+      if (scope === undefined) {
+        throw new TicketWriteRefused("Ticket changes require an active topic turn.");
+      }
+      tools.tickets.versions.requireActive(scope);
+      return scope;
+    };
     switch (name) {
       case "file_issue": {
         const parsed = FileArguments.safeParse(raw);
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return filingText(await tools.filer.file({ ...parsed.data, conversation }));
+        const turn = writeTurn();
+        return filingText(await tools.filer.file({ ...parsed.data, conversation: turn.conversation }, turn));
       }
       case "open_ticket": {
         const parsed = OpenArguments.safeParse(raw);
@@ -915,7 +925,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         const { issue, title_zh, ...rest } = parsed.data;
-        return filingText(await tools.filer.open({ ...rest, number: issue, titleZh: title_zh, conversation }));
+        const turn = writeTurn();
+        return filingText(await tools.filer.open({ ...rest, number: issue, titleZh: title_zh, conversation: turn.conversation }, turn));
       }
       case "open_task_ticket": {
         if (tools.tasks === undefined) {
@@ -943,6 +954,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           }
           attached.set(piece.name, chosen.attachments[0]);
         }
+        const turn = writeTurn();
         const opened = await tools.tasks.open({
           title: parsed.data.title,
           summary: parsed.data.summary,
@@ -954,17 +966,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           after: parsed.data.after,
           difficulty: parsed.data.difficulty,
           platform: parsed.data.platform,
-          conversation,
+          conversation: turn.conversation,
           materials: material.map((piece) => {
             const attachment = attached.get(piece.name);
             return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
           }),
-        });
+        }, turn);
         if (!opened.ok) {
           return { text: opened.reason, isError: true };
         }
         const ticket = opened.ticket;
-        options.attachments?.grant(ticket.id, [...attached.values()]);
         const pendingBefore = ticket.waits.some((wait) => tools.tickets.get(wait.ticket)?.state === "pending");
         return {
           text: [
@@ -994,6 +1005,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const detail = tools.tickets.detail(parsed.data.ticket);
         if (detail === undefined) {
           return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
+        }
+        if (scope !== undefined) {
+          tools.tickets.versions.seen(scope, detail.ticket.id);
         }
         const output = tools.work?.output(detail.ticket.id) ?? "";
         const task = detail.ticket.form === "task" ? tools.tickets.task(detail.ticket.id) : undefined;
@@ -1041,7 +1055,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!chosen.ok) {
           return { text: `Nothing was sent: ${chosen.reason}.`, isError: true };
         }
-        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain", chosen.attachments);
+        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain", chosen.attachments, writeTurn());
         if (!sent.ok) {
           return { text: sent.reason, isError: true };
         }
@@ -1059,7 +1073,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.tickets.get(parsed.data.ticket)?.state === "stuck") {
           return { text: `Ticket ${parsed.data.ticket} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你, whether to resume it or give it up. Tell the owner.`, isError: true };
         }
-        const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason);
+        const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason, writeTurn());
         if (result.ok) {
           return { text: [`Stopped ticket ${result.ticket.id}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
         }
@@ -1079,7 +1093,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (before.state === "stuck") {
           return { text: `Ticket ${before.id} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你: giving it up there opens its repair ticket. Tell the owner.`, isError: true };
         }
-        const repaired = tools.tickets.repair(before.id, "brain", "");
+        const repaired = tools.tickets.repair(before.id, "brain", "", writeTurn());
         if (!repaired.ok) {
           return { text: `No repair ticket was opened: ${repaired.reason}`, isError: true };
         }
@@ -1094,7 +1108,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.tickets.get(ticket) === undefined) {
           return { text: `There is no ticket ${ticket}; nothing was recorded.`, isError: true };
         }
-        const recorded = tools.tickets.change((writes) => writes.recordDecisions(ticket, "brain", [{ chosen, why, otherOptions: other_options }]));
+        const recorded = tools.tickets.change((writes) => writes.recordDecisions(ticket, "brain", [{ chosen, why, otherOptions: other_options }]), writeTurn());
         const decision = recorded[0];
         return {
           text:
@@ -1130,7 +1144,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return statedText(tools.chains.state(parsed.data.chains), tools.defaults);
+        return statedText(tools.chains.state(parsed.data.chains, writeTurn()), tools.defaults);
       }
       case "guide_ticket": {
         if (tools.loop === undefined) {
@@ -1140,7 +1154,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const outcome = tools.loop.guide(parsed.data.ticket, parsed.data.guidance);
+        const outcome = tools.loop.guide(parsed.data.ticket, parsed.data.guidance, writeTurn());
         if (!outcome.ok) {
           return { text: `No round was started: ${outcome.reason}`, isError: true };
         }
@@ -1157,7 +1171,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return loopText(tools.loop.describe(parsed.data.ticket, parsed.data.where), (ticket) => `The card of ticket ${ticket} now says where it is stuck. It waits for the owner.`);
+        return loopText(tools.loop.describe(parsed.data.ticket, parsed.data.where, writeTurn()), (ticket) => `The card of ticket ${ticket} now says where it is stuck. It waits for the owner.`);
       }
       case "merge_ticket": {
         if (tools.verification === undefined) {
@@ -1167,14 +1181,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return mergedText(await tools.verification.skip(parsed.data.ticket, parsed.data.reason));
+        return mergedText(await tools.verification.skip(parsed.data.ticket, parsed.data.reason, writeTurn()));
       }
       default:
-        return chainCall(tools.chains, name, raw);
+        return chainCall(tools.chains, name, raw, writeTurn);
     }
   };
 
-  const chainCall = (chains: ChainArranger | undefined, name: string, raw: unknown): ToolResult | undefined => {
+  const chainCall = (chains: ChainArranger | undefined, name: string, raw: unknown, writeTurn: () => TicketTurn): ToolResult | undefined => {
     if (chains === undefined) {
       return undefined;
     }
@@ -1198,6 +1212,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
               difficulty: chain.difficulty,
               platform: chain.platform,
             })),
+            writeTurn(),
           ),
         );
       }
@@ -1206,21 +1221,21 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return ticketOutcomeText(chains.deployed(parsed.data.ticket), `Recorded that the work of ticket ${parsed.data.ticket} is deployed.`);
+        return ticketOutcomeText(chains.deployed(parsed.data.ticket, writeTurn()), `Recorded that the work of ticket ${parsed.data.ticket} is deployed.`);
       }
       case "proceed_ticket": {
         const parsed = TicketArgument.safeParse(raw);
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return ticketOutcomeText(chains.proceed(parsed.data.ticket), `Ticket ${parsed.data.ticket} no longer waits for the tickets that stopped.`);
+        return ticketOutcomeText(chains.proceed(parsed.data.ticket, writeTurn()), `Ticket ${parsed.data.ticket} no longer waits for the tickets that stopped.`);
       }
       default:
         return undefined;
     }
   };
 
-  const call = async (id: JsonRpcId, params: unknown, conversation: string | undefined, aborted: AbortSignal): Promise<ToolReply> => {
+  const call = async (id: JsonRpcId, params: unknown, conversation: string | undefined, turn: string | undefined, aborted: AbortSignal): Promise<ToolReply> => {
     const parsed = CallParams.safeParse(params);
     if (!parsed.success) {
       return { status: 200, body: errorBody(id, -32602, "Invalid tool call") };
@@ -1237,10 +1252,20 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         result = stop(parsed.data.arguments ?? {});
         break;
       default: {
+        const scope = conversation === undefined || turn === undefined ? undefined : {
+          conversation,
+          id: turn,
+          available: () => !aborted.aborted && conversations.brainReady(),
+        };
         const ticketResult =
           topicCall(conversations.topics, options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation) ??
           (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
-          (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, conversation));
+          (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, scope).catch((error: unknown) => {
+            if (error instanceof TicketWriteRefused) {
+              return { text: error.message, isError: true };
+            }
+            throw error;
+          }));
         if (ticketResult === undefined) {
           return { status: 200, body: errorBody(id, -32602, `Unknown tool: ${parsed.data.name}`) };
         }
@@ -1254,7 +1279,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
   };
 
   return {
-    handle: async ({ body, conversation, aborted }) => {
+    handle: async ({ body, conversation, turn, aborted }) => {
       let message: z.infer<typeof JsonRpcMessage>;
       try {
         const parsed = JsonRpcMessage.safeParse(JSON.parse(body));
@@ -1287,7 +1312,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         case "tools/list":
           return { status: 200, body: resultBody(id, { tools: definitions() }) };
         case "tools/call":
-          return call(id, message.params, conversation, aborted);
+          return call(id, message.params, conversation, turn, aborted);
         default:
           return { status: 200, body: errorBody(id, -32601, `Method not found: ${method}`) };
       }

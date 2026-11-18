@@ -71,6 +71,7 @@ export interface ConversationService {
   tell(ticket: number | null, notice: string, prompt: string): string;
   deliver(delivery: Delivery): string;
   linked(): boolean;
+  brainReady(): boolean;
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
   watchBrain(listener: () => void): () => void;
@@ -318,7 +319,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   const insertTurn = connection.prepare(
     "INSERT INTO turns (id, conversation_id, provider, model, state, started_at) VALUES (?, ?, ?, ?, 'running', ?)",
   );
-  const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ? WHERE id = ?");
+  const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1 WHERE id = ?");
+  const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
   const selectEntry = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?");
   const selectEntries = connection.prepare(
@@ -861,8 +863,11 @@ export function createConversationService(options: ConversationServiceOptions): 
         return undefined;
       }
       const running = runningTurnOf(id);
-      if (running !== undefined && !sendToBrain({ type: "interrupt", conversation: id })) {
-        endTurn(running.id, "interrupted", brainAbsentReason);
+      if (running !== undefined) {
+        revokeTicketWrites.run(running.id);
+        if (!sendToBrain({ type: "interrupt", conversation: id })) {
+          endTurn(running.id, "interrupted", brainAbsentReason);
+        }
       }
       return get(id);
     },
@@ -877,6 +882,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
     },
     linked: () => link !== undefined,
+    brainReady: () => link?.ready === true,
     providers: () => (link === undefined ? undefined : brainProviders),
     sendOrder: (order) => {
       sendToBrain({ type: "order", order: [...order] });

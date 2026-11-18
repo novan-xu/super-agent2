@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
+import { type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
@@ -101,17 +102,6 @@ function event(runner: RunnerLink, ticket: number, seq: number, body: WorkEvent)
   runner.receive({ type: "work.event", ticket, attempt: 1, seq, at: clock.now(), event: body });
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
-  const token = readFileSync(join(dataDir, "brain.token"), "utf8").trim();
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(conversation === undefined ? {} : { [conversationHeader]: conversation }) },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result: { isError: boolean; content: { text: string }[] } };
-  return { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 describe("a ticket's worker for the page and the brain", () => {
   it("sends the runner its task, and serves the worker's output over HTTP and the page's socket", async () => {
     const { running, ticket, runner, sent } = await start();
@@ -167,10 +157,10 @@ describe("a ticket's worker for the page and the brain", () => {
   it("lets the brain message the worker and read its output with the ticket", async () => {
     const { running, ticket, runner, sent } = await start();
     event(runner, ticket.id, 1, { kind: "text", block: "b", delta: "Looking at greet.ts" });
-    const told = await callTool(running, "message_worker", { ticket: ticket.id, text: "Keep it to one line" });
+    const told = await callBrainTool(running, "message_worker", { ticket: ticket.id, text: "Keep it to one line" });
     expect(told.isError).toBe(false);
     expect(sent.filter((message) => message.type === "work.message").map((message) => (message.type === "work.message" ? message.from : ""))).toEqual(["brain"]);
-    const read = await callTool(running, "read_ticket", { ticket: ticket.id });
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id });
     expect(read.text).toContain("Worker: attempt 1 on pc with claude claude-haiku-5-5 low is preparing");
     expect(read.text).toContain("Looking at greet.ts");
   });
@@ -214,7 +204,7 @@ describe("a writing ticket's delivery", () => {
     };
     runner.receive({ type: "hello", protocol: protocolVersion, machine: withAntigravity, works: [] });
     const conversation = running.conversations.create();
-    const opened = await callTool(
+    const opened = await callBrainTool(
       running,
       "open_task_ticket",
       {
@@ -238,7 +228,7 @@ describe("a writing ticket's delivery", () => {
       commit: null,
       deploys: false,
     });
-    const stated = await callTool(running, "choose_defaults", {
+    const stated = await callBrainTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
     });
     expect(stated.isError).toBe(false);

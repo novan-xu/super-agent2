@@ -711,6 +711,38 @@ export const migrations: readonly Migration[] = [
   {
     version: 30,
     sql: `
+      ALTER TABLE tickets ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE turns ADD COLUMN ticket_writes_revoked INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE ticket_locks (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets (id),
+        turn_id TEXT NOT NULL REFERENCES turns (id)
+      ) STRICT;
+      CREATE INDEX ticket_locks_by_turn ON ticket_locks (turn_id);
+      CREATE TABLE topic_ticket_versions (
+        conversation_id TEXT NOT NULL REFERENCES conversations (id),
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        version INTEGER NOT NULL,
+        PRIMARY KEY (conversation_id, ticket_id)
+      ) STRICT;
+      CREATE TRIGGER release_ticket_locks AFTER UPDATE OF state ON turns
+      WHEN NEW.state <> 'running' BEGIN
+        DELETE FROM ticket_locks WHERE turn_id = NEW.id;
+      END;
+      CREATE TRIGGER version_ticket AFTER UPDATE ON tickets
+      WHEN NEW.version = OLD.version BEGIN
+        UPDATE tickets SET version = version + 1 WHERE id = NEW.id;
+      END;
+      ${[
+        "ticket_issues", "ticket_waits", "ticket_moves", "ticket_begins", "ticket_attempts",
+        "ticket_work_events", "ticket_tasks", "ticket_files", "ticket_verifications",
+        "ticket_rounds", "ticket_pull_requests", "ticket_attachments", "worker_messages", "ticket_decisions",
+        "ticket_switches", "ticket_repairs",
+      ].map(ticketVersionTriggers).join("\n")}
+    `,
+  },
+  {
+    version: 31,
+    sql: `
       ALTER TABLE conversations ADD COLUMN board_status TEXT NOT NULL DEFAULT '';
       ALTER TABLE conversations ADD COLUMN board_revision INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE conversations ADD COLUMN merged_into TEXT REFERENCES conversations (id);
@@ -739,6 +771,17 @@ export const migrations: readonly Migration[] = [
     `,
   },
 ];
+
+function ticketVersionTriggers(table: string): string {
+  const keys = table === "ticket_repairs" ? ["ticket_id", "repairs"] : ["ticket_id"];
+  return (["INSERT", "UPDATE", "DELETE"] as const).map((operation) => {
+    const rows = operation === "INSERT" ? ["NEW"] : operation === "DELETE" ? ["OLD"] : ["OLD", "NEW"];
+    const ids = rows.flatMap((row) => keys.map((key) => `${row}.${key}`));
+    return `CREATE TRIGGER version_${table}_${operation.toLowerCase()} AFTER ${operation} ON ${table} BEGIN
+      UPDATE tickets SET version = version + 1 WHERE id IN (${ids.join(", ")});
+    END;`;
+  }).join("\n");
+}
 
 function sqlText(value: string): string {
   return value.replaceAll("'", "''");

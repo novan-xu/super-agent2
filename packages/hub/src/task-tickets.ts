@@ -17,6 +17,8 @@ import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi } from "./github-api.js";
 import { TicketError, type TicketService } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
+import type { AttachmentStore } from "./attachments.js";
 
 export interface TaskTicketRequest {
   readonly title: GeneratedText;
@@ -36,7 +38,7 @@ export interface TaskTicketRequest {
 export type TaskOpenOutcome = { readonly ok: true; readonly ticket: Ticket; readonly notes: readonly string[] } | { readonly ok: false; readonly reason: string };
 
 export interface TaskTickets {
-  open(request: TaskTicketRequest): Promise<TaskOpenOutcome>;
+  open(request: TaskTicketRequest, turn?: TicketTurn): Promise<TaskOpenOutcome>;
   resume(): void;
   idle(): Promise<void>;
   close(): void;
@@ -45,6 +47,7 @@ export interface TaskTickets {
 export interface TaskTicketsOptions {
   readonly database: HubDatabase;
   readonly tickets: TicketService;
+  readonly attachments?: AttachmentStore;
   readonly credentials: CredentialSource;
   readonly fetch?: Fetch;
   readonly gitHubBase?: string;
@@ -58,6 +61,16 @@ const IdRow = z.object({ id: z.number().int() });
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function requirePredecessor(ticket: Ticket | undefined, id: number): Ticket {
+  if (ticket === undefined) {
+    throw new TicketError(`there is no ticket ${id} to come after.`);
+  }
+  if (ticket.state === "stopped") {
+    throw new TicketError(ticket.repairedBy === null ? `ticket ${id} has stopped, so nothing can come after it.` : `ticket ${id} has stopped; ticket ${ticket.repairedBy} repairs it, so come after that.`);
+  }
+  return ticket;
 }
 
 export function short(commit: string): string {
@@ -144,7 +157,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     }
   };
 
-  const open = async (request: TaskTicketRequest): Promise<TaskOpenOutcome> => {
+  const open = async (request: TaskTicketRequest, turn?: TicketTurn): Promise<TaskOpenOutcome> => {
     const refuse = (reason: string): TaskOpenOutcome => ({ ok: false, reason: `Nothing was opened: ${reason}` });
     const repository = request.repository ?? null;
     if (repository !== null && !RepositoryName.safeParse(repository).success) {
@@ -157,16 +170,11 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       return refuse("a deployment is an operation; give kind operation.");
     }
     const after = [...new Set(request.after ?? [])];
-    const before: Ticket[] = [];
-    for (const id of after) {
-      const found = tickets.get(id);
-      if (found === undefined) {
-        return refuse(`there is no ticket ${id} to come after.`);
-      }
-      if (found.state === "stopped") {
-        return refuse(found.repairedBy === null ? `ticket ${id} has stopped, so nothing can come after it.` : `ticket ${id} has stopped; ticket ${found.repairedBy} repairs it, so come after that.`);
-      }
-      before.push(found);
+    let before: Ticket[];
+    try {
+      before = after.map((id) => requirePredecessor(tickets.get(id), id));
+    } catch (error) {
+      return refuse(reasonOf(error));
     }
     const chains = before.filter((ticket) => ticket.form === "code" && sameRepository(ticket.repository, repository));
     let commitRef: string | null = null;
@@ -201,6 +209,9 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     }
     try {
       const ticket = tickets.change((writes) => {
+        for (const id of after) {
+          requirePredecessor(writes.get(id), id);
+        }
         const id = writes.open({
           form: "task",
           repository,
@@ -219,8 +230,9 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         if (opened === undefined) {
           throw new TicketError(`Ticket ${id} was not stored`);
         }
+        options.attachments?.grant(id, request.materials.flatMap((piece) => piece.attachment == null ? [] : [piece.attachment]));
         return opened;
-      });
+      }, turn);
       return { ok: true, ticket, notes };
     } catch (error) {
       return refuse(reasonOf(error));

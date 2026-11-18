@@ -18,6 +18,7 @@ export interface ToolEndpoint {
   readonly url: string;
   readonly token: string;
   readonly conversation: string;
+  readonly turn: string;
 }
 
 export interface OpenOptions {
