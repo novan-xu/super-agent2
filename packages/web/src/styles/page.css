@@ -166,6 +166,8 @@ a.back:hover { text-decoration: none; }
 .mrow--editing { grid-template-columns: minmax(0, 1fr); }
 .mrow--armed { background: var(--danger-soft); }
 .mem-list { overflow: hidden; }
+.mrow-text, .mrow-replaces s { white-space: pre-wrap; }
+.mem-new { margin-bottom: var(--space-8); }
 
 .top-sub { font-size: var(--text-lg); }
 .set-body > .set-title { margin-bottom: calc(var(--space-4) * -1); }

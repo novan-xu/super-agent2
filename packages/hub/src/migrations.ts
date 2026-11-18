@@ -473,4 +473,28 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_files_kept RENAME TO ticket_files;
     `,
   },
+  {
+    version: 20,
+    sql: `
+      ALTER TABLE memories DROP COLUMN text_en;
+      ALTER TABLE memories DROP COLUMN stale;
+      ALTER TABLE memories RENAME COLUMN text_zh TO text;
+      ALTER TABLE memory_changes ADD COLUMN suggestion_id INTEGER;
+      UPDATE memory_changes SET action = 'added' WHERE action = 'remembered';
+      UPDATE memory_changes SET action = 'edited' WHERE action = 'rewritten';
+      CREATE TABLE memory_suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        memory_id INTEGER,
+        replaces TEXT NOT NULL,
+        conversation_id TEXT,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        decided_at INTEGER
+      ) STRICT;
+      CREATE INDEX memory_suggestions_by_state ON memory_suggestions (state, id);
+      UPDATE program_sessions SET memory_seen = 0, memory_offered = 0;
+    `,
+  },
 ];

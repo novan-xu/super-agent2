@@ -2650,3 +2650,105 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options:** A key that `sshd` restricts to a forced command accepting only the release's verbs, kept for the
   self-deployment; a NAS user without Docker rights, which could not release; keeping `nas` as a target name that is
   listed and always refused.
+
+## 2026-11-17 — The memory is the owner's, in one Chinese text
+
+- **Chosen:** A memory has one text, in Chinese, which is what 记忆 shows and exactly what the brain is given. The English
+  copy, the stale mark and the "write a matching English with `remember`" round trip are gone. This is a stated
+  exception to the rule that text an LLM generates for the owner is kept twice (`GeneratedText {en, zh}`): a memory is
+  the owner's own text, and the brain reads Chinese directly. Migration 20 drops `text_en` and `stale` from `memories`
+  and renames `text_zh` to `text`, so each existing memory keeps its Chinese words and its id; it renames the change
+  log's old actions (`remembered` to `added`, `rewritten` to `edited`) and resets every session's memory mark, so each
+  running session is given the whole memory again at its next turn, with the note that it replaces any memory given
+  before. Overturns the English half of "Where memories are kept, and how they reach each program" and the whole of "The
+  owner's edits, and the English that would go stale".
+- **Why:** The owner's words: the memory page always shows Chinese, no translation is needed, and the brain reads
+  Chinese without trouble. The pair cost a round trip after every edit and gave two texts that could disagree.
+- **Other options:** Keeping an English copy for other models (every model in use reads Chinese, and a memory never
+  goes to GitHub); translating in the hub, which has no model.
+
+## 2026-11-17 — The owner's edits are stored exactly as written
+
+- **Chosen:** What the owner saves is stored as it is: no length or count limit, no "must contain Chinese", no duplicate
+  refusal, no credential refusal, no white-space folding or trimming. Line breaks are kept; the page shows them
+  (`white-space: pre-wrap`), and the brain is given each text as a quoted JSON string, so line breaks and spaces reach it
+  exactly. A blank box is simply not saved: 保存 is disabled on the page, and the hub answers 400 to a text of white
+  space only. The owner also adds a memory by hand (`POST /api/memories`). The revision check on edits and deletions is
+  dropped: only the owner changes the memory now, so the only possible conflict is between two of the owner's own
+  devices, where the last save winning is what the owner expects and a refusal would restrict the owner's edit; the
+  list is live on both devices anyway. An edit or deletion of a memory already gone answers 404. Overturns, for the
+  owner, every limit and refusal of "How much the memory holds, and what it refuses", and the revision part of "The
+  owner's edits, and the English that would go stale".
+- **Why:** The owner's words: no restriction on my own edits; whatever I write, however I change it, that is exactly
+  what gets stored. A credential the owner chooses to write is the owner's decision, though the memory is sent to the
+  model providers with each conversation.
+- **Other options:** Keeping the credential refusal for the owner as a warning to confirm; keeping the revision check
+  with a merge prompt.
+
+## 2026-11-17 — The brain only suggests
+
+- **Chosen:** `remember` creates a suggestion (`memory_suggestions`, migration 20) and changes nothing else; `forget`
+  creates a suggestion to remove a memory. Both wait in 记忆's 待确认, where one press of 确认 or 不要 decides them. A
+  `remember` suggestion may name in `replaces` the memories it replaces: the page shows them struck through after
+  确认后替换, and 确认 adds the new memory (its chip says 大脑) and removes those still there; a replaced memory already
+  deleted is skipped. A `forget` suggestion shows the memory struck through after 确认后删除 (the prototype has no
+  forget suggestion; this follows its replace line). When the owner deletes a memory, a pending suggestion to forget it
+  is settled and leaves 待确认. The nav item 记忆 shows the count of pending suggestions, in the sidebar and the tab bar.
+  No push notification is sent: nothing waits on a suggestion. This holds when the owner says 记住… in the
+  conversation too: the hub cannot tell who asked for a suggestion, so every one waits for 确认. The brain has no way to
+  withdraw a suggestion; the owner declines one that is no longer wanted. Every answer of `remember`, `forget` and
+  `recall` carries the memory as it is now, the pending suggestions and what the owner set aside.
+- **Why:** The owner's words: I manage the memory myself, the brain only makes suggestions. A write the owner did not
+  confirm is what let repeated and unwanted memories in.
+- **Other options:** Writing at once when the owner asked in words, which the hub cannot verify; a push notification
+  per suggestion; a `withdraw` tool for the brain.
+
+## 2026-11-17 — What counts as the same text, and what the brain is not to suggest again
+
+- **Chosen:** Two texts are the same when their keys are equal. The key (`memoryKey` in
+  `packages/protocol/src/memory.ts`) is the text after Unicode NFKC (full-width letters, digits and punctuation become
+  their ordinary forms), lower-cased, with every white-space character (the ideographic space and line breaks
+  included), every punctuation mark (Chinese and Western, in either width) and every invisible format character
+  removed. Symbols, digits and every other character count, so 每周 1 次 and 每周 2 次, or C++ and C, stay different.
+  The hub refuses a `remember` whose key equals that of a memory, of a pending suggestion, of a suggestion the owner
+  declined (不要), or of a memory the owner deleted (with ×, by confirming a `forget`, or by confirming a suggestion that
+  replaced it); the refusal names what it matched, with its id and text. A `forget` is refused while one for the same
+  memory waits, and after the owner declined forgetting that memory, until its text changes. `ownerAsked: true` lifts
+  only the refusals for what the owner declined, deleted or kept, for when the owner asks for it again; never the one
+  for a memory or a pending suggestion. The brain is given, with its memory at the start of each conversation, in every
+  change notice and in every `recall`, `remember` and `forget` answer, the pending suggestions and what the owner set
+  aside, marked as not to be suggested again unless the owner asks. A set-aside text is listed once, and not while a
+  memory says it again. The texts a memory had before the owner edited it are not set aside.
+- **Why:** Repeated suggestions are the owner's main complaint about the earlier system, so the rules carry what rules
+  can: the same text, in any spacing, punctuation, width or case, cannot come back. Chinese is written without spaces
+  between words, and a stop or a comma, its width, or the case of a name does not change what a sentence says. Rules
+  cannot catch two wordings of one meaning (你希望回答简短 and 回答尽量短一些); that part is the brain's judgement, helped
+  by always seeing the memory, the pending suggestions and the set-aside list, and by the guidance and the tool's
+  description telling it to name the memory it updates in `replaces`. No other model is used as a judge. The set-aside
+  list grows without bound and is sent whole; no cap is added.
+- **Other options:** Exact comparison only (misses 。 against no stop); removing symbols too (C++ and C would match);
+  similarity by edit distance or by a model, which would refuse real new memories on a guess.
+
+## 2026-11-17 — Limits on the brain's suggestions
+
+- **Chosen:** No count cap and no length cap. A suggestion must contain Chinese (a Han character), so that the page
+  stays Chinese; names and technical terms may be in any script. A suggestion that looks like a credential is refused,
+  by the same rules as before (`packages/hub/src/credentials.ts`). The brain's text is trimmed at both ends; the
+  owner's never is.
+- **Why:** The owner asked for no caps. The credential refusal is a constraint on the model's behaviour, and the memory
+  is sent to model providers with every conversation. The Chinese check is the code side of "the memory page always
+  shows Chinese" for text the brain writes.
+- **Other options:** Leaving the language to the guidance alone.
+
+## 2026-11-17 — 记忆 on the page, with suggestions and 新记忆
+
+- **Chosen:** Two sections, as in the prototype: 待确认 with a hot count, then 长期记忆 with its count, each newest
+  first; a section with nothing in it is not shown, and with neither, 还没有记忆. A suggestion row shows its text, what
+  it would replace or remove struck through, when it was made, and 确认 and 不要; no source chip. 新记忆 in the top bar
+  opens the prototype's editor at the top of the page, empty. The editor has no length limit and shows no message under
+  the box; 保存 is disabled while the box is blank or unchanged; Enter saves on a keyboard, Shift+Enter starts a new
+  line, Escape closes. Deleting is unchanged: × arms the row, 删除 sends. No tabs, no 摘要, no kind groups. The demo
+  brain of `tools/page-dev` suggests on 记住… (with 替换 #n to replace a memory) and on 忘掉 #n. Partly overturns "记忆
+  on the page" (its single list, its messages under the box, and the 新记忆 it left out).
+- **Why:** The prototype's look, with the owner's wish for the pending flow and for writing a memory by hand.
+- **Other options:** A link from each suggestion to the conversation it came from; a modal editor for 新记忆.
