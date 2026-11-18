@@ -510,3 +510,5 @@ The work is tracked as GitHub issues under five milestones.
 3. **Verification and merge.** Woodpecker rules, automatic merge, the failure loop and its retry cap.
 4. **Deployment.** Deployment by the brain with health check and rollback, Super-agent2 itself included.
 5. **Interface completion.** 历史, 记忆 and 设置.
+
+The runner checks worker programs at startup and every six hours. For an npm global installation whose resolved executable belongs to the expected package, it compares the installed version with npm's stable `latest` and updates while the machine is idle. It reserves the machine during the check and installation, queues assignments that arrive meanwhile, and immediately probes and reports the programs again after an attempted installation. A backup of the package and executable is restored if npm fails. Other installation channels are left untouched and reported as unrecognised. Set `SUPERAGENT2_PROGRAM_AUTO_UPDATE=0` in the runner's environment to disable these checks on a machine.
