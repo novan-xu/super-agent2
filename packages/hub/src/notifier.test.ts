@@ -84,7 +84,7 @@ function hold(command: string, environment: Readonly<Record<string, string>> = {
     at: 1,
     command: {
       id: "c1",
-      target: "nas",
+      target: "studio",
       command,
       account: "novan-xu",
       cwd: null,
@@ -115,7 +115,7 @@ describe("notifying about a held command", () => {
   it("names where it runs and the command itself", () => {
     expect(payloadOf(hold("gh repo delete novan-xu/old --yes"))).toEqual({
       title: "等你",
-      body: "nas 上有一条命令等你确认：\ngh repo delete novan-xu/old --yes",
+      body: "studio 上有一条命令等你确认：\ngh repo delete novan-xu/old --yes",
       url: "/workbench?card=hold%3Ac1",
       tag: "hold:c1",
     });

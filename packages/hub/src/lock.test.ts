@@ -46,7 +46,7 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function create(): { running: CommandService; lock: ConfirmationLock; hub: Target & { jobs: Job[] }; nas: Target & { jobs: Job[] } } {
+function create(): { running: CommandService; lock: ConfirmationLock; hub: Target & { jobs: Job[] }; studio: Target & { jobs: Job[] } } {
   const keys = createKeyCache({ source: staticKeySource(keySet(key)), clock });
   const verify = createAccessVerifier({ team, audience, keys, clock });
   const lock = createConfirmationLock({
@@ -57,9 +57,9 @@ function create(): { running: CommandService; lock: ConfirmationLock; hub: Targe
     settings: lockSettings({ projectFolders: ["/srv/projects"], credentialPaths: [] }),
   });
   const hub = fakeTarget("hub");
-  const nas = fakeTarget("nas");
-  service = createCommandService({ database, clock, targets: [hub, nas], credentials: testCredentials, gate: lock.gate });
-  return { running: service, lock, hub, nas };
+  const studio = fakeTarget("studio");
+  service = createCommandService({ database, clock, targets: [hub, studio], credentials: testCredentials, gate: lock.gate });
+  return { running: service, lock, hub, studio };
 }
 
 async function owner(): Promise<string> {
@@ -84,11 +84,11 @@ describe("the confirmation lock", () => {
   });
 
   it("holds a command on the list, says why, and does not run it", async () => {
-    const { running, lock, nas } = create();
-    const { id } = running.start({ target: "nas", command: "docker volume rm superagent-data" });
+    const { running, lock, studio } = create();
+    const { id } = running.start({ target: "studio", command: "docker volume rm superagent-data" });
     const held = await waitForState(running, id, "held");
     expect(held.reason).toBe("等你确认：删除数据库或数据卷（docker volume rm superagent-data）");
-    expect(nas.jobs).toEqual([]);
+    expect(studio.jobs).toEqual([]);
     expect(lock.waiting().map((hold) => hold.command)).toEqual([id]);
     expect(lock.get(id)).toMatchObject({
       form: "data-deletion",
@@ -192,7 +192,7 @@ describe("the confirmation lock", () => {
 
   it("keeps a held command across a restart and runs it exactly as held once released", async () => {
     const first = create();
-    const request = { target: "nas", command: "rm -rf /volume1/docker/old-app", account: "novan-xu", cwd: "/volume1" } as const;
+    const request = { target: "studio", command: "rm -rf /volume1/docker/old-app", account: "novan-xu", cwd: "/volume1" } as const;
     const { id } = first.running.start(request);
     const held = await waitForState(first.running, id, "held");
     await first.running.close();
@@ -204,14 +204,14 @@ describe("the confirmation lock", () => {
     expect(second.lock.waiting().map((hold) => hold.command)).toEqual([id]);
     expect(await second.lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf(held) })).toMatchObject({ ok: true });
     expect(await finished(second.running, id)).toMatchObject({ state: "exited", ...request });
-    expect(second.nas.jobs.map((job) => [job.command, job.cwd])).toEqual([[request.command, request.cwd]]);
-    expect(first.nas.jobs).toEqual([]);
+    expect(second.studio.jobs.map((job) => [job.command, job.cwd])).toEqual([[request.command, request.cwd]]);
+    expect(first.studio.jobs).toEqual([]);
   });
 
   it("ties a hold to the command's environment, in any order of its names, and releases only that", async () => {
-    const { running, lock, nas } = create();
+    const { running, lock, studio } = create();
     const environment = { SUPERAGENT2_PREVIOUS_COMMIT: "1111111", SUPERAGENT2_COMMIT: "2222222" };
-    const { id } = running.start({ target: "nas", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment });
+    const { id } = running.start({ target: "studio", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment });
     const held = await waitForState(running, id, "held");
     expect(held.environment).toEqual(environment);
     const reordered = { ...held, environment: { SUPERAGENT2_COMMIT: "2222222", SUPERAGENT2_PREVIOUS_COMMIT: "1111111" } };
@@ -222,12 +222,12 @@ describe("the confirmation lock", () => {
     expect(await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf({ ...held, environment: {} }) })).toEqual({ ok: false, error: "conflict" });
     expect(await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf(held) })).toMatchObject({ ok: true });
     await finished(running, id);
-    expect(nas.jobs[0]?.credentials).toMatchObject(environment);
+    expect(studio.jobs[0]?.credentials).toMatchObject(environment);
   });
 
   it("keeps the fingerprint of a command without environment as it was before commands had one, so holds stored then stay releasable", async () => {
     const first = create();
-    const request = { target: "nas", command: "rm -rf /volume1/docker/old-app", account: "novan-xu", cwd: "/volume1" } as const;
+    const request = { target: "studio", command: "rm -rf /volume1/docker/old-app", account: "novan-xu", cwd: "/volume1" } as const;
     const { id } = first.running.start(request);
     const held = await waitForState(first.running, id, "held");
     const before = createHash("sha256").update(JSON.stringify([held.id, held.target, held.command, held.account, held.cwd])).digest("hex");
@@ -243,14 +243,14 @@ describe("the confirmation lock", () => {
 
   it("drops a held command whose environment changed while the hub was down", async () => {
     const first = create();
-    const { id } = first.running.start({ target: "nas", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment: { SUPERAGENT2_COMMIT: "2222222" } });
+    const { id } = first.running.start({ target: "studio", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment: { SUPERAGENT2_COMMIT: "2222222" } });
     await waitForState(first.running, id, "held");
     await first.running.close();
     service = undefined;
     database.connection.prepare("UPDATE commands SET environment = ? WHERE id = ?").run(JSON.stringify({ SUPERAGENT2_COMMIT: ".." }), id);
     const second = create();
     expect(await finished(second.running, id)).toMatchObject({ state: "dropped", reason: changedReason });
-    expect(second.nas.jobs).toEqual([]);
+    expect(second.studio.jobs).toEqual([]);
   });
 
   it("drops a held command whose stored text changed while the hub was down", async () => {

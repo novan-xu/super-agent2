@@ -18,8 +18,8 @@ a computer.
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues, arranges and starts work, evaluates failures, deploys, and operates anything through the hub |
-| Hub | NAS, always on | Holds the credentials, runs commands for the brain, keeps ticket state, enforces the code constraints, serves the front door |
+| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues, arranges and starts work, evaluates failures, deploys other repositories, and operates through the hub |
+| Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container and on the runners, keeps ticket state, enforces the code constraints, serves the front door |
 | Runner | One process on each work machine (PC, Mac mini, others later) | Starts workers and runs the commands the hub sends |
 | Worker | On a runner | One LLM session per ticket, in full-access mode, in its own git worktree |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
@@ -54,16 +54,22 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 ## The brain's reach
 
 The hub gives the brain one general capability: run a shell command on a target and return its output. The target is the
-hub itself, the NAS host, or any runner. Commands run with the owner's credentials: both GitHub accounts with
-administrator rights, Woodpecker, Cloudflare, and deployment access.
+hub's own container or a runner. Commands run with the owner's credentials: both GitHub accounts with administrator
+rights, Woodpecker, Cloudflare, and deployment access through runners.
+
+The reach ends at this project's containers on the NAS. Administrator rights inside the hub's container are intended;
+administrator rights over the NAS host are not. No target runs on the NAS host, the hub's container holds no key to
+sign in to it and no Docker socket, and the hub does not deploy Super-agent2 itself, which is deployed on the NAS by
+hand.
 
 Shortcuts for frequent operations (file an issue, arrange chains, merge, deploy) are built on that same path. They are
 conveniences and never the boundary: anything without a shortcut is still possible through a command.
 
 Two things follow:
 
-- The hub container is not hardened in ways that block operations. It has a writable file system and shell access to the
-  NAS host and to every runner.
+- The hub container is not hardened in ways that block operations inside it. It has a writable file system, passwordless
+  `sudo`, and shell access to every runner. Its mounts are its own volumes, the instance's project folders, and nothing
+  else of the host.
 - GitHub carries no rule the owner's token cannot bypass. Merging with checks skipped is an ordinary operation.
 
 ## Ticket flow
@@ -143,7 +149,12 @@ A model and effort the chosen machine's program does not offer is refused, never
 ## Deployment
 
 A ticket never deploys. When merged work needs deploying, the brain deploys it through the hub. After a deployment the
-hub checks that the service answers its health check, and rolls back to the previous version when it does not.
+hub checks that the service answers its health check, and rolls back to the previous version when it does not. A
+deployment's commands run in the hub's container or on a runner; a deployment file that names the NAS host is refused.
+
+Super-agent2 itself is the exception. The hub cannot reach the NAS host it runs on, so it does not deploy itself: the
+owner deploys a new version on the NAS with `deploy/deploy.sh`, or files work for a worker to do it, and the brain
+records the deployment once the owner says it is done.
 
 ## Verification rules
 
@@ -176,6 +187,8 @@ This is the complete list.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
+6. **No reach into the NAS host.** The hub has no target on the NAS host, mounts nothing of it but its own folders,
+   and holds no key to sign in to it.
 
 ## Tests
 
@@ -274,7 +287,8 @@ this repository, and `.gitignore` excludes the file types that hold them.
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | NAS, `secrets/hub.env` | Push notifications |
 | `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET` | Each runner, `~/.superagent2/runner.env` | A runner passing the front door |
 
-Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. Workers use the
+Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. The hub holds no
+credential for the NAS host itself. Workers use the
 logins of the command-line programs already present on each runner.
 
 ## Build order

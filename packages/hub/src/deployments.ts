@@ -49,7 +49,10 @@ export interface DeploymentOptions {
   readonly tell?: Tell;
   readonly deployed?: MarkDeployed;
   readonly sleep?: Sleep;
+  readonly ownRepository?: string;
 }
+
+const nasHostName = "nas";
 
 export interface DeploymentService {
   start(request: DeploymentRequest): Promise<DeploymentStart>;
@@ -664,6 +667,12 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
     }
     const repository = named.data;
     const key = repository.toLowerCase();
+    if (options.ownRepository !== undefined && key === options.ownRepository.toLowerCase()) {
+      return {
+        ok: false,
+        reason: `${repository} is Super-agent2 itself, which the hub does not deploy: the hub cannot reach the NAS host it runs on. It is deployed on the NAS by hand, or by a worker when the owner files work for it. Nothing was deployed. Tell the owner the new version is merged and waits to be deployed; once the owner says it is deployed, report it with report_deployment.`,
+      };
+    }
     if (closed) {
       return { ok: false, reason: "The hub is stopping; nothing was deployed." };
     }
@@ -702,6 +711,12 @@ export function createDeployments(options: DeploymentOptions): DeploymentService
         return { ok: false, reason: `${deploymentFile} at ${short(commit)} is not a valid deployment file: ${reading.reason}. Nothing was deployed.` };
       }
       const file = reading.file;
+      if (file.target === nasHostName) {
+        return {
+          ok: false,
+          reason: `${deploymentFile} at ${short(commit)} names the target ${nasHostName}, the NAS host, which the hub cannot reach: no target runs there. Deploying on the NAS host is out of scope until the owner sets up a way for it deliberately. Nothing was deployed.`,
+        };
+      }
       const targets = options.targets();
       if (!targets.includes(file.target)) {
         return { ok: false, reason: `${deploymentFile} at ${short(commit)} names the target ${file.target}, which the hub does not know (targets now: ${targets.join(", ")}). Nothing was deployed.` };
