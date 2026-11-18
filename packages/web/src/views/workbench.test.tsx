@@ -7,7 +7,7 @@ import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiti
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { arm: () => undefined, disarm: () => undefined, answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
+const actions: CardActions = { answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
 
 function state(...cards: WaitingCard[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });
@@ -240,6 +240,16 @@ describe("start cards in 工作台", () => {
     expect(html).toContain("#12");
     expect(html).not.toContain("Parse");
     expect(text(html)).toContain("|开始|");
+  });
+
+  it("marks a repair ticket's card and its row, with the reason the brain gave for the choice", () => {
+    const repair = { repairs: 5, difficultyReason: { en: "A stronger model", zh: "换个更强的模型做一直失败的那一步" } };
+    const card = render(state(startCard(2, { ticket: { ...pair, ...repair } })));
+    expect(text(card)).toContain("|补救|");
+    expect(card).toContain("换个更强的模型做一直失败的那一步");
+    expect(text(render(state(startCard(1, { ticket: pair }))))).not.toContain("补救");
+    const row = render(state(), "hidden", null, receiveTickets([ticket(2, { state: "waiting", repairs: 5 }), ticket(3, { state: "working", work: workStatus() })]));
+    expect(row.match(/补救/g)).toHaveLength(1);
   });
 
   it("counts pending chains with what waits for the owner", () => {

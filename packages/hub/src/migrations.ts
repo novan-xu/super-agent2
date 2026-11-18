@@ -655,6 +655,25 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_attempts ADD COLUMN takeover INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 27,
+    sql: `
+      CREATE TABLE ticket_repairs (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets (id),
+        repairs INTEGER NOT NULL UNIQUE REFERENCES tickets (id),
+        opened_by TEXT NOT NULL,
+        words TEXT NOT NULL,
+        opened_at INTEGER NOT NULL,
+        round INTEGER,
+        failure TEXT,
+        detail TEXT,
+        where_en TEXT,
+        where_zh TEXT,
+        saved INTEGER,
+        saved_detail TEXT
+      ) STRICT;
+    `,
+  },
 ];
 
 function sqlText(value: string): string {

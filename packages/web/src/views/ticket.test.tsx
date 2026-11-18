@@ -14,7 +14,7 @@ const actions: TicketActions = {
 };
 
 function render(detail: DetailState | null, known: ReadonlyMap<number, Ticket> = new Map()): string {
-  return renderToString(<TicketView detail={detail} known={known} actions={actions} origin="workbench" backHref="/workbench" back={() => undefined} now={20_000} />);
+  return renderToString(<TicketView detail={detail} known={known} actions={actions} origin="workbench" backHref="/workbench" back={() => undefined} ticketHref={(id) => `/tickets/${id}`} openTicket={() => undefined} now={20_000} />);
 }
 
 function text(html: string): string {
@@ -84,12 +84,27 @@ describe("a ticket's detail", () => {
 
   it("goes back to the list it was opened from, named as that list is named in the navigation", () => {
     const back = (origin: "workbench" | "history", href: string) =>
-      text(renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin={origin} backHref={href} back={() => undefined} now={20_000} />));
-    const fromHistory = renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin="history" backHref="/history" back={() => undefined} now={20_000} />);
+      text(renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin={origin} backHref={href} back={() => undefined} ticketHref={(id) => `/tickets/${id}`} openTicket={() => undefined} now={20_000} />));
+    const fromHistory = renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin="history" backHref="/history" back={() => undefined} ticketHref={(id) => `/tickets/${id}`} openTicket={() => undefined} now={20_000} />);
     expect(fromHistory).toContain('<a class="back" href="/history">');
     expect(back("history", "/history")).toContain("|历史|");
     expect(back("workbench", "/workbench")).toContain("|工作台|");
     expect(back("history", "/history")).not.toContain("|工作台|");
+  });
+
+  it("shows a repair ticket as one, linked to the ticket it repairs, and the repaired ticket linked to its repair", () => {
+    const repair = render(detailOf({ ...running, repairs: 5 }));
+    expect(text(repair)).toContain("|补救|");
+    expect(repair).toContain('href="/tickets/5"');
+    expect(text(repair)).toContain("接着工单 5");
+    expect(repair).not.toContain("接手");
+    const ended = render(detailOf(ticket(5, { state: "stopped", repairedBy: 9, work: null })));
+    expect(ended).toContain('href="/tickets/9"');
+    expect(text(ended)).toContain("由工单 9 接着做");
+    expect(text(ended)).not.toContain("|补救|");
+    const plain = render(detailOf(running));
+    expect(text(plain)).not.toContain("补救");
+    expect(plain).not.toContain("/tickets/");
   });
 
   it("marks what the owner chose and says what actually ran", () => {

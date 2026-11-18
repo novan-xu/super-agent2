@@ -45,6 +45,8 @@ const base = Ticket.parse({
   beginFailure: null,
   stopReason: null,
   joinedInto: null,
+  repairs: null,
+  repairedBy: null,
   conversation: null,
   createdAt: 1,
   updatedAt: 5,

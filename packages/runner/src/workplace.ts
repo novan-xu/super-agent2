@@ -8,14 +8,15 @@ export interface WorkPaths {
   readonly worktree: string;
   readonly folder: string;
   readonly handback: string;
+  readonly scratch?: string;
 }
 
-export function workPaths(home: string, repository: string, ticket: number): WorkPaths {
+export function workPaths(home: string, repository: string, ticket: number, folderOf: number = ticket): WorkPaths {
   const [owner = "unknown", name = "unknown"] = repository.split("/");
   const folder = join(home, "work", `t${ticket}`);
   return {
     clone: join(home, "repos", owner, name),
-    worktree: join(home, "worktrees", `${name}-t${ticket}`),
+    worktree: join(home, "worktrees", `${name}-t${folderOf}`),
     folder,
     handback: join(folder, "handback.json"),
   };
@@ -193,7 +194,7 @@ export async function saveWork(git: Git, ticket: number, branch: string, paths: 
   await git.must(["add", "-A"], paths.worktree);
   const staged = await git.run(["diff", "--cached", "--quiet"], paths.worktree);
   if (staged.code === 1) {
-    await git.must(["commit", "--no-verify", "-m", `Save work in progress of ticket ${ticket} before it moves to another machine`], paths.worktree);
+    await git.must(["commit", "--no-verify", "-m", `Save work in progress of ticket ${ticket} so that it is on the branch`], paths.worktree);
   }
   const pushed = await git.run(["push", "origin", `HEAD:refs/heads/${branch}`], paths.worktree);
   if (pushed.code !== 0) {

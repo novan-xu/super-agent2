@@ -135,6 +135,7 @@ export const WorkTask = z.object({
   session: z.string().nullable(),
   note: z.string().nullable(),
   takeover: z.boolean().default(false),
+  folder: Ticket.optional(),
   environment: z.record(z.string(), z.string()),
 });
 export type WorkTask = z.infer<typeof WorkTask>;
@@ -169,6 +170,7 @@ export const TaskAssignment = z.object({
   session: z.string().nullable(),
   note: z.string().nullable(),
   takeover: z.boolean().default(false),
+  folder: Ticket.optional(),
   environment: z.record(z.string(), z.string()).default({}),
 });
 export type TaskAssignment = z.infer<typeof TaskAssignment>;

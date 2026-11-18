@@ -13,12 +13,10 @@ export interface StuckCardProps {
   readonly focused: boolean;
   readonly href: string;
   readonly open: () => void;
-  readonly arm: () => void;
-  readonly disarm: () => void;
   readonly answer: (answer: StuckAnswer, words: string) => void;
 }
 
-export function StuckCard({ card, use, focused, href, open, arm, disarm, answer }: StuckCardProps) {
+export function StuckCard({ card, use, focused, href, open, answer }: StuckCardProps) {
   const { ticket, guidance } = card;
   const stuck = ticket.stuck;
   const [words, setWords] = useState("");
@@ -65,27 +63,15 @@ export function StuckCard({ card, use, focused, href, open, arm, disarm, answer 
           {failureText(use.failure)}
         </p>
       )}
-      {use.step === "armed" ? (
-        <div className="card-actions">
-          <button className="btn" type="button" autoFocus onClick={disarm}>
-            {text("hold.cancel")}
-          </button>
-          <button className="btn btn-danger-solid" type="button" onClick={() => answer("give-up", words)}>
-            <Icon name="stop" />
-            {text("stuck.giveUp")}
-          </button>
-        </div>
-      ) : (
-        <div className="card-actions">
-          <button className={`btn btn-primary${busy("resume")}`} type="button" disabled={sending} onClick={() => answer("resume", words)}>
-            <Icon name="check" />
-            {text("stuck.resume")}
-          </button>
-          <button className={`btn btn-danger${busy("give-up")}`} type="button" disabled={sending} onClick={arm}>
-            {text("stuck.giveUp")}
-          </button>
-        </div>
-      )}
+      <div className="card-actions">
+        <button className={`btn btn-primary${busy("resume")}`} type="button" disabled={sending} aria-busy={sending && use.verdict === "resume"} onClick={() => answer("resume", words)}>
+          <Icon name="check" />
+          {text("stuck.resume")}
+        </button>
+        <button className={`btn btn-danger${busy("give-up")}`} type="button" disabled={sending} aria-busy={sending && use.verdict === "give-up"} onClick={() => answer("give-up", words)}>
+          {text("stuck.giveUp")}
+        </button>
+      </div>
     </article>
   );
 }

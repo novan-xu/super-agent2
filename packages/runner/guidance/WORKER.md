@@ -33,6 +33,23 @@ that they only make sense together: finished work then lands even if a later iss
 stays small enough to verify and fix quickly. Prefer a single pull request when the issues are small, or when splitting
 them would leave the default branch in a state that does not build or makes no sense on its own.
 
+## When you take over from earlier workers
+
+Your task may start with a note from the hub that says you hold a repair ticket: earlier workers could not finish this
+chain, and you carry on what remained. Your issues are only the ones still open; the closed ones stay closed.
+
+- The note tells what failed: each guided round's failure and the guidance given, the brain's description of why the
+  ticket got stuck, any words from the owner, the decisions already recorded, the messages the earlier workers were
+  given and the end of the last one's output. It usually pays to read it before you touch anything, and to look for
+  what the earlier guidance missed instead of repeating it.
+- You are on the same branch as before. On the machine where the earlier worker ran you are in its folder as it left
+  it, uncommitted changes included; elsewhere you start from the branch, where those changes were pushed when the
+  machine could. The state the machine read is listed below the note: check it against the note before you go on.
+- If the note names an open pull request, it is usually best to continue it: push to the branch and hand in that same
+  pull request. When it cannot be continued, a new one is yours to open.
+- Decisions listed in the note are already recorded: do not hand them in again, and do not reverse one without a
+  reason. List only decisions that are new.
+
 ## How to work
 
 - Usually work through the issues in the order given; each issue tends to build on the ones before it.

@@ -44,37 +44,30 @@ describe("what waits", () => {
 });
 
 describe("answering a card", () => {
-  it("lets 确认 and 拒绝 of a held command be pressed once, with nothing to arm", () => {
+  it("lets 确认 and 拒绝 of a held command be pressed once", () => {
     const shown = run({ type: "snapshot", cards: [one] });
-    expect(canAnswer(shown, "hold:a1", "release")).toBe(true);
-    expect(canAnswer(shown, "hold:a1", "refuse")).toBe(true);
-    expect(waitingReducer(shown, { type: "arm", key: "hold:a1" })).toBe(shown);
+    expect(canAnswer(shown, "hold:a1")).toBe(true);
+    expect(useOf(waitingReducer(shown, { type: "sending", key: "hold:a1", verdict: "release" }), "hold:a1").step).toBe("sending");
   });
 
-  it("lets 放弃 of a stuck ticket be pressed only after it was armed, and lets the owner change their mind", () => {
+  it("lets 继续 and 放弃 of a stuck ticket be pressed once, with nothing to confirm", () => {
     const shown = run({ type: "snapshot", cards: [stuck] });
-    expect(canAnswer(shown, stuck.key, "give-up")).toBe(false);
-    const armed = waitingReducer(shown, { type: "arm", key: stuck.key });
-    expect(useOf(armed, stuck.key).step).toBe("armed");
-    expect(canAnswer(armed, stuck.key, "give-up")).toBe(true);
-    const state = waitingReducer(armed, { type: "disarm", key: stuck.key });
-    expect(useOf(state, stuck.key).step).toBe("idle");
-    expect(canAnswer(state, stuck.key, "give-up")).toBe(false);
+    expect(canAnswer(shown, stuck.key)).toBe(true);
+    const sending = waitingReducer(shown, { type: "sending", key: stuck.key, verdict: "give-up" });
+    expect(useOf(sending, stuck.key)).toEqual({ step: "sending", verdict: "give-up", failure: null });
   });
 
   it("cannot be pressed twice while the answer is on its way", () => {
     const sending = run({ type: "snapshot", cards: [one] }, { type: "sending", key: "hold:a1", verdict: "release" });
     expect(useOf(sending, "hold:a1")).toEqual({ step: "sending", verdict: "release", failure: null });
-    expect(canAnswer(sending, "hold:a1", "release")).toBe(false);
-    expect(canAnswer(sending, "hold:a1", "refuse")).toBe(false);
+    expect(canAnswer(sending, "hold:a1")).toBe(false);
     expect(waitingReducer(sending, { type: "sending", key: "hold:a1", verdict: "refuse" })).toBe(sending);
   });
 
   it("does not begin to answer a card that is not there", () => {
     const state = run({ type: "snapshot", cards: [one] });
-    expect(canAnswer(state, "hold:zz", "refuse")).toBe(false);
+    expect(canAnswer(state, "hold:zz")).toBe(false);
     expect(waitingReducer(state, { type: "sending", key: "hold:zz", verdict: "refuse" })).toBe(state);
-    expect(waitingReducer(state, { type: "arm", key: "hold:zz" })).toBe(state);
   });
 
   it("keeps the state of a card across the hub's lists, so a list arriving mid-answer changes nothing", () => {

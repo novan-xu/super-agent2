@@ -11,7 +11,7 @@ import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { Decisions } from "./Decisions.js";
 import { clockOf, DeliveryBody, TextBody, ToolFold } from "./Entries.js";
-import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones } from "./TicketParts.js";
+import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones, RepairChip } from "./TicketParts.js";
 
 const nearBottom = 48;
 
@@ -32,6 +32,8 @@ export interface TicketViewProps {
   readonly origin: TicketOrigin;
   readonly backHref: string;
   readonly back: () => void;
+  readonly ticketHref: (ticket: number) => string;
+  readonly openTicket: (ticket: number) => void;
   readonly now: number;
 }
 
@@ -668,7 +670,7 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
   );
 }
 
-export function TicketView({ detail, known, actions, origin, backHref, back, now }: TicketViewProps) {
+export function TicketView({ detail, known, actions, origin, backHref, back, ticketHref, openTicket, now }: TicketViewProps) {
   const entries = useMemo(() => (detail === null ? [] : timeline(detail)), [detail]);
   const following = useRef(false);
   const list = useRef<HTMLOListElement>(null);
@@ -758,6 +760,17 @@ export function TicketView({ detail, known, actions, origin, backHref, back, now
             </span>
           )}
           <span className="chip">{text(kindKey(ticket))}</span>
+          <RepairChip ticket={ticket} />
+          {ticket.repairs === null ? null : (
+            <a className="chip chip--mono" href={ticketHref(ticket.repairs)} onClick={(event) => followLink(event, () => openTicket(ticket.repairs ?? 0))}>
+              {text("ticket.repairs", { ticket: ticket.repairs })}
+            </a>
+          )}
+          {ticket.repairedBy === null ? null : (
+            <a className="chip chip--mono" href={ticketHref(ticket.repairedBy)} onClick={(event) => followLink(event, () => openTicket(ticket.repairedBy ?? 0))}>
+              {text("ticket.repairedBy", { ticket: ticket.repairedBy })}
+            </a>
+          )}
         </div>
         <h2>{chineseOf(ticket.title)}</h2>
       </div>

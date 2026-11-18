@@ -389,18 +389,10 @@ export class PageController {
     }
   }
 
-  arm(key: string): void {
-    this.store.dispatch({ type: "waiting", action: { type: "arm", key } });
-  }
-
-  disarm(key: string): void {
-    this.store.dispatch({ type: "waiting", action: { type: "disarm", key } });
-  }
-
   async answer(key: string, verdict: Verdict): Promise<boolean> {
     const waiting = this.store.getState().waiting;
     const card = cardOf(waiting, key);
-    if (card === undefined || card.kind !== "hold" || !canAnswer(waiting, key, verdict)) {
+    if (card === undefined || card.kind !== "hold" || !canAnswer(waiting, key)) {
       return false;
     }
     this.store.dispatch({ type: "waiting", action: { type: "sending", key, verdict } });
@@ -418,7 +410,7 @@ export class PageController {
     const waiting = this.store.getState().waiting;
     const card = cardOf(waiting, key);
     const at = card?.kind === "stuck" ? card.ticket.stuck?.at : undefined;
-    if (card === undefined || card.kind !== "stuck" || at === undefined || !canAnswer(waiting, key, verdict)) {
+    if (card === undefined || card.kind !== "stuck" || at === undefined || !canAnswer(waiting, key)) {
       return false;
     }
     this.store.dispatch({ type: "waiting", action: { type: "sending", key, verdict } });

@@ -32,7 +32,45 @@ function lastHubMessage(prompt: string): string | undefined {
   return at < 0 ? undefined : prompt.slice(at);
 }
 
+function repairPlan(hub: string, turn: number): Step[] | undefined {
+  const repair = Number(/ticket (\d+)\. It is pending/.exec(hub)?.[1] ?? Number.NaN);
+  const asked = /Now call choose_defaults for ticket (\d+): kind (\w+)(?:, the difficulty of each of its issues \(([^)]*)\))?/.exec(hub);
+  if (!Number.isInteger(repair) || asked === null) {
+    return undefined;
+  }
+  const failed = /ran on \S+ with (\w+)/.exec(hub)?.[1];
+  const engine = failed === "claude" ? "codex" : "claude";
+  const issues = [...(asked[3] ?? "").matchAll(/#(\d+)/g)].map((found) => Number(found[1]));
+  return [
+    {
+      kind: "hub",
+      call: `repair-${turn}`,
+      name: "choose_defaults",
+      args: {
+        chains: [
+          {
+            ticket: repair,
+            kind: asked[2] ?? "feature",
+            ...(issues.length === 0 ? { difficulty: "complex" } : { issues: issues.map((number) => ({ number, difficulty: "complex" })) }),
+            reason: {
+              en: `Demo brain: the earlier run used ${failed ?? "another provider"}; ${engine} with a stronger setting may see what it missed.`,
+              zh: `演示大脑：上一次用的是 ${failed ?? "另一家"}，换成 ${engine === "codex" ? "GPT" : "Claude"} 并用更强的设置，也许能看到它漏掉的地方。`,
+            },
+            platform: "any",
+            engine,
+          },
+        ],
+      },
+    },
+    { kind: "text", block: `repair-${turn}`, text: `工单 ${repair} 是接着做的补救工单，我换了一家供应商、用了更强的设置，原因写在它的卡片上。它在工作台等你开始。` },
+  ];
+}
+
 function loopPlan(hub: string, turn: number): Step[] | undefined {
+  const repair = repairPlan(hub, turn);
+  if (repair !== undefined) {
+    return repair;
+  }
   const ticket = Number(/ticket (\d+) \(/.exec(hub)?.[1] ?? Number.NaN);
   if (!Number.isInteger(ticket)) {
     return undefined;

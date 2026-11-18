@@ -410,14 +410,17 @@ describe("the retry cap", () => {
     expect(running.tickets.moves(ticket.id).map((move) => [move.from, move.to])).toContainEqual(["stuck", "working"]);
   });
 
-  it("ends the ticket when the owner gives it up", async () => {
+  it("ends the ticket when the owner gives it up, destroys nothing, and opens its repair", async () => {
     const started = await start();
     const { running, sent, conversation } = started;
     const ticket = await failThreeRounds(started, 11);
     const answered = await post(running, `/api/tickets/${ticket.id}/answer`, { at: ticket.stuck?.at ?? 0, answer: "give-up" });
     expect(answered.status).toBe(202);
-    expect(current(running, ticket.id)).toMatchObject({ state: "stopped", stopReason: { zh: "引导到上限后，你放弃了它" } });
-    expect(sent.filter((message) => message.type === "work.stop")).toEqual([{ type: "work.stop", ticket: ticket.id, save: false, remove: true }]);
-    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${ticket.id}`);
+    const ended = current(running, ticket.id);
+    expect(ended).toMatchObject({ state: "stopped", stopReason: { zh: "引导到上限后，你放弃了它" } });
+    const repair = current(running, ended.repairedBy ?? 0);
+    expect(repair).toMatchObject({ state: "pending", repairs: ticket.id, branch: ticket.branch });
+    expect(sent.filter((message) => message.type === "work.stop")).toEqual([{ type: "work.stop", ticket: ticket.id, save: true, remove: false }]);
+    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${ticket.id}，已开补救工单 ${repair.id}，等你开始`);
   });
 });

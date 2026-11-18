@@ -36,7 +36,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
-import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, ticketLine, ticketReport, waitedLine } from "./reports.js";
+import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
@@ -647,7 +647,7 @@ function ticketDefinitions() {
     {
       name: "stop_ticket",
       title: "Stop a ticket",
-      description: "Stop an open ticket and record why. A stopped ticket does not start again.",
+      description: "Stop an open ticket and record why. A stopped ticket does not start again; if the owner later wants its work finished, open_repair_ticket opens a new ticket that continues it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -655,6 +655,22 @@ function ticketDefinitions() {
           reason: generatedSchema("reason for stopping"),
         },
         required: ["ticket", "reason"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "open_repair_ticket",
+      title: "Open a repair ticket for a stopped ticket",
+      description: [
+        "Open a pending repair ticket that carries on the work a stopped ticket left, when the owner asks for that in conversation: the work of a ticket the owner stopped, or one you stopped, and that they now want finished.",
+        "For a code ticket the repair holds the issues still open and continues on the same branch (its worker hands in the open pull request again, or a new one); what is merged stays merged. For a task ticket it is the same task. The repair keeps the kind, difficulty, platform and repository; what waited for the stopped ticket waits for the repair; its worker is given what the earlier workers did and what failed.",
+        "Refused when the ticket has not stopped (a stuck ticket is the owner's to decide on its card, where giving it up opens a repair by itself), when it was joined into another ticket, when it already has a repair (repair that one instead, if it stopped too), or when nothing remains.",
+        "Afterwards state its defaults with choose_defaults, as for any ticket. The owner starts it; you cannot start it.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: { ticket: { type: "integer", minimum: 1, description: "The stopped ticket whose work should go on" } },
+        required: ["ticket"],
         additionalProperties: false,
       },
     },
@@ -974,6 +990,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const stuck = detail.ticket.stuck;
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...repairLines(detail.ticket, (id) => tools.tickets.get(id)),
           ...(waited === null ? [] : [waitedLine(waited)]),
           ...roundLines(detail.rounds),
           ...(stuck === null
@@ -1037,6 +1054,24 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
           : { text: `Ticket ${parsed.data.ticket} is ${result.ticket?.state ?? "finished"} and cannot be stopped.`, isError: true };
+      }
+      case "open_repair_ticket": {
+        const parsed = TicketArgument.safeParse(raw);
+        if (!parsed.success) {
+          return invalid(parsed.error);
+        }
+        const before = tools.tickets.get(parsed.data.ticket);
+        if (before === undefined) {
+          return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
+        }
+        if (before.state === "stuck") {
+          return { text: `Ticket ${before.id} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你: giving it up there opens its repair ticket. Tell the owner.`, isError: true };
+        }
+        const repaired = tools.tickets.repair(before.id, "brain", "");
+        if (!repaired.ok) {
+          return { text: `No repair ticket was opened: ${repaired.reason}`, isError: true };
+        }
+        return { text: [`Opened repair ticket ${repaired.ticket.id}.`, ticketReport(repaired.ticket), ...repairReport(before, repaired.ticket, repaired.followers, true), ...chainProgress(before)].join("\n") };
       }
       case "record_decision": {
         const parsed = DecisionArguments.safeParse(raw);

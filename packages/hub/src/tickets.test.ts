@@ -385,6 +385,145 @@ describe("the history", () => {
   });
 });
 
+describe("repair tickets", () => {
+  const reason = { en: "Stopped", zh: "停了" };
+
+  function stopped(tickets: ReturnType<typeof createTicketService>, numbers: readonly number[] = [7, 8]): Ticket {
+    const title = { en: "Two steps", zh: "两步" };
+    const summary = { en: "Both steps", zh: "两个步骤" };
+    const ticket = tickets.open({
+      repository,
+      issues: numbers.map((number) => ({ repository, number, url: `https://github.com/${repository}/issues/${number}`, title, summary })),
+      title,
+      summary,
+      kind: "feature",
+      difficulty: "standard",
+      platform: "windows",
+    });
+    tickets.change((writes) => {
+      writes.setBranch(ticket.id, "sa2/ticket-1-aaaa");
+      writes.move(ticket.id, "working");
+      writes.setPullRequest(ticket.id, 21, { en: "First", zh: "第一" }, { closes: [numbers[0] ?? 0] });
+      writes.pullRequestMerged(ticket.id, { number: 21, closes: [numbers[0] ?? 0], mergeCommit: "m21", deployment: null });
+      writes.move(ticket.id, "stopped", reason);
+    });
+    return tickets.get(ticket.id) ?? ticket;
+  }
+
+  it("opens one repair for a stopped ticket, holding what is open on the same branch, and links both ways", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const ended = stopped(tickets);
+    const result = tickets.repair(ended.id, "brain", " please ");
+    if (!result.ok) {
+      throw new Error(result.reason);
+    }
+    expect(result.ticket).toMatchObject({ state: "pending", repairs: ended.id, repairedBy: null, branch: "sa2/ticket-1-aaaa", kind: "feature", difficulty: "standard", platform: "windows", repository });
+    expect(result.ticket.issues.map((issue) => issue.number)).toEqual([8]);
+    expect(tickets.get(ended.id)).toMatchObject({ state: "stopped", repairs: null, repairedBy: result.ticket.id });
+    expect(tickets.repairRecord(result.ticket.id)).toMatchObject({ openedBy: "brain", words: "please", failure: null, where: null, saved: null });
+    expect(tickets.lineage(result.ticket.id).map((ticket) => ticket.id)).toEqual([ended.id]);
+    expect(tickets.repair(ended.id, "brain", "")).toEqual({ ok: false, reason: `Ticket ${ended.id} already has a repair ticket` });
+  });
+
+  it("refuses a ticket that has not stopped, was joined, or has nothing left", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const working = tickets.open(request(7));
+    expect(tickets.repair(working.id, "brain", "")).toMatchObject({ ok: false });
+    expect(tickets.repair(999, "brain", "")).toEqual({ ok: false, reason: "There is no ticket 999." });
+    const joined = tickets.open(request(8));
+    tickets.change((writes) => writes.join(joined.id, working.id, reason));
+    expect(tickets.repair(joined.id, "brain", "")).toMatchObject({ ok: false, reason: expect.stringContaining("joined") as unknown as string });
+    const done = stopped(tickets, [20]);
+    expect(tickets.repair(done.id, "brain", "")).toMatchObject({ ok: false, reason: expect.stringContaining("nothing remains") as unknown as string });
+  });
+
+  it("opens a repair in the same step as giving up, redirecting every wait that was not waived and keeping the deployment flag", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const title = { en: "Two steps", zh: "两步" };
+    const stuck = tickets.open({ ...request(7), issues: [7, 8].map((number) => ({ repository, number, url: `https://github.com/${repository}/issues/${number}`, title, summary: title })) });
+    const after = (number: number) => tickets.open(request(number, { waitsFor: [stuck.id] }));
+    const pending = after(20);
+    const started = after(21);
+    const deployed = after(22);
+    const waived = after(23);
+    const working = after(24);
+    tickets.change((writes) => {
+      writes.setWaits(deployed.id, [{ ticket: stuck.id, deployment: true }]);
+      writes.move(started.id, "waiting");
+      writes.move(waived.id, "waiting");
+      writes.waive(waived.id, stuck.id);
+      writes.move(working.id, "working");
+      writes.move(stuck.id, "working");
+      writes.stick(stuck.id, { kind: "workflow", detail: "red" });
+      writes.describeStuck(stuck.id, { en: "Where", zh: "卡在这里" });
+    });
+    const seen: Ticket[] = [];
+    tickets.subscribe((ticket) => seen.push(ticket));
+    const outcome = tickets.giveUp(stuck.id, reason, " words ");
+    if (!outcome.ok || outcome.repair === null) {
+      throw new Error("no repair");
+    }
+    const repair = outcome.repair;
+    expect(outcome.ticket).toMatchObject({ state: "stopped", repairedBy: repair.id });
+    expect(outcome.followers.map((ticket) => ticket.id)).toEqual([pending.id, started.id, deployed.id]);
+    const waits = (id: number) => tickets.get(id)?.waits.map((wait) => [wait.ticket, wait.deployment, wait.waived]);
+    expect(waits(pending.id)).toEqual([[repair.id, false, false]]);
+    expect(waits(started.id)).toEqual([[repair.id, false, false]]);
+    expect(waits(deployed.id)).toEqual([[repair.id, true, false]]);
+    expect(waits(waived.id)).toEqual([[stuck.id, false, true]]);
+    expect(waits(working.id)).toEqual([[stuck.id, false, false]]);
+    expect(tickets.waitingFor(stuck.id).map((ticket) => ticket.id)).toEqual([waived.id, working.id]);
+    expect(tickets.repairRecord(repair.id)).toMatchObject({ openedBy: "owner", words: "words", failure: { kind: "workflow", detail: "red" }, where: { en: "Where" } });
+    expect(seen.find((ticket) => ticket.id === stuck.id)?.repairedBy).toBe(repair.id);
+    expect(tickets.giveUp(stuck.id, reason, "")).toEqual({ ok: false, error: "refused" });
+    expect(tickets.giveUp(999, reason, "")).toEqual({ ok: false, error: "not_found" });
+  });
+
+  it("copies a task's text, material, commit and deployment, and keeps the waits it already had", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const before = tickets.open(request(7));
+    const title = { en: "Deploy", zh: "部署" };
+    const task = tickets.open({
+      form: "task",
+      repository,
+      issues: [],
+      title,
+      summary: title,
+      kind: "operation",
+      requiredMachine: "pc",
+      waitsFor: [before.id],
+      task: { task: "Deploy it.", materials: [{ name: "notes.txt", source: "owner", text: "careful" }], commitRef: "merged", deploys: true },
+    });
+    tickets.change((writes) => {
+      writes.setCommit(task.id, "abc1234");
+      writes.move(task.id, "working");
+      writes.move(task.id, "stopped", reason);
+    });
+    const outcome = tickets.repair(task.id, "brain", "");
+    if (!outcome.ok) {
+      throw new Error(outcome.reason);
+    }
+    expect(outcome.ticket).toMatchObject({ form: "task", kind: "operation", requiredMachine: "pc", deploys: true, commitRef: "merged", commit: "abc1234", branch: null, issues: [] });
+    expect(tickets.task(outcome.ticket.id)).toMatchObject({ task: "Deploy it.", materials: [{ name: "notes.txt", text: "careful" }] });
+    expect(outcome.ticket.waits.map((wait) => wait.ticket)).toEqual([before.id]);
+  });
+
+  it("hands in a decision once across the whole lineage", () => {
+    const tickets = createTicketService({ database: open(), clock });
+    const ended = stopped(tickets);
+    const decision = { chosen: { en: "Use CSV", zh: "用 CSV" }, why: { en: "Simple", zh: "简单" }, otherOptions: { en: "Excel", zh: "用 Excel" } };
+    tickets.change((writes) => writes.recordDecisions(ended.id, "brain", [decision]));
+    const first = tickets.repair(ended.id, "brain", "");
+    if (!first.ok) {
+      throw new Error(first.reason);
+    }
+    const recorded = tickets.change((writes) => writes.recordDecisions(first.ticket.id, "worker", [decision, { ...decision, chosen: { en: "Use TSV", zh: "用 TSV" } }]));
+    expect(recorded.map((entry) => entry.chosen.en)).toEqual(["Use TSV"]);
+    expect(tickets.get(ended.id)?.decisions).toHaveLength(1);
+    expect(tickets.get(first.ticket.id)?.decisions).toHaveLength(1);
+  });
+});
+
 describe("the catalog", () => {
   it("names every ticket state and kind in Chinese", () => {
     for (const state of ticketStates) {

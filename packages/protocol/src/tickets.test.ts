@@ -6,6 +6,7 @@ import {
   canMoveTicket,
   codeKinds,
   finishedTicketStates,
+  hasRemainingWork,
   fitsForm,
   isOpenTicket,
   openTicketStates,
@@ -67,6 +68,8 @@ const ticket = {
   verification: null,
   stopReason: null,
   joinedInto: null,
+  repairs: null,
+  repairedBy: null,
   endedAt: null,
   conversation: null,
   createdAt: 1,
@@ -145,6 +148,20 @@ describe("ticket messages", () => {
   it("reads a ticket from a hub that did not know forms as code", () => {
     const { form: _form, requiredMachine: _machine, commitRef: _ref, commit: _commit, deploys: _deploys, ...older } = ticket;
     expect(Ticket.parse(older)).toMatchObject({ form: "code", requiredMachine: null, commitRef: null, commit: null, deploys: false });
+  });
+
+  it("reads a ticket from a hub that did not know repair tickets as one with no repair on either side", () => {
+    const { repairs: _repairs, repairedBy: _repairedBy, ...older } = ticket;
+    expect(Ticket.parse(older)).toMatchObject({ repairs: null, repairedBy: null });
+    expect(Ticket.parse({ ...ticket, repairs: 4, repairedBy: 9 })).toMatchObject({ repairs: 4, repairedBy: 9 });
+  });
+
+  it("knows what remains of a ticket that stopped", () => {
+    const issues = [{ number: 7 }, { number: 8 }];
+    expect(hasRemainingWork({ form: "code", issues, pullRequests: [{ state: "merged", closes: [7] }] })).toBe(true);
+    expect(hasRemainingWork({ form: "code", issues, pullRequests: [{ state: "merged", closes: [7, 8] }] })).toBe(false);
+    expect(hasRemainingWork({ form: "code", issues, pullRequests: [{ state: "open", closes: [7, 8] }] })).toBe(true);
+    expect(hasRemainingWork({ form: "task", issues: [], pullRequests: [] })).toBe(true);
   });
 
   it("knows a repository name from other text", () => {

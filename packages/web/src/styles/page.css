@@ -121,6 +121,8 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .ticket-group .chain-head h3 { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
 .ticket-group .chain-head h3.mono { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0; }
 .ticket-group .chain-head .od-icon { --od-icon-size: 14px; flex: none; }
+a.chip { text-decoration: none; }
+a.chip:hover { border-color: var(--accent); color: var(--fg); }
 a.lrow { text-decoration: none; }
 a.lrow:hover { text-decoration: none; }
 .lrow-meta .chip .od-icon { --od-icon-size: 13px; }

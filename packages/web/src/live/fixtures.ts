@@ -91,6 +91,8 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     verification: null,
     stopReason: null,
     joinedInto: null,
+    repairs: null,
+    repairedBy: null,
     conversation: null,
     createdAt: id * 1000,
     updatedAt: id * 1000,
