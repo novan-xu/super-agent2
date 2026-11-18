@@ -127,7 +127,7 @@ describe("a ticket's detail", () => {
     const writing = ticket(2, { state: "delivered", kind: "writing", repository: null, issues: [], title: { en: "Letter", zh: "写一封信" }, work: workStatus({ state: "finished", engine: "antigravity" }) });
     const html = render(
       detailOf(writing, [
-        workEvent(1, { kind: "delivered", text: "Dear friend", files: [{ name: "letter.md", size: 12, mediaType: "text/markdown", data: "" }], report: { en: "Done", zh: "写好了" } }, { ticket: 2 }),
+        workEvent(1, { kind: "delivered", text: "Dear friend", files: [{ name: "letter.md", size: 12, mediaType: "text/markdown" }], report: { en: "Done", zh: "写好了" } }, { ticket: 2 }),
       ]),
     );
     expect(html).toContain("Dear friend");

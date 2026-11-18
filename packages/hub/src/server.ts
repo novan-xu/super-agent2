@@ -45,6 +45,7 @@ import {
   historyQueryLength,
   MemoryEdit,
   type MemoryList,
+  largestMessageBytes,
   memoryLimit,
   MemoryRemoval,
   positionOfCursor,
@@ -153,10 +154,6 @@ export const ownerStopReason = { en: "The owner stopped it", zh: text("ticket.re
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
 const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt)?$/;
-
-const maximumBodyBytes = 16 * 1024;
-
-const maximumMessageBytes = 1024 * 1024;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -277,7 +274,18 @@ function isSameOrigin(request: IncomingMessage): boolean {
   }
 }
 
-function readBody(request: IncomingMessage, limit: number = maximumBodyBytes): Promise<string | undefined> {
+function declaresTooLarge(request: IncomingMessage): boolean {
+  const declared = Number(request.headers["content-length"] ?? "0");
+  return Number.isFinite(declared) && declared > largestMessageBytes;
+}
+
+function refuseTooLarge(request: IncomingMessage, response: ServerResponse): void {
+  request.resume();
+  response.setHeader("connection", "close");
+  sendJson(response, 413, { error: "too_large" });
+}
+
+function readBody(request: IncomingMessage, limit: number = largestMessageBytes): Promise<string | undefined> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -416,7 +424,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 415, { error: "unsupported_media_type" });
       return;
     }
-    const body = await readBody(request, maximumMessageBytes);
+    if (declaresTooLarge(request)) {
+      refuseTooLarge(request, response);
+      return;
+    }
+    const body = await readBody(request);
     if (body === undefined) {
       sendJson(response, 400, { error: "bad_request" });
       return;
@@ -498,6 +510,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const identity = await authenticate(request);
     if (identity === undefined) {
       sendJson(response, 403, { error: "forbidden" });
+      return;
+    }
+    if (declaresTooLarge(request)) {
+      refuseTooLarge(request, response);
       return;
     }
     if (path === sessionPath && method === "GET") {
@@ -1022,7 +1038,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 415, { error: "unsupported_media_type" });
         return true;
       }
-      const message = parseOwnerMessage(await readBody(request, maximumMessageBytes));
+      const message = parseOwnerMessage(await readBody(request));
       if (message === undefined) {
         sendJson(response, 400, { error: "bad_request" });
         return true;
@@ -1063,13 +1079,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     response.writeHead(200, {
       "content-type": "application/octet-stream",
-      "content-length": file.data.length,
+      "content-length": file.size,
       "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
       "content-security-policy": "sandbox",
     });
-    response.end(file.data);
+    const body = file.open();
+    body.on("error", () => response.destroy());
+    response.on("close", () => body.destroy());
+    body.pipe(response);
     return true;
   };
 
@@ -1183,7 +1202,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 404, { error: "not_found" });
       return true;
     }
-    const given = parseJson(await readBody(request, 64 * 1024), WorkerMessage.strict());
+    const given = parseJson(await readBody(request), WorkerMessage.strict());
     if (given === undefined) {
       sendJson(response, 400, { error: "bad_request" });
       return true;

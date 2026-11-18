@@ -100,6 +100,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
   const descriptions = new Map<number, string | null>();
   const branches = new Map<number, string>();
   const pieces = new Map<number, { readonly branch: string; readonly count: number; readonly closes: readonly number[] }>();
+  const outputs = new Map<number, Map<string, Buffer>>();
 
   const machineOf = (name: string) => machines.find((machine) => machine.name === name);
 
@@ -202,7 +203,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
     if (work.planned === "fails") {
       tool(work, "test", "pnpm test", [`FAIL src/parser.test.ts > parses relative dates (attempt ${work.attempt})\n`, "AssertionError: expected '2026-11-18' to be '2026-11-17'\n"], false, () => {
         stream(work, "gave-up", words("测试还是不过，我没能交回 PR。"), () => {
-          emit(work, { kind: "failed", failure: "no-pull-request", reason: "The worker ended without handing back a pull request, after two corrections" });
+          emit(work, { kind: "failed", failure: "no-pull-request", reason: "The program stopped without handing back a pull request" });
           end(work);
         });
       });
@@ -220,10 +221,11 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
         stream(work, "final", words("正文和文件都放进输出文件夹了。"), () => {
           const letter = "Dear neighbours,\n\nThe garden gate will be repainted on Saturday morning. Please use the side entrance until noon.\n\nThank you.";
           const data = Buffer.from(`# Notice\n\n${letter}\n`, "utf8");
+          outputs.set(work.ticket, new Map([["notice.md", data]]));
           emit(work, {
             kind: "delivered",
             text: letter,
-            files: [{ name: "notice.md", size: data.length, mediaType: "text/markdown", data: data.toString("base64") }],
+            files: [{ name: "notice.md", size: data.length, mediaType: "text/markdown" }],
             report: { en: "Wrote the notice and a Markdown copy.", zh: "写好了通知，另附一份 Markdown。" },
           });
           end(work);
@@ -309,8 +311,24 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
         emit(work, { kind: "text", block: `reply-${message.id}`, delta: `收到：「${message.text}」。下一步会照这个做。` });
         return;
       }
+      case "work.file": {
+        const data = outputs.get(message.ticket)?.get(message.name);
+        machine.link?.receive({
+          type: "work.file.part",
+          ticket: message.ticket,
+          attempt: message.attempt,
+          name: message.name,
+          offset: message.offset,
+          data: data === undefined ? null : data.subarray(message.offset, message.offset + message.length).toString("base64"),
+          problem: data === undefined ? "The scripted worker has no such file" : null,
+        });
+        return;
+      }
       case "work.stop": {
         const work = running.get(message.ticket);
+        if (message.remove) {
+          outputs.delete(message.ticket);
+        }
         if (work === undefined || work.machine !== machine.name || work.ended) {
           return;
         }

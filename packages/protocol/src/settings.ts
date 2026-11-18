@@ -92,6 +92,8 @@ export type AccountState = z.infer<typeof AccountState>;
 export const chosenProviders = ["gpt", "claude"] as const;
 export const fallbackProvider: Provider = "deepseek";
 
+export const startingOrder: readonly (typeof chosenProviders)[number][] = ["claude", "gpt"];
+
 export const ProviderOrderChange = z.object({
   order: z
     .array(z.enum(chosenProviders))

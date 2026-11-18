@@ -18,8 +18,8 @@ a computer.
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues, arranges and starts work, evaluates failures, deploys, and operates anything through the hub |
-| Hub | NAS, always on | Holds the credentials, runs commands for the brain, keeps ticket state, enforces the code constraints, serves the front door |
+| Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues, arranges and starts work, evaluates failures, deploys other repositories, and operates through the hub |
+| Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container and on the runners, keeps ticket state, enforces the code constraints, serves the front door |
 | Runner | One process on each work machine (PC, Mac mini, others later) | Starts workers and runs the commands the hub sends |
 | Worker | On a runner | One LLM session per ticket, in full-access mode, in its own git worktree |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
@@ -34,7 +34,7 @@ API directly.
 
 | Role | Providers |
 | --- | --- |
-| Brain | GPT through Codex, and Claude through Claude Code. DeepSeek, through `dsh`, answers only while both are unavailable. |
+| Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
 | Worker, code | Codex, Claude Code and `dsh`. |
 | Worker, writing | Antigravity: translation, articles, emails and other text work. Any writing that concerns code is code work and stays with the code workers. |
 
@@ -44,7 +44,8 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 
 - A conversation is one long-lived session. It keeps its context from one message to the next, for days.
 - The owner sees the brain work as it happens: what it reads, what it runs, what it writes.
-- The owner can send a message while the brain is working, and can interrupt it.
+- The owner can send a message while the brain is working, and can interrupt it. Codex and Claude Code take both
+  natively; `dsh` through a small plugin this repository ships and mounts at each start.
 - A session whose context grows long is compacted by its program, and goes on.
 - A restart of the brain, the hub or the NAS resumes the same session.
 - When another provider takes over, its session is given the conversation so far.
@@ -53,16 +54,22 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 ## The brain's reach
 
 The hub gives the brain one general capability: run a shell command on a target and return its output. The target is the
-hub itself, the NAS host, or any runner. Commands run with the owner's credentials: both GitHub accounts with
-administrator rights, Woodpecker, Cloudflare, and deployment access.
+hub's own container or a runner. Commands run with the owner's credentials: both GitHub accounts with administrator
+rights, Woodpecker, Cloudflare, and deployment access through runners.
+
+The reach ends at this project's containers on the NAS. Administrator rights inside the hub's container are intended;
+administrator rights over the NAS host are not. No target runs on the NAS host, the hub's container holds no key to
+sign in to it and no Docker socket, and the hub does not deploy Super-agent2 itself, which is deployed on the NAS by
+hand.
 
 Shortcuts for frequent operations (file an issue, arrange chains, merge, deploy) are built on that same path. They are
 conveniences and never the boundary: anything without a shortcut is still possible through a command.
 
 Two things follow:
 
-- The hub container is not hardened in ways that block operations. It has a writable file system and shell access to the
-  NAS host and to every runner.
+- The hub container is not hardened in ways that block operations inside it. It has a writable file system, passwordless
+  `sudo`, and shell access to every runner. Its mounts are its own volumes, the instance's project folders, and nothing
+  else of the host.
 - GitHub carries no rule the owner's token cannot bypass. Merging with checks skipped is an ordinary operation.
 
 ## Ticket flow
@@ -78,8 +85,9 @@ Two things follow:
    decides how many pull requests to open: whenever a piece of the chain is ready, it opens a pull request that closes at
    least one of the chain's open issues, hands it in, and waits.
 6. **Verification.** Rules only, for each pull request as it is handed in; see below.
-7. **Merge.** Automatic when the rules pass. A conflict at merge time goes back to the worker. The hub closes the issues
-   the pull request closes, as GitHub lists them.
+7. **Merge.** Automatic when the rules pass. A conflict at merge time goes back to the worker, every time it is found.
+   It is never a failure and never counts as a guided round; the ticket says how many times it went back. The hub
+   closes the issues the pull request closes, as GitHub lists them.
 8. **Continue.** When issues of the chain are still open, the hub resumes the same worker, in the same session and the
    same folder, on a new branch from the updated default branch, and tells it what merged and what remains. The brain
    is not part of this.
@@ -118,7 +126,7 @@ ticket is a single issue. The issue is what the owner manages; the brain decides
 
 For each chain the brain chooses, once, where and how it runs: machine, engine, model and effort, for example Mac mini,
 Codex, `gpt-6.1-sol`, high. They are defaults: the owner can change any of them on the card before the start, and the
-owner's choice wins.
+owner's choice wins. The card has one select for each, in that order; the page calls the engine 供应商.
 
 The brain decides from four things.
 
@@ -155,7 +163,12 @@ A model and effort the chosen machine's program does not offer is refused, never
 ## Deployment
 
 A ticket never deploys. When merged work needs deploying, the brain deploys it through the hub. After a deployment the
-hub checks that the service answers its health check, and rolls back to the previous version when it does not.
+hub checks that the service answers its health check, and rolls back to the previous version when it does not. A
+deployment's commands run in the hub's container or on a runner; a deployment file that names the NAS host is refused.
+
+Super-agent2 itself is the exception. The hub cannot reach the NAS host it runs on, so it does not deploy itself: the
+owner deploys a new version on the NAS with `deploy/deploy.sh`, or files work for a worker to do it, and the brain
+records the deployment once the owner says it is done.
 
 ## Verification rules
 
@@ -181,14 +194,18 @@ This is the complete list.
    - force-push to, or rewrite the history of, a default branch
    - delete a database or a data volume on the NAS
    - delete files outside project folders
-   - delete or replace a credential
 
    The list matches known forms. It cannot see inside a script, so that part rests on the LLM's own judgement.
+   Credentials are not on the list: changing or deleting one is not held. A credential file is a file like any other,
+   so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
-   owner. A merged pull request is progress: the count starts again for the next one.
+   owner. A merge conflict is not a failure and is not counted. A merged pull request is progress: the count starts
+   again for the next one.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
+6. **No reach into the NAS host.** The hub has no target on the NAS host, mounts nothing of it but its own folders,
+   and holds no key to sign in to it.
 
 ## Tests
 
@@ -198,6 +215,15 @@ No test fails because something took longer than expected.
   is off; only the pipeline's overall limit ends a run that hangs.
 - Logic that depends on time is tested with a clock the test controls.
 - A test waits for an event, never for a duration.
+
+## Limits
+
+Nothing the owner, the brain or a worker sends has an upper limit of its own: not a message, a task, material, a
+reason, a command, a list, or the number and size of a writing worker's files. What remains is physical. One request
+body or live message is at most 64 MiB, and a request past it is refused with a plain statement that this is the
+system's physical limit. A writing worker's text result too long for one message reaches the owner whole, as a file.
+Delivered files go from the runner to the hub in parts the hub asks for, and are kept as files beside the hub's
+database. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
 
 ## Decisions
 
@@ -222,7 +248,8 @@ are.
 ## Notices
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and
-is sent as a push notification from the web page. There is no Lark channel.
+is sent as a push notification from the web page. There is no Lark channel. The notification for a held operation names
+where it runs and the command, cut visibly when it is too long for a push message, and never its environment.
 
 ## Interface
 
@@ -241,6 +268,7 @@ Kept from it:
 Changed by this design:
 
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
+  确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.
 - Everything that showed the issue reviewer, the repairer, LLM verification or Lark is gone.
 
@@ -276,8 +304,14 @@ this repository, and `.gitignore` excludes the file types that hold them.
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | NAS, `secrets/hub.env` | Push notifications |
 | `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET` | Each runner, `~/.superagent2/runner.env` | A runner passing the front door |
 
-Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. Workers use the
+Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. The hub holds no
+credential for the NAS host itself. Workers use the
 logins of the command-line programs already present on each runner.
+
+The confirmation lock does not guard credentials. Changing or deleting one, a secret, a key, a token, a grant or a
+login, runs without confirmation; a credential file is deleted under the same rule as any file. The hub still refuses
+credential names as a command's environment variables and credential-looking text in a memory, and still injects the
+credentials into each command itself.
 
 ## Build order
 

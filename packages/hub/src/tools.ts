@@ -12,8 +12,6 @@ import {
   deploymentFile,
   deploymentOutcomeMarker,
   MaterialName,
-  maximumMaterialText,
-  maximumMaterials,
   openIssueNumbers,
   Platform,
   platforms,
@@ -95,20 +93,18 @@ const OpenArguments = z.object({
 
 const MaterialArgument = z.object({
   name: MaterialName,
-  source: z.string().trim().min(1).max(500),
-  text: z.string().max(maximumMaterialText).optional(),
+  source: z.string().trim().min(1),
+  text: z.string().optional(),
 });
 
 const WritingArguments = z.object({
   title: GeneratedText,
   summary: GeneratedText,
-  task: z.string().trim().min(1).max(20_000),
-  material: z.array(MaterialArgument).max(maximumMaterials).optional(),
+  task: z.string().trim().min(1),
+  material: z.array(MaterialArgument).optional(),
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
 });
-
-const maximumMaterialTotal = 400_000;
 
 const ListArguments = z.object({
   all: z.boolean().optional(),
@@ -119,13 +115,13 @@ const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
 
 const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
 
-const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1).max(20_000) });
+const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1) });
 
 const ChainArgument = z.object({
   name: z.string().trim().min(1).max(100),
   repository: RepositoryName,
-  issues: z.array(z.number().int().positive()).min(1).max(100),
-  after: z.array(z.union([z.string().trim().min(1), z.number().int().positive()])).max(100).optional(),
+  issues: z.array(z.number().int().positive()).min(1),
+  after: z.array(z.union([z.string().trim().min(1), z.number().int().positive()])).optional(),
   after_deployment: z.boolean().optional(),
   title: GeneratedText.optional(),
   summary: GeneratedText.optional(),
@@ -134,7 +130,7 @@ const ChainArgument = z.object({
   platform: Platform.optional(),
 });
 
-const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1).max(100) });
+const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1) });
 
 const TicketArgument = z.object({ ticket: z.number().int().positive() });
 
@@ -142,19 +138,19 @@ const GuideArguments = z.object({ ticket: z.number().int().positive(), guidance:
 
 const StuckArguments = z.object({ ticket: z.number().int().positive(), where: GeneratedText });
 
-const MergeArguments = z.object({ ticket: z.number().int().positive(), reason: z.string().trim().min(1).max(2_000) });
+const MergeArguments = z.object({ ticket: z.number().int().positive(), reason: z.string().trim().min(1) });
 
 const DefaultsArgument = z.object({
   ticket: z.number().int().positive(),
   kind: TicketKind,
-  issues: z.array(z.object({ number: z.number().int().positive(), difficulty: Difficulty })).max(100).optional(),
+  issues: z.array(z.object({ number: z.number().int().positive(), difficulty: Difficulty })).optional(),
   difficulty: Difficulty.optional(),
   reason: GeneratedText,
   platform: Platform,
   engine: CodeEngineChoice.optional(),
 });
 
-const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1).max(100) });
+const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) });
 
 const DeployArguments = z.object({
   repository: RepositoryName,
@@ -226,7 +222,7 @@ function loopDefinitions() {
       name: "guide_ticket",
       title: "Guide a failed ticket's worker into another round",
       description: [
-        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a conflict the worker did not resolve, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
+        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
         "A failure of the machine (lost, prepare) starts a retry that is not counted, once in a row.",
         "Refused for a ticket whose worker still runs (use message_worker), for a ticket with nothing failed, and for a ticket stopped for the owner.",
       ].join(" "),
@@ -304,8 +300,9 @@ function deploymentDefinitions() {
         `Deploy a repository at a commit as its deployment file ${deploymentFile} at that commit declares, read from GitHub so that what runs is what was merged.`,
         "The hub runs the file's deploy command on the file's target through the command channel, as any command (a command the confirmation lock holds waits for the owner, and the deployment waits with it), then runs its health check command every few seconds until it passes or the file's period is over.",
         "When the service does not pass, or the deploy command fails, the hub runs the rollback command, which restores the previously deployed commit, and checks health again. A first deployment through the hub has no previous commit to restore and is not rolled back, unless you give `previous`.",
-        `A deployment that checks and rolls itself back (one that replaces the hub, as Super-agent2's own does) reports how it ended by printing a line \`${deploymentOutcomeMarker} {"result": …, "reason": …}\` from any of its commands; the hub then ends it with that result.`,
+        `A deployment that checks and rolls itself back reports how it ended by printing a line \`${deploymentOutcomeMarker} {"result": …, "reason": …}\` from any of its commands; the hub then ends it with that result.`,
         "The commands get SUPERAGENT2_REPOSITORY, SUPERAGENT2_COMMIT (the commit deployed), SUPERAGENT2_PREVIOUS_COMMIT (the commit deployed before, unset when there is none) and SUPERAGENT2_DEPLOYMENT in their environment, besides the owner's credentials.",
+        "No target runs on the NAS host: a file that names the target nas is refused, and Super-agent2 itself is not deployed through the hub but on the NAS by hand.",
         "It returns once the deployment has started; the result comes to this conversation as a [hub] message. read_deployment shows its state and each step's output meanwhile. One deployment per repository at a time.",
         "A successful deployment marks every merged ticket of the repository whose merge commit it contains as deployed, so tickets waiting for that deployment begin, as report_deployment does. Only you deploy: no ticket and no merge deploys anything.",
       ].join(" "),
@@ -593,7 +590,6 @@ function ticketDefinitions() {
           task: { type: "string", description: "What to do, in English: the work, the language and form of the result, tone, length, anything the owner said that matters" },
           material: {
             type: "array",
-            maxItems: maximumMaterials,
             items: {
               type: "object",
               properties: {
@@ -740,7 +736,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         title: "Run a shell command",
         description: [
           "Run a shell command on a target through the hub, with the owner's credentials, and wait until it ends.",
-          `Targets now: ${targets.join(", ")}. "hub" runs in the hub's own container; "nas" runs on the NAS host.`,
+          `Targets now: ${targets.join(", ")}. "hub" runs in the hub's own container on the NAS; no target runs on the NAS host itself.`,
           ...machineText(options.machines?.() ?? ""),
           `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
           "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
@@ -958,9 +954,6 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const material = parsed.data.material ?? [];
         if (new Set(material.map((piece) => piece.name)).size !== material.length) {
           return { text: "Nothing was opened: two pieces of material have the same name.", isError: true };
-        }
-        if (material.reduce((total, piece) => total + (piece.text?.length ?? 0), 0) > maximumMaterialTotal) {
-          return { text: `Nothing was opened: the material's text is more than ${maximumMaterialTotal} characters in all. Pass a long piece by its source instead of its text, or split the work.`, isError: true };
         }
         try {
           const ticket = tools.tickets.open({

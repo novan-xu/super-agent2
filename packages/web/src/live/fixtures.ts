@@ -15,6 +15,7 @@ export function verification(overrides: Partial<TicketVerification> = {}): Ticke
     mergeCommit: null,
     deployment: null,
     skipReason: null,
+    conflictReturns: 0,
     checkedAt: 10_000,
     ...overrides,
   };
@@ -100,7 +101,7 @@ export function holdCard(id: string, overrides: { readonly at?: number; readonly
     at,
     command: {
       id,
-      target: "nas",
+      target: "studio",
       command: overrides.command ?? "gh repo delete novan-xu/old --yes",
       account: "novan-xu",
       cwd: overrides.cwd === undefined ? "/srv/projects/app" : overrides.cwd,

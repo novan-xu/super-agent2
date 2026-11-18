@@ -46,15 +46,15 @@ afterEach(async () => {
 function create(gate?: CommandGate) {
   const environment = testEnvironment();
   const hubTarget = recordingTarget("hub", environment);
-  const nasTarget = recordingTarget("nas", {});
+  const machineTarget = recordingTarget("studio", {});
   service = createCommandService({
     database,
     clock,
-    targets: [hubTarget, nasTarget],
+    targets: [hubTarget, machineTarget],
     credentials: environmentCredentials(environment),
     ...(gate === undefined ? {} : { gate }),
   });
-  return { service, hubTarget, nasTarget };
+  return { service, hubTarget, machineTarget };
 }
 
 async function finished(running: CommandService, id: string): Promise<CommandRecord> {
@@ -89,13 +89,13 @@ describe("running a command", () => {
     expect(textOf(running.output(started.id), "stdout").trim()).toBe(marker);
   });
 
-  it("runs on the NAS target as well", async () => {
-    const { service: running, nasTarget } = create();
-    const command = nodeScript(workDir, `process.stderr.write("from the nas"); process.exit(2);`);
-    const record = await finished(running, running.start({ target: "nas", command }).id);
-    expect(record).toMatchObject({ state: "exited", exitCode: 2, target: "nas" });
-    expect(textOf(running.output(record.id), "stderr")).toBe("from the nas");
-    expect(nasTarget.jobs.map((job) => job.command)).toEqual([command]);
+  it("runs on a work machine as well", async () => {
+    const { service: running, machineTarget } = create();
+    const command = nodeScript(workDir, `process.stderr.write("from the machine"); process.exit(2);`);
+    const record = await finished(running, running.start({ target: "studio", command }).id);
+    expect(record).toMatchObject({ state: "exited", exitCode: 2, target: "studio" });
+    expect(textOf(running.output(record.id), "stderr")).toBe("from the machine");
+    expect(machineTarget.jobs.map((job) => job.command)).toEqual([command]);
   });
 
   it("runs in the requested folder", async () => {
@@ -108,7 +108,7 @@ describe("running a command", () => {
   });
 
   it("gives the command the chosen account's token and not the other's", async () => {
-    const { service: running, nasTarget } = create();
+    const { service: running, machineTarget } = create();
     const command = nodeScript(workDir, envProbe);
     for (const account of ["novan-xu", "nuofan-island"] as const) {
       const record = await finished(running, running.start({ target: "hub", command, account }).id);
@@ -120,12 +120,12 @@ describe("running a command", () => {
         island: null,
       });
     }
-    await finished(running, running.start({ target: "nas", command, account: "nuofan-island" }).id);
-    expect(nasTarget.jobs[0]?.credentials["GH_TOKEN"]).toBe(testTokens["nuofan-island"]);
+    await finished(running, running.start({ target: "studio", command, account: "nuofan-island" }).id);
+    expect(machineTarget.jobs[0]?.credentials["GH_TOKEN"]).toBe(testTokens["nuofan-island"]);
   });
 
   it("gives the command the environment it was started with, keeps it on the record, and refuses a credential's name", async () => {
-    const { service: running, nasTarget } = create();
+    const { service: running, machineTarget } = create();
     const command = nodeScript(workDir, `console.log(JSON.stringify({ commit: process.env.SUPERAGENT2_COMMIT ?? null, gh: process.env.GH_TOKEN ?? null }));`);
     const record = await finished(running, running.start({ target: "hub", command, environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
     expect(record.environment).toEqual({ SUPERAGENT2_COMMIT: "abc1234" });
@@ -134,8 +134,8 @@ describe("running a command", () => {
       expect(() => running.start({ target: "hub", command, environment: { [name]: "not-a-token" } })).toThrow(/credentials are given by the hub alone/);
     }
     expect(running.list().every((entry) => Object.keys(entry.environment).every((name) => name.startsWith("SUPERAGENT2_")))).toBe(true);
-    await finished(running, running.start({ target: "nas", command: "true", environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
-    expect(nasTarget.jobs[0]?.credentials["SUPERAGENT2_COMMIT"]).toBe("abc1234");
+    await finished(running, running.start({ target: "studio", command: "true", environment: { SUPERAGENT2_COMMIT: "abc1234" } }).id);
+    expect(machineTarget.jobs[0]?.credentials["SUPERAGENT2_COMMIT"]).toBe("abc1234");
     expect(() => running.start({ target: "hub", command, environment: { "NOT A NAME": "x" } })).toThrow();
   });
 

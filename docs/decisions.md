@@ -2436,6 +2436,220 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   the owner. Until they exist, no machine is connected to the live hub, so a started ticket waits for a machine.
 - **Other options:** Create the rules through Cloudflare's API with the hub's token.
 
+## 2026-11-17 — The brain starts with Claude, then GPT
+
+- **Chosen:** At the owner's review, the starting order is Claude, then GPT, then DeepSeek only while both are
+  unavailable. It is stated once, as `startingOrder` in `packages/protocol/src/settings.ts`, and read by the brain's
+  `BRAIN_PROVIDERS` default, by 设置 before the brain has linked, and by the development harness's demo brain;
+  `tools/brain-live`'s failover check now makes Claude unavailable first. This overturns the default `gpt,claude` in
+  "The brain as a package of its own". The hub never writes `brain_order` by itself: the row exists only after the
+  owner pressed 提前 in 设置 → 模型, so it always holds an order the owner chose, and nothing migrates it. On the live
+  system the new default applies when the next deployment recreates the brain container, unless the owner has chosen an
+  order in 设置 (that order stays) or `secrets/brain.env` on the NAS sets `BRAIN_PROVIDERS` (that value wins over the
+  default and has to be removed or changed by hand).
+- **Why:** The owner's word. Seeding the hub's row from a default would make an untouched order look like the owner's
+  choice, and a migration to correct it could overwrite one the owner made.
+- **Other options:** A migration that rewrites a stored `gpt,claude`; setting `BRAIN_PROVIDERS` in `deploy/compose.yaml`.
+
+## 2026-11-17 — 确认 and 拒绝 on a held command take one press
+
+- **Chosen:** At the owner's review, 确认 releases a held command at once and 拒绝 refuses it at once; the buttons stay
+  where they are. This overturns the two presses of "What a confirmation card shows and how 确认 is guarded". The
+  page's refusal of a second answer for the same card, the disabled buttons while an answer is on its way, and the
+  fingerprint the owner saw are unchanged. Arming now exists only for a stuck ticket's 放弃, and the reducer refuses to
+  arm any other card.
+- **Why:** The owner finds the second press unnecessary; the card itself, showing the whole command, is the guard.
+- **Other options:** Keeping two presses for some forms of hold only; a press-and-hold button.
+
+## 2026-11-17 — A held command's notification names the target and the command
+
+- **Chosen:** At the owner's review, the notification for a held command reads `<target> 上有一条命令等你确认：`
+  followed by the command on the next line; the title, the tag and the address are as before. This overturns "holds no
+  command" in "When the hub sends, and what a notification says". The whole payload must fit one Web Push record of
+  4096 bytes, which leaves 3993 bytes of JSON; a longer command is cut at a whole character, found by halving, and ends
+  with `…`. If even the target and the ellipsis did not fit, the plain sentence 有一条命令等你确认 is sent, so a
+  notification always goes. The command's environment, its account and its folder are never in the notification: a
+  value under any name could be a credential, and the command service still refuses credential names as variables.
+- **Why:** The owner accepts the command on the lock screen of a personal device; leaving out the environment entirely
+  is the only way to be sure no credential value reaches a push service.
+- **Other options:** Showing the environment with values that look like credentials masked; cutting by bytes; naming
+  the form of the hold instead of the command.
+
+## 2026-11-17 — Four selects on the start card, and one name for the provider
+
+- **Chosen:** At the owner's review, the start card has four selects in the order 机器, 供应商, 模型, 推理强度; the
+  model select lists the models the chosen machine's program offers, and the effort select the efforts of the chosen
+  model. Each field keeps its own `field--owner` mark. Changing the provider returns model and effort to the table's, as
+  before; changing the model keeps the effort when the new model offers it, and otherwise returns an effort the owner
+  set to the default; changing the machine drops the owner's model and effort when the machine does not offer the
+  model, and only the owner's effort when it offers the model but not that effort. `resolveStart` now says `effort` is
+  missing (机器上的程序不给这个模型提供这个推理强度) when the model is offered and the effort is not, and `model` only
+  when the model is not offered. 改派 in the ticket's panel has the same four selects, with 按默认 for the model, and asks
+  for an effort once a model is picked. The page calls the program 供应商 everywhere it names it: the start card, 改派,
+  the ticket's detail, and the messages about what is missing; 设置 names each program by its own name and had no
+  general word for it. This overturns the three selects of "The choice on the start card".
+- **Why:** The owner's word, and one thing has one name.
+- **Other options:** Leaving 改派 with one select of pairs; choosing the new model's first effort when the old one is not
+  offered, which the design forbids as taking a neighbour.
+
+## 2026-11-17 — Nothing the owner, the brain or a worker sends has a cap of its own
+
+- **Chosen:** At the owner's review, every cap on what is sent was removed: the owner's message to the brain (100000
+  characters), a message to a worker (20000 characters, 64 KB body), the words on a stuck card (4000), a writing task
+  (20000), material (500-character source, 200000 characters a piece, 20 pieces, 400000 together), `merge_ticket`'s
+  reason (2000), `arrange_chains` (100 chains, 100 issues, 100 before), `choose_defaults` (100 chains, 100 issues), a
+  start (200 chains), a deployment's deploy, rollback and health commands (20000 each), a deployment outcome's reason
+  (4000), a command's environment value (10000), the writing worker's deliverables (20 files, 4 MB each, 8 MB together,
+  200000 characters of text) and the corrections of a hand-back (two, then the attempt failed; now the worker is told
+  what is wrong for as long as it is wrong). This overturns those limits in "A writing ticket's task and material", "The
+  scratch folder and the hand-back of a writing worker" and "Delivering the text and files into the conversation".
+  What remains is physical. A request body read into memory, and so one live message, is at most 64 MiB
+  (`largestMessageBytes`): a request that declares more is answered 413 `too_large` once the sender is known, and the
+  page says 超过了系统一次能传送的物理上限（64 兆字节）, while a body sent without its length that runs past it is a 400.
+  The `ws` library's own frame limit of 100 MiB stays above it, and SQLite's limit of about a billion bytes a value is
+  not reached. A text result whose JSON is larger than 64 MiB reaches the owner whole, as a file, instead of inline.
+  A command longer than a shell accepts fails with the operating system's own error, as any command already did. Left
+  as they are, with the reason: the memory limits (reworked separately); `roundCap`; every clip of a log or output
+  handed to an LLM or listed on the page (the full text stays); deployments' health-check timing; name and identifier
+  fields (machine, model, effort, variable, chain and material names, a delivered file's name, a commit, a deployment's
+  folder, push subscriptions); network timeouts; page sizes of lists and of `list_tickets` (a read, not something
+  sent); 历史's search of 200 characters and 8 terms (each term is one more pattern matched against every ended ticket);
+  the hub's internal scans of up to 100000 open tickets; the lock's nesting depth of 8 when it reads a command; the
+  brain's four open programs; the runner's three trial starts and its 5 MB log.
+- **Why:** The owner asked for no upper limit except where the mechanism itself would break; 64 MiB keeps one message
+  well inside the WebSocket frame limit with room for its envelope and escaping.
+- **Other options:** Raising each cap to a larger number; one limit for the brain and another for the owner; streaming
+  request bodies to disk so that no request has a limit.
+
+## 2026-11-17 — Delivered files travel in parts the hub asks for
+
+- **Chosen:** The `delivered` event now carries each file's name, size and media type, and no bytes. While the ticket
+  stays working and the attempt running, the hub asks the runner for each file in parts of 8 MiB (`work.file`, answered
+  by `work.file.part` with the bytes in base64, or none and the reason), one part at a time over the link it already
+  has, and writes them to `<HUB_DATA_DIR>/files/t<ticket>/a<attempt>/<index>`. When every file is whole it finishes the
+  attempt, records the files, and delivers into the conversation as before. After a dropped link or a restart of the hub
+  it goes on from the size it already has when the runner says hello; a part the runner cannot read ends the attempt as
+  `lost`, a failure of the machine with its one uncounted retry. A stop or a new attempt drops what was fetched.
+  `ticket_files` (migration 19) keeps the bytes of files delivered before, and new rows point at the fetched files,
+  which `GET /api/tickets/<n>/files/<name>` streams. A runner still on the version before this asks nothing new of the
+  hub, but it closes its link on `work.file`; it switches to the hub's version as soon as its work has ended, and then
+  answers.
+- **Why:** Base64 inside one event and a blob in SQLite carried the whole file through memory at every step. Parts the
+  hub pulls need no new route through the front door, no retry logic in the runner, and stay far below Cloudflare's
+  limit on one request.
+- **Other options:** The runner uploading each file over HTTP, which through Cloudflare needs parts anyway and a way to
+  retry after a dropped link; parts as ordinary work events in the runner's ledger, which would copy every file into it.
+
+## 2026-11-17 — A merge conflict goes back to the worker every time
+
+- **Chosen:** At the owner's review, every time verification finds the pull request conflicting, it goes back to the
+  worker with a note to merge the base, resolve, test, push and hand back, naming the files changed on both sides and,
+  from the second time, how many times it has come back. It is never a failure: it counts toward no round and never
+  makes the ticket stuck. This overturns "sent back only once" in "A conflict at merge time" and the `conflict` failure
+  of "What a failure is, and what counts as a guided round". `conflict` is no longer a failure kind; migration 18 drops
+  `ticket_verifications.conflict_head`, adds `conflict_returns`, and rewrites any stored conflict failure as a red
+  workflow, which keeps an old row readable (none can exist on the live system, where no worker has run). The count is
+  raised only when the ticket actually went back, is on the ticket as `verification.conflictReturns`, and `read_ticket`
+  says "went back to its worker for a conflict n times". The brain is not told at each return; it steps in with
+  `message_worker` while the worker runs, since `guide_ticket` answers failures only. Verification's `conflict` state
+  stays, as the record that the head conflicted, or that it could not go back to the worker.
+- **Why:** The owner's word: the worker resolves the conflict, however long it takes.
+- **Other options:** Telling the brain at each return; a count on the ticket's own row; keeping `conflict` as a failure
+  kind that is never counted.
+
+## 2026-11-17 — dsh takes a message into a running turn, and stops one without being killed
+
+- **Chosen:** A plugin of our own, `packages/programs/src/dsh-control.ts`, built with the package to
+  `dist/dsh-control.js`, adds steering and cancelling to dsh's `sdk` profile. The adapter mounts it through the `--patch`
+  file it already writes, by the plugin's absolute path, with a path for a local channel in the plugin's config: a named
+  pipe on Windows, a Unix socket in the temporary folder elsewhere. The adapter listens on that path before it starts dsh;
+  the plugin connects when dsh loads it, and the two speak JSON-RPC lines over it. `steer` calls the dsh agent's own
+  `steer`, which dsh feeds into the running turn at its next step; the plugin does it only while that session's turn is
+  open (between `turn/start` and `turn/end`) and its agent is running, and otherwise answers that it is idle, so the
+  adapter reports the message as queued and the brain or runner starts the next turn with it, as before. `cancel` calls
+  the agent's `cancel` as the user; dsh ends the turn as `aborted`, which the adapter reports as interrupted, and the
+  process and session stay for the next turn. The adapter sends the cancel only once the prompt has reached dsh; an
+  interrupt that comes earlier keeps the prompt from being sent. The program is killed, and the session resumed in a new
+  process, only when the cancel is not acknowledged: no plugin connection, an error, or a closed channel. If dsh goes
+  idle after a cancel without ending a turn, the adapter ends it as interrupted. A second interrupt of the same turn is
+  ignored. This overturns the part of "What the programs cannot do, and the nearest honest behaviour" about dsh (no
+  message into a running turn, no interrupt) and the choice in "How each program is driven" not to write a dsh control
+  plugin.
+- **Why:** The owner asked for both. The `sdk` profile stays, so failures keep their error codes for choosing a
+  provider. dsh loads plugins from a path in a patch row, so one file in this repository gives both features wherever
+  the adapter runs: in the brain's container and on every runner, with nothing for the owner to install, and the patch
+  that mounts it is written per launch, so the owner's own dsh profiles are never touched. A channel the adapter owns
+  needs no port and no discovery, and passing its path in the patch keeps it out of the environment that dsh's tools
+  see. Tracking the open turn in the plugin closes the race where a message arrives as a turn ends: dsh drains steering
+  given before `turn/end` inside that turn, and anything later becomes a turn of its own.
+- **Other options:** `dsh --profile acp`, whose `session/cancel` is native, plus a plugin only for steering: one prompt
+  at a time per session, and failures arrive as text only. A local HTTP port announced on standard error: a port to
+  allocate and protect. Interrupting a dsh turn and resending the message as a new turn.
+- **What a dsh update can break:** The plugin relies on interfaces dsh documents in its type files but does not promise:
+  plugins loaded from an absolute path in a `--patch` `insert` row with their `config`, the `agents` service
+  (`ctx.agents.get(sessionId)`), an agent's `status`, `steer(message)` and `cancel({ kind: "user" })`, and the
+  `session/event` hook with `turn/start` and `turn/end`. If a newer dsh fails to load the plugin, it logs the error and
+  runs without it, and the adapter falls back to queueing and killing. The brain's image pins dsh 0.2.1-rc.2; a runner
+  uses whichever dsh its machine has.
+
+## 2026-11-17 — Credentials are out of the confirmation lock
+
+- **Chosen:** The lock has five forms: `repository-deletion`, `repository-publication`, `default-branch-rewrite`,
+  `data-deletion` and `file-deletion`. `credential-change` is gone, with its command rules (`gh secret`, `gh auth
+  logout`, deleting SSH, GPG and deploy keys, `docker secret rm`, `kubectl delete secret`, `wrangler secret`,
+  `cloudflared tunnel delete`, `woodpecker-cli secret`, `gpg --delete-*`, `security delete-*`, `cmdkey /delete`), its API
+  rules (secrets, keys, tokens, grants, Cloudflare tokens, service tokens and tunnels), the effect rule over credential
+  files with its built-in list of credential paths, `HUB_CREDENTIAL_PATHS` (and `credentialPaths` in the hub's
+  configuration, `deploy/compose.yaml` and the harnesses) and the project `.env` exemption that only softened it. What
+  became dead went with them: the hub no longer reads what a command writes, copies or moves (redirects, `cp`, `mv`,
+  `tee`, `sed -i`, `ssh-keygen`, `openssl`, PowerShell's `Set-Content` and `Out-File` and the rest), only what it
+  deletes, pushes or sends to an API; the Cloudflare API is no longer read at all. This overturns the forms of "How the
+  confirmation lock reads a command" (six forms, and rules over what a command writes or moves), "Project folders and
+  credential paths" (`HUB_CREDENTIAL_PATHS`, the built-in credential list and everything it held), "Temporary folders and
+  a project's own `.env`" (the project `.env` exemption, and the credential file in a temporary folder that stayed held)
+  and "Project folders and credential paths in the deployment" (the value of `HUB_CREDENTIAL_PATHS`); those entries stay
+  as written, and what they say of project folders and temporary folders still holds. The consequences: writing,
+  appending to, overwriting or moving a credential file is not held anywhere. Deleting one is judged only by
+  `file-deletion`, like any other file, with no special case either way: held outside the project folders and the
+  temporary folders, free inside them, so a credential file in `/tmp` is now deleted without a hold. The other five
+  forms are unchanged. Not touched, because they are not this form: the refusal of credential names as a command's
+  environment variables, the refusal of credential-looking text in a memory, the way the hub injects credentials into
+  commands, and `packages/hub/src/credentials.ts`. The brain's guidance no longer lists credentials among what is held,
+  and `docs/design.md` says credentials are not on the list. A deployment that still sets `HUB_CREDENTIAL_PATHS` is not
+  refused: the hub ignores a variable it does not read.
+- **Why:** The owner's word: changing or deleting credentials is not within the confirmation lock's scope.
+- **Other options:** Keeping the lock's reading of writes and moves for a later form; holding a credential file's
+  deletion wherever it is; leaving `HUB_CREDENTIAL_PATHS` accepted and unused.
+
+## 2026-11-17 — The brain's reach ends at the hub's container
+
+- **Chosen:** At the owner's review, the hub has no way into the NAS host. The `nas` target is gone, with
+  `NAS_SSH_DESTINATION`, `NAS_SSH_PORT` and `NAS_SSH_IDENTITY` (a hub given them ignores them), the SSH script target
+  behind it, the key's mount at `/run/superagent2/ssh`, the `host.docker.internal` host entry and `SUPERAGENT2_INSTANCE`
+  in `deploy/compose.yaml`, and the `authorize` step and the key generation of the `secrets` step in `deploy/deploy.sh`.
+  `deauthorize` stays, so an instance authorized earlier can be cleaned up, and now refuses a public key file that holds
+  no key instead of matching every line. The hub does not deploy Super-agent2: `.superagent2/deployment.json` is
+  removed from this repository, `deploy_repository` refuses the hub's own repository (`HUB_SOURCE_REPOSITORY`) before
+  it reads GitHub, whatever an older commit's file says, and a merge in it tells the brain that the new version waits
+  to be deployed on the NAS, with 工单 n 已合并，Super-agent2 的新版本等你部署 as the notice. The owner deploys it with
+  `deploy.sh release`, or files work for a worker, which signs in with its own machine's access; the brain then records
+  it with `report_deployment`. A deployment file of any repository that names `nas` is refused with the reason that the
+  hub cannot reach the NAS host. `nas` stays reserved as a machine name, so no runner can take it and turn such a file
+  into a deployment on that runner. The script's `begin`, `outcome` and `settle` steps and the background release they
+  started are removed, since only the hub called them; `release`, `rollback` and the other steps keep today's
+  behaviour, including installing the release's own `deploy.sh` and `compose.yaml`. The hub's reading of an outcome
+  line from a deployment's commands stays, as a general part of `deploy_repository` that its tool text describes.
+  Runner targets, for `run_command` and for deployment files, are unchanged. This overturns "How the hub reaches the
+  NAS host", the `nas` part of "Targets, shells and stopping", "Super-agent2's deployment file, and why its shape did
+  not change", and the hub-driven part of "Super-agent2 is deployed by a script that outlives the hub" (`begin`,
+  `outcome`, `settle` and `setsid`); the release itself, with its backup, health check and way back, stands.
+- **Why:** The owner's word: administrator rights inside this project's containers are intended, administrator rights
+  over the whole NAS are not. `novanxu` can drive Docker for every container on the NAS, so any sign-in as that user is
+  the whole NAS, and the brain has passwordless `sudo` in the hub's container, so whatever the container holds the brain
+  holds. Whether the brain deploys Super-agent2 matters little to the owner, since a worker can.
+- **Other options:** A key that `sshd` restricts to a forced command accepting only the release's verbs, kept for the
+  self-deployment; a NAS user without Docker rights, which could not release; keeping `nas` as a target name that is
+  listed and always refused.
 ## 2026-11-17 — A chain is handed in as several pull requests
 
 - **Chosen:** The worker owns the chain and decides how many pull requests to open. Whenever a piece is ready it opens a
@@ -2502,7 +2716,7 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 
 ## 2026-11-17 — The record of a chain's pull requests
 
-- **Chosen:** Migration 18 adds `ticket_pull_requests`: per ticket, in the order handed in, the number, link, branch,
+- **Chosen:** Migration 20 adds `ticket_pull_requests`: per ticket, in the order handed in, the number, link, branch,
   state (`open`, `merged`, `closed`), the issues it closes (for a merged one, as read at the merge), merge commit,
   whether the repository had a deployment at that commit, and when it was handed in and merged; and
   `ticket_verifications.closes`. `Ticket.pullRequests` carries the records, `Ticket.pullRequest` stays the latest, and

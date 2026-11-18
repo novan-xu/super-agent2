@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { antigravityAdapter, claudeAdapter, codexAdapter, dshAdapter, type ProgramEvent, type ProgramHandle, type ProgramSettings, type WorkerAdapter } from "@super-agent2/programs";
 import {
+  type FetchFile,
+  filePartBytes,
   type HubToRunner,
   type RunnerToHub,
   WorkEngine,
@@ -34,9 +37,9 @@ import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
 import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
-import { checkWritingHandback, clearOutput, prepareScratch, writingPaths, writingPlace } from "./writing.js";
+import { checkWritingHandback, clearOutput, outputFolder, prepareScratch, writingPaths, writingPlace } from "./writing.js";
 
-export type WorkMessage = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" }>;
+export type WorkMessage = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" }>;
 
 export type AdapterFactory = (engine: WorkEngine, settings: ProgramSettings) => WorkerAdapter;
 
@@ -59,8 +62,6 @@ export const workerCodexConfig: Readonly<Record<string, unknown>> = {
   "shell_environment_policy.inherit": "all",
   "shell_environment_policy.ignore_default_excludes": true,
 };
-
-export const maximumCorrections = 2;
 
 export interface WorksOptions {
   readonly home: string;
@@ -118,7 +119,6 @@ interface Work {
   handle: ProgramHandle | undefined;
   turn: boolean;
   queue: string[];
-  corrections: number;
   generation: number;
   ran: boolean;
   freshTried: boolean;
@@ -208,7 +208,6 @@ export function createWorks(options: WorksOptions): Works {
     handle: undefined,
     turn: false,
     queue: [],
-    corrections: 0,
     generation: 0,
     ran: false,
     freshTried: false,
@@ -340,11 +339,6 @@ export function createWorks(options: WorksOptions): Works {
       await end(work, outcome.event);
       return;
     }
-    if (work.corrections >= maximumCorrections) {
-      await end(work, { kind: "failed", failure: "no-pull-request", reason: outcome.problem });
-      return;
-    }
-    work.corrections += 1;
     emit(work, { kind: "message", id: randomUUID(), from: "hub", text: outcome.problem, delivery: "steered" });
     startTurn(work, `[hub] ${outcome.problem}`);
   };
@@ -604,6 +598,36 @@ export function createWorks(options: WorksOptions): Works {
     }
   };
 
+  const serveFile = async (asked: FetchFile) => {
+    const reply = (data: string | null, problem: string | null) =>
+      options.send({ type: "work.file.part", ticket: asked.ticket, attempt: asked.attempt, name: asked.name, offset: asked.offset, data, problem });
+    const work = works.get(asked.ticket);
+    if (work === undefined || work.record.attempt !== asked.attempt || work.record.kind !== "writing") {
+      reply(null, `This machine has no writing work for ticket ${asked.ticket}, attempt ${asked.attempt}`);
+      return;
+    }
+    const length = Math.min(asked.length, filePartBytes);
+    try {
+      const handle = await open(join(outputFolder(work.paths), asked.name), "r");
+      try {
+        const buffer = Buffer.alloc(length);
+        let read = 0;
+        while (read < length) {
+          const { bytesRead } = await handle.read(buffer, read, length - read, asked.offset + read);
+          if (bytesRead === 0) {
+            break;
+          }
+          read += bytesRead;
+        }
+        reply(buffer.subarray(0, read).toString("base64"), null);
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      reply(null, messageOf(error));
+    }
+  };
+
   const message = async (ticket: number, attempt: number, id: string, from: WorkSender, text: string) => {
     const work = works.get(ticket);
     if (work === undefined || work.record.attempt !== attempt || !work.live || work.record.ended) {
@@ -692,6 +716,9 @@ export function createWorks(options: WorksOptions): Works {
           return;
         case "work.stop":
           track(stop(incoming.ticket, incoming.save, incoming.remove));
+          return;
+        case "work.file":
+          track(serveFile(incoming));
           return;
       }
     },

@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
   activeWorkStates,
+  type FilePart,
+  filePartBytes,
   finishedTicketStates,
   type GeneratedText,
   guidanceRefusal,
@@ -57,6 +59,15 @@ export interface GuidedRound {
 export type WorkOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
 
 export type MessageOutcome = { readonly ok: true; readonly id: string } | { readonly ok: false; readonly reason: string };
+
+type DeliveredEvent = Extract<WorkEvent, { readonly kind: "delivered" }>;
+
+interface Fetching {
+  readonly attempt: number;
+  readonly machine: string;
+  readonly event: DeliveredEvent;
+  asked: { readonly part: number; readonly offset: number } | undefined;
+}
 
 export type WorkListener = (event: StoredWorkEvent) => void;
 
@@ -136,6 +147,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const listeners = new Set<WorkListener>();
   const files = options.files ?? createTicketFiles(options.database);
   const removalsSent = new Set<string>();
+  const fetching = new Map<number, Fetching>();
   let closed = false;
 
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? AND attempt = ?");
@@ -378,7 +390,16 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
   };
 
+  const forget = (ticket: number) => {
+    const pending = fetching.get(ticket);
+    if (pending !== undefined) {
+      fetching.delete(ticket);
+      files.drop(ticket, pending.attempt);
+    }
+  };
+
   const finish = (ticket: Ticket) => {
+    forget(ticket.id);
     const latest = latestOf(ticket.id);
     if (latest !== undefined && (latest.state === "queued" || isActive(latest.state))) {
       touch(ticket.id, () => end(ticket.id, latest.attempt, "stopped", null, ticket.stopReason?.en ?? `The ticket is ${ticket.state}`));
@@ -438,6 +459,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover, clock.now());
       writes.touched(ticket.id);
     });
+    forget(ticket.id);
     dispatch();
   };
 
@@ -480,6 +502,97 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     });
   };
 
+  const complete = (id: number, pending: Fetching) => {
+    fetching.delete(id);
+    let delivered: Ticket | undefined;
+    tickets.change((writes) => {
+      const attempt = attemptOf(id, pending.attempt);
+      if (attempt !== undefined && isActive(attempt.state)) {
+        end(id, pending.attempt, "finished", null, null);
+      }
+      const ticket = writes.get(id);
+      if (ticket !== undefined && ticket.kind === "writing" && ticket.state === "working") {
+        files.keep(id, pending.attempt, pending.event.files);
+        writes.setReport(id, pending.event.report);
+        delivered = writes.move(id, "delivered");
+      }
+      writes.touched(id);
+    });
+    if (delivered !== undefined) {
+      handIn(delivered, pending.event);
+    }
+    dispatch();
+  };
+
+  const loseDelivery = (id: number, pending: Fetching, reason: string) => {
+    forget(id);
+    const ticket = tickets.get(id);
+    const attempt = attemptOf(id, pending.attempt);
+    if (ticket === undefined || attempt === undefined || !isActive(attempt.state) || isFinal(ticket)) {
+      return;
+    }
+    touch(id, () => end(id, attempt.attempt, "failed", "lost", reason));
+    failed(ticket, attempt, "lost", reason);
+    dispatch();
+  };
+
+  const fetchNext = (id: number) => {
+    const pending = fetching.get(id);
+    if (pending === undefined || closed || pending.asked !== undefined) {
+      return;
+    }
+    const ticket = tickets.get(id);
+    if (latestOf(id)?.attempt !== pending.attempt || ticket === undefined || ticket.kind !== "writing" || ticket.state !== "working") {
+      forget(id);
+      return;
+    }
+    for (const [part, file] of pending.event.files.entries()) {
+      let have = files.staged(id, pending.attempt, part);
+      if (have > file.size || (have === 0 && file.size === 0)) {
+        have = files.append(id, pending.attempt, part, 0, Buffer.alloc(0));
+      }
+      if (have < file.size) {
+        if (send(pending.machine, { type: "work.file", ticket: id, attempt: pending.attempt, name: file.name, offset: have, length: Math.min(filePartBytes, file.size - have) })) {
+          pending.asked = { part, offset: have };
+        }
+        return;
+      }
+    }
+    complete(id, pending);
+  };
+
+  const fetchFrom = (id: number, attempt: number, machine: string, event: DeliveredEvent) => {
+    const known = fetching.get(id);
+    if (known === undefined || known.attempt !== attempt || known.machine !== machine) {
+      fetching.set(id, { attempt, machine, event, asked: undefined });
+    } else {
+      known.asked = undefined;
+    }
+    fetchNext(id);
+  };
+
+  const receivePart = (machine: string, message: FilePart) => {
+    const pending = fetching.get(message.ticket);
+    if (pending === undefined || pending.machine !== machine || pending.attempt !== message.attempt || pending.asked === undefined) {
+      return;
+    }
+    const asked = pending.asked;
+    const file = pending.event.files[asked.part];
+    if (file === undefined || file.name !== message.name || asked.offset !== message.offset) {
+      return;
+    }
+    pending.asked = undefined;
+    const data = message.data === null ? undefined : Buffer.from(message.data, "base64");
+    const expected = Math.min(filePartBytes, file.size - asked.offset);
+    if (data === undefined || data.length === 0 || data.length > expected) {
+      const why = message.problem ?? (data === undefined || data.length === 0 ? "the file ended before its size" : "it sent more than was asked for");
+      loseDelivery(message.ticket, pending, `The runner on ${machine} could not send the delivered file ${file.name} from byte ${asked.offset}: ${why}`);
+      return;
+    }
+    files.append(message.ticket, pending.attempt, asked.part, asked.offset, data);
+    fetchNext(message.ticket);
+  };
+
   const apply = (machine: string, message: RunnerWorkEvent) => {
     const attempt = attemptOf(message.ticket, message.attempt);
     if (attempt === undefined || attempt.machine !== machine) {
@@ -498,10 +611,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     let told: { readonly failure: WorkFailure; readonly reason: string } | undefined;
     let handedOver = false;
     let delivered: Ticket | undefined;
+    let fetchFiles = false;
     let id = 0;
-    const shown: WorkEvent = event.kind === "delivered" ? { ...event, files: event.files.map((file) => ({ ...file, data: "" })) } : event;
     tickets.change((writes) => {
-      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(shown)).lastInsertRowid);
+      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
       updateSeq.run(message.seq, attempt.ticket_id, attempt.attempt);
       const live = attempt.state === "preparing" || attempt.state === "running";
       switch (event.kind) {
@@ -535,12 +648,17 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           return;
         }
         case "delivered": {
+          const ticket = writes.get(attempt.ticket_id);
+          const accepted = current && ticket !== undefined && ticket.kind === "writing" && ticket.state === "working";
+          if (accepted && event.files.length > 0) {
+            fetchFiles = true;
+            writes.touched(attempt.ticket_id);
+            return;
+          }
           if (live) {
             end(attempt.ticket_id, attempt.attempt, "finished", null, null);
           }
-          const ticket = writes.get(attempt.ticket_id);
-          if (current && ticket !== undefined && ticket.kind === "writing" && ticket.state === "working") {
-            files.put(ticket.id, event.files);
+          if (accepted) {
             writes.setReport(ticket.id, event.report);
             delivered = writes.move(ticket.id, "delivered");
           }
@@ -569,10 +687,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           return;
       }
     });
-    const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event: shown };
+    const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event };
     announce(stored);
     if (delivered !== undefined && event.kind === "delivered") {
       handIn(delivered, event);
+    }
+    if (fetchFiles && event.kind === "delivered") {
+      fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
     }
     if (told !== undefined) {
       const ticket = tickets.get(attempt.ticket_id);
@@ -637,8 +758,16 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     for (const { ticket, attempt } of lost) {
       const reason = `The runner on ${machine} came back without this work, so the worker and its session are gone`;
+      forget(ticket.id);
       touch(ticket.id, () => end(ticket.id, attempt.attempt, "failed", "lost", reason));
       failed(ticket, attempt, "lost", reason);
+    }
+    for (const value of selectActiveOn.all(machine)) {
+      const row = Attempt.parse(value);
+      const last = selectRecent.all(row.ticket_id, row.attempt, 1).map(storedOf)[0]?.event;
+      if (last?.kind === "delivered" && last.files.length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
+        fetchFrom(row.ticket_id, row.attempt, machine, last);
+      }
     }
     for (const value of selectActive.all()) {
       const row = Attempt.parse(value);
@@ -668,12 +797,22 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         apply(machine, message);
       }
     },
+    part: (machine, message) => {
+      if (!closed) {
+        receivePart(machine, message);
+      }
+    },
     closed: (machine) => {
       if (closed) {
         return;
       }
       const rows = selectActiveOn.all(machine).map((row) => Attempt.parse(row));
       markUnreachable.run(clock.now(), machine);
+      for (const pending of fetching.values()) {
+        if (pending.machine === machine) {
+          pending.asked = undefined;
+        }
+      }
       for (const row of rows) {
         tickets.change((writes) => writes.touched(row.ticket_id));
       }

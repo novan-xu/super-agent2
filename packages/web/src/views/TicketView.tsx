@@ -1,10 +1,9 @@
 import { text } from "@super-agent2/catalog";
 import { type ChoiceChange, chineseOf, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { modelLabel, modelValue } from "../live/choice.js";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
 import { panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
-import { draftOptions, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, type ReassignDraft, reassignChange, reassignMachines } from "../live/reassign.js";
+import { draftOptions, draftWithEffort, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, type ReassignDraft, reassignChange, reassignMachines } from "../live/reassign.js";
 import type { LogItem } from "../live/work.js";
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
@@ -285,11 +284,22 @@ function Reassign({ ticket, actions, done }: { readonly ticket: Ticket; readonly
         </div>
         <div className="form-row">
           <label htmlFor={`${id}-model`}>{text("chains.model")}</label>
-          <select className="field field--sm" id={`${id}-model`} value={modelValue(draft.model, draft.effort)} disabled={busy} onChange={(event) => setDraft(draftWithModel(draft, event.target.value))}>
+          <select className="field field--sm" id={`${id}-model`} value={draft.model ?? ""} disabled={busy} onChange={(event) => setDraft(draftWithModel(draft, event.target.value, offered))}>
             <option value="">{text("ticket.defaultModel")}</option>
-            {options.models.map((option) => (
-              <option key={option.value} value={option.value}>
-                {modelLabel(option)}
+            {options.models.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="form-row">
+          <label htmlFor={`${id}-effort`}>{text("chains.effort")}</label>
+          <select className="field field--sm" id={`${id}-effort`} value={draft.effort ?? ""} disabled={busy || draft.model === null} onChange={(event) => setDraft(draftWithEffort(draft, event.target.value))}>
+            {draft.effort === null ? <option value="" /> : null}
+            {options.efforts.map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
               </option>
             ))}
           </select>

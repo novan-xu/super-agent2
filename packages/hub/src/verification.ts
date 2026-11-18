@@ -54,6 +54,7 @@ export interface VerificationOptions {
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
   readonly report?: (report: FailureReport) => void;
+  readonly ownRepository?: string;
 }
 
 export type SkipOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
@@ -166,7 +167,7 @@ const columns = [
   "told",
   "skip_reason",
   "skip_at",
-  "conflict_head",
+  "conflict_returns",
   "merging_head",
   "merging_rule",
   "merge_commit",
@@ -425,7 +426,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
     const rule = VerificationRule.catch("outside").parse(row.rule ?? "outside");
     const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
-    const deployed = row.deployment === 1;
+    const own = options.ownRepository !== undefined && (ticket.repository ?? "").toLowerCase() === options.ownRepository.toLowerCase();
+    const deployed = row.deployment === 1 && !own;
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
     const merged = ticket.pullRequests.filter((pull) => pull.state === "merged");
     const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
@@ -434,16 +436,18 @@ export function createVerification(options: VerificationOptions): VerificationSe
       `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
       `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
-      deployed
-        ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying. The ticket deployed nothing. Deploy it with deploy_repository at ${row.merge_commit ?? "the merge commit"} unless the owner said otherwise.`
-        : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
-      ...(deployed && waitingForDeployment.length > 0
+      own
+        ? "Deployment: this is Super-agent2 itself, which the hub does not deploy, since it cannot reach the NAS host. It is deployed on the NAS by hand, or by a worker when the owner files work for it. Tell the owner the new version is merged and waits to be deployed; once the owner says it is deployed, report it with report_deployment."
+        : deployed
+          ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying. The ticket deployed nothing. Deploy it with deploy_repository at ${row.merge_commit ?? "the merge commit"} unless the owner said otherwise.`
+          : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
+      ...((deployed || own) && waitingForDeployment.length > 0
         ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a deployment that contains this commit succeeds.`]
         : []),
       "Tell the owner in Chinese, in a line or two.",
     ];
     save(id, { reported_at: clock.now() });
-    tell(ticket.conversation, text(deployed ? "notice.ticketMergedDeploy" : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
+    tell(ticket.conversation, text(own ? "notice.ticketMergedSelf" : deployed ? "notice.ticketMergedDeploy" : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
   };
 
   const finish = async (ticket: Ticket, gitHub: GitHubApi, pull: PullRequestState, rule: VerificationRule): Promise<void> => {
@@ -533,57 +537,37 @@ export function createVerification(options: VerificationOptions): VerificationSe
   };
 
   const conflict = async (ticket: Ticket, head: string, base: string, gitHub: GitHubApi): Promise<void> => {
-    const row = rowOf(ticket.id);
-    if (row?.conflict_head === head) {
-      const files = await bothSides(gitHub, ticket, head, base);
-      if (closed) {
-        return;
-      }
-      const reason = `The pull request still conflicts with ${base} at ${short(head)}, after it went back to the worker; ${files}`;
-      save(ticket.id, { state: "conflict", waiting: null, reason, merging_head: null, merging_rule: null });
-      reportOnce(
-        ticket,
-        `conflict:${entryOf(ticket.id)}:${head}`,
-        {
-          ticket: ticket.id,
-          failure: { kind: "conflict", detail: reason },
-          evidence: [
-            `The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} in ${ticket.repository ?? ""} still conflicts with ${base} at ${head}. It went back to its worker for this conflict, and the worker handed back without resolving it.`,
-            `Branch: ${ticket.branch ?? "(none)"}. ${files.charAt(0).toUpperCase()}${files.slice(1)}.`,
-          ].join("\n"),
-        },
-        text("notice.verificationFailed", { ticket: ticket.id }),
-        [
-          `[hub] The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} still conflicts with ${base} at ${head}. It went back to its worker once for this conflict, and the worker handed back without resolving it.`,
-          "The ticket stays verifying with this recorded, and nothing is retried. Tell the owner in Chinese what happened; stop it with stop_ticket if it cannot be done.",
-        ].join("\n"),
-      );
+    const files = await bothSides(gitHub, ticket, head, base);
+    if (closed) {
       return;
     }
+    const returns = (rowOf(ticket.id)?.conflict_returns ?? 0) + 1;
     save(ticket.id, {
-      conflict_head: head,
       state: "conflict",
       waiting: null,
-      reason: `The pull request conflicts with ${base} at ${short(head)}; it went back to the worker`,
+      reason: `The pull request conflicts with ${base} at ${short(head)}; ${files}`,
       merging_head: null,
       merging_rule: null,
       skip_at: null,
       skip_reason: null,
     });
-    const note = `Pull request #${ticket.pullRequest ?? 0} cannot be merged: it conflicts with ${base}. Merge the latest ${base} into this branch, resolve every conflict, run the tests, push, and hand back the same pull request.`;
+    const again = returns === 1 ? "" : ` It has come back for a conflict before; this is time ${returns}.`;
+    const note = `Pull request #${ticket.pullRequest ?? 0} cannot be merged: it conflicts with ${base} at ${short(head)}.${again} ${files.charAt(0).toUpperCase()}${files.slice(1)}. Merge the latest ${base} into this branch, resolve every conflict, run the tests, push, and hand back the same pull request.`;
     const outcome = options.sendBack?.(ticket.id, note, { en: `The pull request conflicts with ${base}; it went back to the worker`, zh: text("verification.conflictReturned", { base }) }) ?? {
       ok: false,
       reason: "The hub has no worker service to send it back to",
     };
-    if (!outcome.ok) {
-      save(ticket.id, { reason: `The pull request conflicts with ${base} at ${short(head)}, and it could not go back to the worker: ${outcome.reason}` });
-      tellOnce(
-        ticket,
-        `again:${head}`,
-        text("notice.verificationFailed", { ticket: ticket.id }),
-        `[hub] The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} conflicts with ${base} at ${head}, and it could not go back to its worker: ${outcome.reason}. Tell the owner in Chinese what happened.`,
-      );
+    if (outcome.ok) {
+      save(ticket.id, { conflict_returns: returns, reason: `The pull request conflicts with ${base} at ${short(head)}; it went back to the worker, time ${returns}` });
+      return;
     }
+    save(ticket.id, { reason: `The pull request conflicts with ${base} at ${short(head)}, and it could not go back to the worker: ${outcome.reason}` });
+    tellOnce(
+      ticket,
+      `again:${head}`,
+      text("notice.verificationFailed", { ticket: ticket.id }),
+      `[hub] The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} conflicts with ${base} at ${head}, and it could not go back to its worker: ${outcome.reason}. Tell the owner in Chinese what happened.`,
+    );
   };
 
   const merge = async (ticket: Ticket, gitHub: GitHubApi, head: string, rule: VerificationRule): Promise<void> => {

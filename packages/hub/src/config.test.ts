@@ -30,7 +30,6 @@ describe("loadConfig", () => {
         port: 8080,
         host: "0.0.0.0",
         projectFolders: [],
-        credentialPaths: [],
         brainTokenFile: join("/data", "brain.token"),
         pageDir: defaultPageDir,
       },
@@ -48,14 +47,12 @@ describe("loadConfig", () => {
     expect(result.ok && result.config.brainTokenFile).toBe("/run/secrets/brain.token");
   });
 
-  it("reads the project folders and the extra credential paths", () => {
+  it("reads the project folders", () => {
     const result = loadConfig({
       ...valid,
       HUB_PROJECT_FOLDERS: "/srv/projects, ~/work ,C:\work",
-      HUB_CREDENTIAL_PATHS: "**/vault/**,!**/vault/README.md",
     });
     expect(result.ok && result.config.projectFolders).toEqual(["/srv/projects", "~/work", "C:\work"]);
-    expect(result.ok && result.config.credentialPaths).toEqual(["**/vault/**", "!**/vault/README.md"]);
   });
 
   it("refuses a project folder that is not absolute", () => {
@@ -68,24 +65,10 @@ describe("loadConfig", () => {
     expect(result.ok && result.config.host).toBe("127.0.0.1");
   });
 
-  it("reads the NAS's SSH destination, port and key", () => {
-    const result = loadConfig({
-      ...valid,
-      NAS_SSH_DESTINATION: "owner@nas.local",
-      NAS_SSH_PORT: "2222",
-      NAS_SSH_IDENTITY: "/run/secrets/nas_key",
-    });
-    expect(result.ok && result.config.nas).toEqual({
-      destination: "owner@nas.local",
-      port: 2222,
-      identityFile: "/run/secrets/nas_key",
-    });
-    const plain = loadConfig({ ...valid, NAS_SSH_DESTINATION: "nas" });
-    expect(plain.ok && plain.config.nas).toEqual({ destination: "nas" });
-  });
-
-  it.each(["-oProxyCommand=x", "owner@nas local", ""])("refuses the SSH destination %j", (destination) => {
-    expect(problemsFor({ ...valid, NAS_SSH_DESTINATION: destination })[0]).toMatch(/^NAS_SSH_DESTINATION /);
+  it("starts with the NAS sign-in variables an older instance still sets, and takes nothing from them", () => {
+    const result = loadConfig({ ...valid, NAS_SSH_DESTINATION: "-oProxyCommand=x", NAS_SSH_PORT: "none", NAS_SSH_IDENTITY: "/run/superagent2/ssh/nas_ed25519" });
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/ProxyCommand|nas_ed25519/);
   });
 
   it.each(["ACCESS_TEAM", "ACCESS_AUD", "OWNER_EMAIL", "HUB_DATA_DIR"] as const)("names %s when it is missing", (name) => {

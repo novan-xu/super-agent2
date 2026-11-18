@@ -1,7 +1,7 @@
 import type { MachineChoice } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import { fixtureMachines, ticket } from "./fixtures.js";
-import { draftOptions, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, reassignChange, reassignMachines } from "./reassign.js";
+import { draftOptions, draftWithEffort, draftWithEngine, draftWithMachine, draftWithModel, initialDraft, reassignChange, reassignMachines } from "./reassign.js";
 
 const withAntigravity: MachineChoice[] = [
   ...fixtureMachines,
@@ -27,7 +27,8 @@ describe("改派", () => {
     const options = draftOptions(initialDraft(working), fixtureMachines);
     expect(options.machines).toEqual(["pc", "mini"]);
     expect(options.engines).toEqual(["codex", "claude"]);
-    expect(options.models.map((option) => option.value)).toContain("gpt-6-luna low");
+    expect(options.models).toEqual(["gpt-6.1-sol", "gpt-6-luna"]);
+    expect(options.efforts).toEqual(["medium", "high"]);
   });
 
   it("keeps the engine and model on a machine that offers them, and drops what it does not", () => {
@@ -39,9 +40,17 @@ describe("改派", () => {
 
   it("sends the machine and engine, and the model only when one is picked, so the default table fills it", () => {
     expect(reassignChange(draftWithEngine(initialDraft(working), "claude"))).toEqual({ machine: "pc", engine: "claude" });
-    const picked = draftWithModel(draftWithEngine(initialDraft(working), "claude"), "claude-opus-5-5 max");
+    const model = draftWithModel(draftWithEngine(initialDraft(working), "claude"), "claude-opus-5-5", fixtureMachines);
+    expect(model).toEqual({ machine: "pc", engine: "claude", model: "claude-opus-5-5", effort: null });
+    expect(reassignChange(model)).toBeUndefined();
+    const picked = draftWithEffort(model, "max");
     expect(reassignChange(picked)).toEqual({ machine: "pc", engine: "claude", model: "claude-opus-5-5", effort: "max" });
-    expect(reassignChange(draftWithModel(picked, ""))).toEqual({ machine: "pc", engine: "claude" });
+    expect(reassignChange(draftWithModel(picked, "", fixtureMachines))).toEqual({ machine: "pc", engine: "claude" });
     expect(reassignChange({ machine: null, engine: null, model: null, effort: null })).toBeUndefined();
+  });
+
+  it("keeps the effort when the new model offers it", () => {
+    expect(draftWithModel(initialDraft({ ...working, effort: "medium" }), "gpt-6-luna", fixtureMachines)).toMatchObject({ model: "gpt-6-luna", effort: "medium" });
+    expect(draftWithModel(initialDraft(working), "gpt-6-luna", fixtureMachines)).toMatchObject({ model: "gpt-6-luna", effort: null });
   });
 });

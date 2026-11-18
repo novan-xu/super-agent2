@@ -14,12 +14,10 @@ export interface HoldCardProps {
   readonly card: Card;
   readonly use: CardUse;
   readonly focused: boolean;
-  readonly arm: () => void;
-  readonly disarm: () => void;
   readonly answer: (verdict: Verdict) => void;
 }
 
-export function HoldCard({ card, use, focused, arm, disarm, answer }: HoldCardProps) {
+export function HoldCard({ card, use, focused, answer }: HoldCardProps) {
   const { command, hold } = card;
   const environment = Object.entries(command.environment).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const sending = use.step === "sending";
@@ -77,27 +75,15 @@ export function HoldCard({ card, use, focused, arm, disarm, answer }: HoldCardPr
           {failureText(use.failure)}
         </p>
       )}
-      {use.step === "armed" ? (
-        <div className="card-actions">
-          <button className="btn" type="button" autoFocus onClick={disarm}>
-            {text("hold.cancel")}
-          </button>
-          <button className="btn btn-danger-solid" type="button" onClick={() => answer("release")}>
-            <Icon name="check" />
-            {text("hold.confirm")}
-          </button>
-        </div>
-      ) : (
-        <div className="card-actions">
-          <button className={`btn btn-primary${busy("release")}`} type="button" disabled={sending} onClick={arm}>
-            <Icon name="check" />
-            {text("hold.confirm")}
-          </button>
-          <button className={`btn${busy("refuse")}`} type="button" disabled={sending} onClick={() => answer("refuse")}>
-            {text("hold.refuse")}
-          </button>
-        </div>
-      )}
+      <div className="card-actions">
+        <button className={`btn btn-primary${busy("release")}`} type="button" disabled={sending} onClick={() => answer("release")}>
+          <Icon name="check" />
+          {text("hold.confirm")}
+        </button>
+        <button className={`btn${busy("refuse")}`} type="button" disabled={sending} onClick={() => answer("refuse")}>
+          {text("hold.refuse")}
+        </button>
+      </div>
     </article>
   );
 }

@@ -33,6 +33,7 @@ let begun: number[];
 let sentBack: { readonly ticket: number; readonly note: string }[];
 let ticks: (() => void)[];
 let withWoodpecker: boolean;
+let ownRepository: string;
 
 const noDefaults: ChainDefaults = {
   resolve: () => {
@@ -71,6 +72,7 @@ function open(): void {
     credentials,
     fetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
+    ownRepository,
     ticker: (tick) => {
       ticks.push(tick);
       return () => undefined;
@@ -107,6 +109,7 @@ beforeEach(() => {
   sentBack = [];
   ticks = [];
   withWoodpecker = true;
+  ownRepository = "novan-xu/super-agent2";
   open();
 });
 
@@ -489,7 +492,7 @@ describe("a conflict at merge time", () => {
     expect(sentBack).toHaveLength(1);
   });
 
-  it("does not send the same conflict back twice, and tells the brain it was not resolved", async () => {
+  it("sends the same conflict back as often as it comes, counts each time on the ticket, and never reports it as a failure", async () => {
     const ticket = verifying([52], 22, "y1", ["docs/a.md"]);
     const pull = forge.repository(repository).pulls.get(22);
     if (pull === undefined) {
@@ -497,14 +500,24 @@ describe("a conflict at merge time", () => {
     }
     pull.mergeable = false;
     await settle();
+    for (let time = 2; time <= 4; time += 1) {
+      handBack(ticket.id);
+      await settle();
+      await poll();
+      expect(current(ticket.id).state).toBe("working");
+      expect(sentBack).toHaveLength(time);
+      expect(sentBack.at(-1)?.note).toContain(`this is time ${time}`);
+    }
+    expect(sentBack[0]?.note).not.toContain("this is time");
+    expect(current(ticket.id).verification).toMatchObject({ state: "conflict", conflictReturns: 4 });
+    expect(current(ticket.id).round).toBe(0);
+    expect(told).toEqual([]);
+    pull.head = "y2";
+    pull.mergeable = true;
     handBack(ticket.id);
     await settle();
-    await poll();
-    expect(sentBack).toHaveLength(1);
-    expect(current(ticket.id).state).toBe("verifying");
-    expect(current(ticket.id).verification).toMatchObject({ state: "conflict" });
-    expect(told.map((entry) => entry.notice)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`]);
-    expect(told[0]?.prompt).toContain("without resolving it");
+    expect(current(ticket.id).state).toBe("merged");
+    expect(current(ticket.id).verification?.conflictReturns).toBe(4);
   });
 });
 
@@ -554,6 +567,19 @@ describe("after the merge", () => {
     expect(deployedReport?.notice).toBe(`工单 ${deployed.id} 已合并，这次改动需要部署`);
     expect(deployedReport?.prompt).toContain("so this change needs deploying");
     expect(deployedReport?.prompt).toContain("The ticket deployed nothing");
+  });
+
+  it("says a merge of Super-agent2 itself is deployed by hand, even when its tree still holds a deployment file", async () => {
+    await shut();
+    ownRepository = repository.toUpperCase();
+    open();
+    const own = verifying([83], 30, "p3", ["src/app.ts"], ["src/app.ts", ".superagent2/deployment.json"]);
+    await settle();
+    const report = told.find((entry) => entry.prompt.includes(`Ticket ${own.id} (`));
+    expect(report?.notice).toBe(`工单 ${own.id} 已合并，Super-agent2 的新版本等你部署`);
+    expect(report?.prompt).toContain("this is Super-agent2 itself, which the hub does not deploy");
+    expect(report?.prompt).toContain("report it with report_deployment");
+    expect(report?.prompt).not.toContain("deploy_repository");
   });
 
   it("stops polling a ticket that is no longer verifying", async () => {

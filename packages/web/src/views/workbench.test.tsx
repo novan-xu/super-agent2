@@ -47,7 +47,7 @@ describe("工作台", () => {
     const html = render(state(holdCard("a1", { command: "gh repo delete novan-xu/old --yes", cwd: "/srv/projects/app" })));
     expect(html).toContain("gh repo delete novan-xu/old --yes");
     expect(html).toContain("/srv/projects/app");
-    expect(html).toContain(">nas<");
+    expect(html).toContain(">studio<");
     expect(html).toContain(">novan-xu<");
     expect(html).toContain("删除仓库");
   });
@@ -89,27 +89,15 @@ describe("工作台", () => {
     expect(render(state(holdCard("a1", { cwd: null })))).not.toContain("raw-folder");
   });
 
-  it("offers 确认 and 拒绝 on a card, and 取消 in place of 拒绝 only after 确认 was pressed once", () => {
-    const idle = text(render(state(holdCard("a1"))));
-    expect(idle).toContain("确认");
-    expect(idle).toContain("拒绝");
-    expect(idle).not.toContain("取消");
-    const armed = text(render(waitingReducer(state(holdCard("a1")), { type: "arm", key: "hold:a1" })));
-    expect(armed).toContain("取消");
-    expect(armed).toContain("确认");
-    expect(armed).not.toContain("拒绝");
-  });
-
-  it("puts 确认 in another place once it is armed, so a second tap in the same place cannot confirm", () => {
-    const first = render(state(holdCard("a1")));
-    const second = render(waitingReducer(state(holdCard("a1")), { type: "arm", key: "hold:a1" }));
-    const order = (html: string) => [...html.matchAll(/<button class="btn[^"]*"[^>]*>(?:<svg[^>]*>.*?<\/svg>)?([^<]+)</g)].map((match) => match[1]);
-    expect(order(first)).toEqual(["确认", "拒绝"]);
-    expect(order(second)).toEqual(["取消", "确认"]);
+  it("offers 确认 and 拒绝 on a card, each answering with one press", () => {
+    const html = render(state(holdCard("a1")));
+    const order = [...html.matchAll(/<button class="btn[^"]*"[^>]*>(?:<svg[^>]*>.*?<\/svg>)?([^<]+)</g)].map((match) => match[1]);
+    expect(order).toEqual(["确认", "拒绝"]);
+    expect(text(html)).not.toContain("取消");
   });
 
   it("disables both buttons while the answer is on its way", () => {
-    const sending = waitingReducer(waitingReducer(state(holdCard("a1")), { type: "arm", key: "hold:a1" }), { type: "sending", key: "hold:a1", verdict: "release" });
+    const sending = waitingReducer(state(holdCard("a1")), { type: "sending", key: "hold:a1", verdict: "release" });
     const html = render(sending);
     expect(html.match(/<button class="btn[^"]*" type="button" disabled=""/g)).toHaveLength(2);
     expect(html).toContain("is-busy");
@@ -328,7 +316,7 @@ describe("start cards in 工作台", () => {
     expect(render(failed)).toContain("这一项已经处理过或已有变化，请刷新后再看");
   });
 
-  it("shows a chain's difficulty, platform and reason in Chinese, with its machine, engine and model to change", () => {
+  it("shows a chain's difficulty, platform and reason in Chinese, with its machine, provider, model and effort to change, in that order", () => {
     const html = render(
       state(startCard(1, { ticket: { difficulty: "complex", platform: "windows", difficultyReason: { en: "Across modules", zh: "跨模块的改动" } } })),
     );
@@ -339,8 +327,16 @@ describe("start cards in 工作台", () => {
     expect(text(html)).toContain("|机器|");
     expect(html).toContain('<option value="pc" selected="">pc</option>');
     expect(html).toContain('<option value="codex" selected="">Codex</option>');
-    expect(html).toContain('<option value="gpt-6.1-sol high" selected="">gpt-6.1-sol · high</option>');
-    expect(html).toContain('<option value="gpt-6-luna low">gpt-6-luna · low</option>');
+    expect(html).toContain('<option value="gpt-6.1-sol" selected="">gpt-6.1-sol</option>');
+    expect(html).toContain('<option value="gpt-6-luna">gpt-6-luna</option>');
+    expect(html).toContain('<option value="high" selected="">high</option>');
+    expect([...html.matchAll(/<label for="choice-1-[a-z]+">([^<]+)<\/label>/g)].map((match) => match[1])).toEqual(["机器", "供应商", "模型", "推理强度"]);
+  });
+
+  it("marks each field the owner set, on its own", () => {
+    const html = render(state(startCard(1, { choice: { by: { machine: "default", engine: "default", model: "default", effort: "owner" } } })));
+    expect(html).toContain('<select class="field field--sm field--owner" id="choice-1-effort"');
+    expect(html).toContain('<select class="field field--sm" id="choice-1-model"');
   });
 
   it("says what is missing and offers no 开始 until the choice is complete", () => {

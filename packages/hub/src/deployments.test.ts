@@ -116,7 +116,7 @@ function start(): void {
   database = openDatabase({ dataDir, clock });
   const keys = createKeyCache({ source: staticKeySource(keySet(key)), clock });
   const verify = createAccessVerifier({ team, audience, keys, clock });
-  lock = createConfirmationLock({ database, clock, verify, ownerEmail, settings: lockSettings({ projectFolders: [], credentialPaths: [] }) });
+  lock = createConfirmationLock({ database, clock, verify, ownerEmail, settings: lockSettings({ projectFolders: [] }) });
   commands = createCommandService({ database, clock, targets: [toyTarget()], credentials: testCredentials, gate: lock.gate });
   tickets = createTicketService({ database, clock });
   chains = createChains({
@@ -139,6 +139,7 @@ function start(): void {
     sleep: timer.sleep,
     tell: (conversation, notice, prompt) => void told.push({ conversation, notice, prompt }),
     deployed: (ticket) => chains.arranger.deployed(ticket),
+    ownRepository: "novan-xu/super-agent2",
   });
   open = true;
 }
@@ -258,15 +259,15 @@ function mergedTicket(number: number, mergeCommit: string, conversation = "c-1")
 
 describe("the deployment file", () => {
   it("is small, takes defaults for the health check's period, and refuses what it does not know", () => {
-    const read = readDeploymentFile(JSON.stringify({ target: "nas", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health" }, rollback: "./rollback.sh" }));
+    const read = readDeploymentFile(JSON.stringify({ target: "box", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health" }, rollback: "./rollback.sh" }));
     expect(read).toEqual({
       ok: true,
-      file: { target: "nas", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health", everySeconds: 5, withinSeconds: 120 }, rollback: "./rollback.sh" },
+      file: { target: "box", deploy: "./deploy.sh", health: { command: "curl -fsS http://localhost:8080/health", everySeconds: 5, withinSeconds: 120 }, rollback: "./rollback.sh" },
     });
     expect(readDeploymentFile("{ not json")).toMatchObject({ ok: false, reason: expect.stringContaining("it is not JSON") });
-    const unknown = readDeploymentFile(JSON.stringify({ target: "nas", deploy: "a", health: { command: "b" }, rollback: "c", token: "secret" }));
+    const unknown = readDeploymentFile(JSON.stringify({ target: "box", deploy: "a", health: { command: "b" }, rollback: "c", token: "secret" }));
     expect(unknown).toMatchObject({ ok: false, reason: expect.stringContaining("token") });
-    expect(readDeploymentFile(JSON.stringify({ target: "nas", deploy: "a", rollback: "c" }))).toMatchObject({ ok: false, reason: expect.stringContaining("health") });
+    expect(readDeploymentFile(JSON.stringify({ target: "box", deploy: "a", rollback: "c" }))).toMatchObject({ ok: false, reason: expect.stringContaining("health") });
   });
 });
 
@@ -428,6 +429,29 @@ describe("what a deployment refuses", () => {
     expect(deployments.list()).toEqual([]);
   });
 
+  it("refuses a file that names the NAS host as its target, saying the hub cannot reach it", async () => {
+    forge.file(repository, third, deploymentFile, fileText({ target: "nas" }));
+    expect(await deployments.start({ repository, commit: third })).toEqual({
+      ok: false,
+      reason: `${deploymentFile} at 3333333 names the target nas, the NAS host, which the hub cannot reach: no target runs there. Deploying on the NAS host is out of scope until the owner sets up a way for it deliberately. Nothing was deployed.`,
+    });
+    expect(toy.jobs).toEqual([]);
+    expect(deployments.list()).toEqual([]);
+  });
+
+  it("refuses to deploy Super-agent2 itself, whatever its files say, without reading GitHub", async () => {
+    const own = "Novan-Xu/Super-Agent2";
+    forge.file(own, first, deploymentFile, fileText());
+    forge.repository(own).mainline.push(first);
+    const calls = forge.calls.length;
+    const refused = await deployments.start({ repository: own, commit: first, conversation: "c-1" });
+    expect(refused).toMatchObject({ ok: false, reason: expect.stringContaining(`${own} is Super-agent2 itself, which the hub does not deploy`) });
+    expect(refused.ok ? "" : refused.reason).toContain("report it with report_deployment");
+    expect(forge.calls.length).toBe(calls);
+    expect(toy.jobs).toEqual([]);
+    expect(deployments.list()).toEqual([]);
+  });
+
   it("refuses a second deployment of the same repository while one runs, saying what runs", async () => {
     toy.hang.add("deploy");
     const running = await begin(first);
@@ -560,7 +584,7 @@ function outcomeLine(outcome: Record<string, string>): string {
   return `${deploymentOutcomeMarker} ${JSON.stringify(outcome)}`;
 }
 
-describe("a deployment that replaces the hub running it", () => {
+describe("a deployment that reports how it ended, across a restart of the hub", () => {
   type Release = "running" | "succeeded" | "rolled-back" | "unchanged" | "none";
   let release: Release;
 

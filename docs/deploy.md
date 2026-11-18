@@ -2,7 +2,9 @@
 
 Super-agent2 runs on the NAS as the Compose project `superagent2`: `superagent2-hub`, `superagent2-brain`, and
 `superagent2-tunnel`, which starts only with the Compose profile `tunnel`. Everything is driven by
-`/share/Container/superagent2/deploy.sh` with `/share/Container/superagent2/compose.yaml`, run on the NAS as `novanxu`.
+`/share/Container/superagent2/deploy.sh` with `/share/Container/superagent2/compose.yaml`, run on the NAS as `novanxu`
+by a person, or by a worker over its own sign-in to the NAS. The hub has no way into the NAS host: no target of
+`run_command` runs there, and the hub's container holds no key to sign in with.
 
 The same two files serve any instance: the folder the script lives in names it. `/share/Container/superagent2` is the
 live system; `/share/Container/superagent2-<name>` is another instance (a rehearsal) whose Compose project, containers,
@@ -16,9 +18,9 @@ moves is checked to be inside its own folder and every image it tags or removes 
 | --- | --- |
 | Deploy script and Compose file | `/share/Container/superagent2/deploy.sh` and `compose.yaml`, installed from `deploy/` of each release; the ones before it in `deploy.previous/` |
 | Source of the running version | `/share/Container/superagent2/src` (its commit in `src/.revision`); the one before it in `src.previous` |
-| Releases | `/share/Container/superagent2/releases/<id>/`: `state` (what the release did, line by line), `log`, `build.log`, `hub.sqlite` (the database backed up just before the switch) and, after a rollback that restored it, `replaced/` (the database files the failed version left). The newest five are kept. `<id>` is `d<deployment>-<commit>` for a release the hub started and `manual-<time>-<commit>` for one started by hand |
+| Releases | `/share/Container/superagent2/releases/<id>/`: `state` (what the release did, line by line), `log`, `build.log`, `hub.sqlite` (the database backed up just before the switch) and, after a rollback that restored it, `replaced/` (the database files the failed version left). The newest five are kept. `<id>` is `manual-<time>-<commit>`; `d<deployment>-<commit>` are releases an earlier hub started |
 | Uploaded archives | `/share/Container/superagent2/incoming/<commit>.tar`, used instead of GitHub when present |
-| Secrets | `/share/Container/superagent2/secrets`: `hub.env`, `brain.env`, `tunnel.env`, and `ssh/nas_ed25519`, the hub's key to the NAS host |
+| Secrets | `/share/Container/superagent2/secrets`: `hub.env`, `brain.env`, `tunnel.env` |
 | Project folders | `/share/Container/superagent2/projects`, mounted at the same path in the hub; the only place the lock lets a delete run unasked |
 | Docker client settings | `/share/Container/superagent2/.docker` |
 | Copies of `authorized_keys` taken before a change | `/share/Container/superagent2/backups` |
@@ -38,25 +40,24 @@ bash /share/Container/superagent2/deploy.sh status
 
 It lists the containers, the running and previous commits and the latest releases with how each ended.
 
-## How the brain deploys Super-agent2
+## How Super-agent2 is deployed
 
-The brain calls `deploy_repository` for `novan-xu/super-agent2` at a commit, as for any repository. The repository's
-`.superagent2/deployment.json` has three commands on the `hub` target; each signs in to the NAS with the hub's key and
-runs the deploy script of the hub's own instance (`SUPERAGENT2_INSTANCE`, set by `compose.yaml`):
+The hub does not deploy Super-agent2. The repository has no `.superagent2/deployment.json`, and `deploy_repository`
+refuses the hub's own repository. When a ticket of Super-agent2 merges, the brain is told that the new version is merged
+and waits to be deployed, and it tells the owner. The owner deploys it on the NAS, or files work for a worker to deploy
+it; the worker signs in to the NAS with the access of its own machine, not through the hub. Once it is deployed, the
+owner tells the brain, which records it with `report_deployment`, so tickets arranged after that deployment begin.
 
-- **deploy**: `deploy.sh begin <deployment> <commit>` records the release and starts it in the background in a session
-  of its own (`setsid`), then returns. From then on the release depends on nothing of the hub: not its process, not the
-  SSH session, not the brain.
-- **health**: `deploy.sh outcome <deployment> <commit>`, every 10 seconds for up to an hour. While the release runs it
-  exits with 3. Once it has ended it prints one line,
-  `superagent2-deployment-outcome {"result": …, "reason": …, "previous": …}`, and exits with 0 if it succeeded.
-- **rollback**: `deploy.sh settle <deployment> <commit>` waits for the release to end and acknowledges its outcome. The
-  release goes back by itself, so this runs only if the hub never read an outcome.
+On the NAS, with the full commit id:
 
-The release itself:
+```sh
+bash /share/Container/superagent2/deploy.sh release <commit>
+```
+
+It runs in the foreground, prints each step and ends with its result. It needs neither the hub nor the brain:
 
 1. fetches the commit from GitHub with `GITHUB_TOKEN_NOVAN_XU` from `secrets/hub.env` (or unpacks
-   `incoming/<commit>.tar`) into `src.next`;
+   `incoming/<commit>.tar`, if one was uploaded) into `src.next`;
 2. builds both images, tagged with the commit, while the old version keeps running;
 3. stops hub and brain, and backs up the hub's database into the release's folder with SQLite's `VACUUM INTO`;
 4. switches: the old images become `previous`, the new ones `current`, `src` becomes `src.previous`, and the release's
@@ -67,50 +68,7 @@ The release itself:
    migration than the previous hub knows (the replaced files are kept), puts back the previous images, source and deploy
    files, starts them and checks them again.
 
-The hub that started the deployment is stopped at step 3. The next hub finds the deployment in its health check, starts
-the check again, reads the outcome line and finishes the record: succeeded, rolled back (with the reason and the version
-it went back to), unrecovered, or unchanged when the release failed before it replaced anything. The result reaches the
-conversation the brain asked from, and the brain, in its new container, resumes the same session to answer it.
-
-## First deployment under this scheme on the live system
-
-The live folder has an older `deploy.sh` without `begin`, no `compose.yaml` at its top, and a hub started without
-`SUPERAGENT2_INSTANCE`, so the first release of a commit that contains #18 is run by hand. From a clone, with `C` the
-merge commit:
-
-```sh
-C=<merge commit>
-git archive --format=tar -o "superagent2-$C.tar" "$C"
-ssh novan-nas-maintenance "cat > /share/Container/superagent2/incoming/$C.tar" < "superagent2-$C.tar"
-ssh novan-nas-maintenance "cd /share/Container/superagent2 && cp -p deploy.sh backups/deploy.sh.before-18 && tar -xOf incoming/$C.tar deploy/deploy.sh > deploy.sh.next && tar -xOf incoming/$C.tar deploy/compose.yaml > compose.yaml && mv deploy.sh.next deploy.sh && chmod 0700 deploy.sh"
-ssh novan-nas-maintenance "bash /share/Container/superagent2/deploy.sh release $C"
-```
-
-`release` prints each step and ends with its result; it takes the old containers over by their Compose project and
-service names, so nothing else needs stopping first. After it succeeded:
-
-- `bash /share/Container/superagent2/deploy.sh status` shows the new commit running, and
-  `curl -s http://127.0.0.1:18180/health` answers with it;
-- the first release removes the commit-tagged images of the older versions (about 2.5 GB each), keeping `current`,
-  `previous` and their commits;
-- from then on the brain deploys with `deploy_repository`. The hub has no successful deployment of Super-agent2 on
-  record yet, so the brain's first call should give `previous` as the commit running before (`src.previous/.revision`);
-  the release goes back to it on failure either way.
-
-If the release by hand fails, it goes back by itself to the version running before; the old `deploy.sh` is in
-`backups/deploy.sh.before-18`.
-
-## Deploy by hand when the hub is down
-
-On the NAS, with the full commit id:
-
-```sh
-bash /share/Container/superagent2/deploy.sh release <commit>
-```
-
-It does exactly what a release started by the hub does, in the foreground, and needs neither the hub nor the brain: the
-source comes from GitHub with the token in `secrets/hub.env`, or from `incoming/<commit>.tar` if one was uploaded (as in
-the first deployment above). To go back to the version before the running one:
+To go back to the version before the running one:
 
 ```sh
 bash /share/Container/superagent2/deploy.sh rollback
@@ -119,6 +77,40 @@ bash /share/Container/superagent2/deploy.sh rollback
 It finds the release that switched the running version in, restores the database backed up then if the running hub
 added migrations since, and starts the previous images and source. To only start or stop what is there:
 `deploy.sh up`, `deploy.sh stop`, and `deploy.sh health` to check.
+
+To release a commit that is not on GitHub, upload its archive first. From a clone, with `C` the commit:
+
+```sh
+git archive --format=tar -o "superagent2-$C.tar" "$C"
+ssh novan-nas-maintenance "cat > /share/Container/superagent2/incoming/$C.tar" < "superagent2-$C.tar"
+ssh novan-nas-maintenance "bash /share/Container/superagent2/deploy.sh release $C"
+```
+
+## Updating an instance that let the hub sign in to the NAS host
+
+Versions before #60 gave the hub a key to the NAS host (`secrets/ssh/nas_ed25519`, mounted at `/run/superagent2/ssh`)
+and authorized it in `novanxu`'s `~/.ssh/authorized_keys`. Release the first version without it by hand, as above. The
+release installs its own `deploy.sh` and `compose.yaml`, so the new hub starts without the key's mount, without
+`NAS_SSH_DESTINATION`, `NAS_SSH_IDENTITY` and `SUPERAGENT2_INSTANCE`, and without the `host.docker.internal` host entry.
+None of these was in an env file under `secrets`, so no env file needs editing; a hub that is given them anyway ignores
+them. Then, on the NAS as `novanxu`:
+
+```sh
+bash /share/Container/superagent2/deploy.sh deauthorize
+rm -rf /share/Container/superagent2/secrets/ssh
+docker exec superagent2-hub ssh-keygen -R host.docker.internal -f /home/node/.ssh/known_hosts
+```
+
+`deauthorize` removes the hub's key from `authorized_keys` if it is still there, with a copy of the file before in
+`backups/`, and says so either way; on the live system the key was already removed by hand. Run it before deleting
+`secrets/ssh`, since it reads the public key there. The last line drops the NAS host's key from the hub's `known_hosts`
+on volume `superagent2-hub-home`; it is harmless to leave. To check that the hub holds nothing to sign in with:
+
+```sh
+docker exec superagent2-hub sh -c 'ls /run/superagent2/ssh; env | grep -c NAS_SSH'
+```
+
+It answers that there is no such folder, and `0`.
 
 ## Runners
 
@@ -173,7 +165,6 @@ out after going back, and `codex login` has to be run again in `superagent-brain
 bash /share/Container/superagent2/deploy.sh secrets
 bash /share/Container/superagent2/deploy.sh codex-login
 bash /share/Container/superagent2/deploy.sh release <commit>
-bash /share/Container/superagent2/deploy.sh authorize
 ```
 
 with `deploy.sh` and `compose.yaml` put in the folder first.
@@ -182,13 +173,11 @@ with `deploy.sh` and `compose.yaml` put in the folder first.
   `GITHUB_TOKEN_NUOFAN_ISLAND`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN`, `CLOUDFLARE_API_TOKEN`,
   `WOODPECKER_SERVER`, `WOODPECKER_TOKEN`, `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` into `hub.env`,
   `BRAIN_CLAUDE_OAUTH_TOKEN` into `brain.env` and `TUNNEL_TOKEN` into `tunnel.env`, from
-  `/share/Container/superagent/secrets`. It generates the hub's SSH key. A file that already exists is kept; delete it to
-  copy it again.
+  `/share/Container/superagent/secrets`. A file that already exists is kept; delete it to copy it again.
 - `codex-login` copies only `auth.json` from the first Super-agent's volume `superagent-brain-codex-home`, mounted
   read-only, and keeps an `auth.json` already in the instance's codex volume.
-- `authorize` adds the hub's public key to `novanxu`'s own `~/.ssh/authorized_keys`, accepted only from Docker's
-  internal networks, and checks that the hub can sign in. It changes no `sshd` setting and no other user. `deauthorize`
-  takes the key out again. The hub needs it both for its `nas` target and for deploying itself.
+
+Nothing is authorized for the hub on the NAS host: it gets no key and needs none.
 
 ## What the owner does once by hand
 

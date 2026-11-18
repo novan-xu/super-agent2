@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
 import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
-import { type AccessKeySet, brainToolsPath, enrollPath, type Provider } from "@super-agent2/protocol";
+import { type AccessKeySet, brainToolsPath, enrollPath, fullOrder, type Provider, startingOrder } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
@@ -143,7 +143,6 @@ const hub = await startHub({
     port: 0,
     host: "127.0.0.1",
     projectFolders: [],
-    credentialPaths: [],
     brainTokenFile: join(hubDir, "brain.token"),
     pageDir: defaultPageDir,
     ...(vapid === undefined ? {} : { vapid }),
@@ -200,7 +199,7 @@ async function startBrain(): Promise<(() => Promise<void>) | undefined> {
   const link = createHubLink({ hubUrl, token, report: (line) => process.stdout.write(`<link> ${line}\n`) });
   const brain = createBrain({
     adapters,
-    order: brainKind === "demo" ? ["gpt", "claude", "deepseek"] : ["claude"],
+    order: brainKind === "demo" ? fullOrder(startingOrder) : ["claude"],
     transport: link,
     clock: systemClock,
     tools: { url: `${hubUrl}${brainToolsPath}`, token },
