@@ -60,6 +60,27 @@ describe("a ticket's detail", () => {
     expect(html).toContain('aria-label="时间线"');
   });
 
+  it("marks the issues already merged and lists the pull requests in the order handed in", () => {
+    const pull = (number: number, state: "merged" | "open", closes: number[]) => ({
+      number,
+      url: `https://github.com/novan-xu/super-agent-sandbox/pull/${number}`,
+      branch: `sa2/ticket-1-${number}`,
+      state,
+      closes,
+      mergeCommit: state === "merged" ? `merge-${number}` : null,
+      deployment: null,
+      handedAt: 9000 + number,
+      mergedAt: state === "merged" ? 9500 + number : null,
+    });
+    const html = render(detailOf({ ...running, state: "verifying", pullRequest: 22, pullRequests: [pull(21, "merged", [3]), pull(22, "open", [4])] }));
+    const issues = html.slice(html.indexOf('class="chain-issues"'), html.indexOf('class="chain-pulls"'));
+    expect(issues.indexOf('class="chain-issue is-merged"')).toBeLessThan(issues.indexOf("问候"));
+    expect(issues.split('class="chain-issue is-merged"')).toHaveLength(2);
+    const pulls = html.slice(html.indexOf('class="chain-pulls"'));
+    expect(text(pulls)).toMatch(/已合并\|#21\|#3\|.*未合并\|#22\|#4\|/);
+    expect(pulls).toContain('href="https://github.com/novan-xu/super-agent-sandbox/pull/22"');
+  });
+
   it("goes back to the list it was opened from, named as that list is named in the navigation", () => {
     const back = (origin: "workbench" | "history", href: string) =>
       text(renderToString(<TicketView detail={detailOf(running)} known={new Map()} actions={actions} origin={origin} backHref={href} back={() => undefined} now={20_000} />));

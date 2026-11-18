@@ -497,4 +497,43 @@ export const migrations: readonly Migration[] = [
       UPDATE program_sessions SET memory_seen = 0, memory_offered = 0;
     `,
   },
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE ticket_pull_requests (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        seq INTEGER NOT NULL,
+        number INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        state TEXT NOT NULL,
+        closes TEXT NOT NULL DEFAULT '[]',
+        merge_commit TEXT,
+        deployment INTEGER,
+        handed_at INTEGER NOT NULL,
+        merged_at INTEGER,
+        PRIMARY KEY (ticket_id, seq)
+      ) STRICT;
+      ALTER TABLE ticket_verifications ADD COLUMN closes TEXT;
+      INSERT INTO ticket_pull_requests (ticket_id, seq, number, url, branch, state, closes, merge_commit, deployment, handed_at, merged_at)
+        SELECT
+          t.id,
+          1,
+          t.pull_request,
+          'https://github.com/' || t.repository || '/pull/' || t.pull_request,
+          COALESCE(t.branch, ''),
+          CASE WHEN t.state = 'merged' THEN 'merged' ELSE 'open' END,
+          CASE WHEN t.state = 'merged' THEN COALESCE((SELECT json_group_array(number) FROM (SELECT i.number AS number FROM ticket_issues i WHERE i.ticket_id = t.id ORDER BY i.position)), '[]') ELSE '[]' END,
+          v.merge_commit,
+          v.deployment,
+          COALESCE((SELECT MIN(m.at) FROM ticket_moves m WHERE m.ticket_id = t.id AND m.to_state = 'verifying'), t.updated_at),
+          CASE WHEN t.state = 'merged' THEN COALESCE(v.merged_at, t.ended_at, t.updated_at) ELSE NULL END
+        FROM tickets t
+        LEFT JOIN ticket_verifications v ON v.ticket_id = t.id
+        WHERE t.pull_request IS NOT NULL AND t.repository IS NOT NULL;
+      UPDATE ticket_verifications
+        SET closes = (SELECT p.closes FROM ticket_pull_requests p WHERE p.ticket_id = ticket_verifications.ticket_id AND p.seq = 1)
+        WHERE EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_verifications.ticket_id AND t.state = 'merged');
+    `,
+  },
 ];

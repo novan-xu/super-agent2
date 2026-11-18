@@ -4,7 +4,7 @@ import { memo, useLayoutEffect, useRef, useState } from "react";
 import { type HistoryState, historyLine, matchNote } from "../live/history.js";
 import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
-import { momentOf, PhaseStatus } from "./TicketParts.js";
+import { ChainNumbers, momentOf, PhaseStatus, PullRequestNumbers } from "./TicketParts.js";
 
 export interface HistoryViewProps {
   readonly history: HistoryState;
@@ -42,14 +42,14 @@ const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: 
               {ticket.repository}
             </span>
           )}
-          {ticket.issues.length === 0 ? null : <span className="mono">{ticket.issues.map((issue) => `#${issue.number}`).join(" ")}</span>}
+          {ticket.issues.length === 0 ? null : <ChainNumbers ticket={ticket} />}
         </span>
         {line.reason === null ? null : <span className="lrow-note">{line.reason}</span>}
         {note === null ? null : <span className="lrow-note lrow-note--match">{note}</span>}
       </span>
       <span className="lrow-side">
         <span className="num">{momentOf(ticket.endedAt ?? ticket.updatedAt, now)}</span>
-        {ticket.pullRequest === null ? null : <span className="mono">{`#${ticket.pullRequest}`}</span>}
+        {ticket.pullRequests.length === 0 ? null : <PullRequestNumbers ticket={ticket} />}
       </span>
     </a>
   );

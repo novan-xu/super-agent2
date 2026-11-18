@@ -32,6 +32,7 @@ const base = Ticket.parse({
   ran: null,
   branch: null,
   pullRequest: null,
+  pullRequests: [],
   report: null,
   work: null,
   verification: null,

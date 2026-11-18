@@ -18,7 +18,7 @@ import {
 } from "@super-agent2/protocol";
 import type { AccessVerifier } from "./access.js";
 import type { Tell } from "./chains.js";
-import { tail } from "./reports.js";
+import { chainProgress, tail } from "./reports.js";
 import { TicketError, type TicketService } from "./tickets.js";
 import type { VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
@@ -46,6 +46,7 @@ export interface FailureLoop {
   guide(ticket: number, guidance: GeneratedText): LoopOutcome;
   describe(ticket: number, where: GeneratedText): LoopOutcome;
   answer(given: OwnerStuckAnswer): Promise<StuckAnswerOutcome>;
+  ownerStopped(ticket: Ticket): void;
   cards(): StuckCard[];
   close(): void;
 }
@@ -139,6 +140,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         `[hub] ${described(stuck)} failed again after ${stuck.round} guided rounds, the cap of ${roundCap}: ${failureWords[report.failure.kind]}.`,
         report.evidence,
         `The hub stopped it for the owner. Its branch, its pull request and the worker's output are kept, nothing runs for it, and no round can start: guide_ticket refuses it. The owner decides on its card in 等你, where they can resume it with a fresh count or give it up.`,
+        ...chainProgress(stuck),
         "Now call describe_stuck once with where it is stuck, in English with a Chinese copy, in a few sentences: what the work is, what keeps failing, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the card. Then tell the owner in Chinese, in a line or two, that it waits for them.",
       ].join("\n"),
     );
@@ -233,6 +235,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         text("notice.ownerGaveUp", { ticket: ticket.id }),
         [
           `[hub] The owner gave up ${described(ticket)} on its card, after ${stuck.round} guided rounds. It is stopped: its worker's folder is removed; the branch and any pull request stay on GitHub.`,
+          ...chainProgress(stopped.ticket),
           words === "" ? "The owner gave no words." : `The owner's words to you: ${words}`,
           "Acknowledge it to the owner in Chinese in a line.",
         ].join("\n"),
@@ -269,6 +272,21 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     return { ok: true, ticket: resumed };
   };
 
+  const ownerStopped = (ticket: Ticket) => {
+    if (closed || ticket.repository === null || !ticket.pullRequests.some((pull) => pull.state === "merged")) {
+      return;
+    }
+    tell(
+      ticket.conversation,
+      text("notice.ownerStoppedChain", { ticket: ticket.id }),
+      [
+        `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`,
+        ...chainProgress(ticket),
+        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, deploy it once with deploy_repository at the last merge commit, unless the owner said otherwise; Super-agent2 itself is deployed on the NAS, not through the hub.",
+      ].join("\n"),
+    );
+  };
+
   const cards = (): StuckCard[] =>
     tickets
       .list({ open: true, limit: everyTicket })
@@ -285,6 +303,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     guide,
     describe,
     answer,
+    ownerStopped,
     cards,
     close: () => {
       closed = true;

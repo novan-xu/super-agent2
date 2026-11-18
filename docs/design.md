@@ -81,22 +81,36 @@ Two things follow:
 3. **Arrangement.** As it files them, the brain arranges the issues into chains and chooses each chain's start defaults.
 4. **Start.** The owner presses 开始 on a chain's card. One start starts the whole arrangement.
 5. **Work.** The hub creates a git worktree on a new branch and starts a worker in full-access mode. The worker works
-   through the chain's issues in order, runs the tests itself, resolves conflicts with the default branch itself, and
-   opens one pull request for the chain.
-6. **Verification.** Rules only; see below.
+   through the chain's issues in order, runs the tests itself, and resolves conflicts with the default branch itself. It
+   decides how many pull requests to open: whenever a piece of the chain is ready, it opens a pull request that closes at
+   least one of the chain's open issues, hands it in, and waits.
+6. **Verification.** Rules only, for each pull request as it is handed in; see below.
 7. **Merge.** Automatic when the rules pass. A conflict at merge time goes back to the worker, every time it is found.
-   It is never a failure and never counts as a guided round; the ticket says how many times it went back.
-8. **Report.** The ticket ends at the merge and reports to the brain, saying whether the change needs deploying.
-9. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
-   tries again.
+   It is never a failure and never counts as a guided round; the ticket says how many times it went back. The hub
+   closes the issues the pull request closes, as GitHub lists them.
+8. **Continue.** When issues of the chain are still open, the hub resumes the same worker, in the same session and the
+   same folder, on a new branch from the updated default branch, and tells it what merged and what remains. The brain
+   is not part of this.
+9. **Report.** The ticket is merged when every issue of its chain is closed by one of its merged pull requests. It
+   reports to the brain once, with the pull requests merged, the final merge commit and whether the change needs
+   deploying.
+10. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
+   tries again. What is already merged stays merged.
 
 A writing ticket has no repository: the worker's text is delivered to the owner in the conversation, with no pull
 request and no verification.
 
 ## Chains
 
-The chain is how work is scheduled. A ticket is one chain: one or more issues of one repository in working order, done
-by one worker on one branch into one pull request. The smallest ticket is a single issue.
+The chain is how work is scheduled. A ticket is one chain: one or more issues of one repository in working order,
+handed once to one worker, which opens as many pull requests for them as it sees fit, one after another. The smallest
+ticket is a single issue. The issue is what the owner manages; the brain decides how issues are arranged into chains.
+
+- Each pull request comes from its own branch, named by the hub, in the ticket's one worktree. The hub recognises a
+  pull request as the ticket's when its worker hands it in from the ticket's current branch.
+- The ticket records its pull requests in order, each with its state and the issues it closed, and which issues are
+  still open. A chain that stops keeps what is merged, and the ticket records what remains: the open pull request and
+  the open issues.
 
 - The brain puts on one chain the issues that depend on one another, and the issues that cannot be worked on at the
   same time because they touch the same code.
@@ -105,7 +119,7 @@ by one worker on one branch into one pull request. The smallest ticket is a sing
   merged or deployed first. The issues after the cut are a ticket of their own that waits for the earlier ticket.
 - Only the owner starts a chain, with 开始 on its card. The brain arranges and proposes; it has no way to start one.
 - Starting starts everything arranged: tickets with nothing before them begin, and each waiting ticket begins by itself
-  when the tickets before it have merged.
+  when the tickets before it have merged, that is when every issue of them is closed.
 - A started chain is closed. Later work is a new ticket after it.
 
 ## Start defaults
@@ -177,7 +191,8 @@ records the deployment once the owner says it is done.
 
 ## Verification rules
 
-The level is computed from the changed files, not judged by an LLM.
+Each pull request a worker hands in is verified on its own. The level is computed from its changed files, not judged by
+an LLM.
 
 | Change | Rule |
 | --- | --- |
@@ -203,7 +218,8 @@ This is the complete list.
    Credentials are not on the list: changing or deleting one is not held. A credential file is a file like any other,
    so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
-   owner. A merge conflict is not a failure and is not counted.
+   owner. A merge conflict is not a failure and is not counted. A merged pull request is progress: the count starts
+   again for the next one.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.

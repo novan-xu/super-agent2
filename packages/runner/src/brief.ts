@@ -28,9 +28,9 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     `Chain: ${task.title}`,
     "",
     "Issues, in working order:",
-    ...task.issues.map((issue, index) => `${index + 1}. #${issue.number} ${issue.title} (${issue.url})`),
+    ...task.issues.map((issue, index) => `${index + 1}. #${issue.number} ${issue.title} (${issue.url})${(task.merged ?? []).includes(issue.number) ? ", already closed by a merged pull request" : ""}`),
     "",
-    `Hand back by writing the JSON file at: ${place.handback}`,
+    `Hand in each pull request by writing the JSON file at: ${place.handback}`,
   ].join("\n");
 }
 
@@ -46,7 +46,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
   return [
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
     "Check `git status` and `git log` in your working folder first, and look at what is already on the branch and in any open pull request from it.",
-    `Hand back by writing the JSON file at ${place.handback} when the pull request is open, as described at the start.`,
+    `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
     task.note === null ? "" : `\n${task.note}`,
   ]
     .join("\n")
@@ -54,7 +54,22 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`].join("\n");
+  return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`].join("\n");
+}
+
+export interface LeftoverPlace {
+  readonly branch: string;
+  readonly commit: string;
+  readonly carried: boolean;
+  readonly into: string;
+  readonly base: string;
+}
+
+export function leftoverText(leftover: LeftoverPlace): string {
+  const kept = `the local branch ${leftover.branch} (commit ${leftover.commit})`;
+  return leftover.carried
+    ? `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They were carried over: they are uncommitted changes on ${leftover.into} now, and a copy is kept on ${kept}. Check that they still belong in the next pull request.`
+    : `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They did not apply cleanly on the updated ${leftover.base}, so ${leftover.into} starts clean, and they are kept on ${kept}. Take what you need from there, for example with \`git cherry-pick --no-commit ${leftover.commit}\` or \`git checkout ${leftover.commit} -- <path>\`.`;
 }
 
 export function messageText(from: WorkSender, text: string): string {

@@ -46,7 +46,7 @@ export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequest
 }
 
 export type HandbackOutcome =
-  | { readonly ok: true; readonly pullRequest: number; readonly url: string; readonly report: GeneratedText }
+  | { readonly ok: true; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText }
   | { readonly ok: false; readonly problem: string };
 
 export interface HandbackCheck {
@@ -54,17 +54,26 @@ export interface HandbackCheck {
   readonly repository: string;
   readonly branch: string;
   readonly issues: readonly number[];
+  readonly merged: readonly number[];
   readonly environment: Readonly<Record<string, string>>;
   readonly cwd: string;
   readonly read: PullRequestReader;
 }
 
+function listed(numbers: readonly number[]): string {
+  return numbers.map((number) => `#${number}`).join(", ");
+}
+
 export async function checkHandback(check: HandbackCheck): Promise<HandbackOutcome> {
+  const open = check.issues.filter((issue) => !check.merged.includes(issue));
   let text: string;
   try {
     text = readFileSync(check.path, "utf8").replace(/^﻿/, "");
   } catch {
-    return { ok: false, problem: `You have not handed back: there is no file at ${check.path}. Open the pull request if it is not open yet, then write that file as described in your task.` };
+    return {
+      ok: false,
+      problem: `You have not handed in a pull request: there is no file at ${check.path}. The chain is done only when every issue is closed by a merged pull request, and ${listed(open)} ${open.length === 1 ? "is" : "are"} still open. Open a pull request from your branch that closes at least one of them, then write that file as described in your task.`,
+    };
   }
   let raw: unknown;
   try {
@@ -90,12 +99,12 @@ export async function checkHandback(check: HandbackCheck): Promise<HandbackOutco
   if (state.state !== "OPEN" && state.state !== "MERGED") {
     return { ok: false, problem: `Pull request #${handback.pullRequest} is ${state.state.toLowerCase()}. Reopen it or open a new one from ${check.branch}, and hand back its number.` };
   }
-  const missing = check.issues.filter((issue) => !state.closes.includes(issue));
-  if (missing.length > 0) {
+  const closing = open.filter((issue) => state.closes.includes(issue));
+  if (closing.length === 0) {
     return {
       ok: false,
-      problem: `Pull request #${handback.pullRequest} does not close ${missing.map((issue) => `#${issue}`).join(", ")}. Edit its body so that it has a line "Closes #<number>" for every issue of your task (gh pr edit ${handback.pullRequest} --body-file <file>), then write the hand-back file again.`,
+      problem: `Pull request #${handback.pullRequest} closes none of the open issues of the chain (${listed(open)}). Edit its body so that it has a line "Closes #<number>" for each open issue it resolves (gh pr edit ${handback.pullRequest} --body-file <file>), then write the hand-back file again.`,
     };
   }
-  return { ok: true, pullRequest: state.number, url: state.url, report: handback.summary };
+  return { ok: true, pullRequest: state.number, url: state.url, closes: closing, report: handback.summary };
 }

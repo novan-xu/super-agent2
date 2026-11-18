@@ -1,0 +1,317 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
+import type { CredentialSource } from "./credentials.js";
+import type { Hub } from "./hub.js";
+import type { RunnerLink } from "./runners.js";
+import { assertion, keySet, personClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
+import { type FakeForge, fakeForge, fakeGitHubBase, fakeWoodpeckerServer } from "./testing/forge.js";
+import { startTestHub } from "./testing/http.js";
+
+const repository = "novan-xu/super-agent-sandbox";
+
+let dataDir: string;
+let clock: TestClock;
+let key: SigningKey;
+let forge: FakeForge;
+let hub: Hub | undefined;
+
+const credentials: CredentialSource = (account) => ({
+  ok: true,
+  credentials: { GH_TOKEN: `token-of-${account}`, GITHUB_TOKEN: `token-of-${account}`, WOODPECKER_SERVER: fakeWoodpeckerServer, WOODPECKER_TOKEN: "woodpecker-token" },
+});
+
+const report: MachineReport = { hostname: "pc", platform: "win32", release: "1", arch: "x64", user: "owner", slots: { total: 2, free: 2 }, programs: [], allowances: [] };
+
+const seqs = new Map<string, number>();
+
+beforeEach(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), "hub-pieces-api-"));
+  clock = new TestClock();
+  key = await signingKey("key-1");
+  forge = fakeForge();
+  seqs.clear();
+});
+
+afterEach(async () => {
+  await hub?.close();
+  hub = undefined;
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
+interface Started {
+  readonly running: Hub;
+  readonly runner: RunnerLink;
+  readonly sent: HubToRunner[];
+  readonly conversation: string;
+}
+
+async function start(): Promise<Started> {
+  const running = await startTestHub({
+    config: testConfig(dataDir),
+    keySource: staticKeySource(keySet(key)),
+    clock,
+    credentials,
+    forgeFetch: forge.fetch,
+    gitHubBase: fakeGitHubBase,
+  });
+  hub = running;
+  running.machines.add({ name: "pc", accessClientId: "pc.access" });
+  const machine = running.machines.get("pc");
+  if (machine === undefined) {
+    throw new Error("machine missing");
+  }
+  const sent: HubToRunner[] = [];
+  const runner = running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined });
+  runner.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
+  forge.woodpecker.set(repository, { id: 6, active: true, configFile: "", pipelines: [] });
+  return { running, runner, sent, conversation: running.conversations.create().id };
+}
+
+const chainIssues = [7, 8, 9] as const;
+
+function begin(running: Hub, conversation: string): Ticket {
+  for (const issue of chainIssues) {
+    forge.repository(repository).issues.set(issue, "open");
+  }
+  const opened = running.tickets.open({
+    repository,
+    issues: chainIssues.map((number) => ({
+      repository,
+      number,
+      url: `https://github.com/${repository}/issues/${number}`,
+      title: { en: `Step ${number}`, zh: `第 ${number} 步` },
+      summary: { en: `Do step ${number}`, zh: `做第 ${number} 步` },
+    })),
+    title: { en: "Three steps", zh: "三步" },
+    summary: { en: "Three steps in order", zh: "按顺序做三步" },
+    kind: "feature",
+    conversation,
+  });
+  running.tickets.change((writes) => {
+    writes.choose(opened.id, { machine: "pc", engine: "claude", model: "claude-haiku-5-5", effort: "low", by: { machine: "owner", engine: "owner", model: "owner", effort: "owner" } });
+    writes.move(opened.id, "working");
+  });
+  const ticket = running.tickets.get(opened.id);
+  if (ticket === undefined || running.work === undefined) {
+    throw new Error("setup failed");
+  }
+  running.work.begin(ticket);
+  return current(running, opened.id);
+}
+
+function current(running: Hub, id: number): Ticket {
+  const ticket = running.tickets.get(id);
+  if (ticket === undefined) {
+    throw new Error(`ticket ${id} missing`);
+  }
+  return ticket;
+}
+
+function event(runner: RunnerLink, ticket: number, attempt: number, body: WorkEvent): void {
+  const key = `${ticket}:${attempt}`;
+  const seq = (seqs.get(key) ?? 0) + 1;
+  seqs.set(key, seq);
+  runner.receive({ type: "work.event", ticket, attempt, seq, at: clock.now(), event: body });
+}
+
+function base(running: Hub): string {
+  return `http://127.0.0.1:${running.address.port}`;
+}
+
+async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
+  const response = await fetch(`${base(running)}${brainToolsPath}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${readFileSync(join(dataDir, "brain.token"), "utf8").trim()}`,
+      "content-type": "application/json",
+      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  });
+  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
+  return reply.result === undefined ? { isError: true, text: reply.error?.message ?? "" } : { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
+}
+
+const NoticeRow = z.object({ body: z.string(), prompt: z.string().nullable() });
+
+function notices(running: Hub, conversation: string): { readonly text: string; readonly prompt: string }[] {
+  return running.database.connection
+    .prepare("SELECT body, prompt FROM conversation_entries WHERE conversation_id = ? AND kind = 'notice' ORDER BY seq")
+    .all(conversation)
+    .map((row) => {
+      const value = NoticeRow.parse(row);
+      return { text: z.object({ text: z.string() }).parse(JSON.parse(value.body)).text, prompt: value.prompt ?? "" };
+    });
+}
+
+function starts(sent: readonly HubToRunner[], ticket: number): Extract<HubToRunner, { readonly type: "work.start" }>[] {
+  return sent.flatMap((message) => (message.type === "work.start" && message.task.ticket === ticket ? [message] : []));
+}
+
+function pipeline(number: number, commit: string, pull: number, state: "success" | "failure"): void {
+  const found = forge.woodpecker.get(repository);
+  if (found === undefined) {
+    throw new Error("no Woodpecker repository");
+  }
+  const step = 900 + number;
+  found.pipelines.push({
+    number,
+    commit,
+    ref: `refs/pull/${pull}/merge`,
+    event: "pull_request",
+    status: state,
+    workflows: [{ name: "check", state, steps: [{ id: step, name: "test", state, exitCode: state === "failure" ? 1 : 0 }] }],
+    config: ["check"],
+  });
+  forge.logs.set(step, state === "failure" ? ["FAIL src/steps.test.ts"] : []);
+}
+
+function pullAt(pull: number, head: string, branch: string, closes: readonly number[]): void {
+  const existing = forge.repository(repository).pulls.get(pull);
+  if (existing === undefined) {
+    forge.pull(repository, pull, head, ["src/steps.ts"], branch, closes);
+  } else {
+    existing.head = head;
+  }
+  forge.tree(repository, head, ["src/steps.ts", ".woodpecker/check.yaml"]);
+}
+
+function handIn(runner: RunnerLink, ticket: number, attempt: number, pull: number, closes: readonly number[]): void {
+  event(runner, ticket, attempt, { kind: "finished", pullRequest: pull, url: `https://github.com/${repository}/pull/${pull}`, closes: [...closes], report: { en: `Pull request ${pull}`, zh: `交了 PR ${pull}` } });
+}
+
+async function settled(running: Hub): Promise<void> {
+  await running.verification.idle();
+  await running.chains.idle();
+}
+
+describe("a chain handed in as several pull requests", () => {
+  it("merges each pull request as it is handed in, continues the same worker after each merge, and is merged when every issue is closed", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    const first = current(running, ticket.id).branch ?? "";
+    expect(first).toMatch(/^sa2\/ticket-\d+-[0-9a-f]{4}$/);
+    expect(starts(sent, ticket.id)[0]?.task).toMatchObject({ attempt: 1, branch: first, merged: [] });
+
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    event(runner, ticket.id, 1, { kind: "session", session: "session-1" });
+    pullAt(21, "aaa111", first, [7, 8]);
+    pipeline(1, "aaa111", 21, "failure");
+    handIn(runner, ticket.id, 1, 21, [7, 8]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "verifying", pullRequest: 21, verification: { state: "failed" } });
+    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing step test.", zh: "修好失败的步骤测试。" } }, conversation);
+    expect(guided.isError, guided.text).toBe(false);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
+
+    event(runner, ticket.id, 2, { kind: "phase", phase: "resumed", detail: "Resumed" });
+    pullAt(21, "bbb222", first, [7, 8]);
+    pipeline(2, "bbb222", 21, "success");
+    handIn(runner, ticket.id, 2, 21, [7, 8]);
+    await settled(running);
+
+    const continued = current(running, ticket.id);
+    const second = continued.branch ?? "";
+    expect(continued).toMatchObject({ state: "working", round: 0, freeRetry: false, pullRequest: 21, verification: null, work: { attempt: 3 } });
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^sa2\/ticket-\d+-[0-9a-f]{4}$/);
+    expect(continued.pullRequests).toEqual([
+      expect.objectContaining({ number: 21, branch: first, state: "merged", closes: [7, 8], mergeCommit: "merge-of-bbb222" }),
+    ]);
+    expect(forge.merges).toEqual([{ repository, number: 21, sha: "bbb222", method: "squash" }]);
+    expect([...forge.repository(repository).issues]).toEqual([
+      [7, "closed"],
+      [8, "closed"],
+      [9, "open"],
+    ]);
+    expect(forge.repository(repository).branches.has(first)).toBe(false);
+    const third = starts(sent, ticket.id)[2]?.task;
+    expect(third).toMatchObject({ attempt: 3, branch: second, merged: [7, 8], session: "session-1" });
+    expect(third?.note).toContain("Pull request #21 is merged into main as commit merge-of-bbb222. It closed #7, #8.");
+    expect(third?.note).toContain("- #9 Step 9");
+    expect(third?.note).toContain(`Your folder is now on a new branch, ${second}, made from the updated main`);
+    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`]);
+    const moves = running.tickets.moves(ticket.id).map((move) => [move.from, move.to, move.reason?.zh ?? null]);
+    expect(moves).toContainEqual(["verifying", "working", "PR #21 已合并，接着做 #9"]);
+
+    event(runner, ticket.id, 3, { kind: "phase", phase: "resumed", detail: "Resumed" });
+    pullAt(22, "ccc333", second, [9]);
+    pipeline(3, "ccc333", 22, "success");
+    handIn(runner, ticket.id, 3, 22, [9]);
+    await settled(running);
+
+    const merged = current(running, ticket.id);
+    expect(merged).toMatchObject({ state: "merged", round: 0, pullRequest: 22 });
+    expect(merged.pullRequests.map((pull) => [pull.number, pull.branch, pull.state, pull.closes])).toEqual([
+      [21, first, "merged", [7, 8]],
+      [22, second, "merged", [9]],
+    ]);
+    expect(forge.merges.map((merge) => merge.number)).toEqual([21, 22]);
+    expect(forge.repository(repository).issues.get(9)).toBe("closed");
+    const told = notices(running, conversation);
+    expect(told.map((entry) => entry.text)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.id} 已合并`]);
+    expect(told.at(-1)?.prompt).toContain("Pull requests merged in novan-xu/super-agent-sandbox, in order: #21 (closed #7, #8, commit merge-of-bbb222); #22 (closed #9, commit merge-of-ccc333).");
+    expect(told.at(-1)?.prompt).toContain("That is the final merge commit");
+
+    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    expect(read.text).toContain("#7 merged, #8 merged, #9 merged; pull requests #21 merged, #22 merged");
+    expect(read.text).toContain(`#22 merged from ${second}`);
+  });
+
+  it("continues with every issue still open when a merged pull request closed none of them", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    const branch = current(running, ticket.id).branch ?? "";
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    pullAt(31, "ddd444", branch, []);
+    pipeline(1, "ddd444", 31, "success");
+    handIn(runner, ticket.id, 1, 31, [7]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", pullRequests: [expect.objectContaining({ number: 31, state: "merged", closes: [] })] });
+    const note = starts(sent, ticket.id)[1]?.task.note ?? "";
+    expect(note).toContain("It closed no issue of the chain.");
+    expect(note).toContain("Closed so far: none.");
+    expect([...forge.repository(repository).issues.values()]).toEqual(["open", "open", "open"]);
+  });
+
+  it("keeps what is merged when the owner stops the chain, records what remains, and tells the brain once", async () => {
+    const { running, runner, conversation } = await start();
+    const ticket = begin(running, conversation);
+    const first = current(running, ticket.id).branch ?? "";
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    pullAt(41, "eee555", first, [7]);
+    forge.file(repository, "eee555", ".superagent2/deployment.json", "{}");
+    pipeline(1, "eee555", 41, "success");
+    handIn(runner, ticket.id, 1, 41, [7]);
+    await settled(running);
+    const second = current(running, ticket.id).branch ?? "";
+    event(runner, ticket.id, 2, { kind: "phase", phase: "resumed", detail: "Resumed" });
+    pullAt(42, "fff666", second, [8]);
+    handIn(runner, ticket.id, 2, 42, [8]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "verifying", verification: { state: "waiting", waiting: "pipeline" } });
+
+    const response = await fetch(`${base(running)}/api/tickets/${ticket.id}/stop`, {
+      method: "POST",
+      body: "{}",
+      headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock, claims: personClaims() }), "content-type": "application/json", origin: base(running) },
+    });
+    expect(response.status).toBe(202);
+    const stopped = current(running, ticket.id);
+    expect(stopped.state).toBe("stopped");
+    expect(stopped.pullRequests.map((pull) => [pull.number, pull.state, pull.closes])).toEqual([
+      [41, "merged", [7]],
+      [42, "open", [8]],
+    ]);
+    expect(forge.repository(repository).issues.get(7)).toBe("closed");
+    const told = notices(running, conversation);
+    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.id}，已合并的部分保留`]);
+    expect(told[0]?.prompt).toContain("Pull requests merged, in order: #41 (closed #7, commit merge-of-eee555).");
+    expect(told[0]?.prompt).toContain(`Still open: #8, #9; open pull request: #42 from ${second}.`);
+    expect(told[0]?.prompt).toContain("the repository has a deployment");
+  });
+});

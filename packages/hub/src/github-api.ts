@@ -59,6 +59,7 @@ export interface GitHubApi {
   issueOpen(repository: string, number: number): Promise<boolean | null>;
   closeIssue(repository: string, number: number): Promise<void>;
   deleteBranch(repository: string, branch: string): Promise<void>;
+  closingIssues(repository: string, number: number): Promise<number[]>;
 }
 
 export interface GitHubApiOptions {
@@ -105,6 +106,40 @@ const MergeJson = z.looseObject({ sha: z.string() });
 const IssueJson = z.looseObject({ state: z.string() });
 
 const MessageJson = z.looseObject({ message: z.string() });
+
+const ClosingJson = z.looseObject({
+  data: z
+    .looseObject({
+      repository: z
+        .looseObject({
+          pullRequest: z
+            .looseObject({
+              closingIssuesReferences: z.looseObject({
+                nodes: z.array(z.looseObject({ number: z.number().int(), repository: z.looseObject({ nameWithOwner: z.string() }) }).nullable()),
+                pageInfo: z.looseObject({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+              }),
+            })
+            .nullable(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .optional(),
+  errors: z.array(z.looseObject({ message: z.string() })).optional(),
+});
+
+const closingQuery = [
+  "query($owner: String!, $name: String!, $number: Int!, $after: String) {",
+  "  repository(owner: $owner, name: $name) {",
+  "    pullRequest(number: $number) {",
+  "      closingIssuesReferences(first: 100, after: $after) {",
+  "        nodes { number repository { nameWithOwner } }",
+  "        pageInfo { hasNextPage endCursor }",
+  "      }",
+  "    }",
+  "  }",
+  "}",
+].join("\n");
 
 const pageSize = 100;
 const filePages = 30;
@@ -309,6 +344,36 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
       const response = await send("PATCH", path, { state: "closed", state_reason: "completed" });
       if (!response.ok) {
         throw await failure("PATCH", path, response);
+      }
+    },
+    closingIssues: async (repository, number) => {
+      const name = RepositoryName.parse(repository);
+      const [owner = "", short = ""] = name.split("/");
+      const found: number[] = [];
+      let after: string | null = null;
+      for (;;) {
+        const response = await send("POST", "/graphql", { query: closingQuery, variables: { owner, name: short, number, after } });
+        if (!response.ok) {
+          throw await failure("POST", "/graphql", response);
+        }
+        const parsed = ClosingJson.safeParse(await response.json());
+        if (!parsed.success) {
+          throw new ForgeError(`GitHub answered the closing references of pull request ${number} in an unexpected shape: ${parsed.error.message}`, response.status);
+        }
+        const errors = parsed.data.errors ?? [];
+        const references = parsed.data.data?.repository?.pullRequest?.closingIssuesReferences;
+        if (errors.length > 0 || references === undefined) {
+          throw new ForgeError(`GitHub could not give the closing references of pull request ${number}${errors.length === 0 ? "" : `: ${errors.map((error) => error.message).join("; ")}`}`, response.status);
+        }
+        for (const node of references.nodes) {
+          if (node !== null && node.repository.nameWithOwner.toLowerCase() === name.toLowerCase() && !found.includes(node.number)) {
+            found.push(node.number);
+          }
+        }
+        if (!references.pageInfo.hasNextPage || references.pageInfo.endCursor === null) {
+          return found;
+        }
+        after = references.pageInfo.endCursor;
       }
     },
     deleteBranch: async (repository, branch) => {

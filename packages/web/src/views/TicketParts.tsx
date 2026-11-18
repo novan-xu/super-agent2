@@ -1,6 +1,7 @@
 import { text } from "@super-agent2/catalog";
-import type { Ticket } from "@super-agent2/protocol";
+import { mergedIssueNumbers, type Ticket, type TicketPullRequestState } from "@super-agent2/protocol";
 import { phaseLooks, type TicketPhase, type TicketProblem } from "../live/phase.js";
+import { Icon } from "../parts/icons.js";
 import { clockOf, dayLabel } from "./Entries.js";
 
 export function momentOf(at: number, now: number): string {
@@ -19,6 +20,35 @@ export function PhaseStatus({ phase }: { readonly phase: TicketPhase }) {
     <span className={`status status--${tone}`}>
       <span className={live ? `dot dot--${tone} dot--live` : `dot dot--${tone}`} />
       <span>{text(`ticket.phase.${phase}`)}</span>
+    </span>
+  );
+}
+
+export const pullRequestTones: Readonly<Record<TicketPullRequestState, "ok" | "info" | "mute">> = { merged: "ok", open: "info", closed: "mute" };
+
+export function ChainNumbers({ ticket }: { readonly ticket: Ticket }) {
+  const merged = new Set(mergedIssueNumbers(ticket));
+  return (
+    <span className="mono chain-numbers">
+      {ticket.issues.map((issue) => (
+        <span key={`${issue.repository}#${issue.number}`} className={merged.has(issue.number) ? "chain-number is-merged" : "chain-number"}>
+          {merged.has(issue.number) ? <Icon name="check" /> : null}
+          {`#${issue.number}`}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function PullRequestNumbers({ ticket }: { readonly ticket: Ticket }) {
+  return (
+    <span className="mono chain-numbers">
+      {ticket.pullRequests.map((pull) => (
+        <span key={pull.number} className={`chain-number is-${pull.state}`}>
+          <Icon name="pr" />
+          {`#${pull.number}`}
+        </span>
+      ))}
     </span>
   );
 }
