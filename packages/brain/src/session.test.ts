@@ -15,7 +15,7 @@ import {
   type Provider,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type Brain, createBrain } from "./brain.js";
+import { type Brain, type BrainOptions, createBrain } from "./brain.js";
 import { createHubLink, type HubLink, type Schedule } from "./link.js";
 import type { OpenOptions } from "@super-agent2/programs";
 import { FakeProgram } from "./testing/fake.js";
@@ -81,7 +81,10 @@ function hubUrl(): string {
   return `http://127.0.0.1:${port}`;
 }
 
-function startBrain(order: readonly Provider[] = ["gpt", "claude", "deepseek"]): Brain {
+function startBrain(
+  order: readonly Provider[] = ["gpt", "claude", "deepseek"],
+  settings: Pick<BrainOptions, "idleMilliseconds" | "schedule" | "maximumOpen"> = {},
+): Brain {
   link = createHubLink({ hubUrl: hubUrl(), token, schedule: manualSchedule, reconnectDelay: 0 });
   brain = createBrain({
     adapters: new Map(Object.entries(programs) as [Provider, FakeProgram][]),
@@ -90,6 +93,7 @@ function startBrain(order: readonly Provider[] = ["gpt", "claude", "deepseek"]):
     clock,
     tools: { url: `${hubUrl()}${brainToolsPath}`, token },
     workspace: dataDir,
+    ...settings,
   });
   const current = brain;
   link.bind({ receive: (message) => current.receive(message), running: () => current.running() });
@@ -219,7 +223,7 @@ describe("the brain's session", () => {
     const conversation = await newConversation();
     await say(conversation.id, "novan-xu/super-agent2 现在有哪些打开的 PR？");
     const { handle, text } = await programs.gpt.next();
-    expect(text).toBe("novan-xu/super-agent2 现在有哪些打开的 PR？");
+    expect(text.endsWith("novan-xu/super-agent2 现在有哪些打开的 PR？")).toBe(true);
     handle.emit({ type: "session", session: "gpt-session-1" });
     const command = "gh pr list --repo novan-xu/super-agent2 --state open";
     handle.emit({ type: "tool.started", call: "c1", name: "mcp__hub__run_command", input: JSON.stringify({ target: "hub", command }) });
@@ -257,7 +261,7 @@ describe("the brain's session", () => {
     expect(second.handle).not.toBe(opening.handle);
     expect(second.handle.options.session).toBe("gpt-session-1");
     expect(second.handle.options.tools?.turn).not.toBe(opening.handle.options.tools?.turn);
-    expect(second.text).toBe("今天天气不错。");
+    expect(second.text.endsWith("今天天气不错。")).toBe(true);
     second.handle.finish("是的。");
     await turnEnded(conversation.id, 2);
 
@@ -267,7 +271,7 @@ describe("the brain's session", () => {
     const afterBrain = await programs.gpt.next();
     expect(afterBrain.handle).not.toBe(opening.handle);
     expect(afterBrain.handle.options.session).toBe("gpt-session-1");
-    expect(afterBrain.text).toBe("我的猫叫什么？");
+    expect(afterBrain.text.endsWith("我的猫叫什么？")).toBe(true);
     afterBrain.handle.finish("Mochi。");
     await turnEnded(conversation.id, 3);
 
@@ -281,7 +285,7 @@ describe("the brain's session", () => {
     await say(conversation.id, "它几岁了？我没说过。");
     const afterHub = await programs.gpt.next();
     expect(afterHub.handle.options.session).toBe("gpt-session-1");
-    expect(afterHub.text).toBe("它几岁了？我没说过。");
+    expect(afterHub.text.endsWith("它几岁了？我没说过。")).toBe(true);
     afterHub.handle.finish("你没告诉过我。");
     await turnEnded(conversation.id, 4);
 
@@ -293,11 +297,118 @@ describe("the brain's session", () => {
     await say(conversation.id, "再说一遍猫的名字。");
     const afterMachine = await programs.gpt.next();
     expect(afterMachine.handle.options.session).toBe("gpt-session-1");
-    expect(afterMachine.text).toBe("再说一遍猫的名字。");
+    expect(afterMachine.text.endsWith("再说一遍猫的名字。")).toBe(true);
     afterMachine.handle.finish("Mochi。");
     await turnEnded(conversation.id, 5);
-    const prompts = programs.gpt.handles.flatMap((handle) => handle.prompts);
-    expect(prompts.filter((prompt) => prompt.includes("Mochi"))).toEqual(["记住：我的猫叫 Mochi。"]);
+    expect(second.text).not.toContain("Owner: 记住：我的猫叫 Mochi。");
+    expect(afterBrain.text).toContain("Owner: 记住：我的猫叫 Mochi。");
+    expect(afterHub.text).not.toContain("Owner: 记住：我的猫叫 Mochi。");
+    expect(afterMachine.text).toContain("Owner: 记住：我的猫叫 Mochi。");
+  });
+
+  it("closes a topic at its idle deadline and sends a seed when resuming the same saved session", async () => {
+    await startHub();
+    let timer: { callback: () => void; deadline: number } | undefined;
+    const current = startBrain(["gpt"], {
+      idleMilliseconds: 1000,
+      schedule: (callback, delay) => {
+        timer = { callback, deadline: clock.now() + delay };
+        return () => { timer = undefined; };
+      },
+    });
+    const topic = await newConversation();
+    await say(topic.id, "Decide the release date");
+    const opening = await programs.gpt.next();
+    opening.handle.emit({ type: "session", session: "saved-at-idle" });
+    opening.handle.finish("Release on Friday.\nSecond detail.");
+    await turnEnded(topic.id, 1);
+    expect(running().conversations.topics.summary(topic.id)).toContain("Release on Friday.");
+    expect(timer?.deadline).toBe(clock.now() + 1000);
+    clock.advance(999);
+    expect(opening.handle.closed).toBe(false);
+    clock.advance(1);
+    timer?.callback();
+    await current.settled();
+    expect(opening.handle.closed).toBe(true);
+
+    await say(topic.id, "Which day?");
+    const resumed = await programs.gpt.next();
+    expect(resumed.handle.options.session).toBe("saved-at-idle");
+    expect(resumed.text).toContain("Assistant (GPT): Release on Friday.\nSecond detail.");
+    expect(resumed.text).toContain("[hub] Topic board\n");
+    resumed.handle.finish("Friday.");
+    await turnEnded(topic.id, 2);
+  });
+
+  it("holds a waiting topic until a slot is fully closed and evicts the least recently used idle topic", async () => {
+    await startHub();
+    startBrain(["gpt"], { maximumOpen: 2 });
+    const alpha = await newConversation();
+    const beta = await newConversation();
+    const gamma = await newConversation();
+    await say(alpha.id, "Alpha");
+    const first = await programs.gpt.next();
+    await say(beta.id, "Beta");
+    const second = await programs.gpt.next();
+
+    let release = () => {};
+    const closing = new Promise<void>((resolve) => { release = resolve; });
+    const close = first.handle.close.bind(first.handle);
+    first.handle.close = async () => {
+      await closing;
+      await close();
+    };
+    try {
+      await say(gamma.id, "Gamma");
+      expect(detail(gamma.id).turns).toHaveLength(0);
+      first.handle.finish("Alpha complete");
+      await turnEnded(alpha.id, 1);
+      expect(programs.gpt.handles).toHaveLength(2);
+      expect(detail(gamma.id).turns).toHaveLength(0);
+    } finally {
+      release();
+    }
+    const third = await programs.gpt.next();
+    expect(first.handle.closed).toBe(true);
+    expect(second.handle.closed).toBe(false);
+    expect(third.text.endsWith("Gamma")).toBe(true);
+
+    second.handle.finish("Beta complete");
+    await turnEnded(beta.id, 1);
+    third.handle.finish("Gamma complete");
+    await turnEnded(gamma.id, 1);
+    const delta = await newConversation();
+    await say(delta.id, "Delta");
+    const fourth = await programs.gpt.next();
+    expect(second.handle.closed).toBe(true);
+    expect(third.handle.closed).toBe(false);
+    fourth.handle.finish();
+    await turnEnded(delta.id, 1);
+  });
+
+  it("sends a quote and confirmed memory changes to a turn already in progress", async () => {
+    await startHub();
+    startBrain();
+    const topic = await newConversation();
+    await say(topic.id, "Collect the release decisions.");
+    const opening = await programs.gpt.next();
+    opening.handle.emit({ type: "session", session: "steering-session" });
+    opening.handle.emit({ type: "text", block: "quote", delta: "The decision is Friday." });
+    const quote = await until(() => detail(topic.id).entries.find((entry) => entry.kind === "text"));
+    running().memories.add("你希望同时写下日期。");
+    running().conversations.send(topic.id, "Include this decision.", [], quote.id);
+    const steered = await programs.gpt.next("steer");
+    expect(steered.text).toContain(`[hub] Quoted message ${quote.id}\nAssistant (GPT): The decision is Friday.`);
+    expect(steered.text).toContain("你希望同时写下日期。");
+    await until(() => detail(topic.id).entries.filter((entry) => entry.kind === "owner").every((entry) => entry.taken));
+    opening.handle.finish("Recorded.");
+    await turnEnded(topic.id, 1);
+
+    await say(topic.id, "Another follow-up");
+    const next = await programs.gpt.next();
+    expect(next.text).not.toContain("你希望同时写下日期。");
+    next.handle.finish();
+    await turnEnded(topic.id, 2);
   });
 
   it("gives a message sent during a turn to that turn", async () => {
@@ -327,9 +438,10 @@ describe("the brain's session", () => {
     await say(conversation.id, "第二件事。");
     await until(() => detail(conversation.id).entries.length === 2);
     expect(first.handle.steers).toEqual([]);
+    first.handle.emit({ type: "session", session: "gpt-one" });
     first.handle.finish("第一件做完了。");
     const second = await programs.gpt.next();
-    expect(second.text).toBe("第二件事。");
+    expect(second.text.endsWith("第二件事。")).toBe(true);
     second.handle.finish("第二件也做完了。");
     const turns = await turnEnded(conversation.id, 2);
     expect(turns.map((turn) => turn.state)).toEqual(["completed", "completed"]);
@@ -381,19 +493,20 @@ describe("the brain's session", () => {
     const claudeAgain = await programs.claude.next();
     expect(claudeAgain.handle.options.session).toBe("claude-session-1");
     expect(claudeAgain.text).toContain("Owner: 我叫什么？");
-    expect(claudeAgain.text).not.toContain("CI 是绿的");
+    expect(claudeAgain.text).toContain("Assistant (Claude): CI 是绿的。");
     claudeAgain.handle.emit({ type: "unavailable", reason: "rate limited", until: clock.now() + 3_600_000 });
     const deepseek = await programs.deepseek.next();
     expect(deepseek.text).toContain("Owner: 我叫 Novan。");
     expect(deepseek.text).toContain("Assistant (Claude): CI 是绿的。");
     expect(deepseek.text).toContain("Owner: 我叫什么？");
+    deepseek.handle.emit({ type: "session", session: "deepseek-session-1" });
     deepseek.handle.finish("你叫 Novan。");
     const third = await turnEnded(conversation.id, 3);
     expect(third[2]).toMatchObject({ state: "completed", provider: "deepseek" });
 
     await say(conversation.id, "谢谢。");
     const deepseekAgain = await programs.deepseek.next();
-    expect(deepseekAgain.text).toBe("谢谢。");
+    expect(deepseekAgain.text.endsWith("谢谢。")).toBe(true);
     deepseekAgain.handle.finish("不客气。");
     await turnEnded(conversation.id, 4);
 
@@ -456,7 +569,7 @@ describe("the brain's session", () => {
     const turns = await turnEnded(conversation.id, 1);
     expect(turns[0]).toMatchObject({ state: "interrupted", reason: "大脑在这一轮结束前重启了，这一轮被中断" });
     const next = await programs.gpt.next();
-    expect(next.text).toBe("还有这个。");
+    expect(next.text.endsWith("还有这个。")).toBe(true);
     next.handle.finish("好。");
     await turnEnded(conversation.id, 2);
   });
@@ -583,7 +696,7 @@ describe("the brain's session", () => {
     const first = await newConversation();
     await say(first.id, "记住：以后回答先说结论。");
     const opening = await programs.gpt.next();
-    expect(opening.text).toBe("记住：以后回答先说结论。");
+    expect(opening.text.endsWith("记住：以后回答先说结论。")).toBe(true);
     opening.handle.emit({ type: "session", session: "gpt-one" });
     expect(await callTool(opening.handle.options, "remember", { text: "你希望先说结论。" })).toContain("Suggested (suggestion 1)");
     opening.handle.finish("已经放进记忆的待确认里。");

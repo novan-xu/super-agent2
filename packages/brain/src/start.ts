@@ -34,6 +34,9 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     workspace: config.workspace,
     attachments: config.attachments,
     maximumOpen: config.maximumOpen,
+    idleMilliseconds: config.idleMilliseconds,
+    seedSoftShare: config.seedSoftShare,
+    inputCapacity: config.inputCapacity,
   });
   const stopUpdates = programDir === undefined ? () => undefined : startProgramUpdates(brain, programDir, report);
   link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });

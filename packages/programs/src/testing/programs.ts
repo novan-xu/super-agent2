@@ -44,6 +44,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       return finish("failed", { message: "You've hit your usage limit.", codexErrorInfo: "usageLimitExceeded" });
     }
     if (text === "wait") return;
+    if (text === "report capacity") {
+      notify("thread/tokenUsage/updated", { threadId, turnId, tokenUsage: { modelContextWindow: 272000 } });
+      return finish("completed");
+    }
     notify("item/started", { turnId, item: { type: "commandExecution", id: "exec-1", command: "gh pr list", status: "inProgress" } });
     notify("item/commandExecution/outputDelta", { turnId, itemId: "exec-1", delta: "#29 " });
     notify("item/completed", { turnId, item: { type: "commandExecution", id: "exec-1", command: "gh pr list", status: "completed", aggregatedOutput: "#29 open\\n", exitCode: 0 } });
@@ -131,6 +135,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({ id, result: { messageId: "m" } });
     if (text === "early") return event(sid, "assistant/message", { message: { id: "e", content: [{ type: "text", text: "preparing" }] } });
     event(sid, "turn/start", { turn: 1 });
+    if (text === "report capacity") event(sid, "request/context", { contextWindow: 1000000 });
     if (text === "wait") return event(sid, "assistant/message", { message: { id: "w", content: [{ type: "text", text: "waiting" }] } });
     if (text === "quota") {
       event(sid, "turn/end", { reason: { kind: "error", error: { code: "ACCOUNT_QUOTA", message: "quota exhausted" } } });
@@ -204,7 +209,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   send({ type: "assistant", parent_tool_use_id: null, message: { id: "msg-2", content: [{ type: "tool_use", id: "toolu-1", name: "mcp__hub__run_command", input: { target: "hub" } }] } });
   send({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu-1", content: [{ type: "text", text: "exited" }], is_error: false }] } });
   send({ type: "assistant", parent_tool_use_id: null, message: { id: "msg-3", content: [{ type: "text", text: "结果是 exited。" }] } });
-  return result([message.uuid]);
+  return result([message.uuid], text === "report capacity" ? { modelUsage: { "claude-opus-5-5": { contextWindow: 200000 } } } : {});
 });
 `;
 

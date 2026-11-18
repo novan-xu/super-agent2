@@ -740,6 +740,36 @@ export const migrations: readonly Migration[] = [
       ].map(ticketVersionTriggers).join("\n")}
     `,
   },
+  {
+    version: 31,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN board_status TEXT NOT NULL DEFAULT '';
+      ALTER TABLE conversations ADD COLUMN board_revision INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE conversations ADD COLUMN merged_into TEXT REFERENCES conversations (id);
+      ALTER TABLE turns ADD COLUMN topic_summary TEXT;
+      ALTER TABLE conversation_entries ADD COLUMN quote_id TEXT REFERENCES conversation_entries (id);
+      ALTER TABLE program_sessions ADD COLUMN board_seen INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE program_sessions ADD COLUMN board_offered INTEGER NOT NULL DEFAULT 0;
+      UPDATE conversations SET board_revision = rowid;
+      CREATE INDEX conversations_by_board_revision ON conversations (board_revision);
+      CREATE INDEX entries_by_turn_seq ON conversation_entries (turn_id, seq);
+      CREATE TRIGGER topic_board_insert AFTER INSERT ON conversations BEGIN
+        UPDATE conversations SET board_revision = (SELECT coalesce(max(board_revision), 0) + 1 FROM conversations)
+          WHERE id = NEW.id;
+      END;
+      CREATE TRIGGER topic_board_update
+      AFTER UPDATE OF title, repository, topic_state, board_status, merged_into ON conversations
+      WHEN OLD.title IS NOT NEW.title OR OLD.repository IS NOT NEW.repository OR OLD.topic_state IS NOT NEW.topic_state
+        OR OLD.board_status IS NOT NEW.board_status OR OLD.merged_into IS NOT NEW.merged_into BEGIN
+        UPDATE conversations SET board_revision = (SELECT max(board_revision) + 1 FROM conversations)
+          WHERE id = NEW.id;
+      END;
+      CREATE TRIGGER topic_merge_sessions AFTER UPDATE OF merged_into ON conversations
+      WHEN OLD.merged_into IS NOT NEW.merged_into AND NEW.merged_into IS NOT NULL BEGIN
+        DELETE FROM program_sessions WHERE conversation_id IN (NEW.id, NEW.merged_into);
+      END;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

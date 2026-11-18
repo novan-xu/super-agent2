@@ -45,6 +45,8 @@ const TurnEnd = z.looseObject({
   }),
 });
 
+const RequestContext = z.looseObject({ contextWindow: z.number().int().positive() });
+
 const DshInitialized = z.looseObject({ model: z.string().optional(), reasoningEffort: z.string().nullable().optional() });
 
 const limitCodes = new Set(["ACCOUNT_QUOTA", "QUOTA", "RATE_LIMIT"]);
@@ -272,6 +274,13 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       return;
     }
     switch (type) {
+      case "request/context": {
+        const parsed = RequestContext.safeParse(data);
+        if (parsed.success && options.tools !== null) {
+          listener({ type: "capacity", tokens: parsed.data.contextWindow });
+        }
+        return;
+      }
       case "assistant/message": {
         const parsed = AssistantMessage.safeParse(data);
         if (!parsed.success) {

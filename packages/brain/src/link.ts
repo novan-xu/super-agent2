@@ -51,7 +51,7 @@ export function createHubLink(options: LinkOptions): HubLink {
   const delay = options.reconnectDelay ?? 1000;
   const report = options.report ?? (() => undefined);
   const outbox: BrainMessage[] = [];
-  const pending = new Map<string, { readonly message: PrepareRequest; readonly resolve: (prepared: Prepared) => void }>();
+  const pending = new Map<string, { readonly message: PrepareRequest; readonly resolve: (prepared: Prepared) => void; readonly reject: (error: Error) => void }>();
   let handlers: LinkHandlers | undefined;
   let socket: WebSocket | undefined;
   let open = false;
@@ -162,7 +162,11 @@ export function createHubLink(options: LinkOptions): HubLink {
       }
     },
     prepare: (call: PrepareCall) =>
-      new Promise<Prepared>((resolve) => {
+      new Promise<Prepared>((resolve, reject) => {
+        if (closed) {
+          reject(new Error("The hub link is closed."));
+          return;
+        }
         const message: PrepareRequest = {
           type: "prepare",
           request: randomUUID(),
@@ -170,13 +174,20 @@ export function createHubLink(options: LinkOptions): HubLink {
           provider: call.provider,
           exclude: [...call.exclude],
           fresh: call.fresh,
+          ...(call.seed === undefined ? {} : { seed: call.seed }),
+          ...(call.steer === undefined ? {} : { steer: call.steer }),
+          ...(call.continuing === undefined ? {} : { continuing: call.continuing }),
         };
-        pending.set(message.request, { message, resolve });
+        pending.set(message.request, { message, resolve, reject });
         write(message);
       }),
     close: async () => {
       closed = true;
       cancelRetry?.();
+      for (const request of pending.values()) {
+        request.reject(new Error("The hub link is closed."));
+      }
+      pending.clear();
       const current = socket;
       socket = undefined;
       if (current !== undefined && current.readyState !== WebSocket.CLOSED) {

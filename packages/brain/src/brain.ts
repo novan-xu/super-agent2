@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { BrainInput, BrainMessage, BrainProviders, HistoryItem, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
 import type { Clock } from "@super-agent2/programs";
 import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
-import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt, withAttachments } from "./prompt.js";
+import type { Schedule } from "./link.js";
+import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt } from "./prompt.js";
+import { defaultSoftShare, fallbackInputCapacity, topicPrompt } from "./seed.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
 
 export interface PrepareCall {
@@ -10,6 +12,9 @@ export interface PrepareCall {
   readonly provider: Provider;
   readonly exclude: readonly string[];
   readonly fresh: boolean;
+  readonly seed?: boolean;
+  readonly steer?: boolean;
+  readonly continuing?: boolean;
 }
 
 export interface BrainTransport {
@@ -26,6 +31,10 @@ export interface BrainOptions {
   readonly workspace: string;
   readonly attachments?: string;
   readonly maximumOpen?: number;
+  readonly idleMilliseconds?: number;
+  readonly schedule?: Schedule;
+  readonly seedSoftShare?: number;
+  readonly inputCapacity?: Readonly<Record<Provider, number>>;
   readonly newId?: () => string;
 }
 
@@ -60,7 +69,7 @@ interface Live {
 
 interface TurnRun {
   readonly id: string;
-  readonly inputs: readonly BrainInput[];
+  readonly inputs: BrainInput[];
   readonly tried: Set<Provider>;
   provider: Provider;
   tokens: number;
@@ -77,7 +86,19 @@ interface State {
   readonly handled: Set<string>;
   chain: Promise<void>;
   used: number;
+  idleAt: number;
+  waiting: number;
+  retiring: Promise<void> | undefined;
+  steering: boolean;
 }
+
+export const defaultIdleMilliseconds = 2 * 60 * 60 * 1000;
+
+const idleSchedule: Schedule = (callback, milliseconds) => {
+  const timer = setTimeout(callback, Math.min(milliseconds, 2 ** 31 - 1));
+  timer.unref();
+  return () => clearTimeout(timer);
+};
 
 function lastOwner(history: readonly HistoryItem[]): Pick<BrainInput, "attachments">[] {
   const owner = history.findLast((item) => item.kind === "owner");
@@ -93,6 +114,11 @@ export function createBrain(options: BrainOptions): Brain {
   const newId = options.newId ?? randomUUID;
   const maximumOpen = options.maximumOpen ?? 4;
   const attachments = options.attachments ?? defaultAttachmentsFolder;
+  const schedule = options.schedule ?? idleSchedule;
+  const idleMilliseconds = options.idleMilliseconds ?? defaultIdleMilliseconds;
+  const softShare = options.seedSoftShare ?? defaultSoftShare;
+  const inputCapacity = options.inputCapacity ?? fallbackInputCapacity;
+  const learnedCapacity = new Map<Provider, number>();
   const choice = createProviderChoice(options.order.filter((provider) => adapters.has(provider)), options.clock);
   const status = (): BrainProviders => ({
     type: "providers",
@@ -136,6 +162,8 @@ export function createBrain(options: BrainOptions): Brain {
   const states = new Map<string, State>();
   const work = new Set<Promise<void>>();
   let uses = 0;
+  let arrivals = 0;
+  let cancelIdle: (() => void) | undefined;
   let closing = false;
   let maintenance: { action: () => Promise<void>; done: () => void } | undefined;
   let maintaining = false;
@@ -148,7 +176,7 @@ export function createBrain(options: BrainOptions): Brain {
   const stateOf = (id: string): State => {
     let state = states.get(id);
     if (state === undefined) {
-      state = { id, live: undefined, turn: undefined, queue: [], handled: new Set(), chain: Promise.resolve(), used: 0 };
+      state = { id, live: undefined, turn: undefined, queue: [], handled: new Set(), chain: Promise.resolve(), used: 0, idleAt: 0, waiting: 0, retiring: undefined, steering: false };
       states.set(id, state);
     }
     return state;
@@ -162,30 +190,27 @@ export function createBrain(options: BrainOptions): Brain {
     return adapter;
   };
 
-  const dropLive = (state: State, live: Live | undefined = state.live) => {
+  const dropLive = (state: State) => {
+    const live = state.live;
     if (live === undefined) {
-      return;
+      return state.retiring;
     }
     live.closed = true;
     live.attempt = undefined;
-    if (state.live === live) {
-      state.live = undefined;
-    }
-    const closed = live.handle.close();
-    track(closed);
-    return closed;
+    state.live = undefined;
+    const retiring = Promise.resolve().then(() => live.handle.close()).catch(() => undefined).then(() => {
+      state.retiring = undefined;
+      pump();
+    });
+    state.retiring = retiring;
+    track(retiring);
+    return retiring;
   };
 
-  const trimOpen = () => {
-    const open = [...states.values()].filter((state) => state.live !== undefined && state.turn === undefined);
-    const excess = [...states.values()].filter((state) => state.live !== undefined).length - maximumOpen;
-    open.sort((a, b) => a.used - b.used);
-    for (const state of open.slice(0, Math.max(0, excess))) {
-      dropLive(state);
-    }
-  };
+  const idle = (state: State) => state.live !== undefined && state.turn === undefined && state.queue.length === 0 && !state.steering;
+  const occupiesSlot = (state: State) => state.live !== undefined || state.turn !== undefined || state.retiring !== undefined;
 
-  const finishTurn = (state: State, turn: TurnRun, outcome: "completed" | "interrupted" | "failed", reason: string | null) => {
+  const finishTurn = (state: State, turn: TurnRun, outcome: "completed" | "interrupted" | "failed", reason: string | null, applied = false) => {
     if (state.turn !== turn) {
       return;
     }
@@ -194,9 +219,10 @@ export function createBrain(options: BrainOptions): Brain {
       state.live.attempt = undefined;
     }
     state.turn = undefined;
-    transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason });
-    startTurn(state);
-    tryMaintenance();
+    state.used = ++uses;
+    state.idleAt = options.clock.now();
+    transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason, applied });
+    pump();
   };
 
   const nextProvider = (turn: TurnRun): Provider | undefined => providers.candidates().find((provider) => !turn.tried.has(provider));
@@ -239,6 +265,10 @@ export function createBrain(options: BrainOptions): Brain {
     if (live.closed) {
       return;
     }
+    if (event.type === "capacity") {
+      learnedCapacity.set(live.provider, event.tokens);
+      return;
+    }
     if (event.type === "session") {
       live.session = event.session;
       transport.send({ type: "session", conversation: state.id, provider: live.provider, session: event.session });
@@ -250,7 +280,7 @@ export function createBrain(options: BrainOptions): Brain {
         if (event.type === "unavailable") {
           providers.markUnavailable(live.provider, event.reason, event.until);
         }
-        dropLive(state, live);
+        dropLive(state);
       }
       return;
     }
@@ -285,7 +315,7 @@ export function createBrain(options: BrainOptions): Brain {
         return;
       case "turn.finished":
         providers.markAvailable(attempt.provider);
-        finishTurn(state, turn, turn.interrupting ? "interrupted" : event.outcome, null);
+        finishTurn(state, turn, turn.interrupting ? "interrupted" : event.outcome, null, true);
         return;
       case "unavailable":
         providers.markUnavailable(attempt.provider, event.reason, event.until);
@@ -293,7 +323,7 @@ export function createBrain(options: BrainOptions): Brain {
         return;
       case "failed":
         if (event.lostSession && !attempt.freshSession) {
-          dropLive(state, live);
+          dropLive(state);
           track(run(state, turn, attempt.provider, attempt.mode, true));
           return;
         }
@@ -322,25 +352,46 @@ export function createBrain(options: BrainOptions): Brain {
     return live;
   };
 
+  const preparePrompt = (state: State, provider: Provider, inputs: readonly BrainInput[], prepared: Prepared, continuing = false) =>
+    topicPrompt({
+      conversation: state.id, inputs, prepared, provider, capacity: learnedCapacity.get(provider) ?? inputCapacity[provider],
+      softShare, attachments, continuing,
+    });
+
   const steerQueued = async (state: State) => {
     const live = state.live;
     const turn = state.turn;
-    if (live === undefined || turn === undefined || !turn.started) {
+    if (live === undefined || turn === undefined || live.attempt !== turn.current || !turn.started || state.steering) {
       return;
     }
-    while (state.queue.length > 0 && state.turn === turn && state.live === live) {
-      const input = state.queue[0];
-      if (input === undefined) {
-        return;
+    state.steering = true;
+    try {
+      while (state.queue.length > 0 && state.turn === turn && state.live === live && !turn.interrupting) {
+        const input = state.queue[0];
+        if (input === undefined) {
+          return;
+        }
+        const prepared = await transport.prepare({ conversation: state.id, provider: live.provider, exclude: [], fresh: false, steer: true });
+        if (state.turn !== turn || state.live !== live || turn.interrupting) {
+          return;
+        }
+        const prompt = preparePrompt(state, live.provider, [input], { ...prepared, history: [] });
+        const result = await live.handle.steer(prompt.text, prompt.images);
+        if (result !== "steered" || state.turn !== turn || state.live !== live) {
+          return;
+        }
+        turn.inputs.push(input);
+        state.queue.shift();
+        transport.send({
+          type: "input.taken", conversation: state.id, turn: turn.id, input: input.id,
+          ...(prepared.memoryRevision === undefined ? {} : { memoryRevision: prepared.memoryRevision }),
+        });
       }
-      const result = await live.handle
-        .steer(withAttachments(input.text, input.attachments, attachments), promptImages([input], attachments))
-        .catch(() => "queued" as const);
-      if (result !== "steered" || state.turn !== turn) {
-        return;
-      }
-      state.queue.shift();
-      transport.send({ type: "input.taken", conversation: state.id, turn: turn.id, input: input.id });
+    } catch {
+      return;
+    } finally {
+      state.steering = false;
+      pump();
     }
   };
 
@@ -350,21 +401,31 @@ export function createBrain(options: BrainOptions): Brain {
     turn.current = attempt;
     turn.provider = provider;
     turn.tried.add(provider);
+    const call: PrepareCall = {
+      conversation: state.id,
+      provider,
+      exclude: turn.inputs.map((input) => input.id),
+      fresh: freshSession,
+      seed: state.live?.provider !== provider || freshSession || mode === "continue",
+      continuing: mode === "continue",
+    };
+    const active = () => !closing && state.turn === turn && turn.current === attempt;
     let prepared: Prepared;
     try {
-      prepared = await transport.prepare({
-        conversation: state.id,
-        provider,
-        exclude: mode === "fresh" ? turn.inputs.map((input) => input.id) : [],
-        fresh: freshSession,
-      });
+      prepared = await transport.prepare(call);
+      if (
+        active() && !turn.interrupting && prepared.board !== undefined && prepared.seed === undefined
+        && (state.live?.provider !== provider || state.live.session !== prepared.session)
+      ) {
+        prepared = await transport.prepare({ ...call, seed: true });
+      }
     } catch (error) {
-      if (state.turn === turn && turn.current === attempt) {
+      if (active()) {
         finishTurn(state, turn, "failed", messageOf(error));
       }
       return;
     }
-    if (state.turn !== turn || turn.current !== attempt || closing) {
+    if (!active()) {
       return;
     }
     if (turn.interrupting) {
@@ -372,32 +433,44 @@ export function createBrain(options: BrainOptions): Brain {
       return;
     }
     let live = state.live;
-    try {
-      if (live !== undefined && (live.turn !== turn.id || live.provider !== provider || freshSession)) {
-        await dropLive(state, live)?.catch(() => undefined);
-        if (state.turn !== turn || turn.current !== attempt || closing) {
-          return;
-        }
-        if (turn.interrupting) {
-          finishTurn(state, turn, "interrupted", null);
-          return;
-        }
-        live = undefined;
+    if (live !== undefined && (
+      live.turn !== turn.id || live.provider !== provider || freshSession || (prepared.board !== undefined && live.session !== prepared.session)
+    )) {
+      dropLive(state);
+      live = undefined;
+    }
+    if (state.retiring !== undefined) {
+      await state.retiring;
+      if (!active()) {
+        return;
       }
+      if (turn.interrupting) {
+        finishTurn(state, turn, "interrupted", null);
+        return;
+      }
+    }
+
+    let prompt: ReturnType<typeof topicPrompt>;
+    try {
+      if (prepared.board !== undefined || prepared.seed !== undefined || turn.inputs.some((input) => input.quote !== undefined)) {
+        prompt = preparePrompt(state, provider, turn.inputs, prepared, mode === "continue");
+      } else if (mode === "fresh") {
+        prompt = { text: turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), images: promptImages(turn.inputs, attachments) };
+      } else {
+        prompt = { text: continuationPrompt(prepared.history, prepared.memory, attachments), images: promptImages(lastOwner(prepared.history), attachments) };
+      }
+    } catch (error) {
+      finishTurn(state, turn, "failed", messageOf(error));
+      return;
+    }
+    try {
       if (live === undefined) {
         live = openLive(state, turn, provider, freshSession ? null : prepared.session);
         state.live = live;
-        trimOpen();
       }
-      uses += 1;
-      state.used = uses;
       live.attempt = attempt;
       turn.started = true;
-      if (mode === "fresh") {
-        live.handle.start(turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), promptImages(turn.inputs, attachments));
-      } else {
-        live.handle.start(continuationPrompt(prepared.history, prepared.memory, attachments), promptImages(lastOwner(prepared.history), attachments));
-      }
+      live.handle.start(prompt.text, prompt.images);
     } catch (error) {
       providers.markUnavailable(provider, messageOf(error), null);
       switchProvider(state, attempt, messageOf(error));
@@ -407,10 +480,6 @@ export function createBrain(options: BrainOptions): Brain {
   };
 
   const startTurn = (state: State) => {
-    if (closing || maintenance !== undefined || maintaining || state.turn !== undefined || state.queue.length === 0) {
-      return;
-    }
-    const inputs = state.queue.splice(0);
     const candidates = providers.candidates();
     const provider = candidates[0] ?? providers.order()[0];
     if (provider === undefined) {
@@ -418,7 +487,7 @@ export function createBrain(options: BrainOptions): Brain {
     }
     const turn: TurnRun = {
       id: newId(),
-      inputs,
+      inputs: state.queue.splice(0),
       tried: new Set(),
       provider,
       tokens: 0,
@@ -433,7 +502,7 @@ export function createBrain(options: BrainOptions): Brain {
       turn: turn.id,
       provider,
       model: adapterOf(provider).model,
-      inputs: inputs.map((input) => input.id),
+      inputs: turn.inputs.map((input) => input.id),
     });
     track(run(state, turn, provider, "fresh", false));
   };
@@ -443,9 +512,12 @@ export function createBrain(options: BrainOptions): Brain {
       return;
     }
     state.handled.add(input.id);
+    if (state.queue.length === 0) {
+      state.waiting = ++arrivals;
+    }
     state.queue.push(input);
     if (state.turn === undefined) {
-      startTurn(state);
+      pump();
       return;
     }
     await steerQueued(state);
@@ -484,12 +556,52 @@ export function createBrain(options: BrainOptions): Brain {
       } finally {
         maintaining = false;
         task.done();
-        for (const state of states.values()) {
-          startTurn(state);
-        }
-        tryMaintenance();
+        pump();
       }
     })());
+  };
+
+  const pump = () => {
+    cancelIdle?.();
+    cancelIdle = undefined;
+    if (closing || maintaining) {
+      return;
+    }
+    if (maintenance !== undefined) {
+      tryMaintenance();
+      return;
+    }
+    const now = options.clock.now();
+    for (const state of states.values()) {
+      if (idle(state) && now - state.idleAt >= idleMilliseconds) {
+        dropLive(state);
+      }
+    }
+    const waiting = [...states.values()]
+      .filter((state) => state.turn === undefined && state.queue.length > 0 && state.retiring === undefined && !state.steering)
+      .sort((a, b) => a.waiting - b.waiting);
+    let open = [...states.values()].filter(occupiesSlot).length;
+    for (const state of waiting) {
+      if (state.live !== undefined || open < maximumOpen) {
+        if (state.live === undefined) {
+          open += 1;
+        }
+        startTurn(state);
+      } else if (![...states.values()].some((candidate) => candidate.retiring !== undefined && candidate.turn === undefined)) {
+        const oldest = [...states.values()].filter((candidate) =>
+          candidate.live !== undefined && candidate.turn === undefined && !candidate.steering
+          && (candidate.queue.length === 0 || candidate.waiting > state.waiting),
+        ).sort((a, b) => a.used - b.used)[0];
+        if (oldest !== undefined) {
+          dropLive(oldest);
+          break;
+        }
+      }
+    }
+    const idleAt = Math.min(...[...states.values()].filter(idle).map((state) => state.idleAt));
+    if (Number.isFinite(idleAt)) {
+      cancelIdle = schedule(pump, Math.max(0, idleAt + idleMilliseconds - now));
+    }
   };
 
   return {
@@ -500,7 +612,7 @@ export function createBrain(options: BrainOptions): Brain {
         return;
       }
       maintenance = { action, done };
-      tryMaintenance();
+      pump();
     }),
     status,
     receive: (message) => {
@@ -534,6 +646,7 @@ export function createBrain(options: BrainOptions): Brain {
     },
     close: async () => {
       closing = true;
+      cancelIdle?.();
       maintenance?.done();
       maintenance = undefined;
       for (const state of states.values()) {

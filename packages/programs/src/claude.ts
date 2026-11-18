@@ -99,6 +99,7 @@ const Output = z.looseObject({
   is_api_error_message: z.boolean().optional(),
   is_error: z.boolean().optional(),
   result: z.string().optional(),
+  modelUsage: z.record(z.string(), z.looseObject({ contextWindow: z.number().int().positive().optional() })).optional().catch(undefined),
   errors: z.array(z.string()).optional(),
   terminal_reason: z.string().optional(),
   user_message_uuid: z.string().optional(),
@@ -273,6 +274,10 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
         lastError = undefined;
         finish(failure);
         return;
+      }
+      const tokens = (output.modelUsage?.[reportedModel ?? settings.model] ?? output.modelUsage?.[settings.model])?.contextWindow;
+      if (tokens !== undefined && options.tools !== null) {
+        listener({ type: "capacity", tokens });
       }
       const covered = output.user_message_uuids ?? (output.user_message_uuid === undefined ? [...outstanding] : [output.user_message_uuid]);
       for (const id of covered) {
