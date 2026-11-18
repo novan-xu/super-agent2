@@ -9,11 +9,11 @@ import { browserSocket } from "./hub/socket.js";
 import { destinationOfMessage } from "./live/address.js";
 import { initialPage } from "./live/page.js";
 import { reviewCount } from "./live/tickets.js";
-import { conversationRepositories, scopeOfTopic, topicScopeKey } from "./live/topic-scope.js";
+import { conversationRepositories, scopeOfTopic, topicScopeKey, workbenchScope } from "./live/topic-scope.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
-import { AllowanceSidebar, AllowanceCompact } from "./parts/Allowance.js";
+import { AllowanceSidebar } from "./parts/Allowance.js";
 import { useRoute } from "./parts/route.js";
 import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
@@ -23,7 +23,7 @@ import { ConversationTabs } from "./views/ConversationTabs.js";
 import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
-import { WorkbenchView } from "./views/WorkbenchView.js";
+import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
 import { type SettingsActions, SettingsView } from "./views/SettingsView.js";
 import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
@@ -133,20 +133,26 @@ export function App() {
     };
   }, [controller]);
 
-  const conversationId = route.view === "conversations" ? route.conversation : null;
+  const [workRepository, setWorkRepository] = useState<string | null | undefined>(undefined);
+  const [workTopic, setWorkTopic] = useState<string | null>(null);
+  const [workTicket, setWorkTicket] = useState<number | null>(null);
+  const selectWorkRepository = useCallback((repository: string | null | undefined) => { setWorkRepository(repository); setWorkTopic(null); }, []);
+  const workScope = useMemo(() => workbenchScope(workRepository), [workRepository]);
+  const inWorkbench = route.view === "workbench";
+  const conversationId = inWorkbench ? workTopic : route.view === "conversations" ? route.conversation : null;
   const inConversation = route.view === "conversations" || route.view === "home";
   const inTransfer = route.view === "transfer";
-  const inStream = inConversation && conversationId === null;
+  const inStream = (inConversation || inWorkbench) && conversationId === null;
   const currentTopic = page.current?.id === conversationId ? page.current : null;
   const selectedTopic = currentTopic?.conversation ?? page.list.find((topic) => topic.id === conversationId);
-  const preferredScope = route.view === "conversations" ? route.scope : undefined;
+  const preferredScope = inWorkbench ? workScope : route.view === "conversations" ? route.scope : undefined;
   const scope = useMemo(() => scopeOfTopic(selectedTopic, preferredScope), [selectedTopic, preferredScope]);
   const streamRoute = useMemo<PageRoute>(() => ({ view: "conversations", conversation: null, scope }), [scope]);
   const repositories = useMemo(
     () => conversationRepositories(page.repositories, [...page.tickets.open, ...page.list], scope),
     [page.repositories, page.tickets.open, page.list, scope],
   );
-  const ticketId = route.view === "ticket" ? route.ticket : null;
+  const ticketId = inWorkbench ? workTicket : route.view === "ticket" ? route.ticket : null;
 
   useEffect(() => {
     void controller.openTicket(ticketId);
@@ -181,9 +187,10 @@ export function App() {
   useEffect(() => {
     const redirect = page.topicRedirect;
     if (redirect !== null && redirect.from === conversationId) {
-      navigate({ view: "conversations", conversation: redirect.to.id, scope: scopeOfTopic(redirect.to, preferredScope) }, true);
+      if (inWorkbench) setWorkTopic(redirect.to.id);
+      else navigate({ view: "conversations", conversation: redirect.to.id, scope: scopeOfTopic(redirect.to, preferredScope) }, true);
     }
-  }, [conversationId, navigate, page.topicRedirect, preferredScope]);
+  }, [conversationId, inWorkbench, navigate, page.topicRedirect, preferredScope]);
 
   const topicActions = useMemo(() => ({
     rename: (source: string, title: string) => controller.renameTopic(source, title),
@@ -201,8 +208,8 @@ export function App() {
     view: "conversations", conversation, scope: scopeOfTopic(page.list.find((topic) => topic.id === conversation), scope),
   }), [page.list, scope]);
   const conversationHref = useCallback((conversation: string) => pagePath(topicRoute(conversation)), [topicRoute]);
-  const openConversation = useCallback((conversation: string) => navigate(topicRoute(conversation)), [navigate, topicRoute]);
-  const openStream = useCallback(() => navigate(streamRoute), [navigate, streamRoute]);
+  const openConversation = useCallback((conversation: string) => { if (inWorkbench) setWorkTopic(conversation); else navigate(topicRoute(conversation)); }, [inWorkbench, navigate, topicRoute]);
+  const openStream = useCallback(() => { if (inWorkbench) setWorkTopic(null); else navigate(streamRoute); }, [inWorkbench, navigate, streamRoute]);
   const send = useCallback(
     (message: string, attachments: readonly string[] = [], quotedMessage?: string) => controller.send(message, attachments, quotedMessage, conversationId, scope),
     [controller, conversationId, scope],
@@ -219,13 +226,6 @@ export function App() {
   );
   const togglePush = useCallback(() => void pushController.toggle(), [pushController]);
   const ticketHref = useCallback((ticket: number) => pagePath({ view: "ticket", ticket }), []);
-  const openTicket = useCallback(
-    (ticket: number) => {
-      setOrigin("workbench");
-      navigate({ view: "ticket", ticket });
-    },
-    [navigate],
-  );
   const openFromHistory = useCallback(
     (ticket: number) => {
       setOrigin("history");
@@ -293,7 +293,7 @@ export function App() {
       status={page.status}
       linked={page.linked}
       model={model}
-      fill={inConversation || inTransfer}
+      fill={inConversation || inTransfer || inWorkbench}
       subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
       toast={toast}
       waiting={page.waiting.cards.length}
@@ -333,18 +333,29 @@ export function App() {
       ) : inTransfer ? (
         <TransferView navigation={conversationTabs} />
       ) : route.view === "workbench" ? (
-        <WorkbenchView
+        <CanvasWorkbench
+          tickets={page.tickets.open}
+          topics={page.list}
           waiting={page.waiting}
-          allowance={<AllowanceCompact report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
           actions={cardActions}
+          repository={workRepository}
+          selectRepository={selectWorkRepository}
+          selected={workTicket}
+          selectTicket={setWorkTicket}
+          ticketHref={ticketHref}
           focus={focus}
           focused={clearFocus}
           push={pushPhase(pushFacts)}
           togglePush={togglePush}
-          tickets={page.tickets}
-          ticketHref={ticketHref}
-          openTicket={openTicket}
-          now={now}
+          panel={workTicket === null ? <ConversationView
+            compact conversation={conversationId} scope={scope} state={currentTopic}
+            stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
+            list={page.list} status={page.status} linked={page.linked} model={model}
+            hrefOf={conversationHref} open={openConversation} streamHref={pagePath(streamRoute)} openStream={openStream}
+            send={send} stop={stop} topicActions={topicActions} loadOlder={() => controller.loadOlderStream()} now={now}
+          /> : <TicketView detail={page.detail} known={known} actions={ticketActions} origin="workbench"
+            backHref={pagePath({ view: "workbench" })} back={() => setWorkTicket(null)} ticketHref={ticketHref}
+            openTicket={setWorkTicket} now={now} />}
         />
       ) : route.view === "history" ? (
         <HistoryView

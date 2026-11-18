@@ -677,7 +677,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
 
   useLayoutEffect(() => {
     following.current = false;
-    const main = document.getElementById("main");
+    const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
     if (main === null) {
       return;
     }
@@ -687,18 +687,18 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
     };
     main.addEventListener("scroll", scrolled, { passive: true });
     return () => main.removeEventListener("scroll", scrolled);
-  }, [id]);
+  }, [id, origin]);
 
   useLayoutEffect(() => {
-    const main = document.getElementById("main");
+    const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
     if (main !== null && following.current) {
       main.scrollTop = main.scrollHeight;
     }
-  }, [entries]);
+  }, [entries, origin]);
 
   useEffect(() => {
     const element = list.current;
-    const main = document.getElementById("main");
+    const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
     if (element === null || main === null || typeof ResizeObserver === "undefined") {
       return;
     }
@@ -709,7 +709,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [ticket !== null]);
+  }, [ticket !== null, origin]);
 
   const send = useCallback(
     async (message: string, attachments: readonly string[]) => {
