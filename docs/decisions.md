@@ -3938,6 +3938,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The installed executable must be tied to the package being updated, and a failed installation must be recoverable without replacing another installation. The known npm installations can be verified and backed up; the other channels need their own detection and recovery procedures. The switch allows a machine owner to control local changes without a new page control.
 - **Other options:** Update native and Homebrew installations with channel-specific recovery; reinstall an unrecognised program through npm; provide no opt-out.
 
+## 2026-11-18 — New model discovery
+
+- **Chosen:** Baseline each engine from the stored machine reports or its first nonempty report, and batch new model IDs per engine in each report. Include Antigravity and ignore effort-only changes.
+- **Why:** This avoids questions about the existing catalogue while making each later report actionable without delaying notices.
+- **Other options:** Wait for a timed cross-machine batch; count new efforts as models; exclude Antigravity.
+
 ## 2026-11-18 ? Brain program updates
 
 - **Chosen:** Check npm latest at startup and every six hours; queue new turns while all three programs are checked and

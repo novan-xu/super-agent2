@@ -136,7 +136,7 @@ describe("the brain's ticket tools", () => {
       "arrange_chains",
       "report_deployment",
       "proceed_ticket",
-      "read_allowance",
+      "set_engine_row", "read_allowance",
       "choose_defaults",
       "merge_ticket",
       "guide_ticket",

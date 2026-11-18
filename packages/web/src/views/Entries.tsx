@@ -124,6 +124,7 @@ function Notice({ entry }: { readonly entry: NoticeEntry }) {
     <div className="sysline sysline--note">
       <Icon name="swap" />
       <span>{entry.text}</span>
+      {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href="/settings/models">{text("notice.newModelsLink")}</a> : null}
     </div>
   );
 }
