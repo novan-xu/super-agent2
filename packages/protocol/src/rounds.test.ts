@@ -27,7 +27,7 @@ function loopTicket(overrides: Partial<LoopTicket> = {}): LoopTicket {
 describe("what counts as a guided round", () => {
   it("counts a round after any failure of the work, and the cap is three", () => {
     expect(roundCap).toBe(3);
-    for (const kind of ["workflow", "conflict", "no-pull-request", "program"] as const) {
+    for (const kind of ["workflow", "no-pull-request", "program"] as const) {
       expect(countsAsRound(kind, false)).toBe(true);
       expect(countsAsRound(kind, true)).toBe(true);
     }
@@ -53,7 +53,7 @@ describe("when the cap is reached", () => {
     expect(capReached(0, "workflow", false)).toBe(false);
     expect(capReached(2, "workflow", false)).toBe(false);
     expect(capReached(3, "workflow", false)).toBe(true);
-    expect(capReached(4, "conflict", false)).toBe(true);
+    expect(capReached(4, "program", false)).toBe(true);
   });
 
   it("leaves one retry for a failure of the machine at the cap, and stops at the second in a row", () => {
@@ -71,12 +71,12 @@ describe("the failure a round answers", () => {
     expect(loopFailureOf(loopTicket({ work: null }))).toBeNull();
   });
 
-  it("is a red workflow or an unresolved conflict of a verifying ticket", () => {
+  it("is a red workflow of a verifying ticket, and never a conflict, which goes back to the worker", () => {
     expect(loopFailureOf(loopTicket({ state: "verifying", work: { state: "finished", failure: null, reason: null }, verification: { state: "failed", reason: "red" } }))).toEqual({
       kind: "workflow",
       detail: "red",
     });
-    expect(loopFailureOf(loopTicket({ state: "verifying", verification: { state: "conflict", reason: "conflicts" } }))).toEqual({ kind: "conflict", detail: "conflicts" });
+    expect(loopFailureOf(loopTicket({ state: "verifying", verification: { state: "conflict", reason: "conflicts" } }))).toBeNull();
     expect(loopFailureOf(loopTicket({ state: "verifying", verification: { state: "waiting", reason: "no pipeline yet" } }))).toBeNull();
   });
 

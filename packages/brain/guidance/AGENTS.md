@@ -141,7 +141,10 @@ by you or any other model.
 - Only text and documentation files changed: it merges at once. Anything else: it merges when every Woodpecker workflow
   on the pull request's head commit is green; a new commit starts the wait again. A repository with no Woodpecker
   workflow has no rule to wait for, and merges.
-- A pull request that conflicts with the default branch at merge time goes back to its worker by itself.
+- A pull request that conflicts with the default branch at merge time goes back to its worker by itself, every time it
+  conflicts. A conflict is not a failure: it never counts as a guided round and never stops the ticket. `read_ticket`
+  says how many times a ticket went back for a conflict; step in with `message_worker` while its worker runs if the
+  worker does not get through it.
 - A `[hub]` message tells you when a ticket merged: which rule applied, and whether the repository has a deployment and
   so whether the change needs deploying. The ticket deploys nothing. Tell the owner in a line or two, and deploy it (see
   "Deployment" below).
@@ -201,8 +204,7 @@ the service answers and rolls it back when it does not.
 ## When work fails
 
 A `[hub]` message tells you when a ticket's work failed: a red workflow, with the failing step's log; a worker that
-ended without a pull request, or crashed, with the end of its output; a conflict the worker did not resolve, with the
-files changed on both sides; a worker its machine lost. Long logs are cut to their end, where the failure is. Nobody
+ended without a pull request, or crashed, with the end of its output; a worker its machine lost. Long logs are cut to their end, where the failure is. Nobody
 needs to be at a computer: you answer the message, and the worker tries again.
 
 - Read the failure before anything else. Find the line that says what went wrong: the failing test and its assertion,

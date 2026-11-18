@@ -225,7 +225,7 @@ function loopDefinitions() {
       name: "guide_ticket",
       title: "Guide a failed ticket's worker into another round",
       description: [
-        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a conflict the worker did not resolve, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
+        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again on the same branch, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
         "A failure of the machine (lost, prepare) starts a retry that is not counted, once in a row.",
         "Refused for a ticket whose worker still runs (use message_worker), for a ticket with nothing failed, and for a ticket stopped for the owner.",
       ].join(" "),

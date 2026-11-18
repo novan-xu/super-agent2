@@ -272,7 +272,6 @@ export const messages = {
   "notice.ownerResumedWords": "你让工单 {ticket} 继续，引导重新计数：{words}",
   "notice.ownerGaveUp": "你放弃了工单 {ticket}",
   "loop.failure.workflow": "流水线没通过",
-  "loop.failure.conflict": "冲突没有解决",
   "loop.failure.no-pull-request": "没有交回合格的结果",
   "loop.failure.program": "程序出错或额度用完",
   "loop.failure.lost": "机器重启后，这次执行丢失了",

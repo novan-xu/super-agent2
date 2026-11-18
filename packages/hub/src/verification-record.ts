@@ -17,7 +17,7 @@ export const VerificationRow = z.object({
   told: z.string().nullable(),
   skip_reason: z.string().nullable(),
   skip_at: z.number().int().nullable(),
-  conflict_head: z.string().nullable(),
+  conflict_returns: z.number().int(),
   merging_head: z.string().nullable(),
   merging_rule: z.string().nullable(),
   merge_commit: z.string().nullable(),
@@ -75,6 +75,7 @@ export function verificationOf(raw: unknown): TicketVerification {
     mergeCommit: row.merge_commit,
     deployment: row.deployment === null ? null : row.deployment === 1,
     skipReason: row.skip_reason,
+    conflictReturns: row.conflict_returns,
     checkedAt: row.checked_at,
   });
 }
