@@ -49,6 +49,7 @@ const Environment = z.object({
       error: "must be absolute folders separated by commas, such as /srv/projects,~/work",
     }),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
+  HUB_CONVERTER_URL: unlessEmpty(z.url()),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
@@ -77,6 +78,7 @@ export interface Config {
   readonly host: string;
   readonly projectFolders: readonly string[];
   readonly brainTokenFile: string;
+  readonly converterUrl?: string;
   readonly pageDir?: string;
   readonly attachmentsDir?: string;
   readonly vapid?: VapidSettings;
@@ -140,6 +142,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       host: value.HUB_HOST,
       projectFolders: value.HUB_PROJECT_FOLDERS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
+      ...(value.HUB_CONVERTER_URL === undefined ? {} : { converterUrl: value.HUB_CONVERTER_URL.replace(/\/+$/, "") }),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
       attachmentsDir: value.HUB_ATTACHMENTS_DIR ?? join(value.HUB_DATA_DIR, "attachments"),
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),

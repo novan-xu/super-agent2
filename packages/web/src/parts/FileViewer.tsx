@@ -29,6 +29,14 @@ function Content({ file }: { file: ViewFile }) {
   const kind = kindOf({ name: file.name, mime });
   const [data, setData] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [reason, setReason] = useState("");
+  const [officeReady, setOfficeReady] = useState(false);
+  useEffect(() => {
+    if (kind !== "office") return;
+    const abort = new AbortController();
+    void fetch(`${file.url}/preview`, { signal: abort.signal }).then(async response => { if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(typeof body.message === "string" ? body.message : "Conversion failed."); } await response.body?.cancel(); setOfficeReady(true); }).catch(error => { if (!abort.signal.aborted) { setReason(error instanceof Error ? error.message : "Conversion failed."); setFailed(true); } });
+    return () => abort.abort();
+  }, [file.url, kind]);
   const [actual, setActual] = useState(false);
   useEffect(() => {
     if (!["vector", "markdown", "text", "table"].includes(kind)) return;
@@ -46,11 +54,12 @@ function Content({ file }: { file: ViewFile }) {
   }, [file, kind]);
   const fail = useState(() => () => setFailed(true))[0];
   if (!mime && kind === "other") return null;
-  if (failed || kind === "other" || kind === "office") return <div className="fv-fallback"><strong>{file.name}</strong><span>{sizeOf(file.size)}</span><a href={file.url} download={file.name}>{text("viewer.download")}</a></div>;
+  if (failed || kind === "other") return <div className="fv-fallback"><strong>{file.name}</strong><span>{sizeOf(file.size)}</span>{failed ? <span>{reason || text("viewer.failed")}</span> : null}<a href={file.url} download={file.name}>{text("viewer.download")}</a></div>;
   if (kind === "image" || kind === "vector") return kind === "vector" && data === null ? null : <img className={actual ? "fv-image actual" : "fv-image"} src={kind === "vector" ? data ?? undefined : file.url} alt={file.name} onClick={() => setActual(!actual)} onError={fail} />;
   if (kind === "video") return <video controls playsInline src={file.url} onError={fail} />;
   if (kind === "audio") return <audio controls src={file.url} onError={fail} />;
-  if (kind === "pdf") return <PdfView url={file.url} fail={fail} />;
+  if (kind === "office" && !officeReady) return null;
+  if (kind === "pdf" || kind === "office") return <PdfView url={kind === "office" ? `${file.url}/preview` : file.url} fail={fail} />;
   if (data === null) return null;
   if (kind === "markdown") return <article className="fv-document"><Markdown text={data} /></article>;
   if (kind === "table") { const table = parseTable(data, delimiterOf(data, file.name)); return <div className="fv-table"><table><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => i === 0 ? <th key={j}>{cell}</th> : <td key={j}>{cell}</td>)}</tr>)}</tbody></table>{table.total > table.rows.length ? <p>{table.rows.length} / {table.total}</p> : null}</div>; }

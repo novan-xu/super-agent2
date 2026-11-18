@@ -128,6 +128,7 @@ export const messages = {
   "composer.label": "发给大脑的消息",
   "composer.send": "发送",
   "composer.stop": "停止",
+  "viewer.failed": "无法预览此文件，请下载原文件。",
   "viewer.download": "下载",
   "viewer.close": "关闭",
   "viewer.previous": "上一个",

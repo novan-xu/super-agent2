@@ -4160,3 +4160,5 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why** The owner chooses the topic that will hold the combined history. Tickets and System retain their
   established destinations for work and notices.
 - **Other options** Restrict merges to one project, or let the combined topic acquire the source's project.
+
+Office preview conversion is limited to 64 MiB for both input and output, with at most four distinct conversions in progress and a 90-second timeout. This bounds hub memory and converter load; larger originals remain downloadable. Streaming larger files was an alternative, but would require a separate resource-control design.
