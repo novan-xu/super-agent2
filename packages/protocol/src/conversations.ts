@@ -107,10 +107,9 @@ export const ConversationDetail = z.object({
 });
 export type ConversationDetail = z.infer<typeof ConversationDetail>;
 
-export const maximumMessageLength = 100_000;
 
 export const OwnerMessage = z.object({
-  text: z.string().trim().min(1).max(maximumMessageLength),
+  text: z.string().trim().min(1),
 });
 export type OwnerMessage = z.infer<typeof OwnerMessage>;
 

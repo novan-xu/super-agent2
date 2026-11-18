@@ -1,7 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
-import { canStartCard, changeOfEngine, changeOfMachine, changeOfModel, choiceOptions, modelLabel, modelValue } from "../live/choice.js";
+import { canStartCard, changeOfEffort, changeOfEngine, changeOfMachine, changeOfModel, choiceOptions } from "../live/choice.js";
 import { type CardUse, type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
@@ -18,7 +18,7 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
   const options = choiceOptions(card);
   const { choice } = card;
   const id = `choice-${card.ticket.id}`;
-  const owned = (field: "machine" | "engine" | "model") => (choice.by[field] === "owner" ? "field field--sm field--owner" : "field field--sm");
+  const owned = (field: "machine" | "engine" | "model" | "effort") => (choice.by[field] === "owner" ? "field field--sm field--owner" : "field field--sm");
   return (
     <div className="wcard-where">
       <div className="form-row">
@@ -63,21 +63,41 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
       <div className="form-row">
         <label htmlFor={`${id}-model`}>{text("chains.model")}</label>
         <select
-          className={choice.by.model === "owner" || choice.by.effort === "owner" ? "field field--sm field--owner" : "field field--sm"}
+          className={owned("model")}
           id={`${id}-model`}
-          value={modelValue(choice.model, choice.effort)}
+          value={choice.model ?? ""}
           disabled={busy || options.models.length === 0}
           onChange={(event) => {
-            const change = changeOfModel(event.target.value);
-            if (change !== undefined) {
-              choose(change);
+            if (event.target.value !== "") {
+              choose(changeOfModel(card, event.target.value));
             }
           }}
         >
-          {choice.model === null || choice.effort === null ? <option value="" /> : null}
-          {options.models.map((option) => (
-            <option key={option.value} value={option.value}>
-              {modelLabel(option)}
+          {choice.model === null ? <option value="" /> : null}
+          {options.models.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="form-row">
+        <label htmlFor={`${id}-effort`}>{text("chains.effort")}</label>
+        <select
+          className={owned("effort")}
+          id={`${id}-effort`}
+          value={choice.effort ?? ""}
+          disabled={busy || options.efforts.length === 0}
+          onChange={(event) => {
+            if (event.target.value !== "") {
+              choose(changeOfEffort(event.target.value));
+            }
+          }}
+        >
+          {choice.effort === null ? <option value="" /> : null}
+          {options.efforts.map((effort) => (
+            <option key={effort} value={effort}>
+              {effort}
             </option>
           ))}
         </select>

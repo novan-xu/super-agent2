@@ -1,6 +1,6 @@
 import { text } from "@super-agent2/catalog";
 import { cardAddress, type PushPayload, type WaitingCard } from "@super-agent2/protocol";
-import type { PushSender } from "./push.js";
+import { maximumPlaintext, type PushSender } from "./push.js";
 import type { SubscriptionStore } from "./subscriptions.js";
 import type { Waiting } from "./waiting.js";
 
@@ -16,15 +16,43 @@ export interface NotifierOptions {
   readonly vapidKey: string;
 }
 
+const ellipsis = "…";
+
+export function fitsPush(payload: PushPayload): boolean {
+  return Buffer.byteLength(JSON.stringify(payload), "utf8") <= maximumPlaintext;
+}
+
+export function holdPayload(key: string, target: string, command: string): PushPayload {
+  const shaped = (shown: string): PushPayload => ({
+    title: text("waiting.title"),
+    body: text("notice.waiting.hold", { target, command: shown }),
+    url: cardAddress(key),
+    tag: key,
+  });
+  const whole = shaped(command);
+  if (fitsPush(whole)) {
+    return whole;
+  }
+  const characters = [...command];
+  const clipped = (count: number) => shaped(`${characters.slice(0, count).join("")}${ellipsis}`);
+  let low = 0;
+  let high = characters.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fitsPush(clipped(middle))) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const shortest = clipped(low);
+  return fitsPush(shortest) ? shortest : { ...shortest, body: text("notice.waiting.holdPlain") };
+}
+
 export function payloadOf(card: WaitingCard): PushPayload {
   switch (card.kind) {
     case "hold":
-      return {
-        title: text("waiting.title"),
-        body: text("notice.waiting.hold"),
-        url: cardAddress(card.key),
-        tag: card.key,
-      };
+      return holdPayload(card.key, card.command.target, card.command.command);
     case "start":
       return {
         title: text("waiting.title"),

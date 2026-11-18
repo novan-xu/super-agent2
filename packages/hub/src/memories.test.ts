@@ -387,7 +387,7 @@ describe("what the brain is told", () => {
 
 describe("the move to one Chinese text", () => {
   it("keeps each memory's Chinese, renames the log's old actions, and gives every session the whole memory again", () => {
-    const earlier = migrations.filter((migration) => migration.version <= 17);
+    const earlier = migrations.filter((migration) => migration.version <= 19);
     const old = openDatabase({ dataDir, clock, migrations: earlier });
     old.connection.exec(`
       INSERT INTO conversations (id, title, state, provider, created_at, updated_at) VALUES ('c1', 't', 'idle', NULL, 0, 0);

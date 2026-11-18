@@ -14,6 +14,7 @@ const HubRow = z.object({ instance: z.string(), created_at: z.number().int() });
 
 export interface HubDatabase {
   readonly connection: DatabaseSync;
+  readonly dataDir: string;
   readonly instance: string;
   readonly createdAt: number;
   appliedVersions(): number[];
@@ -79,6 +80,7 @@ export function openDatabase(options: OpenDatabaseOptions): HubDatabase {
     const row = HubRow.parse(connection.prepare("SELECT instance, created_at FROM hub WHERE id = 1").get());
     return {
       connection,
+      dataDir: options.dataDir,
       instance: row.instance,
       createdAt: row.created_at,
       appliedVersions: () =>

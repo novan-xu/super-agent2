@@ -105,12 +105,9 @@ describe("PageController", () => {
       return page;
     }
 
-    it("releases with the fingerprint the owner saw, only after the card was armed, and removes the card", async () => {
+    it("releases with one press, with the fingerprint the owner saw, and removes the card", async () => {
       const hub = api();
       const page = shown(hub);
-      expect(await page.answer("hold:a1", "release")).toBe(false);
-      expect(hub.calls).toEqual([]);
-      page.arm("hold:a1");
       expect(await page.answer("hold:a1", "release")).toBe(true);
       expect(hub.calls).toEqual([`release a1 ${first.kind === "hold" ? first.hold.fingerprint : ""}`]);
       expect(page.store.getState().waiting.cards.map((card) => card.key)).toEqual(["hold:b2"]);
@@ -136,7 +133,6 @@ describe("PageController", () => {
           }),
       });
       const page = shown(hub);
-      page.arm("hold:a1");
       const presses = [page.answer("hold:a1", "release"), page.answer("hold:a1", "release"), page.answer("hold:a1", "refuse")];
       expect(useOf(page.store.getState().waiting, "hold:a1").step).toBe("sending");
       release({ ok: true, value: { command: record("a1") } });
@@ -152,12 +148,10 @@ describe("PageController", () => {
         release: (id) => (refuse ? Promise.resolve({ ok: false, error: "conflict" }) : Promise.resolve({ ok: true, value: { command: record(id) } })),
       });
       const page = shown(hub, failures);
-      page.arm("hold:a1");
       expect(await page.answer("hold:a1", "release")).toBe(false);
       expect(useOf(page.store.getState().waiting, "hold:a1")).toEqual({ step: "idle", verdict: null, failure: "conflict" });
       expect(page.store.getState().waiting.cards).toHaveLength(2);
       refuse = false;
-      page.arm("hold:a1");
       expect(await page.answer("hold:a1", "release")).toBe(true);
     });
 

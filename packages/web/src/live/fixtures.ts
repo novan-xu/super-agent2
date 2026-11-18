@@ -15,6 +15,7 @@ export function verification(overrides: Partial<TicketVerification> = {}): Ticke
     mergeCommit: null,
     deployment: null,
     skipReason: null,
+    conflictReturns: 0,
     checkedAt: 10_000,
     ...overrides,
   };

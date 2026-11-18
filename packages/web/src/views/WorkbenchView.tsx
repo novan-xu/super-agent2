@@ -41,8 +41,6 @@ function Card({ card, waiting, actions, focus }: { readonly card: HoldCardData; 
       card={card}
       use={useOf(waiting, card.key)}
       focused={focus === card.key}
-      arm={() => actions.arm(card.key)}
-      disarm={() => actions.disarm(card.key)}
       answer={(verdict) => actions.answer(card.key, verdict)}
     />
   );

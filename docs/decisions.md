@@ -2436,12 +2436,133 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   the owner. Until they exist, no machine is connected to the live hub, so a started ticket waits for a machine.
 - **Other options:** Create the rules through Cloudflare's API with the hub's token.
 
+## 2026-11-17 — The brain starts with Claude, then GPT
+
+- **Chosen:** At the owner's review, the starting order is Claude, then GPT, then DeepSeek only while both are
+  unavailable. It is stated once, as `startingOrder` in `packages/protocol/src/settings.ts`, and read by the brain's
+  `BRAIN_PROVIDERS` default, by 设置 before the brain has linked, and by the development harness's demo brain;
+  `tools/brain-live`'s failover check now makes Claude unavailable first. This overturns the default `gpt,claude` in
+  "The brain as a package of its own". The hub never writes `brain_order` by itself: the row exists only after the
+  owner pressed 提前 in 设置 → 模型, so it always holds an order the owner chose, and nothing migrates it. On the live
+  system the new default applies when the next deployment recreates the brain container, unless the owner has chosen an
+  order in 设置 (that order stays) or `secrets/brain.env` on the NAS sets `BRAIN_PROVIDERS` (that value wins over the
+  default and has to be removed or changed by hand).
+- **Why:** The owner's word. Seeding the hub's row from a default would make an untouched order look like the owner's
+  choice, and a migration to correct it could overwrite one the owner made.
+- **Other options:** A migration that rewrites a stored `gpt,claude`; setting `BRAIN_PROVIDERS` in `deploy/compose.yaml`.
+
+## 2026-11-17 — 确认 and 拒绝 on a held command take one press
+
+- **Chosen:** At the owner's review, 确认 releases a held command at once and 拒绝 refuses it at once; the buttons stay
+  where they are. This overturns the two presses of "What a confirmation card shows and how 确认 is guarded". The
+  page's refusal of a second answer for the same card, the disabled buttons while an answer is on its way, and the
+  fingerprint the owner saw are unchanged. Arming now exists only for a stuck ticket's 放弃, and the reducer refuses to
+  arm any other card.
+- **Why:** The owner finds the second press unnecessary; the card itself, showing the whole command, is the guard.
+- **Other options:** Keeping two presses for some forms of hold only; a press-and-hold button.
+
+## 2026-11-17 — A held command's notification names the target and the command
+
+- **Chosen:** At the owner's review, the notification for a held command reads `<target> 上有一条命令等你确认：`
+  followed by the command on the next line; the title, the tag and the address are as before. This overturns "holds no
+  command" in "When the hub sends, and what a notification says". The whole payload must fit one Web Push record of
+  4096 bytes, which leaves 3993 bytes of JSON; a longer command is cut at a whole character, found by halving, and ends
+  with `…`. If even the target and the ellipsis did not fit, the plain sentence 有一条命令等你确认 is sent, so a
+  notification always goes. The command's environment, its account and its folder are never in the notification: a
+  value under any name could be a credential, and the command service still refuses credential names as variables.
+- **Why:** The owner accepts the command on the lock screen of a personal device; leaving out the environment entirely
+  is the only way to be sure no credential value reaches a push service.
+- **Other options:** Showing the environment with values that look like credentials masked; cutting by bytes; naming
+  the form of the hold instead of the command.
+
+## 2026-11-17 — Four selects on the start card, and one name for the provider
+
+- **Chosen:** At the owner's review, the start card has four selects in the order 机器, 供应商, 模型, 推理强度; the
+  model select lists the models the chosen machine's program offers, and the effort select the efforts of the chosen
+  model. Each field keeps its own `field--owner` mark. Changing the provider returns model and effort to the table's, as
+  before; changing the model keeps the effort when the new model offers it, and otherwise returns an effort the owner
+  set to the default; changing the machine drops the owner's model and effort when the machine does not offer the
+  model, and only the owner's effort when it offers the model but not that effort. `resolveStart` now says `effort` is
+  missing (机器上的程序不给这个模型提供这个推理强度) when the model is offered and the effort is not, and `model` only
+  when the model is not offered. 改派 in the ticket's panel has the same four selects, with 按默认 for the model, and asks
+  for an effort once a model is picked. The page calls the program 供应商 everywhere it names it: the start card, 改派,
+  the ticket's detail, and the messages about what is missing; 设置 names each program by its own name and had no
+  general word for it. This overturns the three selects of "The choice on the start card".
+- **Why:** The owner's word, and one thing has one name.
+- **Other options:** Leaving 改派 with one select of pairs; choosing the new model's first effort when the old one is not
+  offered, which the design forbids as taking a neighbour.
+
+## 2026-11-17 — Nothing the owner, the brain or a worker sends has a cap of its own
+
+- **Chosen:** At the owner's review, every cap on what is sent was removed: the owner's message to the brain (100000
+  characters), a message to a worker (20000 characters, 64 KB body), the words on a stuck card (4000), a writing task
+  (20000), material (500-character source, 200000 characters a piece, 20 pieces, 400000 together), `merge_ticket`'s
+  reason (2000), `arrange_chains` (100 chains, 100 issues, 100 before), `choose_defaults` (100 chains, 100 issues), a
+  start (200 chains), a deployment's deploy, rollback and health commands (20000 each), a deployment outcome's reason
+  (4000), a command's environment value (10000), the writing worker's deliverables (20 files, 4 MB each, 8 MB together,
+  200000 characters of text) and the corrections of a hand-back (two, then the attempt failed; now the worker is told
+  what is wrong for as long as it is wrong). This overturns those limits in "A writing ticket's task and material", "The
+  scratch folder and the hand-back of a writing worker" and "Delivering the text and files into the conversation".
+  What remains is physical. A request body read into memory, and so one live message, is at most 64 MiB
+  (`largestMessageBytes`): a request that declares more is answered 413 `too_large` once the sender is known, and the
+  page says 超过了系统一次能传送的物理上限（64 兆字节）, while a body sent without its length that runs past it is a 400.
+  The `ws` library's own frame limit of 100 MiB stays above it, and SQLite's limit of about a billion bytes a value is
+  not reached. A text result whose JSON is larger than 64 MiB reaches the owner whole, as a file, instead of inline.
+  A command longer than a shell accepts fails with the operating system's own error, as any command already did. Left
+  as they are, with the reason: the memory limits (reworked separately); `roundCap`; every clip of a log or output
+  handed to an LLM or listed on the page (the full text stays); deployments' health-check timing; name and identifier
+  fields (machine, model, effort, variable, chain and material names, a delivered file's name, a commit, a deployment's
+  folder, push subscriptions); network timeouts; page sizes of lists and of `list_tickets` (a read, not something
+  sent); 历史's search of 200 characters and 8 terms (each term is one more pattern matched against every ended ticket);
+  the hub's internal scans of up to 100000 open tickets; the lock's nesting depth of 8 when it reads a command; the
+  brain's four open programs; the runner's three trial starts and its 5 MB log.
+- **Why:** The owner asked for no upper limit except where the mechanism itself would break; 64 MiB keeps one message
+  well inside the WebSocket frame limit with room for its envelope and escaping.
+- **Other options:** Raising each cap to a larger number; one limit for the brain and another for the owner; streaming
+  request bodies to disk so that no request has a limit.
+
+## 2026-11-17 — Delivered files travel in parts the hub asks for
+
+- **Chosen:** The `delivered` event now carries each file's name, size and media type, and no bytes. While the ticket
+  stays working and the attempt running, the hub asks the runner for each file in parts of 8 MiB (`work.file`, answered
+  by `work.file.part` with the bytes in base64, or none and the reason), one part at a time over the link it already
+  has, and writes them to `<HUB_DATA_DIR>/files/t<ticket>/a<attempt>/<index>`. When every file is whole it finishes the
+  attempt, records the files, and delivers into the conversation as before. After a dropped link or a restart of the hub
+  it goes on from the size it already has when the runner says hello; a part the runner cannot read ends the attempt as
+  `lost`, a failure of the machine with its one uncounted retry. A stop or a new attempt drops what was fetched.
+  `ticket_files` (migration 19) keeps the bytes of files delivered before, and new rows point at the fetched files,
+  which `GET /api/tickets/<n>/files/<name>` streams. A runner still on the version before this asks nothing new of the
+  hub, but it closes its link on `work.file`; it switches to the hub's version as soon as its work has ended, and then
+  answers.
+- **Why:** Base64 inside one event and a blob in SQLite carried the whole file through memory at every step. Parts the
+  hub pulls need no new route through the front door, no retry logic in the runner, and stay far below Cloudflare's
+  limit on one request.
+- **Other options:** The runner uploading each file over HTTP, which through Cloudflare needs parts anyway and a way to
+  retry after a dropped link; parts as ordinary work events in the runner's ledger, which would copy every file into it.
+
+## 2026-11-17 — A merge conflict goes back to the worker every time
+
+- **Chosen:** At the owner's review, every time verification finds the pull request conflicting, it goes back to the
+  worker with a note to merge the base, resolve, test, push and hand back, naming the files changed on both sides and,
+  from the second time, how many times it has come back. It is never a failure: it counts toward no round and never
+  makes the ticket stuck. This overturns "sent back only once" in "A conflict at merge time" and the `conflict` failure
+  of "What a failure is, and what counts as a guided round". `conflict` is no longer a failure kind; migration 18 drops
+  `ticket_verifications.conflict_head`, adds `conflict_returns`, and rewrites any stored conflict failure as a red
+  workflow, which keeps an old row readable (none can exist on the live system, where no worker has run). The count is
+  raised only when the ticket actually went back, is on the ticket as `verification.conflictReturns`, and `read_ticket`
+  says "went back to its worker for a conflict n times". The brain is not told at each return; it steps in with
+  `message_worker` while the worker runs, since `guide_ticket` answers failures only. Verification's `conflict` state
+  stays, as the record that the head conflicted, or that it could not go back to the worker.
+- **Why:** The owner's word: the worker resolves the conflict, however long it takes.
+- **Other options:** Telling the brain at each return; a count on the ticket's own row; keeping `conflict` as a failure
+  kind that is never counted.
+
 ## 2026-11-17 — The memory is the owner's, in one Chinese text
 
 - **Chosen:** A memory has one text, in Chinese, which is what 记忆 shows and exactly what the brain is given. The English
   copy, the stale mark and the "write a matching English with `remember`" round trip are gone. This is a stated
   exception to the rule that text an LLM generates for the owner is kept twice (`GeneratedText {en, zh}`): a memory is
-  the owner's own text, and the brain reads Chinese directly. Migration 18 drops `text_en` and `stale` from `memories`
+  the owner's own text, and the brain reads Chinese directly. Migration 20 drops `text_en` and `stale` from `memories`
   and renames `text_zh` to `text`, so each existing memory keeps its Chinese words and its id; it renames the change
   log's old actions (`remembered` to `added`, `rewritten` to `edited`) and resets every session's memory mark, so each
   running session is given the whole memory again at its next turn, with the note that it replaces any memory given
@@ -2472,7 +2593,7 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 
 ## 2026-11-17 — The brain only suggests
 
-- **Chosen:** `remember` creates a suggestion (`memory_suggestions`, migration 18) and changes nothing else; `forget`
+- **Chosen:** `remember` creates a suggestion (`memory_suggestions`, migration 20) and changes nothing else; `forget`
   creates a suggestion to remove a memory. Both wait in 记忆's 待确认, where one press of 确认 or 不要 decides them. A
   `remember` suggestion may name in `replaces` the memories it replaces: the page shows them struck through after
   确认后替换, and 确认 adds the new memory (its chip says 大脑) and removes those still there; a replaced memory already

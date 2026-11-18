@@ -145,6 +145,6 @@ export const ChainStartItem = z.object({
 export type ChainStartItem = z.infer<typeof ChainStartItem>;
 
 export const ChainStart = z.object({
-  chains: z.array(ChainStartItem).min(1).max(200),
+  chains: z.array(ChainStartItem).min(1),
 });
 export type ChainStart = z.infer<typeof ChainStart>;
