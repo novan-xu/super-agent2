@@ -1,9 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  brainToolsPath,
-  conversationHeader,
   deploymentFile,
   type HubToRunner,
   type MachineReport,
@@ -14,6 +12,7 @@ import {
   type WorkEvent,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
@@ -126,20 +125,6 @@ function base(running: Hub): string {
   return `http://127.0.0.1:${running.address.port}`;
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${readFileSync(join(dataDir, "brain.token"), "utf8").trim()}`,
-      "content-type": "application/json",
-      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
-  return reply.result === undefined ? { isError: true, text: reply.error?.message ?? "" } : { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 async function ownerPost(running: Hub, path: string, body: unknown): Promise<Response> {
   return fetch(`${base(running)}${path}`, {
     method: "POST",
@@ -167,7 +152,7 @@ function chain(running: Hub, conversation: string, issue: number): Ticket {
 }
 
 async function stated(running: Hub, tickets: readonly Ticket[]): Promise<void> {
-  const answer = await callTool(running, "choose_defaults", {
+  const answer = await callBrainTool(running, "choose_defaults", {
     chains: tickets.map((ticket) =>
       ticket.form === "task"
         ? { ticket: ticket.id, kind: "operation", difficulty: "standard", reason: { en: "A known procedure", zh: "已知的步骤" }, platform: "any", engine: "codex" }
@@ -221,7 +206,7 @@ describe("a deployment arranged with the work it deploys", () => {
       throw new Error("no pc");
     }
     const first = chain(running, conversation, 7);
-    const opened = await callTool(
+    const opened = await callBrainTool(
       running,
       "open_task_ticket",
       {
@@ -244,7 +229,7 @@ describe("a deployment arranged with the work it deploys", () => {
     }
     expect(deployment).toMatchObject({ kind: "operation", repository, requiredMachine: "pc", commitRef: "merged", commit: null, deploys: true, waitsFor: [first.id] });
     const later = chain(running, conversation, 8);
-    const arranged = await callTool(running, "arrange_chains", {
+    const arranged = await callBrainTool(running, "arrange_chains", {
       chains: [
         { name: "first", repository, issues: [7] },
         { name: "later", repository, issues: [8], after: ["first"], after_deployment: true },
@@ -307,7 +292,7 @@ describe("a deployment arranged with the work it deploys", () => {
     if (pc === undefined) {
       throw new Error("no pc");
     }
-    const opened = await callTool(running, "open_task_ticket", { title: { en: "Deploy main", zh: "部署主分支" }, summary: { en: "Deploy it", zh: "部署" }, task: "Deploy main.", kind: "operation", repository, deploy: true, commit: "main" }, conversation);
+    const opened = await callBrainTool(running, "open_task_ticket", { title: { en: "Deploy main", zh: "部署主分支" }, summary: { en: "Deploy it", zh: "部署" }, task: "Deploy main.", kind: "operation", repository, deploy: true, commit: "main" }, conversation);
     expect(opened.isError, opened.text).toBe(false);
     const ticket = running.tickets.list({ open: true })[0];
     if (ticket === undefined) {
@@ -326,7 +311,7 @@ describe("a deployment arranged with the work it deploys", () => {
     expect(deliveries(running, conversation)).toEqual([]);
     const told = running.database.connection.prepare("SELECT prompt FROM conversation_entries WHERE conversation_id = ? AND kind = 'notice' ORDER BY seq").all(conversation);
     expect(JSON.stringify(told)).toContain("the worker handed back that its task failed");
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Check the port before deploying.", zh: "部署前先检查端口。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Check the port before deploying.", zh: "部署前先检查端口。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
     expect(tasksSent(pc.sent, ticket.id)[1]?.task).toMatchObject({ attempt: 2, checkout: { commit: "head1" } });
@@ -347,12 +332,12 @@ describe("opening a task ticket", () => {
       [{ ...base, kind: "fix" }, "not valid"],
     ] as const;
     for (const [args, reason] of refusals) {
-      const answer = await callTool(running, "open_task_ticket", args);
+      const answer = await callBrainTool(running, "open_task_ticket", args);
       expect(answer.isError).toBe(true);
       expect(answer.text).toContain(reason);
     }
     forge.file(repository, "head1", deploymentFile, JSON.stringify({ ...recipe, target: "hub" }));
-    const invalid = await callTool(running, "open_task_ticket", { ...base, repository, deploy: true });
+    const invalid = await callBrainTool(running, "open_task_ticket", { ...base, repository, deploy: true });
     expect(invalid.isError).toBe(true);
     expect(invalid.text).toContain("names no work machine");
     expect(running.tickets.list({})).toEqual([]);
@@ -362,7 +347,7 @@ describe("opening a task ticket", () => {
     const { running } = await start();
     forge.tree(repository, "head1", ["src/app.ts"]);
     forge.repository(repository).texts.clear();
-    const answer = await callTool(running, "open_task_ticket", { title: { en: "Deploy", zh: "部署" }, summary: { en: "Deploy", zh: "部署" }, task: "Deploy.", kind: "operation", repository, deploy: true });
+    const answer = await callBrainTool(running, "open_task_ticket", { title: { en: "Deploy", zh: "部署" }, summary: { en: "Deploy", zh: "部署" }, task: "Deploy.", kind: "operation", repository, deploy: true });
     expect(answer.isError, answer.text).toBe(false);
     expect(answer.text).toContain("has no .superagent2/deployment.json on its default branch yet");
     expect(running.tickets.list({})[0]).toMatchObject({ requiredMachine: null, deploys: true, commitRef: null });
@@ -370,7 +355,7 @@ describe("opening a task ticket", () => {
 
   it("keeps the brain's commands in the hub's container", async () => {
     const { running } = await start();
-    const answer = await callTool(running, "run_command", { target: "pc", command: "echo hi" });
+    const answer = await callBrainTool(running, "run_command", { target: "pc", command: "echo hi" });
     expect(answer.isError).toBe(true);
     expect(answer.text).toContain("Nothing was run: pc is not where your commands run");
     expect(running.commands.list()).toEqual([]);

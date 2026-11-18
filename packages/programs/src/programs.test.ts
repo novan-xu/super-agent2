@@ -31,7 +31,7 @@ function settings(program: string, model: string, effort: string): ProgramSettin
 }
 
 function options(session: string | null): OpenOptions {
-  return { session, workspace: directory, tools: { url: "http://hub:8080/brain/mcp", token: "test-brain-token", conversation: "conv-1" } };
+  return { session, workspace: directory, tools: { url: "http://hub:8080/brain/mcp", token: "test-brain-token", conversation: "conv-1", turn: "turn-1" } };
 }
 
 function track<T extends ProgramHandle>(handle: T): T {
@@ -70,7 +70,7 @@ describe("Codex through its app server", () => {
         "mcp_servers.hub": {
           url: "http://hub:8080/brain/mcp",
           bearer_token_env_var: "SUPER_AGENT_HUB_TOKEN",
-          http_headers: { "x-super-agent-conversation": "conv-1" },
+          http_headers: { "x-super-agent-conversation": "conv-1", "x-super-agent-turn": "turn-1" },
           tool_timeout_sec: 86400,
           startup_timeout_sec: 60,
         },
@@ -317,7 +317,7 @@ describe("Claude Code through stream-json", () => {
         hub: {
           type: "http",
           url: "http://hub:8080/brain/mcp",
-          headers: { Authorization: "Bearer ${SUPER_AGENT_HUB_TOKEN}", "x-super-agent-conversation": "conv-1" },
+          headers: { Authorization: "Bearer ${SUPER_AGENT_HUB_TOKEN}", "x-super-agent-conversation": "conv-1", "x-super-agent-turn": "turn-1" },
           alwaysLoad: true,
         },
       },
