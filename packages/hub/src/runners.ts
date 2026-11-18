@@ -128,7 +128,7 @@ export function createRunners(options: RunnersOptions): Runners {
           createdAt: machine.createdAt,
           lastSeenAt: machine.lastSeenAt,
           report: link?.report ?? machine.report,
-          storage: machine.storage,
+          ...(Object.keys(machine.storage).length === 0 ? {} : { storage: machine.storage }),
           ...(machine.system === null ? {} : { system: machine.system }),
           ...(machine.accessExpiresAt === null ? {} : { accessExpiresAt: machine.accessExpiresAt }),
         };
