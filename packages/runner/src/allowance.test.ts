@@ -94,6 +94,24 @@ describe("reading Claude Code's allowance", () => {
   it("is unknown when the login has no rate limits", () => {
     expect(claudeAllowance(claudeAnswer(null, false), now).state).toBe("unknown");
   });
+
+  it("reports the captured Claude Code 2.1.327 response without rate limits as unknown", () => {
+    const output = JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: allowanceRequestId,
+        response: {
+          session: { total_cost_usd: 0, total_api_duration_ms: 0, total_duration_ms: 931, total_lines_added: 0, total_lines_removed: 0, model_usage: {} },
+          subscription_type: null,
+          rate_limits_available: false,
+          rate_limits: null,
+          behaviors: null,
+        },
+      },
+    });
+    expect(claudeAllowance(output, now)).toMatchObject({ state: "unknown", remainingPercent: null, windows: [], problem: "Claude Code reports no rate limits for this login" });
+  });
 });
 
 describe("reading every allowance", () => {
