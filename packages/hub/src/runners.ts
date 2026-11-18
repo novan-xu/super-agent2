@@ -125,6 +125,8 @@ export function createRunners(options: RunnersOptions): Runners {
           createdAt: machine.createdAt,
           lastSeenAt: machine.lastSeenAt,
           report: link?.report ?? machine.report,
+          ...(machine.system === null ? {} : { system: machine.system }),
+          ...(machine.accessExpiresAt === null ? {} : { accessExpiresAt: machine.accessExpiresAt }),
         };
       });
 

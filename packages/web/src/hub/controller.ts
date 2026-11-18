@@ -193,9 +193,12 @@ export class PageController {
     }
   }
 
-  async addMachine(name: string, system: MachineSystem): Promise<MachineAdded | undefined> {
+  async addMachine(name: string, system: MachineSystem): Promise<MachineAdded | { readonly refused: string } | undefined> {
     const answer = await this.options.api.addMachine(name, system);
     if (!answer.ok) {
+      if (answer.error === "cloudflare_refused" && answer.reason !== undefined) {
+        return { refused: answer.reason };
+      }
       this.options.onFailure(answer.error);
       return undefined;
     }

@@ -243,19 +243,42 @@ function readBody(request: IncomingMessage): Promise<Buffer> {
 export interface FakeServiceTokens {
   readonly tokens: AccessServiceTokens;
   failRemove: boolean;
+  failCreate: boolean;
   readonly made: string[];
+  admits(clientId: string, clientSecret: string): boolean;
 }
 
 export function fakeServiceTokens(): FakeServiceTokens {
+  const known = new Map<string, { readonly id: string; readonly secret: string; removed: boolean }>();
   const fake: FakeServiceTokens = {
     failRemove: false,
+    failCreate: false,
     made: [],
+    admits: (clientId, clientSecret) => {
+      const token = known.get(clientId);
+      return token === undefined || (!token.removed && token.secret === clientSecret);
+    },
     tokens: {
       create: (name) => {
+        if (fake.failCreate) {
+          return Promise.reject(new Error("Cloudflare refused to create the service token (HTTP 403): the harness's Cloudflare refuses to create"));
+        }
         fake.made.push(name);
-        return Promise.resolve({ id: randomUUID(), clientId: `${randomBytes(16).toString("hex")}.access`, clientSecret: randomBytes(32).toString("hex") });
+        const token = { id: randomUUID(), clientId: `${randomBytes(16).toString("hex")}.access`, clientSecret: randomBytes(32).toString("hex"), expiresAt: null };
+        known.set(token.clientId, { id: token.id, secret: token.clientSecret, removed: false });
+        return Promise.resolve(token);
       },
-      remove: () => (fake.failRemove ? Promise.reject(new Error("The harness's Cloudflare refuses to delete")) : Promise.resolve()),
+      remove: (id) => {
+        if (fake.failRemove) {
+          return Promise.reject(new Error("The harness's Cloudflare refuses to delete"));
+        }
+        for (const token of known.values()) {
+          if (token.id === id) {
+            token.removed = true;
+          }
+        }
+        return Promise.resolve();
+      },
     },
   };
   return fake;
@@ -799,8 +822,14 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       if (path === "/__harness/cloudflare" && options.cloudflare !== undefined) {
         const remove = url.searchParams.get("remove");
-        options.cloudflare.failRemove = remove === "fail";
-        json(response, 200, { remove: options.cloudflare.failRemove ? "fail" : "ok", made: options.cloudflare.made });
+        const create = url.searchParams.get("create");
+        if (remove !== null) {
+          options.cloudflare.failRemove = remove === "fail";
+        }
+        if (create !== null) {
+          options.cloudflare.failCreate = create === "fail";
+        }
+        json(response, 200, { create: options.cloudflare.failCreate ? "fail" : "ok", remove: options.cloudflare.failRemove ? "fail" : "ok", made: options.cloudflare.made });
         return true;
       }
       if (path === "/__harness/allowance") {

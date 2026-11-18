@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
 import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
-import { type AccessKeySet, brainToolsPath, enrollPath, fullOrder, type Provider, startingOrder } from "@super-agent2/protocol";
+import { type AccessKeySet, brainToolsPath, fullOrder, type Provider, startingOrder } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
@@ -29,6 +29,7 @@ const { values } = parseArgs({
 
 const team = "page-dev";
 const audience = "d".repeat(64);
+const runnerAudience = "e".repeat(64);
 const ownerEmail = "owner@example.com";
 const port = Number(values.port);
 const dataDir = resolve(values.data);
@@ -97,21 +98,21 @@ async function ownerAssertion(): Promise<string> {
 
 async function serviceAssertion(clientId: string): Promise<string> {
   const seconds = Math.floor(Date.now() / 1000);
-  return new SignJWT({ iss: `https://${team}.cloudflareaccess.com`, aud: [audience], common_name: clientId, sub: "", type: "app", iat: seconds, exp: seconds + 600 })
+  return new SignJWT({ iss: `https://${team}.cloudflareaccess.com`, aud: [runnerAudience], common_name: clientId, sub: "", type: "app", iat: seconds, exp: seconds + 600 })
     .setProtectedHeader({ alg: "RS256", kid: "page-dev", typ: "JWT" })
     .sign(pair.privateKey);
 }
 
 function assertionFor(incoming: IncomingMessage): Promise<string | undefined> {
-  if (new URL(incoming.url ?? "/", "http://page-dev").pathname.startsWith(enrollPath)) {
-    return Promise.resolve(undefined);
+  if (!new URL(incoming.url ?? "/", "http://page-dev").pathname.startsWith("/runner/")) {
+    return ownerAssertion();
   }
   const clientId = incoming.headers["cf-access-client-id"];
   const clientSecret = incoming.headers["cf-access-client-secret"];
-  if (typeof clientId === "string" && clientId !== "" && typeof clientSecret === "string" && clientSecret !== "") {
+  if (typeof clientId === "string" && clientId !== "" && typeof clientSecret === "string" && clientSecret !== "" && (cloudflare?.admits(clientId, clientSecret) ?? true)) {
     return serviceAssertion(clientId);
   }
-  return ownerAssertion();
+  return Promise.resolve(undefined);
 }
 
 const replacedHeaders = new Set(["cf-access-jwt-assertion", "cf-access-client-id", "cf-access-client-secret"]);
@@ -138,6 +139,7 @@ const hub = await startHub({
   config: {
     accessTeam: team,
     accessAudience: audience,
+    accessRunnerAudience: runnerAudience,
     ownerEmail,
     dataDir: hubDir,
     port: 0,
@@ -336,7 +338,7 @@ process.stdout.write(
     `Brain:    ${brainKind}`,
     `Data:     ${dataDir}`,
     `Offline:  http://127.0.0.1:${port}/__harness/offline, back with /__harness/online`,
-    `Runners:  a request with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token, as Cloudflare would; add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
+    `Runners:  a request to /runner/ with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token for the runner application, as Cloudflare would (a token the fake Cloudflare deleted, or a wrong secret, gets no assertion); add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
     `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
     `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
     `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort>[&after=<ticket>] files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND, and verifying tickets are checked against GitHub every ten seconds`,
@@ -347,7 +349,7 @@ process.stdout.write(
     `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round), worker (fails once) or repair (one merged pull request, then red every round until stuck; 放弃 on its card opens a repair ticket that merges green to the end), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
     `Deploy:   http://127.0.0.1:${port}/__harness/deploy?repository=<owner/name> (with --forge fake) arranges a one-issue chain and, through the brain's tools, a task ticket that deploys it after the chain on the scripted machine studio, both with their defaults; one 开始 on the chain's card starts both, the chain merges green in the fake forge, and the scripted worker then deploys the final merge commit and reports it; POST a deployment file to /__harness/deployment?repository= to put it in every later scripted pull request instead`,
     `Version:  ${values.announce === undefined ? "none announced (--announce <commit> makes the hub announce it to runners and hand them its release from --source, through GitHub with --credentials environment)" : `${values.announce} of ${values.source}, announced to runners`}`,
-    `Machines: ${cloudflare === undefined ? "no Cloudflare credentials (--cloudflare none), so 添加机器 says so" : "添加机器 in 设置 makes Access service tokens in a fake Cloudflare in this process; /__harness/cloudflare?remove=fail makes revoking keep the token, ?remove=ok puts it back"}; ${enrollPath} reaches the hub with no assertion, as Cloudflare's Bypass rule would let it`,
+    `Machines: ${cloudflare === undefined ? "no Cloudflare credentials (--cloudflare none), so 添加机器 says so" : "添加机器 in 设置 makes Access service tokens in a fake Cloudflare in this process; /__harness/cloudflare?create=fail makes adding fail, ?remove=fail makes revoking keep the token, =ok puts either back"}; only /runner/ takes a service token, as the runner application's Service Auth policy would, and everything else is signed as the owner`,
     `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",

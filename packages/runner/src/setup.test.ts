@@ -107,6 +107,23 @@ describe("the setup", () => {
     }
   });
 
+  it("takes the secret and the runner token on the next lines, as the install script hands them over", async () => {
+    const settings = join(folder, "runner.env");
+    const input = answers(encodeRunnerSetup({ hub: "https://agent.example.com", name: "studio", accessClientId: "id.access" }), "0123abcd", token);
+    expect(await runSetup({ settingsFile: settings, ask: input.ask, say: () => undefined, platform: "linux", execute: () => undefined })).toBe(true);
+    expect(input.asked).toHaveLength(3);
+    expect(readSettingsFile(settings)).toEqual({
+      SUPERAGENT2_HUB: "https://agent.example.com",
+      MACHINE_NAME: "studio",
+      ACCESS_CLIENT_ID: "id.access",
+      ACCESS_CLIENT_SECRET: "0123abcd",
+      RUNNER_TOKEN: token,
+    });
+    const missing = answers(encodeRunnerSetup({ hub: "https://agent.example.com", name: "studio", accessClientId: "id.access" }), "0123abcd", "short");
+    expect(await runSetup({ settingsFile: join(folder, "other.env"), ask: missing.ask, say: () => undefined, platform: "linux", execute: () => undefined })).toBe(false);
+    expect(readSettingsFile(join(folder, "other.env"))).toBeUndefined();
+  });
+
   it("changes nothing for a line that is not the hub's", async () => {
     const settings = join(folder, "runner.env");
     expect(await runSetup({ settingsFile: settings, ask: answers("hello").ask, say: () => undefined, platform: "linux", execute: () => undefined })).toBe(false);

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cloudflareServiceTokens, cloudflareSettings } from "./cloudflare.js";
+import { cloudflareServiceTokens, cloudflareSettings, expiryOf, type ServiceToken } from "./cloudflare.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { runMachineCommand } from "./machine-commands.js";
 import { createMachineStore, MachineError, runnerTokenHash } from "./machines.js";
@@ -76,19 +76,27 @@ describe("the machine store", () => {
 });
 
 describe("creating an Access service token", () => {
-  it("posts the name to the account's service tokens with the API token", async () => {
+  it("asks for a token that does not expire, tagged for the runner application's policy, with the API token", async () => {
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     const fake: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ success: true, result: { id: "token-id", client_id: "id.access", client_secret: "secret" } }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, result: { id: "token-id", client_id: "id.access", client_secret: "secret", duration: "forever" } }), { status: 200 });
     };
     const tokens = cloudflareServiceTokens({ accountId: "account", apiToken: "api-token", fetch: fake });
-    expect(await tokens.create("superagent2-runner-pc")).toEqual({ id: "token-id", clientId: "id.access", clientSecret: "secret" });
+    expect(await tokens.create("superagent2-runner-pc")).toEqual({ id: "token-id", clientId: "id.access", clientSecret: "secret", expiresAt: null });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.cloudflare.com/client/v4/accounts/account/access/service_tokens");
     expect(calls[0]?.init?.method).toBe("POST");
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer api-token");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ name: "superagent2-runner-pc" });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ name: "superagent2-runner-pc", duration: "forever", tags: { superagent2: "runner" } });
+  });
+
+  it("keeps the expiry Cloudflare gives when the token does expire", () => {
+    expect(expiryOf("8760h", "2027-11-18T12:00:00Z")).toBe(Date.UTC(2027, 10, 18, 12));
+    expect(expiryOf("forever", "2027-11-18T12:00:00Z")).toBeNull();
+    expect(expiryOf(undefined, "0001-01-01T00:00:00Z")).toBeNull();
+    expect(expiryOf(undefined, "not a date")).toBeNull();
+    expect(expiryOf("8760h", null)).toBeNull();
   });
 
   it("reports Cloudflare's refusal without the token", async () => {
@@ -108,7 +116,7 @@ describe("creating an Access service token", () => {
 });
 
 describe("the machines command line", () => {
-  async function run(argv: string[], environment: Record<string, string> = {}, created = { id: "token-id", clientId: "made.access", clientSecret: "made-secret" }) {
+  async function run(argv: string[], environment: Record<string, string> = {}, created: ServiceToken = { id: "token-id", clientId: "made.access", clientSecret: "made-secret", expiresAt: null }) {
     const out: string[] = [];
     const err: string[] = [];
     const names: string[] = [];

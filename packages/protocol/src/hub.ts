@@ -34,8 +34,11 @@ export const Health = z.object({
 
 export type Health = z.infer<typeof Health>;
 
+export const refusalReasonLength = 500;
+
 export const Refusal = z.object({
-  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "cloudflare", "release", "too_large"]),
+  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "cloudflare", "cloudflare_refused", "release", "too_large"]),
+  reason: z.string().max(refusalReasonLength).optional(),
 });
 
 export const largestMessageBytes = 64 * 1024 * 1024;

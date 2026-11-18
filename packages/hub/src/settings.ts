@@ -18,7 +18,7 @@ import type { ConversationService } from "./conversations.js";
 import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import type { StartDefaults } from "./defaults.js";
-import type { MachineAdmin } from "./enrollment.js";
+import type { MachineAdmin } from "./machine-admin.js";
 import type { RepositoryAccounts } from "./repositories.js";
 import type { Runners } from "./runners.js";
 
@@ -93,7 +93,6 @@ export function createSettings(options: SettingsOptions): Settings {
     const subscriptions = options.defaults.subscriptions();
     return {
       machines: options.runners.statuses(),
-      enrollments: options.admin.pending(),
       canAdd: { ...options.admin.canAdd },
       repositories: options.repositories.list(),
       accounts: gitHubAccounts.map((account) => ({ account, configured: options.credentials(account).ok })),

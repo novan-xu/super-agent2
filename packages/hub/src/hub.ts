@@ -35,7 +35,7 @@ import { createVerification, type MergedPart, type Ticker, type VerificationServ
 import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
 import { createDecisionReviews, type DecisionReviews } from "./reviews.js";
 import type { AccessServiceTokens } from "./cloudflare.js";
-import { createMachineAdmin, type MachineAdmin } from "./enrollment.js";
+import { createMachineAdmin, type MachineAdmin } from "./machine-admin.js";
 import { createRepositoryAccounts, type RepositoryAccounts } from "./repositories.js";
 import { createSettings, type Settings } from "./settings.js";
 
@@ -61,6 +61,8 @@ export interface HubOptions {
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
 }
+
+const accessCheckMilliseconds = 60 * 60 * 1000;
 
 export function defaultTargets(environment: Environment): Target[] {
   return [localTarget({ environment })];
@@ -99,6 +101,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const environment = options.environment ?? process.env;
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
   const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
+  const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
@@ -136,8 +139,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const repositories = createRepositoryAccounts(database, clock, config.sourceRepository);
   const accountOf = (repository: string) => repositories.accountOf(repository);
   let settingsChanged = () => undefined as void;
+  let tellOwner: (notice: string, prompt: string) => void = () => undefined;
   const admin = createMachineAdmin({
-    database,
     clock,
     machines,
     revoke: (name) => {
@@ -147,6 +150,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     version: config.version !== undefined && config.sourceRepository !== undefined ? config.version : undefined,
     report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
     changed: () => settingsChanged(),
+    tell: (notice, prompt) => tellOwner(notice, prompt),
   });
   const files = createTicketFiles(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
@@ -176,6 +180,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     });
     conversations = createConversationService({ database, clock, commands, memory: memories, order: () => storedOrder() });
     const told = conversations;
+    tellOwner = (notice, prompt) => {
+      told.tell(null, notice, prompt);
+    };
     if (options.ticketWork === undefined) {
       work = createWorkService({
         database,
@@ -301,6 +308,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       database,
       commands,
       verify,
+      verifyRunner,
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,
@@ -367,6 +375,17 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     chains.resume();
     verification.resume();
     taskTickets.resume();
+    const warn = () => {
+      try {
+        admin.warnExpiring();
+      } catch (error) {
+        (options.report ?? ((line: string) => process.stderr.write(`${line}
+`)))(`Checking the machines' access tokens failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    warn();
+    const accessCheck = setInterval(warn, accessCheckMilliseconds);
+    accessCheck.unref();
     return {
       database,
       commands,
@@ -391,6 +410,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       attachments,
       address,
       close: async () => {
+        clearInterval(accessCheck);
         settings.close();
         try {
           runners.close();

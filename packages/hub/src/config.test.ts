@@ -37,6 +37,14 @@ describe("loadConfig", () => {
     });
   });
 
+  it("reads the runner application's own audience, which must differ from the host's", () => {
+    const runner = "fedcba9876543210".repeat(4);
+    const result = loadConfig({ ...valid, ACCESS_RUNNER_AUD: runner });
+    expect(result.ok && result.config.accessRunnerAudience).toBe(runner);
+    expect(problemsFor({ ...valid, ACCESS_RUNNER_AUD: "runner" })[0]).toMatch(/^ACCESS_RUNNER_AUD must be the runner application's audience tag/);
+    expect(problemsFor({ ...valid, ACCESS_RUNNER_AUD: valid.ACCESS_AUD })[0]).toMatch(/^ACCESS_RUNNER_AUD must be the audience tag of the separate application/);
+  });
+
   it("serves the page built next to the hub unless told otherwise", () => {
     expect(defaultPageDir.replaceAll("\\", "/")).toMatch(/\/packages\/web\/dist\/?$/);
     const result = loadConfig({ ...valid, HUB_PAGE_DIR: "/srv/page" });

@@ -674,6 +674,17 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 28,
+    sql: `
+      DROP TABLE install_codes;
+      ALTER TABLE machines ADD COLUMN access_expires_at INTEGER;
+      ALTER TABLE machines ADD COLUMN access_warned_at INTEGER;
+      ALTER TABLE machines ADD COLUMN system TEXT;
+      ALTER TABLE machines ADD COLUMN hub TEXT;
+      UPDATE machines SET access_expires_at = created_at + 31536000000 WHERE access_token_id IS NOT NULL;
+    `,
+  },
 ];
 
 function sqlText(value: string): string {

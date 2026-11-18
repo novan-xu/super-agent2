@@ -3,6 +3,7 @@ import { encodeRunnerSetup, MachineName } from "@super-agent2/protocol";
 import { type Clock, systemClock } from "./clock.js";
 import { type AccessServiceTokens, cloudflareServiceTokens, cloudflareSettings } from "./cloudflare.js";
 import { openDatabase } from "./database.js";
+import { serviceTokenName } from "./machine-admin.js";
 import { createMachineStore, MachineError, type Machine } from "./machines.js";
 
 export interface MachineCommandOptions {
@@ -101,6 +102,7 @@ export async function runMachineCommand(options: MachineCommandOptions): Promise
       let accessClientId: string;
       let accessClientSecret: string | undefined;
       let accessTokenId: string | undefined;
+      let accessExpiresAt: number | null = null;
       if (reused === undefined) {
         let tokens = options.serviceTokens;
         if (tokens === undefined) {
@@ -111,10 +113,11 @@ export async function runMachineCommand(options: MachineCommandOptions): Promise
           }
           tokens = cloudflareServiceTokens(settings);
         }
-        const created = await tokens.create(`superagent2-runner-${machineName.data}`);
+        const created = await tokens.create(serviceTokenName(machineName.data));
         accessClientId = created.clientId;
         accessClientSecret = created.clientSecret;
         accessTokenId = created.id;
+        accessExpiresAt = created.expiresAt;
       } else {
         accessClientId = reused;
       }
@@ -122,6 +125,7 @@ export async function runMachineCommand(options: MachineCommandOptions): Promise
         name: machineName.data,
         accessClientId,
         ...(accessTokenId === undefined ? {} : { accessTokenId }),
+        accessExpiresAt,
       });
       out(`Added the machine ${added.machine.name}, with the Access client ${accessClientId}.`);
       out(`On ${added.machine.name}, run the runner's setup and paste this line when it asks. It is shown only this once:`);

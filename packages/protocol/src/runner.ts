@@ -6,6 +6,7 @@ import { AttachmentPart, FetchAttachment, FetchFile, FilePart, MessageWork, Runn
 
 export const runnerLinkPath = "/runner/link";
 export const runnerReleasePath = "/runner/release";
+export const runnerInstallPath = "/runner/install";
 export const releaseVersionHeader = "x-superagent2-version";
 
 export const Revision = z.string().regex(/^[0-9a-f]{40}$/);
@@ -20,6 +21,12 @@ export const MachineName = TargetName.max(63).refine((name) => !reservedTargetNa
   error: "is reserved for a target of the hub",
 });
 export type MachineName = z.infer<typeof MachineName>;
+
+export const machineSystems = ["windows", "macos"] as const;
+export const MachineSystem = z.enum(machineSystems);
+export type MachineSystem = z.infer<typeof MachineSystem>;
+
+export const machineAccessWarning = 30 * 24 * 60 * 60 * 1000;
 
 export const programIds = ["codex", "claude", "dsh", "antigravity"] as const;
 export const ProgramId = z.enum(programIds);
@@ -98,7 +105,7 @@ export const RunnerSetup = z.object({
   name: MachineName,
   accessClientId: z.string().min(1),
   accessClientSecret: z.string().min(1).optional(),
-  runnerToken: z.string().min(43),
+  runnerToken: z.string().min(43).optional(),
 });
 export type RunnerSetup = z.infer<typeof RunnerSetup>;
 
@@ -141,6 +148,8 @@ export const MachineStatus = z.object({
   createdAt: z.number().int(),
   lastSeenAt: z.number().int().nullable(),
   report: MachineReport.nullable(),
+  system: MachineSystem.optional(),
+  accessExpiresAt: z.number().int().optional(),
 });
 export type MachineStatus = z.infer<typeof MachineStatus>;
 
