@@ -2,7 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { describe, expect, it } from "vitest";
 import { type FormId, findIrreversible, irreversibleForms, lockSettings } from "./irreversible.js";
 
-const settings = lockSettings({ projectFolders: ["/srv/projects", "C:\\work", "~/code"], credentialPaths: ["/srv/vault/**", "**/.env.deploy"] });
+const settings = lockSettings({ projectFolders: ["/srv/projects", "C:\\work", "~/code"] });
 
 const project = "/srv/projects/app";
 
@@ -112,47 +112,10 @@ const held: readonly Example[] = [
   ["npx prisma migrate reset --force", "data-deletion"],
   ["bin/rails db:drop", "data-deletion"],
   ["kubectl delete pvc data", "data-deletion"],
-  ["rm secrets/github.env", "credential-change"],
-  ["rm -f /opt/app/.env", "credential-change"],
-  ["echo DEPLOY_TOKEN=x > /srv/projects/app/.env.deploy", "credential-change"],
-  ["rm /srv/projects/app/.env.deploy", "credential-change"],
-  ["rm -f /tmp/backup/hub.env", "credential-change"],
-  ["echo TOKEN=abc > secrets/hub.env", "credential-change"],
-  ["echo TOKEN=abc >> ~/.superagent/runner.env", "credential-change"],
-  ["printf 'x' 1> /opt/app/.env.production", "credential-change"],
-  ["cp new.env /srv/secrets/hub.env", "credential-change"],
-  ["cp hub.env /srv/secrets/", "credential-change"],
-  ["mv secrets/hub.env /tmp/", "credential-change"],
-  ["cat new | tee secrets/hub.env > /dev/null", "credential-change"],
-  ["sed -i 's/old/new/' secrets/hub.env", "credential-change"],
-  ["sed -i.bak -e 's/old/new/' .env", "credential-change", "/opt/app"],
-  ["perl -pi -e 's/a/b/' ~/.netrc", "credential-change"],
-  ["truncate -s 0 ~/.ssh/id_ed25519", "credential-change"],
-  ["ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ''", "credential-change"],
-  ["ssh-keygen -t ed25519 -N ''", "credential-change"],
-  ["openssl genrsa -out /srv/certs/server.key 4096", "credential-change"],
-  ["echo x > /srv/vault/token", "credential-change"],
-  ["scp hub.env nas:/volume1/superagent/secrets/hub.env", "credential-change"],
-  ["Set-Content -Path D:\\app\\.env -Value 'TOKEN=x'", "credential-change", windowsProject],
-  ["Remove-Item ~\\.ssh\\id_rsa", "credential-change", windowsProject],
-  ["'x' | Out-File -FilePath secrets\\hub.env", "credential-change", windowsProject],
-  ["Copy-Item new.env -Destination C:\\work\\app\\secrets\\hub.env", "credential-change", windowsProject],
-  ["Rename-Item -Path D:\\app\\.env -NewName old.txt", "credential-change", windowsProject],
-  ["[System.IO.File]::WriteAllText('D:\\app\\.env', 'x')", "credential-change", windowsProject],
-  ["Remove-Item Cert:\\CurrentUser\\My\\ABC123", "credential-change", windowsProject],
-  ["gh secret delete TOKEN", "credential-change"],
-  ["gh secret set TOKEN --body x", "credential-change"],
-  ["gh auth logout --hostname github.com", "credential-change"],
-  ["gh ssh-key delete 123 --yes", "credential-change"],
-  ["gh api -X DELETE repos/novan-xu/x/actions/secrets/TOKEN", "credential-change"],
-  ["gh api -X PUT repos/novan-xu/x/actions/secrets/TOKEN -f encrypted_value=x -f key_id=1", "credential-change"],
-  ["curl -X DELETE https://api.cloudflare.com/client/v4/accounts/abc/access/service_tokens/def", "credential-change"],
-  ["curl -X PUT https://api.cloudflare.com/client/v4/user/tokens/abc/value", "credential-change"],
-  ["curl -X DELETE https://api.cloudflare.com/client/v4/accounts/abc/cfd_tunnel/def", "credential-change"],
-  ["docker secret rm hub-token", "credential-change"],
-  ["npx wrangler secret delete API_KEY", "credential-change"],
-  ["cloudflared tunnel delete superagent", "credential-change"],
-  ["gpg --batch --yes --delete-secret-keys ABC", "credential-change"],
+  ["rm -f /opt/app/.env", "file-deletion"],
+  ["rm -f ~/.ssh/id_ed25519", "file-deletion"],
+  ["Remove-Item ~\\.ssh\\id_rsa", "file-deletion", windowsProject],
+  ["Remove-Item Cert:\\CurrentUser\\My\\ABC123", "file-deletion", windowsProject],
   ["rm -rf /volume1/docker/superagent", "file-deletion"],
   ["rm -rf /", "file-deletion"],
   ["sudo rm -rf --no-preserve-root /", "file-deletion"],
@@ -224,8 +187,6 @@ const held: readonly Example[] = [
   ["git push\u0085-f\u0085origin main", "default-branch-rewrite"],
   ["docker\u202fvolume\u202frm superagent-data", "data-deletion"],
   ["docker compose down\u2028-v", "data-deletion"],
-  ["gh secret\u205fdelete TOKEN", "credential-change"],
-  ["gh\u1680auth\u1680logout", "credential-change"],
   ["Remove-Item\u00a0-Recurse\u00a0-Force\u00a0C:\\data", "file-deletion", windowsProject],
   ["rm\u2029-rf\u000b/data", "file-deletion"],
   ["gh repo edit \u2013\u2013visibility public", "repository-publication"],
@@ -236,7 +197,6 @@ const held: readonly Example[] = [
   ["docker rm \u2014v db", "data-deletion"],
   ["docker system prune \u2013\u2013volumes -f", "data-deletion"],
   ["pg_restore \u2013c -d app dump.sql", "data-deletion"],
-  ["gpg \u2013\u2013delete-secret-keys ABC", "credential-change"],
   ["pwsh \u2013NoProfile \u2013Command \"gh repo delete novan-xu/x --yes\"", "repository-deletion"],
   ["Remove-Item \u2013Recurse \u2014Force C:\\data", "file-deletion", windowsProject],
   ["& \u201cgh\u201d repo delete novan-xu/x --yes", "repository-deletion"],
@@ -246,8 +206,6 @@ const held: readonly Example[] = [
   ["git push origin \u201c+main\u201d", "default-branch-rewrite"],
   ["git \u201apush\u2019 \u2018--force\u2019", "default-branch-rewrite"],
   ["docker \u201cvolume\u201d \u201crm\u201d x", "data-deletion"],
-  ["gh secret \u2019delete\u2019 TOKEN", "credential-change"],
-  ["Set-Content -Path \u2018D:\\app\\.env\u2019 -Value \u2018TOKEN=x\u2019", "credential-change", windowsProject],
   ["Remove-Item -Recurse \u201eC:\\data\u201c", "file-deletion", windowsProject],
   ["Remove-Item -Recurse -Path @\u2018\nC:\\data\n\u2019@", "file-deletion", windowsProject],
   ["cmd /c \"rd\u00a0/s\u00a0/q\u00a0D:\\data\"", "file-deletion", windowsProject],
@@ -275,7 +233,6 @@ const held: readonly Example[] = [
   ["git push origin \uff0bmain", "default-branch-rewrite"],
   ["d\u043ecker volume rm x", "data-deletion"],
   ["docker v\u03bflume rm x", "data-deletion"],
-  ["gh s\u0435cret delete TOKEN", "credential-change"],
   ["bash -c 'gh r\u0435po delete novan-xu/x'", "repository-deletion"],
   ["rm -rf \u2215data", "file-deletion"],
   ["docker compose down \u2010v", "data-deletion"],
@@ -424,6 +381,43 @@ const ordinary: readonly (readonly [command: string, cwd?: string | null])[] = [
   ["Remove-Item -Recurse -Force C:\\work\\app\\输出", windowsProject],
   ["Write-Output “完成” ‘下一步’", windowsProject],
   ["git commit -m \"🔒 lock: \u200bzero width in a message\""],
+  ["rm secrets/github.env"],
+  ["rm /srv/projects/app/.env.deploy"],
+  ["rm -f /tmp/backup/hub.env"],
+  ["echo DEPLOY_TOKEN=x > /srv/projects/app/.env.deploy"],
+  ["echo TOKEN=abc > secrets/hub.env"],
+  ["echo TOKEN=abc >> ~/.superagent/runner.env"],
+  ["printf 'x' 1> /opt/app/.env.production"],
+  ["cp new.env /srv/secrets/hub.env"],
+  ["cp hub.env /srv/secrets/"],
+  ["mv secrets/hub.env /tmp/"],
+  ["cat new | tee secrets/hub.env > /dev/null"],
+  ["sed -i 's/old/new/' secrets/hub.env"],
+  ["sed -i.bak -e 's/old/new/' .env", "/opt/app"],
+  ["perl -pi -e 's/a/b/' ~/.netrc"],
+  ["truncate -s 0 ~/.ssh/id_ed25519"],
+  ["ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ''"],
+  ["ssh-keygen -t ed25519 -N ''"],
+  ["openssl genrsa -out /srv/certs/server.key 4096"],
+  ["scp hub.env nas:/volume1/superagent/secrets/hub.env"],
+  ["Set-Content -Path D:\\app\\.env -Value 'TOKEN=x'", windowsProject],
+  ["'x' | Out-File -FilePath secrets\\hub.env", windowsProject],
+  ["Copy-Item new.env -Destination C:\\work\\app\\secrets\\hub.env", windowsProject],
+  ["Rename-Item -Path D:\\app\\.env -NewName old.txt", windowsProject],
+  ["[System.IO.File]::WriteAllText('D:\\app\\.env', 'x')", windowsProject],
+  ["gh secret delete TOKEN"],
+  ["gh secret set TOKEN --body x"],
+  ["gh auth logout --hostname github.com"],
+  ["gh ssh-key delete 123 --yes"],
+  ["gh api -X DELETE repos/novan-xu/x/actions/secrets/TOKEN"],
+  ["gh api -X PUT repos/novan-xu/x/actions/secrets/TOKEN -f encrypted_value=x -f key_id=1"],
+  ["curl -X DELETE https://api.cloudflare.com/client/v4/accounts/abc/access/service_tokens/def"],
+  ["curl -X PUT https://api.cloudflare.com/client/v4/user/tokens/abc/value"],
+  ["curl -X DELETE https://api.cloudflare.com/client/v4/accounts/abc/cfd_tunnel/def"],
+  ["docker secret rm hub-token"],
+  ["npx wrangler secret delete API_KEY"],
+  ["cloudflared tunnel delete superagent"],
+  ["gpg --batch --yes --delete-secret-keys ABC"],
 ];
 
 describe("the list", () => {
@@ -433,7 +427,6 @@ describe("the list", () => {
       "repository-publication",
       "default-branch-rewrite",
       "data-deletion",
-      "credential-change",
       "file-deletion",
     ]);
   });
@@ -471,6 +464,18 @@ describe("any text", () => {
   });
 });
 
+describe("credentials", () => {
+  it("are judged like any other file, and nothing else about them is held", () => {
+    const empty = lockSettings({ projectFolders: [] });
+    expect(findIrreversible({ command: "rm -f /opt/app/.env", cwd: project }, settings)?.form).toBe("file-deletion");
+    expect(findIrreversible({ command: "rm -f /srv/projects/app/.env", cwd: project }, settings)).toBeUndefined();
+    expect(findIrreversible({ command: "rm -f /srv/projects/app/.env", cwd: project }, empty)?.form).toBe("file-deletion");
+    expect(findIrreversible({ command: "rm -f /tmp/backup/hub.env", cwd: project }, empty)).toBeUndefined();
+    expect(findIrreversible({ command: "echo TOKEN=abc > /opt/app/.env", cwd: project }, empty)).toBeUndefined();
+    expect(findIrreversible({ command: "gh secret delete TOKEN", cwd: project }, empty)).toBeUndefined();
+  });
+});
+
 describe("evidence", () => {
   it("says what was matched", () => {
     const match = findIrreversible({ command: "cd /srv/projects/app && gh repo delete novan-xu/x --yes", cwd: null }, settings);
@@ -480,13 +485,11 @@ describe("evidence", () => {
   });
 });
 
-describe("project folders and credential paths", () => {
+describe("project folders", () => {
   it("come from configuration", () => {
-    const empty = lockSettings({ projectFolders: [], credentialPaths: [] });
+    const empty = lockSettings({ projectFolders: [] });
     expect(findIrreversible({ command: "rm -rf node_modules", cwd: project }, empty)?.form).toBe("file-deletion");
     expect(findIrreversible({ command: "rm -rf node_modules", cwd: project }, settings)).toBeUndefined();
-    expect(findIrreversible({ command: "echo x > /srv/vault/token", cwd: project }, empty)).toBeUndefined();
-    expect(findIrreversible({ command: "echo x > /srv/vault/token", cwd: project }, settings)?.form).toBe("credential-change");
   });
 
   it("compare Linux paths by case and Windows paths without it", () => {

@@ -32,10 +32,7 @@ describe("Super-agent2's own deployment file", () => {
     if (!reading.ok) {
       throw new Error(reading.reason);
     }
-    const settings = lockSettings({
-      projectFolders: ["/share/Container/superagent2/projects"],
-      credentialPaths: ["/share/Container/superagent2/secrets", "/share/Container/superagent2/secrets/**", "/var/lib/superagent2/link/**", "/run/superagent2/ssh/**"],
-    });
+    const settings = lockSettings({ projectFolders: ["/share/Container/superagent2/projects"] });
     for (const command of [reading.file.deploy, reading.file.health.command, reading.file.rollback]) {
       expect(findIrreversible({ command, cwd: null }, settings)).toBeUndefined();
     }
