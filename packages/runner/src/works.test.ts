@@ -262,10 +262,10 @@ function ended(ticket: number, attempt = 1): Promise<WorkEvent> {
     });
 }
 
-function handBack(ticket: number, pullRequest: number, closes: readonly number[], branch = `sa2/ticket-${ticket}-abcd`, mark = ""): void {
+function handBack(ticket: number, pullRequest: number, closes: readonly number[], branch = `sa2/ticket-${ticket}-abcd`, mark = "", extra: Readonly<Record<string, unknown>> = {}): void {
   const paths = workPaths(home, repository, ticket);
   mkdirSync(paths.folder, { recursive: true });
-  writeFileSync(paths.handback, mark + JSON.stringify({ pullRequest, summary: { en: "Did both issues", zh: "两个问题都做完了" } }));
+  writeFileSync(paths.handback, mark + JSON.stringify({ pullRequest, summary: { en: "Did both issues", zh: "两个问题都做完了" }, ...extra }));
   pulls.set(pullRequest, { number: pullRequest, url: `https://github.com/${repository}/pull/${pullRequest}`, state: "OPEN", head: branch, closes });
 }
 
@@ -326,6 +326,24 @@ describe("a worker on the runner", () => {
     handBack(6, 41, [11, 12]);
     handle.emit({ type: "turn.finished", outcome: "completed" });
     expect(await ended(6)).toMatchObject({ kind: "finished", pullRequest: 41, closes: [11, 12] });
+  });
+
+  it("hands in the decisions the worker wrote with its pull request, and asks again for one that is not complete", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(36) });
+    let handle = await programs.prompted(1);
+    const decision = {
+      chosen: { en: "Parsed dates in the local time zone", zh: "按本地时区解析日期" },
+      why: { en: "The notes are written by one person in one place", zh: "笔记由一个人在同一个地方写" },
+      otherOptions: { en: "UTC everywhere, which shifts evening notes to the next day", zh: "统一用 UTC，晚上的笔记会跑到第二天" },
+    };
+    handBack(36, 46, [11, 12], undefined, "", { decisions: [{ chosen: decision.chosen, why: decision.why }] });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    handle = await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain('may list "decisions", each with "chosen", "why" and "otherOptions"');
+    handBack(36, 46, [11, 12], undefined, "", { decisions: [decision] });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(36)).toMatchObject({ kind: "finished", pullRequest: 46, decisions: [decision] });
   });
 
   it("hands in a pull request for part of the chain, and continues the next piece in the same folder on a new branch", async () => {

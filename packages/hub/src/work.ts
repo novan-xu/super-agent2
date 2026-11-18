@@ -40,7 +40,7 @@ import type { StartDefaults } from "./defaults.js";
 import { accountFor } from "./filing.js";
 import { createTicketFiles, type TicketFiles } from "./files.js";
 import type { FailureReport } from "./failure-loop.js";
-import { clip, tail } from "./reports.js";
+import { clip, decisionLine, decisionReport, tail } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { AttachmentStore } from "./attachments.js";
 import { mergedCommitFor, short } from "./task-tickets.js";
@@ -640,6 +640,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         files.length === 0 ? "Files: none." : `Files: ${files.map((file) => `${file.name} (${file.size} bytes)`).join(", ")}.`,
         event.text === null ? "There is no text beyond the report." : `The delivered text:\n${clip(event.text, 20_000)}`,
         "Tell the owner in Chinese, in a line or two, that it is done, and mention anything the worker flagged. If the owner wants changes, open a new task ticket with this result as its material.",
+        ...decisionReport(ticket),
       ].join("\n"),
     });
   };
@@ -804,6 +805,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           const ticket = writes.get(attempt.ticket_id);
           if (current && ticket !== undefined && ticket.form === "code") {
             writes.setPullRequest(ticket.id, event.pullRequest, event.report, { url: event.url, closes: event.closes ?? [] });
+            writes.recordDecisions(ticket.id, "worker", event.decisions ?? [], { attempt: attempt.attempt, pullRequest: event.pullRequest });
             if (ticket.state === "working") {
               writes.move(ticket.id, "verifying");
             }
@@ -814,6 +816,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         case "delivered": {
           const ticket = writes.get(attempt.ticket_id);
           const accepted = current && ticket !== undefined && ticket.form === "task" && ticket.state === "working";
+          if (current && ticket !== undefined && ticket.form === "task") {
+            writes.recordDecisions(ticket.id, "worker", event.decisions ?? [], { attempt: attempt.attempt });
+          }
           if (accepted && event.commit !== undefined && ticket.commit === null) {
             writes.setCommit(ticket.id, event.commit);
           }
@@ -1040,6 +1045,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     } else {
       lines.push("The task and its material are given to you again in full. What the earlier worker already produced is in the folders listed below by the machine you run on; check it before you redo anything.");
     }
+    if (ticket.decisions.length > 0) {
+      lines.push(
+        `Decisions already recorded for this ticket (${ticket.decisions.length}), which the hub keeps: do not hand them in again, and do not reverse them without a reason. List in your hand-in only decisions that are new.`,
+        ...ticket.decisions.map((decision, index) => `${index + 1}. ${decisionLine(decision, false)}`),
+      );
+    }
+    lines.push("Decisions the earlier worker made but had not handed in are not recorded anywhere but its output below: hand in those that still stand, with your next hand-in.");
     if (given.length > 0) {
       lines.push("Messages the earlier worker was given, in order:");
       for (const message of given) {

@@ -8,6 +8,7 @@ import { PushController } from "./hub/push.js";
 import { browserSocket } from "./hub/socket.js";
 import { destinationOfMessage } from "./live/address.js";
 import { initialPage } from "./live/page.js";
+import { reviewCount } from "./live/tickets.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
@@ -223,6 +224,7 @@ export function App() {
       stop: (ticket) => controller.stopTicket(ticket),
       reassign: (ticket, change) => controller.reassignTicket(ticket, change),
       message: (ticket, message, attachments) => controller.messageTicket(ticket, message, attachments),
+      review: (ticket, decision, review) => controller.reviewDecision(ticket, decision, review),
       machines: () => controller.machines(),
     }),
     [controller],
@@ -275,6 +277,7 @@ export function App() {
       toast={toast}
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
+      reviews={reviewCount(page.tickets)}
       actions={
         inConversation ? (
           <a className="btn btn-sm" href={pagePath(newConversation)} onClick={(event) => followLink(event, () => navigate(newConversation))}>

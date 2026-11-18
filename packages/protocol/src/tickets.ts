@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ConversationId } from "./conversations.js";
+import { TicketDecision, TicketReviewCount } from "./decisions.js";
 import { GeneratedText } from "./generated.js";
 import { ProgramId } from "./runner.js";
 import { TicketRound, TicketStuck } from "./rounds.js";
@@ -210,6 +211,7 @@ export const Ticket = z.object({
   branch: z.string().nullable(),
   pullRequest: IssueNumber.nullable(),
   pullRequests: z.array(TicketPullRequest),
+  decisions: z.array(TicketDecision).default([]),
   report: GeneratedText.nullable(),
   work: WorkStatus.nullable(),
   verification: TicketVerification.nullable(),
@@ -282,6 +284,7 @@ export type TicketDetail = z.infer<typeof TicketDetail>;
 export const TicketsUpdate = z.object({
   type: z.literal("tickets"),
   tickets: z.array(Ticket),
+  reviews: z.array(TicketReviewCount).default([]),
 });
 export type TicketsUpdate = z.infer<typeof TicketsUpdate>;
 

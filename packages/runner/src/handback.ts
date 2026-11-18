@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { type GeneratedText, Handback } from "@super-agent2/protocol";
+import { type Decision, type GeneratedText, Handback } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { ProcessRunner } from "./git.js";
 
@@ -46,7 +46,7 @@ export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequest
 }
 
 export type HandbackOutcome =
-  | { readonly ok: true; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText }
+  | { readonly ok: true; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
   | { readonly ok: false; readonly problem: string };
 
 export interface HandbackCheck {
@@ -85,7 +85,7 @@ export async function checkHandback(check: HandbackCheck): Promise<HandbackOutco
   if (!parsed.success) {
     return {
       ok: false,
-      problem: `The hand-back file ${check.path} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "pullRequest" (a number) and "summary" with "en" in English and "zh" in Simplified Chinese.`,
+      problem: `The hand-back file ${check.path} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "pullRequest" (a number) and "summary" with "en" in English and "zh" in Simplified Chinese, and may list "decisions", each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh".`,
     };
   }
   const handback = parsed.data;
@@ -106,5 +106,5 @@ export async function checkHandback(check: HandbackCheck): Promise<HandbackOutco
       problem: `Pull request #${handback.pullRequest} closes none of the open issues of the chain (${listed(open)}). Edit its body so that it has a line "Closes #<number>" for each open issue it resolves (gh pr edit ${handback.pullRequest} --body-file <file>), then write the hand-back file again.`,
     };
   }
-  return { ok: true, pullRequest: state.number, url: state.url, closes: closing, report: handback.summary };
+  return { ok: true, pullRequest: state.number, url: state.url, closes: closing, report: handback.summary, decisions: handback.decisions };
 }

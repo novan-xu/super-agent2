@@ -186,7 +186,14 @@ describe("a worker whose program becomes unavailable", () => {
     const ticket = working({ issues: [21, 22] });
     work.begin(ticket);
     started("pc", ticket.id, 1);
-    emit("pc", ticket.id, 1, { kind: "finished", pullRequest: 7, url: `https://github.com/${repository}/pull/7`, closes: [21], report: { en: "First", zh: "第一个" } });
+    emit("pc", ticket.id, 1, {
+      kind: "finished",
+      pullRequest: 7,
+      url: `https://github.com/${repository}/pull/7`,
+      closes: [21],
+      report: { en: "First", zh: "第一个" },
+      decisions: [{ chosen: { en: "Used a plain loop", zh: "用了普通循环" }, why: { en: "It is the simplest", zh: "最简单" }, otherOptions: { en: "A recursive helper", zh: "递归函数" } }],
+    });
     tickets.change((writes) => writes.pullRequestMerged(ticket.id, { number: 7, closes: [21], mergeCommit: "c0ffee", deployment: null }));
     expect(work.onward(ticket.id, { pullRequest: 7, mergeCommit: "c0ffee", closes: [21], base: "main" })).toMatchObject({ ok: true });
     started("pc", ticket.id, 2);
@@ -215,6 +222,9 @@ describe("a worker whose program becomes unavailable", () => {
     expect(note).toContain("the owner: Use the new endpoint");
     expect(note).toContain("Working on issue 22 with the new endpoint");
     expect(note).toContain("You are Codex");
+    expect(note).toContain("Decisions already recorded for this ticket (1)");
+    expect(note).toContain("Chosen: Used a plain loop");
+    expect(note).toContain("do not hand them in again");
 
     expect(switches(ticket.id)).toEqual([
       { ticket: ticket.id, seq: 1, kind: "switched", at: clock.now(), from: "claude", to: "codex", machine: "pc", model: "gpt-6.1-sol", effort: "high", reason: "You've hit your limit", until: null, owner: false, attempt: 3 },

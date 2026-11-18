@@ -11,6 +11,23 @@ export interface FileFinding extends Finding {
 export interface RepositoryReport {
   checked: number;
   findings: FileFinding[];
+  conflicts: FileFinding[];
+}
+
+export const conflictMessage = "merge conflict marker";
+
+export function checkConflicts(text: string): Finding[] {
+  if (text.includes("\0")) {
+    return [];
+  }
+  const found: Finding[] = [];
+  const lines = text.split(/\r\n|\n|\r/);
+  for (const [index, line] of lines.entries()) {
+    if (line.startsWith("<<<<<<<") || line.startsWith(">>>>>>>")) {
+      found.push({ line: index + 1, column: 1, message: conflictMessage });
+    }
+  }
+  return found;
 }
 
 export function listFiles(root: string): string[] {
@@ -37,18 +54,26 @@ export function checkText(path: string, text: string): Finding[] {
 
 export function checkRepository(root: string): RepositoryReport {
   const findings: FileFinding[] = [];
+  const conflicts: FileFinding[] = [];
   let checked = 0;
   for (const path of listFiles(root)) {
     const absolute = join(root, path);
-    if (languageOf(path) === undefined || !existsSync(absolute) || !statSync(absolute).isFile()) {
+    if (!existsSync(absolute) || !statSync(absolute).isFile()) {
+      continue;
+    }
+    const text = readFileSync(absolute, "utf8");
+    for (const finding of checkConflicts(text)) {
+      conflicts.push({ path, ...finding });
+    }
+    if (languageOf(path) === undefined) {
       continue;
     }
     checked += 1;
-    for (const finding of checkText(path, readFileSync(absolute, "utf8"))) {
+    for (const finding of checkText(path, text)) {
       findings.push({ path, ...finding });
     }
   }
-  return { checked, findings };
+  return { checked, findings, conflicts };
 }
 
 export function formatFinding(finding: FileFinding): string {

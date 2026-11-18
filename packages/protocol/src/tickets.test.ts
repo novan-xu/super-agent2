@@ -54,6 +54,7 @@ const ticket = {
   branch: null,
   pullRequest: null,
   pullRequests: [],
+  decisions: [],
   round: 0,
   freeRetry: false,
   stuck: null,

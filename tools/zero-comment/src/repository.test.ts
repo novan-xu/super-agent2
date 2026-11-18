@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fixtures } from "./fixtures.js";
 import { run } from "./report.js";
-import { checkRepository, listFiles } from "./repository.js";
+import { checkConflicts, checkRepository, listFiles } from "./repository.js";
 
 let root = "";
 
@@ -71,6 +71,40 @@ describe("checkRepository", () => {
     expect(paths.has("ignored/source.ts")).toBe(false);
     expect(paths.has("notes.txt")).toBe(false);
     expect(report.checked).toBe(fixtures.length * 2 + 1);
+  });
+});
+
+const opening = "<".repeat(7);
+const closing = ">".repeat(7);
+const middle = "=".repeat(7);
+
+describe("leftover merge conflict markers", () => {
+  it("finds a marker at the start of a line in any text, with its line", () => {
+    const text = ["const a = 1;", `${opening} HEAD`, "const b = 2;", middle, "const b = 3;", `${closing} origin/main`, ""].join("\n");
+    expect(checkConflicts(text)).toEqual([
+      { line: 2, column: 1, message: "merge conflict marker" },
+      { line: 6, column: 1, message: "merge conflict marker" },
+    ]);
+    expect(checkConflicts(`${opening}\r\nx\r\n${closing}`).map((finding) => finding.line)).toEqual([1, 3]);
+  });
+
+  it("leaves alone a marker that is not at the start of a line, a rule line of equal signs, and binary data", () => {
+    expect(checkConflicts(`  ${opening} indented\nvalue ${closing}\nTitle\n${middle}\n`)).toEqual([]);
+    expect(checkConflicts(`${opening}\0binary`)).toEqual([]);
+  });
+
+  it("fails a repository whose file of a language not checked for comments holds one, and names it", () => {
+    const dirty = mkdtempSync(join(tmpdir(), "zero-comment-conflict-"));
+    try {
+      execFileSync("git", ["init", "--quiet"], { cwd: dirty, stdio: "ignore" });
+      writeFileSync(join(dirty, "notes.txt"), `fine\n${opening} HEAD\nmine\n${middle}\ntheirs\n${closing} origin/main\n`);
+      writeFileSync(join(dirty, "a.ts"), "export const a = 1;\n");
+      const result = run(dirty);
+      expect(result.exitCode).toBe(1);
+      expect(result.lines).toEqual(["notes.txt:2:1: merge conflict marker", "notes.txt:6:1: merge conflict marker", "2 merge conflict marker(s) left in tracked files."]);
+    } finally {
+      rmSync(dirty, { recursive: true, force: true });
+    }
   });
 });
 

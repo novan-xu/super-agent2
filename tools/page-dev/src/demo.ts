@@ -77,6 +77,23 @@ function loopPlan(hub: string, turn: number): Step[] | undefined {
   return undefined;
 }
 
+function decisionSteps(hub: string, turn: number): Step[] {
+  if (hub.startsWith("[hub] The owner went through the decisions")) {
+    const count = /disagrees with (\d+)/.exec(hub)?.[1] ?? "0";
+    return [{ kind: "text", block: `review-${turn}`, text: `收到你对 ${count} 个决定的意见。演示大脑不会真的去改，真实的大脑会把它们归成后续的问题，范围不清楚的先来问你。` }];
+  }
+  const at = hub.indexOf("Their Chinese copies, as recorded, in the same order:");
+  if (at < 0) {
+    return [];
+  }
+  const copies = hub
+    .slice(at)
+    .split("\n")
+    .slice(1)
+    .filter((line) => /^\d+\. /.test(line));
+  return [{ kind: "text", block: `decisions-${turn}`, text: ["这次替你做了这些决定，可以在工单页上逐条看：", ...copies].join("\n") }];
+}
+
 function plan(message: string, turn: number): Step[] {
   const remembered = /^记住[:：]?\s*(.+?)(?:\s*替换\s*#(\d+))?$/su.exec(message);
   const words = remembered?.[1]?.trim();
@@ -133,7 +150,8 @@ class DemoHandle implements ProgramHandle {
     this.turns += 1;
     this.running = true;
     const hub = lastHubMessage(prompt);
-    this.queue = (hub === undefined ? undefined : loopPlan(hub, this.turns)) ?? plan(lastParagraph(prompt), this.turns);
+    const steps = hub === undefined ? [] : [...(loopPlan(hub, this.turns) ?? []), ...decisionSteps(hub, this.turns)];
+    this.queue = steps.length > 0 ? steps : plan(lastParagraph(prompt), this.turns);
     this.next();
   }
 
@@ -143,7 +161,9 @@ class DemoHandle implements ProgramHandle {
     }
     this.steers += 1;
     const hub = lastHubMessage(text);
-    const loop = hub === undefined ? undefined : loopPlan(hub, this.turns * 1000 + this.steers);
+    const turn = this.turns * 1000 + this.steers;
+    const found = hub === undefined ? [] : [...(loopPlan(hub, turn) ?? []), ...decisionSteps(hub, turn)];
+    const loop = found.length > 0 ? found : undefined;
     this.queue.push(...(loop ?? [{ kind: "text", block: `steer-${this.turns}-${this.steers}`, text: `收到你刚补充的：「${text.trim()}」，已经算进这一轮里。` }]));
     return Promise.resolve("steered");
   }

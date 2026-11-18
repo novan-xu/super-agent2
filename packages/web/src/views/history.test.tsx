@@ -149,4 +149,12 @@ describe("历史", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('href="/tickets/1"');
   });
+
+  it("marks a ticket whose decisions wait for the owner with their count", () => {
+    const waiting = { id: 1, source: "brain" as const, attempt: null, pullRequest: null, chosen: { en: "c", zh: "选了" }, why: { en: "w", zh: "因为" }, otherOptions: { en: "o", zh: "不选" }, at: 1, verdict: null, opinion: null, reviewedAt: null, sentAt: null };
+    const html = render(shown([ended(2, 4_000_000, { decisions: [waiting, { ...waiting, id: 2 }] }), ended(1, 3_000_000, { decisions: [{ ...waiting, id: 3, verdict: "ok" }] })]));
+    expect(html).toContain('aria-label="2 个决定等你看"');
+    expect(html.match(/count--hot/g)).toHaveLength(1);
+  });
 });
+

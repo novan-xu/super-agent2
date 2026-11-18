@@ -9,6 +9,7 @@ const actions: TicketActions = {
   stop: () => Promise.resolve(true),
   reassign: () => Promise.resolve(true),
   message: () => Promise.resolve(true),
+  review: () => Promise.resolve(true),
   machines: () => Promise.resolve([]),
 };
 
@@ -217,5 +218,34 @@ describe("a ticket's detail", () => {
     expect(html).toContain('class="panel is-collapsed"');
     expect(html).toContain('aria-expanded="false"');
     expect(html.indexOf("panel-sec--summary")).toBeLessThan(html.indexOf("panel-rest"));
+  });
+
+  it("shows the decisions made on the owner's behalf above the timeline, each with 可以 and a box for an opinion until it is settled", () => {
+    const decision = (id: number, verdict: "ok" | "opinion" | null, pullRequest: number | null = null) => ({
+      id,
+      source: "worker" as const,
+      attempt: 1,
+      pullRequest,
+      chosen: { en: `Chose ${id}`, zh: `选了方案 ${id}` },
+      why: { en: "Why", zh: `理由 ${id}` },
+      otherOptions: { en: "Other", zh: `另一种做法 ${id}` },
+      at: 1,
+      verdict,
+      opinion: verdict === "opinion" ? "我觉得应该反过来" : null,
+      reviewedAt: verdict === null ? null : 2,
+      sentAt: null,
+    });
+    const reviewed = { ...running, state: "merged" as const, endedAt: 15_000, work: null, decisions: [decision(1, "ok"), decision(2, "opinion"), decision(3, null, 21)] };
+    const html = render(detailOf(reviewed));
+    expect(html.indexOf("选了方案 1")).toBeLessThan(html.indexOf("timeline"));
+    expect(text(html)).toContain("|决定|1|");
+    expect(html).toContain("理由 2");
+    expect(html).toContain("另一种做法 3");
+    expect(html).toContain("我觉得应该反过来");
+    expect(html).toContain('href="https://github.com/novan-xu/super-agent-sandbox/pull/21"');
+    expect(html.match(/class="drow-review"/g)).toHaveLength(1);
+    expect(html.match(/aria-label="可以"/g)).toHaveLength(1);
+    expect(html).toContain('placeholder="意见"');
+    expect(render(detailOf(running))).not.toContain("决定");
   });
 });
