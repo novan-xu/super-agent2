@@ -3952,3 +3952,64 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** This keeps the brain current without a deployment, avoids changing files under running programs, and allows
   one provider to update even if another fails. Sessions resume using the hub's existing saved session IDs.
 - **Other options:** Scheduled image rebuilds and deployments; updating all programs as one transaction.
+
+## 2026-11-18 — Migrating conversations and routing hub notices (#84)
+
+- **Chosen** Convert each existing conversation to a topic with its history and provider session IDs. Hub-created
+  repairs inherit the repaired ticket's topic. Create a topic named after a legacy ticket on its first notice
+  without an assigned topic, and use one shared System topic for notices without a ticket.
+- **Why** This keeps previous work resumable and gives each notice a stable destination even when several topics
+  are active.
+- **Other options** Combine old conversations during migration, or send notices without an assigned topic to the
+  most recently active topic.
+
+## 2026-11-18 — Router fallback and open program slots (#84)
+
+- **Chosen** Start the GPT router with `gpt-6-luna`, the existing mechanical Codex default. If every router provider
+  fails to return a route, create a new topic. Keep one resident router outside `BRAIN_MAX_OPEN`. Close topic
+  programs after two configurable idle hours by default, or close the least recently used idle program to free a
+  slot sooner. Queue inputs when all slots are busy.
+- **Why** A new topic keeps the input available without a speculative match. The router stays responsive while the
+  topic budget still controls parallel answers, even when it is set to one.
+- **Other options** Count the router within the topic budget, start a process for each routing request, or wait for
+  a router provider to recover before accepting an unquoted input.
+
+## 2026-11-18 — Quotes and routing corrections (#84)
+
+- **Chosen** Offer quotes from the current topic in a topic view and quotes from any topic in the main stream.
+  Move or hand over the original message to the destination, interrupt an in-flight source answer for that
+  message, and keep earlier replies and ticket changes.
+- **Why** The composer and quote agree on one destination, and a routing correction keeps one original message
+  while preserving completed work.
+- **Other options** Let a foreign quote override the topic composer, copy a moved message into the destination,
+  or move its earlier replies with it.
+
+## 2026-11-18 — Merging and archiving topics (#84)
+
+- **Chosen** Merge histories and ticket ownership into a chosen destination after affected turns finish, redirect
+  old topic links there, and seed its next turn with the combined history. An archived topic remains searchable and
+  resumes on direct input, a quote, a handover or a ticket notice.
+- **Why** Existing links and open tickets keep a reachable destination. The router can focus on active work while
+  a deliberate follow-up or ticket event can resume archived work.
+- **Other options** Keep merged topics as separate histories behind a common label, or require manual unarchiving
+  before handling a follow-up.
+
+## 2026-11-18 — Seed budgets and shared memory (#84)
+
+- **Chosen** Start with an 18,000-token history budget and a target of about 25,000 tokens for the seed. Give quotes
+  the remaining provider input budget, and index a quote for reading in parts when the program cannot fit it.
+  Send confirmed-memory changes with a topic's next input. Keep pending and past memory suggestions available
+  through the shared memory tools.
+- **Why** Recent topic history and quotes carry the details that explain a turn. A tool reference keeps oversized
+  material available, and memory changes reach each topic when it can use them.
+- **Other options** Clip quotes at a fixed size, send summaries alone, or push every memory change into every
+  running session.
+
+## 2026-11-18 — Ticket lock and stale reads (#84)
+
+- **Chosen** Add the owner's required lock to the closed code-constraint list. Require the current ticket version
+  for brain writes, acquire every affected ticket lock with a multi-ticket change, and revoke a lost turn's write
+  access before releasing its locks. Owner actions and hub updates still advance ticket versions independently.
+- **Why** Topic turns cannot overwrite each other's work or use stale state. A lost turn can be recovered without
+  time-based lock expiry, and the owner and hub can continue operating while a topic answers.
+- **Other options** Use expiring locks, check versions alone, or make owner and hub actions wait on topic turns.
