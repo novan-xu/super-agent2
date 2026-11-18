@@ -44,7 +44,8 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 
 - A conversation is one long-lived session. It keeps its context from one message to the next, for days.
 - The owner sees the brain work as it happens: what it reads, what it runs, what it writes.
-- The owner can send a message while the brain is working, and can interrupt it.
+- The owner can send a message while the brain is working, and can interrupt it. Codex and Claude Code take both
+  natively; `dsh` through a small plugin this repository ships and mounts at each start.
 - A session whose context grows long is compacted by its program, and goes on.
 - A restart of the brain, the hub or the NAS resumes the same session.
 - When another provider takes over, its session is given the conversation so far.
