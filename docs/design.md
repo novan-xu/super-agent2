@@ -232,6 +232,8 @@ which of them decides matters less than the record. The owner reviews the decisi
 
 ## Start defaults
 
+The hub remembers model IDs seen for each engine across machine reports. The first nonempty report for an engine establishes a baseline; later new IDs in a report are grouped into one conversation notice for that engine. Effort-only changes and disappearing models do not create notices. The brain proposes a row change and uses `set_engine_row` only with the owner’s agreement; changed pairs must be offered by an online machine, as for page edits.
+
 For each chain the brain chooses, once, where and how it runs: machine, engine, model and effort, for example Mac mini,
 Codex, `gpt-6.1-sol`, high. They are defaults: the owner can change any of them on the card before the start, and the
 owner's choice wins. The card has one select for each, in that order; the page calls the engine 供应商.
@@ -421,6 +423,8 @@ are.
 - Raw material is shown as it is: command output, logs, code and diffs.
 
 ## Notices
+
+New-model notices include a link to Settings → Models and tell the brain the reported efforts, machines and current row.
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and
 is sent as a push notification from the web page. There is no Lark channel. The notification for a held operation names

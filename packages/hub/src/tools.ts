@@ -1,5 +1,9 @@
 import {
   CodeEngineChoice,
+  ProgramId,
+  DifficultyRow,
+  ModelChoice,
+  unofferedChanges,
   codeEngineChoices,
   codeKinds,
   CommitRef,
@@ -318,6 +322,12 @@ function mergedText(outcome: SkipOutcome): ToolResult {
 
 function defaultsDefinitions() {
   return [
+    {
+      name: "set_engine_row",
+      title: "Change one start-defaults row",
+      description: "Change one engine row only after the owner agrees in this conversation. Changed model and effort pairs must be offered by an online machine.",
+      inputSchema: { type: "object", properties: { engine: { type: "string", enum: ["codex", "claude", "dsh", "antigravity"] }, row: { type: "object", description: "For codex, claude or dsh: mechanical, standard and complex, each with model and effort. For antigravity: model and effort." } }, required: ["engine", "row"], additionalProperties: false },
+    },
     {
       name: "read_allowance",
       title: "Read what is left on the subscriptions",
@@ -1090,6 +1100,19 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
               ? `Ticket ${ticket} already has this decision recorded; nothing new was recorded.`
               : `Recorded on ticket ${ticket}. ${decisionLine(decision, false)} The owner sees it on the ticket's page and reviews it there.`,
         };
+      }
+      case "set_engine_row": {
+        if (tools.defaults === undefined) return undefined;
+        const args = z.object({ engine: ProgramId, row: z.unknown() }).strict().safeParse(raw);
+        if (!args.success) return invalid(args.error);
+        const { engine, row } = args.data;
+        const parsed = (engine === "antigravity" ? ModelChoice : DifficultyRow).safeParse(row);
+        if (!parsed.success) return invalid(parsed.error);
+        const current = tools.defaults.table();
+        const next = { ...current, [engine]: parsed.data };
+        if (unofferedChanges(next, current, tools.defaults.machines()).length > 0) return { text: "A changed model and effort pair is not offered by any online machine; nothing was changed.", isError: true };
+        tools.defaults.setTable(next);
+        return { text: `Updated ${engine}: ${JSON.stringify(parsed.data)}` };
       }
       case "read_allowance": {
         if (tools.defaults === undefined) {

@@ -3932,6 +3932,12 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options:** Waiting for the owner to press 添加机器; installing Node.js through Homebrew, which changes more of the machine than a folder in the user's home; leaving the Mac mini out until the owner had installed Node.js.
 - **Not verified:** No ticket has run on either machine yet. The first run of the install line on Windows stopped because the orchestrator had merged the error stream into the output, which Windows PowerShell 5.1 turns into a failure when a program writes to it; run as the page shows it, without that, it worked. dsh on the Mac mini is 0.2.2-rc.1, a newer version than the one the control plugin was tried with.
 
+## 2026-11-18 — New model discovery
+
+- **Chosen:** Baseline each engine from the stored machine reports or its first nonempty report, and batch new model IDs per engine in each report. Include Antigravity and ignore effort-only changes.
+- **Why:** This avoids questions about the existing catalogue while making each later report actionable without delaying notices.
+- **Other options:** Wait for a timed cross-machine batch; count new efforts as models; exclude Antigravity.
+
 ## 2026-11-18 ? Brain program updates
 
 - **Chosen:** Check npm latest at startup and every six hours; queue new turns while all three programs are checked and

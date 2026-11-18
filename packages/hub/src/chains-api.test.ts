@@ -547,6 +547,30 @@ function reading(program: "codex" | "claude", state: "available" | "exhausted", 
 }
 
 describe("start defaults", () => {
+  it("tells the conversation once when a runner reports new models", async () => {
+    const running = await start();
+    const report = machineReport("win32");
+    report.programs[0]!.models.push({ id: "new-one", efforts: ["high"] }, { id: "new-two", efforts: ["low"] });
+    connect(running, "pc", report);
+    connect(running, "pc", report);
+    const rows = running.database.connection.prepare("SELECT body, prompt FROM conversation_entries WHERE kind = 'notice' AND prompt LIKE ?").all("%New models were reported%");
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).toContain("new-one");
+    expect(JSON.stringify(rows)).toContain("new-two");
+    expect(JSON.stringify(rows)).toContain("pc (efforts: high)");
+  });
+
+  it("changes an engine row through the brain tool only for offered changes", async () => {
+    const running = await start();
+    const before = running.defaults.table();
+    const row = { ...before.claude, complex: { model: "claude-opus-5-5", effort: "max" } };
+    expect((await callTool(running, "set_engine_row", { engine: "claude", row })).isError).toBe(false);
+    expect(running.defaults.table().claude).toEqual(row);
+    const bad = { ...row, complex: { model: "unknown-model", effort: "high" } };
+    expect((await callTool(running, "set_engine_row", { engine: "claude", row: bad })).isError).toBe(true);
+    expect(running.defaults.table().claude).toEqual(row);
+  });
+
   it("offers a complex Windows chain on the runner with the complex row, its reason in Chinese, and starts what the card showed", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");

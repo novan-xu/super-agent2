@@ -96,3 +96,9 @@ describe("the brain status", () => {
     expect(noSummary).toContain("正在调用 run_command</div>");
   });
 });
+
+it("links a new model notice to model settings", () => {
+  const entry: ConversationEntry = { id: "n1", conversation: id, seq: 1, at, kind: "notice", turn: null, text: "新模型：codex（new）" };
+  const html = renderToString(<StreamEntry item={{ kind: "entry", key: "n1", entry, lead: false, live: false }} thisYear={2026} />);
+  expect(html).toContain('href="/settings/models"');
+});
