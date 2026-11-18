@@ -1,4 +1,4 @@
-import type { ConversationEntry, Turn } from "@super-agent2/protocol";
+import type { ConversationEntry, ToolEntry, Turn } from "@super-agent2/protocol";
 import { type ConversationState, isWorking } from "./conversation.js";
 
 export interface Day {
@@ -10,9 +10,9 @@ export interface Day {
 
 export type StreamItem =
   | { readonly kind: "day"; readonly key: string; readonly day: Day }
-  | { readonly kind: "entry"; readonly key: string; readonly entry: ConversationEntry; readonly lead: boolean; readonly live: boolean }
+  | { readonly kind: "entry"; readonly key: string; readonly entry: Exclude<ConversationEntry, ToolEntry>; readonly lead: boolean; readonly live: boolean }
   | { readonly kind: "ended"; readonly key: string; readonly turn: Turn }
-  | { readonly kind: "typing"; readonly key: string };
+  | { readonly kind: "status"; readonly key: string; readonly tool: ToolEntry | null };
 
 function dayOf(at: number): { readonly year: number; readonly month: number; readonly day: number } {
   const date = new Date(at);
@@ -37,7 +37,7 @@ function turnOf(entry: ConversationEntry): string | null {
 }
 
 function isBrain(entry: ConversationEntry): boolean {
-  return entry.kind === "text" || entry.kind === "tool";
+  return entry.kind === "text";
 }
 
 function endedTurns(turns: readonly Turn[]): readonly Turn[] {
@@ -48,7 +48,6 @@ export function streamItems(state: ConversationState, now: number): readonly Str
   const items: StreamItem[] = [];
   const working = isWorking(state);
   const running = new Set(state.turns.filter((turn) => turn.state === "running").map((turn) => turn.id));
-  const finished = new Set(state.turns.filter((turn) => turn.state !== "running").map((turn) => turn.id));
   const ended = endedTurns(state.turns);
   const lastOfTurn = new Map<string, string>();
   for (const entry of state.entries) {
@@ -89,24 +88,24 @@ export function streamItems(state: ConversationState, now: number): readonly Str
   const lastEntry = state.entries.at(-1);
   for (const entry of state.entries) {
     pushLoose(entry.at);
-    pushDay(entry.at);
-    const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry));
-    const turn = turnOf(entry);
-    const live =
-      entry.kind === "tool"
-        ? entry.state === "running" && !finished.has(entry.turn)
-        : entry === lastEntry && entry.kind === "text" && turn !== null && running.has(turn) && working;
-    items.push({ kind: "entry", key: entry.id, entry, lead, live });
-    previous = entry;
+    if (entry.kind !== "tool") {
+      pushDay(entry.at);
+      const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry));
+      const turn = turnOf(entry);
+      const live = entry === lastEntry && entry.kind === "text" && turn !== null && running.has(turn) && working;
+      items.push({ kind: "entry", key: entry.id, entry, lead, live });
+      previous = entry;
+    }
     for (const turnEnded of endings.get(entry.id) ?? []) {
+      pushDay(entry.at);
       items.push({ kind: "ended", key: `ended-${turnEnded.id}`, turn: turnEnded });
       previous = undefined;
     }
   }
   pushLoose(Number.POSITIVE_INFINITY);
-  const quiet = lastEntry === undefined || !(lastEntry.kind === "text" || (lastEntry.kind === "tool" && lastEntry.state === "running" && !finished.has(lastEntry.turn)));
-  if (working && quiet) {
-    items.push({ kind: "typing", key: "typing" });
+  if (working) {
+    const tool = state.entries.findLast((entry): entry is ToolEntry => entry.kind === "tool" && entry.state === "running" && running.has(entry.turn)) ?? null;
+    items.push({ kind: "status", key: "status", tool });
   }
   return items;
 }

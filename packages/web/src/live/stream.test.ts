@@ -41,7 +41,6 @@ describe("streamItems", () => {
       "today",
       "o2",
       "x3*",
-      "k4",
       "x5",
     ]);
   });
@@ -58,19 +57,28 @@ describe("streamItems", () => {
     expect(items.filter((item) => item.kind !== "day").map((item) => item.key)).toEqual(["o1", "x2", "ended-t1", "o3", "ended-t2", "o4"]);
   });
 
-  it("marks the text being written and waits visibly while the brain is busy", () => {
+  it("shows one status while working, including during streamed text", () => {
     const running = turn({ state: "running", endedAt: null });
     const writing = streamItems(state([owner(1, at(17, 9)), text(2, at(17, 9))], [running], true), now);
-    expect(writing.at(-1)).toMatchObject({ kind: "entry", live: true });
-    const thinking = streamItems(state([owner(1, at(17, 9))], [], true), now);
-    expect(thinking.at(-1)).toMatchObject({ kind: "typing" });
-    const runningTool = streamItems(state([owner(1, at(17, 9)), tool(2, at(17, 9), "running")], [running], true), now);
-    expect(runningTool.at(-1)).toMatchObject({ kind: "entry" });
-    const stopped = streamItems(state([owner(1, at(17, 9)), tool(2, at(17, 9), "running")], [turn({ state: "interrupted" })]), now);
-    expect(stopped.find((item) => item.key === "k2")).toMatchObject({ kind: "entry", live: false });
-    const runningCommand = streamItems(state([owner(1, at(17, 9)), tool(2, at(17, 9), "running")], [running], true), now);
-    expect(runningCommand.find((item) => item.key === "k2")).toMatchObject({ kind: "entry", live: true });
-    const idle = streamItems(state([owner(1, at(17, 9)), text(2, at(17, 9))], [turn()]), now);
-    expect(idle.at(-1)).toMatchObject({ kind: "entry", live: false });
+    expect(writing.find((item) => item.key === "x2")).toMatchObject({ kind: "entry", live: true });
+    expect(writing.at(-1)).toMatchObject({ kind: "status", tool: null });
+    const thinking = streamItems(state([owner(1, at(17, 9)), tool(2, at(17, 9))], [running], true), now);
+    expect(thinking.at(-1)).toMatchObject({ kind: "status", tool: null });
+    const active = streamItems(state([tool(1, at(17, 9), "running"), tool(2, at(17, 9), "running")], [running], true), now);
+    expect(active.filter((item) => item.kind === "status")).toEqual([{ kind: "status", key: "status", tool: tool(2, at(17, 9), "running") }]);
+    expect(active.some((item) => item.kind === "entry")).toBe(false);
+    const idle = streamItems(state([tool(1, at(17, 9), "running")], [turn()]), now);
+    expect(idle.some((item) => item.kind === "status")).toBe(false);
+  });
+
+  it.each(["interrupted", "failed"] as const)("keeps the %s ending after a hidden tool", (endState) => {
+    const items = streamItems(state([owner(1, at(17, 9)), text(2, at(17, 9)), tool(3, at(17, 9), "running"), owner(4, at(17, 11))], [turn({ state: endState })]), now);
+    expect(items.filter((item) => item.kind !== "day").map((item) => item.key)).toEqual(["o1", "x2", "ended-t1", "o4"]);
+    expect(items.some((item) => item.kind === "status")).toBe(false);
+  });
+
+  it("ignores hidden tools when deciding which text needs a header", () => {
+    const items = streamItems(state([tool(1, at(17, 9)), text(2, at(17, 9)), tool(3, at(17, 9)), text(4, at(17, 9)), text(5, at(17, 9), "t2")], [turn()]), now);
+    expect(items.filter((item) => item.kind === "entry").map((item) => [item.key, item.lead])).toEqual([["x2", true], ["x4", false], ["x5", true]]);
   });
 });

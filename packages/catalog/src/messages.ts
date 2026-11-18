@@ -65,6 +65,8 @@ export const messages = {
   "brain.name": "大脑",
   "brain.offline": "未连接",
   "brain.thinking": "大脑正在思考",
+  "brain.calling": "正在调用 {tool}",
+  "brain.callingWithSummary": "正在调用 {tool}：{summary}",
   "conversation.new": "新对话",
   "conversation.list": "对话列表",
   "conversation.stream": "对话内容",

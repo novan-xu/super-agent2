@@ -103,22 +103,6 @@ export const ToolFold = memo(function ToolFold({ name, input, output, state, sto
   );
 });
 
-const ToolCall = memo(function ToolCall({ entry, lead, live }: { readonly entry: ToolEntry; readonly lead: boolean; readonly live: boolean }) {
-  const stopped = entry.state === "running" && !live;
-  return (
-    <div className={lead ? "msg msg--brain" : "msg msg--brain msg--more"}>
-      {lead ? (
-        <div className="msg-who">
-          <Logo size={16} />
-          <strong>{text("brain.name")}</strong>
-          <span className="num">{clockOf(entry.at)}</span>
-        </div>
-      ) : null}
-      <ToolFold name={entry.name} input={entry.input} output={entry.output} state={entry.state} stopped={stopped} />
-    </div>
-  );
-});
-
 export interface DeliveryBodyProps {
   readonly ticket: number;
   readonly title: string;
@@ -179,14 +163,15 @@ export function StreamEntry({ item, thisYear }: { readonly item: StreamItem; rea
   switch (item.kind) {
     case "day":
       return <div className="day">{dayLabel(item.day, thisYear)}</div>;
-    case "typing":
-      return (
-        <span className="typing" role="img" aria-label={text("brain.thinking")}>
-          <i />
-          <i />
-          <i />
-        </span>
-      );
+    case "status": {
+      const summary = item.tool === null ? "" : toolSummary(item.tool.input);
+      const status = item.tool === null
+        ? text("brain.thinking")
+        : summary === ""
+          ? text("brain.calling", { tool: toolName(item.tool.name) })
+          : text("brain.callingWithSummary", { tool: toolName(item.tool.name), summary });
+      return <div className="brain-status" aria-live="polite">{status}</div>;
+    }
     case "ended":
       return <Ended turn={item.turn} />;
     case "entry": {
@@ -196,8 +181,6 @@ export function StreamEntry({ item, thisYear }: { readonly item: StreamItem; rea
           return <OwnerMessage entry={entry} />;
         case "text":
           return <BrainText entry={entry} lead={item.lead} live={item.live} />;
-        case "tool":
-          return <ToolCall entry={entry} lead={item.lead} live={item.live} />;
         case "notice":
           return <Notice entry={entry} />;
         case "delivery":

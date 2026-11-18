@@ -82,3 +82,17 @@ describe("the owner's attachments in the conversation", () => {
     expect(html).not.toContain("msg-text");
   });
 });
+
+describe("the brain status", () => {
+  it("shows thinking or the current tool and its summary in a live region", () => {
+    const thinking = renderToString(<StreamEntry item={{ kind: "status", key: "status", tool: null }} thisYear={2026} />);
+    expect(thinking).toContain('class="brain-status" aria-live="polite"');
+    expect(thinking).toContain("大脑正在思考");
+    const tool = { id: "k1", conversation: id, seq: 1, at, kind: "tool" as const, turn: "t1", name: "mcp__hub__run_command", input: JSON.stringify({ command: "gh repo view\nignored" }), output: "", state: "running" as const };
+    const calling = renderToString(<StreamEntry item={{ kind: "status", key: "status", tool }} thisYear={2026} />);
+    expect(calling).toContain("正在调用 run_command：gh repo view");
+    expect(calling).not.toContain("ignored");
+    const noSummary = renderToString(<StreamEntry item={{ kind: "status", key: "status", tool: { ...tool, input: "" } }} thisYear={2026} />);
+    expect(noSummary).toContain("正在调用 run_command</div>");
+  });
+});
