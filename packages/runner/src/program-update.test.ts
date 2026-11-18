@@ -10,6 +10,22 @@ const report: ProgramReport = { id: "codex", installed: true, path: "/bin/codex"
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 async function temp() { const path = await mkdtemp(join(tmpdir(), "program-update-test-")); temporary.push(path); return path; }
+const layouts = process.platform === "win32" ? ["windows"] as const : ["windows", "unix"] as const;
+
+async function installation(root: string, layout: "windows" | "unix") {
+  const modules = join(root, "node_modules");
+  const folder = join(modules, "@openai", "codex");
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "cli.js"), "old");
+  const binary = join(root, layout === "windows" ? "codex.cmd" : "codex");
+  const shims = layout === "windows" ? [binary, join(root, "codex"), join(root, "codex.ps1")] : [binary];
+  if (layout === "windows") {
+    await Promise.all(shims.map((shim, index) => writeFile(shim, `shim ${index} %~dp0\\node_modules\\@openai\\codex\\cli.js`)));
+  } else {
+    await symlink(join(folder, "cli.js"), binary);
+  }
+  return { modules, folder, binary, shims };
+}
 
 describe("program updates", () => {
   it("compares stable versions without downgrading or installing a prerelease", () => {
@@ -20,35 +36,28 @@ describe("program updates", () => {
     expect(newer("unknown", "2.0.0")).toBe(false);
   });
 
-  it("recognises only the npm package behind the resolved executable", async () => {
+  it.each(layouts)("recognises only the npm package behind the %s executable", async (layout) => {
     const root = await temp();
-    const folder = join(root, "node_modules", "@openai", "codex");
-    await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "cli.js"), "old");
-    const binary = join(root, "codex");
-    await symlink(join(folder, "cli.js"), binary);
-    expect(await npmPackageFor(binary, join(root, "node_modules"), "@openai/codex")).toBe(folder);
-    expect(await npmPackageFor(binary, join(root, "node_modules"), "@anthropic-ai/claude-code")).toBeUndefined();
+    const { modules, folder, binary } = await installation(root, layout);
+    expect(await npmPackageFor(binary, modules, "@openai/codex")).toBe(folder);
+    expect(await npmPackageFor(binary, modules, "@anthropic-ai/claude-code")).toBeUndefined();
   });
 
-  it("restores the package and executable if npm fails after removing them", async () => {
+  it.each(layouts)("restores the package and all %s shims if npm fails after removing them", async (layout) => {
     const root = await temp();
-    const modules = join(root, "node_modules");
-    const folder = join(modules, "@openai", "codex");
-    const binary = join(root, "codex");
-    await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "cli.js"), "old");
-    await symlink(join(folder, "cli.js"), binary);
+    const { modules, folder, binary, shims } = await installation(root, layout);
+    const contents = await Promise.all(shims.map((shim) => readFile(shim, "utf8")));
     const prober: Prober = { find: () => "npm", capture: async (_path, args) => {
       if (args[0] === "root") return modules;
       if (args[0] === "view") return "2.0.0";
       await rm(folder, { recursive: true });
-      await rm(binary);
+      await Promise.all(shims.map((shim) => rm(shim)));
       throw new Error("install failed");
     } };
     const update = await systemProgramUpdateSteps(prober).check({ ...report, path: binary });
     await expect(update?.install()).rejects.toThrow("install failed");
-    expect(await readFile(binary, "utf8")).toBe("old");
+    expect(await readFile(join(folder, "cli.js"), "utf8")).toBe("old");
+    expect(await Promise.all(shims.map((shim) => readFile(shim, "utf8")))).toEqual(contents);
   });
 
   it("waits for idle, locks out new work, and publishes a fresh probe after installation", async () => {

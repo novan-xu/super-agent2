@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { cp, lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { ProgramId, ProgramReport } from "@super-agent2/protocol";
@@ -57,14 +57,30 @@ export function systemProgramUpdateSteps(prober: Prober): ProgramUpdateSteps {
             await cp(folder, join(backup, "package"), { recursive: true, dereference: false });
             const executable = program.path;
             if (executable === null) throw new Error("program path is missing");
-            await cp(executable, join(backup, "executable"), { dereference: false, verbatimSymlinks: true });
+            const shims = /\.cmd$/i.test(executable)
+              ? [executable, executable.slice(0, -4), `${executable.slice(0, -4)}.ps1`]
+              : [executable];
+            const present: boolean[] = [];
+            for (const [index, shim] of shims.entries()) {
+              let exists = true;
+              try {
+                await lstat(shim);
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+                exists = false;
+              }
+              present.push(exists);
+              if (exists) await cp(shim, join(backup, `executable-${index}`), { dereference: false, verbatimSymlinks: true });
+            }
             try {
               await prober.capture(npm, ["install", "--global", `${name}@${latest}`]);
             } catch (error) {
               await rm(folder, { recursive: true, force: true });
               await cp(join(backup, "package"), folder, { recursive: true, dereference: false });
-              await rm(executable, { force: true });
-              await cp(join(backup, "executable"), executable, { dereference: false, verbatimSymlinks: true });
+              for (const [index, shim] of shims.entries()) {
+                await rm(shim, { force: true });
+                if (present[index]) await cp(join(backup, `executable-${index}`), shim, { dereference: false, verbatimSymlinks: true });
+              }
               throw error;
             }
           } finally {
