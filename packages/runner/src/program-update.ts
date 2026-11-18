@@ -1,6 +1,7 @@
 import { cp, lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { selfUpdateFor } from "./program-update-self.js";
 import type { ProgramId, ProgramReport } from "@super-agent2/protocol";
 import type { Prober } from "./programs.js";
 
@@ -36,7 +37,7 @@ export async function npmPackageFor(path: string, root: string, name: string): P
 }
 
 export interface ProgramUpdateSteps {
-  check(program: ProgramReport): Promise<{ latest: string; install(): Promise<void> } | undefined>;
+  check(program: ProgramReport): Promise<{ latest: string | null; channel?: string; install(): Promise<void> } | undefined>;
 }
 
 export function systemProgramUpdateSteps(prober: Prober): ProgramUpdateSteps {
@@ -44,17 +45,30 @@ export function systemProgramUpdateSteps(prober: Prober): ProgramUpdateSteps {
     check: async (program) => {
       const name = packages[program.id];
       const npm = prober.find("npm");
-      if (name === undefined || npm === undefined || program.path === null) return undefined;
-      const root = (await prober.capture(npm, ["root", "--global"])).trim();
-      const folder = await npmPackageFor(program.path, root, name);
-      if (folder === undefined) return undefined;
+      if (program.path === null) return undefined;
+      if (name === undefined || npm === undefined) return selfUpdateFor(program, prober);
+      const defaultRoot = (await prober.capture(npm, ["root", "--global"]).catch(() => "")).trim();
+      let root = defaultRoot;
+      let folder = await npmPackageFor(program.path, root, name);
+      if (folder === undefined) {
+        const target = await realpath(program.path).catch(() => "");
+        const marker = `${sep}node_modules${sep}${name.replaceAll("/", sep)}${sep}`;
+        const index = target.lastIndexOf(marker);
+        if (index >= 0) {
+          root = target.slice(0, index + `${sep}node_modules`.length);
+          folder = await npmPackageFor(program.path, root, name);
+        }
+      }
+      if (folder === undefined) return selfUpdateFor(program, prober);
       const latest = (await prober.capture(npm, ["view", `${name}@latest`, "version"])).trim();
+      const packageFolder = folder;
+      const prefix = process.platform === "win32" ? dirname(root) : dirname(dirname(root));
       return {
         latest,
         install: async () => {
           const backup = await mkdtemp(join(tmpdir(), "sa2-program-"));
           try {
-            await cp(folder, join(backup, "package"), { recursive: true, dereference: false });
+            await cp(packageFolder, join(backup, "package"), { recursive: true, dereference: false });
             const executable = program.path;
             if (executable === null) throw new Error("program path is missing");
             const shims = /\.cmd$/i.test(executable)
@@ -73,10 +87,10 @@ export function systemProgramUpdateSteps(prober: Prober): ProgramUpdateSteps {
               if (exists) await cp(shim, join(backup, `executable-${index}`), { dereference: false, verbatimSymlinks: true });
             }
             try {
-              await prober.capture(npm, ["install", "--global", `${name}@${latest}`]);
+              await prober.capture(npm, ["install", "--global", "--prefix", prefix, `${name}@${latest}`]);
             } catch (error) {
-              await rm(folder, { recursive: true, force: true });
-              await cp(join(backup, "package"), folder, { recursive: true, dereference: false });
+              await rm(packageFolder, { recursive: true, force: true });
+              await cp(join(backup, "package"), packageFolder, { recursive: true, dereference: false });
               for (const [index, shim] of shims.entries()) {
                 await rm(shim, { force: true });
                 if (present[index]) await cp(join(backup, `executable-${index}`), shim, { dereference: false, verbatimSymlinks: true });
@@ -118,21 +132,22 @@ export function createProgramUpdater(options: {
             unrecognised.add(program.id);
             continue;
           }
-          if (program.version === null || !newer(program.version, update.latest)) continue;
-          options.log(`Updating ${program.id} from ${program.version} to ${update.latest}`);
+          options.log(`${program.id} auto-update channel: ${update.channel ?? "npm"}`);
+          if (program.version === null || (update.latest !== null && !newer(program.version, update.latest))) continue;
+          options.log(`Updating ${program.id} from ${program.version} to ${update.latest ?? "vendor stable"}`);
           try {
             await update.install();
             await options.reprobe();
             options.log(`Updated ${program.id} from ${program.version} to ${options.report().find((entry) => entry.id === program.id)?.version ?? "unknown"}`);
           } catch (error) {
-            options.log(`Updating ${program.id} from ${program.version} to ${update.latest} failed: ${String(error)}`);
+            options.log(`Updating ${program.id} from ${program.version} to ${update.latest ?? "vendor stable"} failed: ${String(error)}`);
             await options.reprobe();
           }
         } catch (error) {
           options.log(`Checking ${program.id} for updates failed: ${String(error)}`);
         }
       }
-      options.publish(options.report().map((entry) => unrecognised.has(entry.id) ? { ...entry, problem: [entry.problem, "auto-update: unrecognised installation channel"].filter(Boolean).join("; ") } : entry));
+      options.publish(options.report().map((entry) => unrecognised.has(entry.id) ? { ...entry, problem: [entry.problem, entry.id === "dsh" ? "auto-update: unrecognised installation channel; if bundled with DeepSeek Harness Desktop, update through the desktop application" : "auto-update: unrecognised installation channel; no verified safe updater"].filter(Boolean).join("; ") } : entry));
     })().finally(() => {
       running = undefined;
       options.lock(false);

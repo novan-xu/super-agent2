@@ -267,7 +267,7 @@ export function systemProber(options: SystemProberOptions): Prober {
     capture: (path, args, captureOptions = {}) =>
       new Promise((resolve, reject) => {
         mkdirSync(options.cwd, { recursive: true });
-        const child = spawn([quoted(path), ...args].join(" "), {
+        const child = spawn([quoted(path), ...args.map((arg) => platform === "win32" ? `"${arg.replaceAll('"', '""')}"` : `'${arg.replaceAll("'", "'\\''")}'`)].join(" "), {
           shell: true,
           cwd: options.cwd,
           env: { ...options.environment },
