@@ -47,7 +47,7 @@ describe("工作台", () => {
     const html = render(state(holdCard("a1", { command: "gh repo delete novan-xu/old --yes", cwd: "/srv/projects/app" })));
     expect(html).toContain("gh repo delete novan-xu/old --yes");
     expect(html).toContain("/srv/projects/app");
-    expect(html).toContain(">nas<");
+    expect(html).toContain(">studio<");
     expect(html).toContain(">novan-xu<");
     expect(html).toContain("删除仓库");
   });

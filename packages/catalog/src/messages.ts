@@ -227,6 +227,7 @@ export const messages = {
   "notice.verificationFailed": "工单 {ticket} 没有通过验证，大脑会决定怎么处理",
   "notice.ticketMerged": "工单 {ticket} 已合并",
   "notice.ticketMergedDeploy": "工单 {ticket} 已合并，这次改动需要部署",
+  "notice.ticketMergedSelf": "工单 {ticket} 已合并，Super-agent2 的新版本等你部署",
   "notice.deployment.succeeded": "{repository} 已部署到 {commit}，健康检查通过",
   "notice.deployment.rolledBack": "{repository} 部署 {commit} 没有成功，已回滚到 {previous}，旧版本恢复正常",
   "notice.deployment.unrecovered": "{repository} 部署 {commit} 没有成功，回滚后服务仍不正常，大脑会决定怎么处理",

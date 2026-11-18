@@ -4,12 +4,10 @@ script=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)/$(basename -- "${B
 root=${SUPERAGENT2_ROOT:-$(dirname -- "$script")}
 instance=$(basename -- "$root")
 old=/share/Container/superagent
-nas_user=novanxu
 repository=novan-xu/super-agent2
 token_name=GITHUB_TOKEN_NOVAN_XU
 docker_bin=${DOCKER:-/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker}
 old_codex_volume=superagent-brain-codex-home
-marker=superagent2-deployment-outcome
 releases_kept=5
 hub_tries=90
 brain_tries=60
@@ -294,22 +292,6 @@ record_get() {
   sed -n "s/^$2=//p" "$1/state" | tail -n 1
 }
 
-json_text() {
-  local text=$1
-  text=${text//\\/\\\\}
-  text=${text//\"/\\\"}
-  printf '%s' "${text:0:1500}"
-}
-
-outcome_line() {
-  local result=$1 reason=$2 previous=${3:-}
-  if [ -n "$previous" ]; then
-    printf '%s {"result":"%s","reason":"%s","previous":"%s"}\n' "$marker" "$result" "$(json_text "$reason")" "$previous"
-  else
-    printf '%s {"result":"%s","reason":"%s"}\n' "$marker" "$result" "$(json_text "$reason")"
-  fi
-}
-
 release_alive() {
   local pid
   pid=$(record_get "$1" pid)
@@ -519,122 +501,17 @@ stopped_release() {
 }
 
 new_record() {
-  local dir=$1 id=$2 deployment=$3 commit=$4
+  local dir=$1 id=$2 commit=$3
   mkdir -p "$root/releases"
   own_path "$dir"
   mkdir "$dir"
   chmod 0700 "$dir"
   : > "$dir/state"
   record_set "$dir" id "$id"
-  record_set "$dir" deployment "$deployment"
   record_set "$dir" commit "$commit"
   record_set "$dir" started "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   record_set "$dir" step start
   record_set "$dir" state running
-}
-
-hub_release_dir() {
-  [[ "$1" =~ ^[1-9][0-9]{0,9}$ ]] || fail "$1 is not a deployment number"
-  valid_commit "$2"
-  printf '%s/releases/d%s-%s' "$root" "$1" "${2:0:12}"
-}
-
-step_begin() {
-  [ "$#" -eq 2 ] || fail "begin takes a deployment number and a commit"
-  local dir busy
-  dir=$(hub_release_dir "$1" "$2")
-  if [ -d "$dir" ]; then
-    say "release $(basename -- "$dir") was started before; it is not started again"
-    print_outcome "$dir" || true
-    return 0
-  fi
-  if [ ! -f "$root/compose.yaml" ]; then
-    outcome_line not-run "$root/compose.yaml is missing, so $instance cannot be released by this script; nothing was started."
-    return 1
-  fi
-  busy=$(running_release)
-  if [ -n "$busy" ]; then
-    outcome_line not-run "Release $busy is still running on $instance; nothing was started."
-    return 1
-  fi
-  new_record "$dir" "$(basename -- "$dir")" "$1" "$2"
-  install -m 0700 "$script" "$dir/deploy.sh"
-  SUPERAGENT2_ROOT=$root setsid bash "$dir/deploy.sh" run-release "$dir" > "$dir/log" 2>&1 < /dev/null &
-  local waited=0
-  while [ -z "$(record_get "$dir" pid)" ] && [ "$waited" -lt 30 ]; do
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if [ -z "$(record_get "$dir" pid)" ]; then
-    finish "$dir" not-run "The release script did not start in the background; nothing was changed."
-    outcome_line not-run "$(record_get "$dir" reason)"
-    return 1
-  fi
-  say "release $(basename -- "$dir") of $2 runs in the background as process $(record_get "$dir" pid), outside the hub; its log is $dir/log"
-}
-
-print_outcome() {
-  local dir=$1 state
-  state=$(record_get "$dir" state)
-  if [ "$state" = running ] && ! release_alive "$dir"; then
-    stopped_release_of "$dir"
-    state=$(record_get "$dir" state)
-  fi
-  case "$state" in
-    running)
-      say "release $(basename -- "$dir") is running: $(record_get "$dir" step)"
-      return 3
-      ;;
-    succeeded)
-      outcome_line succeeded "$(record_get "$dir" reason)"
-      return 0
-      ;;
-    *)
-      outcome_line "$state" "$(record_get "$dir" reason)" "$(record_get "$dir" previous)"
-      [ "$(record_get "$dir" acknowledged)" = yes ] && return 0
-      return 4
-      ;;
-  esac
-}
-
-stopped_release_of() {
-  release_dir=$1
-  stopped_release
-  release_dir=
-}
-
-step_outcome() {
-  [ "$#" -eq 2 ] || fail "outcome takes a deployment number and a commit"
-  local dir code=0
-  dir=$(hub_release_dir "$1" "$2")
-  if [ ! -d "$dir" ]; then
-    say "no release $(basename -- "$dir") is recorded on $instance"
-    return 5
-  fi
-  print_outcome "$dir" || code=$?
-  return "$code"
-}
-
-step_settle() {
-  [ "$#" -eq 2 ] || fail "settle takes a deployment number and a commit"
-  local dir code=0 waited=0
-  dir=$(hub_release_dir "$1" "$2")
-  if [ ! -d "$dir" ]; then
-    outcome_line not-run "No release of $2 for deployment $1 was started on $instance, so nothing was changed."
-    return 0
-  fi
-  while [ "$(record_get "$dir" state)" = running ] && release_alive "$dir" && [ "$waited" -lt 360 ]; do
-    sleep 5
-    waited=$((waited + 1))
-  done
-  case "$(record_get "$dir" state)" in
-    rolled-back | unchanged | not-run) record_set "$dir" acknowledged yes ;;
-  esac
-  print_outcome "$dir" || code=$?
-  case "$code" in
-    0) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 step_release() {
@@ -644,7 +521,7 @@ step_release() {
   busy=$(running_release)
   [ -z "$busy" ] || fail "release $busy is still running"
   dir="$root/releases/manual-$(date -u +%Y%m%d%H%M%S)-${1:0:12}"
-  new_record "$dir" "$(basename -- "$dir")" manual "$1"
+  new_record "$dir" "$(basename -- "$dir")" "$1"
   install -m 0700 "$script" "$dir/deploy.sh"
   say "releasing $1 in the foreground; the record is $dir"
   SUPERAGENT2_ROOT=$root bash "$dir/deploy.sh" run-release "$dir" 2>&1 | tee "$dir/log" >&2
@@ -663,7 +540,7 @@ step_rollback() {
     fi
   done
   dir="$root/releases/manual-$(date -u +%Y%m%d%H%M%S)-rollback"
-  new_record "$dir" "$(basename -- "$dir")" manual "$current"
+  new_record "$dir" "$(basename -- "$dir")" "$current"
   if [ -n "$found" ] && [ -s "$found/hub.sqlite" ]; then
     cp -p "$found/hub.sqlite" "$dir/hub.sqlite"
     record_set "$dir" backup_level "$(record_get "$found" backup_level)"
@@ -739,10 +616,10 @@ write_env() {
 }
 
 step_secrets() {
-  say "about to prepare $root/secrets: values copied by name from $old/secrets, and a new SSH key for the hub"
+  say "about to prepare $root/secrets: values copied by name from $old/secrets"
   umask 077
-  mkdir -p "$root/secrets/ssh"
-  chmod 0700 "$root/secrets" "$root/secrets/ssh"
+  mkdir -p "$root/secrets"
+  chmod 0700 "$root/secrets"
   write_env "$root/secrets/hub.env" \
     "ACCESS_TEAM:required:hub.env,access.env" \
     "ACCESS_AUD:required:hub.env,access.env" \
@@ -760,15 +637,7 @@ step_secrets() {
     "BRAIN_CLAUDE_OAUTH_TOKEN:optional:brain.env"
   write_env "$root/secrets/tunnel.env" \
     "TUNNEL_TOKEN:required:tunnel.env"
-  local key="$root/secrets/ssh/nas_ed25519"
-  if [ -e "$key" ]; then
-    say "$key exists and is kept"
-  else
-    ssh-keygen -q -t ed25519 -N "" -C "$project-hub" -f "$key" < /dev/null
-    say "generated $key"
-  fi
-  chmod 0600 "$root/secrets/hub.env" "$root/secrets/brain.env" "$root/secrets/tunnel.env" "$key"
-  chmod 0644 "$key.pub"
+  chmod 0600 "$root/secrets/hub.env" "$root/secrets/brain.env" "$root/secrets/tunnel.env"
   say "the brain's token to the hub is made by the hub at its first start, on volume $project-brain-link"
 }
 
@@ -802,32 +671,6 @@ step_health() {
   healthy "" || fail "not healthy"
 }
 
-step_authorize() {
-  local key="$root/secrets/ssh/nas_ed25519.pub"
-  [ -r "$key" ] || fail "no public key at $key; run the secrets step first"
-  [ "$(id -un)" = "$nas_user" ] || fail "run this step as $nas_user, the user the hub signs in as"
-  local keys="$HOME/.ssh/authorized_keys"
-  say "about to authorize the hub's key for $nas_user in $keys, from container networks only; no other user and no sshd setting changes"
-  local body
-  body=$(awk '{print $2}' "$key")
-  mkdir -p "$HOME/.ssh"
-  chmod 0700 "$HOME/.ssh"
-  touch "$keys"
-  chmod 0600 "$keys"
-  if grep -qF "$body" "$keys"; then
-    say "the hub's key is already authorized"
-  else
-    mkdir -p "$root/backups"
-    cp -p "$keys" "$root/backups/authorized_keys.$(date +%Y%m%d%H%M%S)"
-    printf 'from="10.0.0.0/8,172.16.0.0/12",no-agent-forwarding,no-X11-forwarding %s\n' "$(cat "$key")" >> "$keys"
-    say "authorized the hub's key; the previous file is in $root/backups"
-  fi
-  if docker_cli inspect -f '{{.State.Running}}' "$project-hub" 2> /dev/null | grep -q true; then
-    compose exec -T hub ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i /run/superagent2/ssh/nas_ed25519 "$nas_user@host.docker.internal" true < /dev/null
-    say "the hub signs in to the NAS host"
-  fi
-}
-
 step_deauthorize() {
   local key="$root/secrets/ssh/nas_ed25519.pub"
   local keys="$HOME/.ssh/authorized_keys"
@@ -835,8 +678,9 @@ step_deauthorize() {
   say "about to remove the hub's key from $keys"
   local body
   body=$(awk '{print $2}' "$key")
-  if ! grep -qF "$body" "$keys"; then
-    say "the hub's key is not authorized"
+  [ -n "$body" ] || fail "$key holds no key"
+  if ! grep -qF "$body" "$keys" 2> /dev/null; then
+    say "the hub's key is not authorized; $root/secrets/ssh is no longer used and can be deleted"
     return 0
   fi
   mkdir -p "$root/backups"
@@ -844,7 +688,7 @@ step_deauthorize() {
   grep -vF "$body" "$keys" > "$keys.superagent2" || true
   chmod 0600 "$keys.superagent2"
   mv "$keys.superagent2" "$keys"
-  say "removed the hub's key"
+  say "removed the hub's key; $root/secrets/ssh is no longer used and can be deleted"
 }
 
 step_stop() {
@@ -884,16 +728,13 @@ step_giveback() {
 usage() {
   cat >&2 << 'USAGE'
 usage: bash /share/Container/<instance>/deploy.sh <step> [arguments]
-a release, by the brain or by hand:
+a release, run on the NAS by a person or by a worker over their own sign-in:
   release <commit>         fetch, build while the old version runs, back up the database, switch, check, and go back on failure
   rollback                 go back to the previous version, restoring the database backed up before the current one
   status                   the containers, the running commit and the latest releases
-the hub's deployment commands:
-  begin <deployment> <commit>    start a release in the background, outside the hub
-  outcome <deployment> <commit>  say how that release stands; exit 0 once it succeeded
-  settle <deployment> <commit>   wait for that release to end and acknowledge its outcome
 first deployment and upkeep:
-  secrets, codex-login, up, health, stop, authorize, deauthorize, takeover, giveback
+  secrets, codex-login, up, health, stop, takeover, giveback
+  deauthorize              remove the key an earlier version let the hub sign in to the NAS host with
 USAGE
   exit 2
 }
@@ -905,15 +746,11 @@ main() {
     release) step_release "$@" ;;
     rollback) step_rollback ;;
     status) step_status ;;
-    begin) step_begin "$@" ;;
-    outcome) step_outcome "$@" ;;
-    settle) step_settle "$@" ;;
     run-release) run_release "$@" ;;
     secrets) step_secrets ;;
     codex-login) step_codex_login ;;
     up) step_up ;;
     health) step_health ;;
-    authorize) step_authorize ;;
     deauthorize) step_deauthorize ;;
     stop) step_stop ;;
     takeover) step_takeover ;;
