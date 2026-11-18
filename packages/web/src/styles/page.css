@@ -51,19 +51,6 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .msg-text.cursor > :last-child::after { content: "▍"; color: var(--accent); animation: blink 1s infinite; }
 .msg-text.cursor:empty::after { content: "▍"; color: var(--accent); animation: blink 1s infinite; }
 
-.tool { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); overflow: hidden; }
-.tool-head { display: flex; align-items: center; gap: var(--space-2); min-height: 38px; padding: var(--space-2) var(--space-3); cursor: pointer; list-style: none; font-size: var(--text-sm); color: var(--fg-2); }
-.tool-head::-webkit-details-marker { display: none; }
-.tool-head:hover { background: var(--surface-warm); }
-.tool-head:focus-visible { border-radius: 0; }
-.tool-head .od-icon { --od-icon-size: 14px; flex: none; color: var(--muted); transition: transform var(--motion-fast) var(--ease-standard); }
-.tool[open] > .tool-head .od-icon { transform: rotate(90deg); }
-.tool-name { flex: none; font-weight: 600; color: var(--fg-2); }
-.tool-sum { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); }
-.tool-body { display: grid; border-top: 1px solid var(--border-soft); background: var(--sunk); }
-.tool-body pre { margin: 0; padding: var(--space-3) var(--space-4); max-height: 320px; overflow: auto; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
-.tool-in { color: var(--fg-2) !important; }
-.tool-out { border-top: 1px solid var(--border-soft); }
 
 .sysline--note .od-icon { color: var(--info); }
 .sysline--warn .od-icon { color: var(--warn); }
@@ -160,7 +147,6 @@ a.back:hover { text-decoration: none; }
 .tl--live .tl-dot { background: var(--success); }
 .work-log { display: grid; gap: var(--space-3); min-width: 0; padding-top: var(--space-1); }
 .work-log > .msg-text { color: var(--fg); font-size: var(--text-md); line-height: 1.7; overflow-wrap: anywhere; }
-.work-log .typing { justify-self: start; }
 .work-msg { display: grid; gap: var(--space-1); width: fit-content; max-width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); }
 .work-msg--me { border-color: transparent; background: var(--surface-warm); }
 .work-msg-who { display: flex; align-items: baseline; gap: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
