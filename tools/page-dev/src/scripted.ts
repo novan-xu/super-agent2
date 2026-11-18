@@ -1,5 +1,5 @@
 import type { Hub, RunnerLink } from "@super-agent2/hub";
-import { type HubToRunner, type MachinePlatform, type MachineReport, protocolVersion, type WorkEvent } from "@super-agent2/protocol";
+import { type Decision, type HubToRunner, type MachinePlatform, type MachineReport, protocolVersion, type WorkEvent } from "@super-agent2/protocol";
 
 export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "deliver" | "deploy";
 
@@ -88,6 +88,31 @@ function report(name: string, platform: MachinePlatform, busy: number): MachineR
 const words = (text: string): string[] => text.match(/[\s\S]{1,3}/gu) ?? [];
 
 const opening = words("我读完了这几个问题和相关的代码。改动涉及解析器和它的测试，所以先从那里开始，每一步都小到可以单独检查。");
+
+const pieceDecisions: readonly Decision[] = [
+  {
+    chosen: { en: "Parsed dates in the local time zone of the machine that writes the note", zh: "日期按写笔记那台机器的本地时区解析" },
+    why: { en: "Notes are written by one person in one place, and an evening note should stay on its day", zh: "笔记是一个人在一个地方写的，晚上写的笔记应该留在当天" },
+    otherOptions: { en: "UTC everywhere, which moves evening notes to the next day; a time zone setting, which nobody asked for", zh: "统一用 UTC，晚上的笔记会跑到第二天；加一个时区设置，但没有人要求" },
+  },
+  {
+    chosen: { en: "Showed parsed dates beside the note instead of replacing the original words", zh: "解析出的日期显示在笔记旁边，不替换原来的字" },
+    why: { en: "The issue suggested replacing them, but the original wording is what the owner wrote and searches for", zh: "问题里建议替换，但原来的字是你写的，也是你会搜索的" },
+    otherOptions: { en: "Replacing the words as the issue suggested; showing the date only on hover", zh: "按问题建议直接替换；只在鼠标悬停时显示日期" },
+  },
+];
+
+const taskDecision: Decision = {
+  chosen: { en: "Wrote the notice in a friendly, informal tone", zh: "通知用了亲切、不正式的语气" },
+  why: { en: "It is for neighbours, and the material reads that way", zh: "是写给邻居的，材料本身也是这个语气" },
+  otherOptions: { en: "A formal notice, as from a building management", zh: "像物业那样写成正式通知" },
+};
+
+const deployDecision: Decision = {
+  chosen: { en: "Deployed without stopping the old version first", zh: "没有先停旧版本就直接部署" },
+  why: { en: "The recipe switches versions in place, and a stop would have left the service down longer", zh: "配方是原地切换版本，先停会让服务停得更久" },
+  otherOptions: { en: "Stopping the service first, for a cleaner switch", zh: "先停服务，切换更干净" },
+};
 
 const lines = (count: number, prefix: string): string[] => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}\n`);
 
@@ -195,6 +220,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
           url: `https://github.com/${work.repository ?? "novan-xu/super-agent-sandbox"}/pull/${number}`,
           closes: [...work.closes],
           report: { en: "Implemented the change and its tests.", zh: "改动和测试都写好了。" },
+          decisions: [pieceDecisions[(work.piece - 1) % pieceDecisions.length] ?? taskDecision],
         });
         end(work);
       }),
@@ -230,6 +256,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
             text: letter,
             files: [{ name: "notice.md", size: data.length, mediaType: "text/markdown" }],
             report: { en: "Wrote the notice and a Markdown copy.", zh: "写好了通知，另附一份 Markdown。" },
+            decisions: [taskDecision],
           });
           end(work);
         }),
@@ -250,6 +277,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
               text: null,
               files: [],
               report: { en: `Deployed ${commit.slice(0, 7)}; the health check passed.`, zh: `部署了 ${commit.slice(0, 7)}，健康检查通过。` },
+              decisions: [deployDecision],
             });
             end(work);
           }),

@@ -3299,3 +3299,142 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   worker, a real deployment, and the NAS.
 - **Why:** The brief asked to keep the harness able to show a chain followed by its deployment.
 - **Other options:** Starting the pair from the harness.
+
+## 2026-11-18 — Decisions made on the owner's behalf are recorded in the hub, per ticket
+
+- **Chosen:** At the owner's request, the hub keeps a record of decisions per ticket in a new table, `ticket_decisions`
+  (migration 25): what was chosen, why, and what other options there were, each as `GeneratedText` (English and
+  Chinese), with the source (`worker` or `brain`), the attempt and pull request a worker's decision came with, when it
+  was recorded, and the owner's review (`verdict` `ok` or `opinion`, the opinion's text, when it was reviewed, and when
+  it was sent to the brain). `Ticket.decisions` carries them, in the order recorded, so the page, `read_ticket` and every
+  report read one source. A decision whose three English texts equal one already on the ticket is kept once, so a worker
+  that hands the same decision in again after a guided round, or the brain calling twice, adds nothing. When an
+  arrangement joins a ticket into a chain, its decisions move to the chain's ticket. Nothing caps their number or length.
+- **Why:** The owner's words: what matters is the record, and the brain must report, when a string of tasks ends, which
+  decisions were made on the owner's behalf. Keeping it in the hub rather than in the brain's conversation means a new
+  session or another provider loses nothing, and the report does not rest on anyone remembering.
+- **Other options:** One free-text field per decision; keeping decisions in the brain's memory or in the issue's
+  comments; a decision per issue rather than per ticket, which a decision about how work was arranged does not fit;
+  refusing a repeated decision instead of keeping one copy.
+
+## 2026-11-18 — A worker hands its decisions in with each pull request and with a task's hand-back
+
+- **Chosen:** The hand-in file of a code worker and the hand-back file of a task worker take an optional `decisions`
+  list, each with `chosen`, `why` and `otherOptions`, every one with `en` and `zh`; a hand-in with none, or without the
+  field, is valid. A decision that is not complete (a missing field, a Chinese copy without Chinese) makes the file
+  wrong, and the worker is told what to fix, as for any wrong hand-in. The runner's `finished` and `delivered` events
+  carry them as a new optional field, so a hub and a runner one version apart still read each other. The hub records a
+  worker's decisions only from the ticket's current attempt, with that attempt and, for a code ticket, the pull request;
+  a failed task hand-back's decisions are recorded too, since they were made.
+- **Why:** The owner wants workers to decide instead of asking half-way, and to record what they decided; the hand-in is
+  the one moment a worker already writes to the hub.
+- **Other options:** A separate decisions file; a tool for the worker to call (a worker has no tools of the hub's);
+  reading `## Decisions` out of the pull request body, which a task ticket does not have.
+
+## 2026-11-18 — The brain records its decisions with record_decision
+
+- **Chosen:** A new tool, `record_decision` (`ticket`, `chosen`, `why`, `other_options`), records a decision against any
+  ticket in any state, as the brain's. Its answer repeats the decision, or says it was already recorded. The guidance
+  names what is worth recording (assumptions at filing, how the work was arranged, cut or joined, what a guided round or
+  a message told a worker when it changes what gets built, a deployment arranged or left out) and what is not (what the
+  owner decided, routine steps, the start defaults, which the owner sees and changes on the card, and the workers' own
+  decisions).
+- **Why:** The owner's words: the brain can decide on the owner's behalf, and must record explicitly.
+- **Other options:** Recording the brain's decisions as part of `file_issue`, `arrange_chains` and `guide_ticket`, which
+  would miss decisions made in a message or at any other time; parsing them out of the issue body.
+
+## 2026-11-18 — Every end report lists the ticket's decisions
+
+- **Chosen:** When a ticket ends, the hub's message to the brain lists every decision recorded for it, in English with
+  its source and review state, then the Chinese copies in the same order, and asks the brain to report every one to the
+  owner in Chinese, briefly. That covers a merged chain, a task ticket done (in the delivery's prompt), a ticket stopped
+  at the cap, one the owner gives up, one the owner stops with 停止, and the answer of `stop_ticket`. A ticket with none
+  says so in one line. The owner's 停止 now tells the brain also when nothing is merged but decisions are recorded
+  (你停止了工单 n), which changes, in "What the brain is told about a chain of several pull requests", that a stop with
+  nothing merged is not told. `read_ticket` lists the decisions with the owner's review of each.
+- **Why:** The owner asked that the report be guaranteed by code. The Chinese copies are the decision maker's own words,
+  so the brain need not translate them again.
+- **Other options:** One message for a whole arrangement of chains when its last ticket ends, which needs a notion of
+  "a string of tasks" the hub does not have; leaving stuck tickets out because they can resume; English only.
+
+## 2026-11-18 — The owner's review: 可以 or one opinion, and one message to the brain
+
+- **Chosen:** On the ticket's page each unsettled decision has 可以 and one box for an opinion with a send button.
+  可以 settles it as OK; a sent opinion settles it as not OK, as the owner wrote it. A settled decision is final: it shows
+  muted, with a check for 可以 or the opinion under it. While the box has text, 可以 is disabled and the send button is
+  the primary one; Enter sends on a keyboard. Each press is one request, `POST /api/tickets/<n>/decisions/<id>` with
+  `{"verdict": "ok"}` or `{"verdict": "opinion", "opinion": "..."}`, in the owner's session and from the page's own
+  origin like every change; a decision already settled answers 409. When the press settles the last unsettled decision
+  of the ticket, the hub sends the brain one `[hub]` message with every opinion not yet sent and its decision, and lists
+  the decisions accepted as they were, and the conversation shows 你看完了工单 n 的决定，k 条意见交给了大脑. A review with
+  no opinion sends nothing. A decision recorded after a review starts a new batch, and only that batch is sent when it
+  is settled. The message asks the brain to group the opinions into follow-up work as it sees fit and to talk with the
+  owner first where the scope of a fix is unclear.
+- **Why:** The owner's words: each item has 可以 and simply one opinion box, an opinion means it is not OK, there is no
+  need for one issue per point, and the brain receives the whole review and decides the grouping. Settling as the owner
+  goes, with no separate submit, is the smallest interaction; a partly reviewed ticket keeps what was pressed.
+- **Other options:** A 提交 button after the last item (one more press); letting a settled decision be changed until the
+  batch is sent; a message for every opinion; telling the brain also when everything is OK, which would make it answer
+  with nothing to do.
+
+## 2026-11-18 — Where decisions to review surface, and what a ticket with decisions looks like
+
+- **Chosen:** The decisions are a section 决定 above the ticket's timeline, with the hot count of those not settled yet,
+  in the prototype's list style (`mem-list`): what was chosen in bold, why below it, the other options muted after a
+  swap icon, and the pull request a worker's decision came with as a link. Who decided is not shown. Finished tickets
+  with decisions to review carry the count on their row in 历史, and 历史 in the sidebar and the tab bar carries the
+  total, as 记忆 carries its suggestions; the hub sends the counts with the open tickets when the page connects
+  (`TicketsUpdate.reviews`), and every change of a ticket updates them. Open tickets are not counted, and joined
+  tickets, which 历史 does not list, neither. There is no push notification and nothing in 等你.
+- **Why:** The suggested option: where finished tickets already surface, with a count, and no push. The owner's rule:
+  no secondary labels; the layout says what is chosen, why and what else there was. The owner said it does not matter
+  who decided.
+- **Other options:** Pinning tickets to review at the top of 历史; a filter in 历史; counting open tickets too; labels
+  such as 理由 and 其他选项; showing whether the worker or the brain decided.
+
+## 2026-11-18 — Issues are plans in advising language, and workers decide instead of asking
+
+- **Chosen:** "Turning a need into issues" in the brain's guidance is rewritten: when the goal or the scope is unclear,
+  the brain talks with the owner before filing, one short question at a time; details of implementation are decided and
+  recorded, not asked. An issue is a fairly complete plan: background, goal, a suggested approach, scope (in and out),
+  open points each with a recommended option, and what done means, in advising language ("suggested", "recommended",
+  "one reasonable way is"), with firm wording only for what the owner explicitly required, marked as such. The
+  `## Assumptions` section of an issue gives way to open points and recorded decisions. `file_issue`'s description says
+  the same. The worker guidance (`WORKER.md`, `TASK.md`) says from the other side that an issue's approach is a
+  suggestion, that a better way may be taken and is recorded as a decision, that a worker decides rather than stops,
+  and what is worth recording (the test: would the owner want to have been asked). The sections touched now advise
+  ("usually", "prefer") except where they describe what the code enforces (the hand-in checks). This overturns, in the
+  design's ticket flow and in the guidance described by "The brain's guidance" and "What a worker is told", the brain
+  writing its assumptions into the issue as its way of not asking, and the worker's "make a reasonable assumption and
+  say it in the pull request".
+- **Why:** The owner's words: an issue should be a fairly complete plan, not one sentence describing a problem, and
+  overly definite language makes later LLMs refuse to adapt; a worker should not ask half-way.
+- **Other options:** A fixed issue template the hub checks; keeping `## Assumptions` beside the decisions.
+
+## 2026-11-18 — Leftover conflict markers in the brain's guidance
+
+- **Chosen:** `AGENTS.md` on `main` held the markers of an unresolved merge in its attachments paragraph. It now keeps
+  the later text (images of up to 20 MB shown to every provider) with "task ticket" for the material.
+- **Why:** The brain read both versions and the markers as its guidance.
+- **Other options:** None worth keeping.
+
+## 2026-11-18 — Decisions in the development harness, and what was verified
+
+- **Chosen:** In `tools/page-dev`, the scripted worker hands in one decision with each piece of a chain (a different one
+  per piece), one with a delivered writing task and one with a deployment; `/__harness/loop?case=chain` also records,
+  through the brain's `record_decision`, how the chain was arranged. The demo brain reports a ticket's decisions in
+  Chinese from the end report's Chinese copies, and answers a review message. Verified in the page at desktop and phone
+  width with `--forge fake`: the chain merged with three decisions (one the brain's, two the worker's, the one repeated
+  by the red-once attempt kept once); 历史 showed 3 on the row and in the navigation; 可以 on the first muted it with a
+  check and lowered both counts; an opinion typed in the box turned the send button primary and disabled 可以; the last
+  opinion, sent at phone width, settled the ticket and cleared the counts, and the conversation showed the brain's
+  report of the three decisions, 你看完了工单 1 的决定，2 条意见交给了大脑, and the demo brain's answer; a delivered task
+  ticket showed its decision above the timeline. Hub tests cover recording from both sources, the dedupe, the end
+  reports (merged, done, the owner's stop with nothing merged, none recorded), the review endpoint (owner and origin
+  checks, 400, 404, 409), one message per batch, no message for an all-OK review, the counts and the move on join;
+  runner tests cover the hand-in and hand-back with decisions and the correction of an incomplete one; page tests cover
+  the section, the history count and the navigation count. Not verified: a real worker writing decisions, and a real
+  brain reporting them or grouping opinions into issues.
+- **Why:** The brief asked to keep the harness able to show a finished chain with decisions from both sources, reviewed
+  in the page, at desktop and phone width.
+- **Other options:** A separate harness case for decisions.

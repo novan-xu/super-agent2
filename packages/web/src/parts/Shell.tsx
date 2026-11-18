@@ -54,21 +54,23 @@ export interface ShellProps {
   readonly toast: string | null;
   readonly waiting: number;
   readonly suggestions?: number;
+  readonly reviews?: number;
   readonly children?: ReactNode;
 }
 
-export function countOf(view: PageView, waiting: number, suggestions = 0): number {
-  return view === "workbench" ? waiting : view === "memory" ? suggestions : 0;
+export function countOf(view: PageView, waiting: number, suggestions = 0, reviews = 0): number {
+  return view === "workbench" ? waiting : view === "memory" ? suggestions : view === "history" ? reviews : 0;
 }
 
 export function Shell(props: ShellProps) {
   const current = viewOf(props.route, props.ticketFrom);
+  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions, props.reviews);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
     <a
       key={destination.view}
       className={className}
       href={props.hrefOf(destination.view)}
-      aria-label={countOf(destination.view, props.waiting, props.suggestions) > 0 ? `${destination.label} ${countOf(destination.view, props.waiting, props.suggestions)}` : destination.label}
+      aria-label={count(destination.view) > 0 ? `${destination.label} ${count(destination.view)}` : destination.label}
       aria-current={current === destination.view ? "page" : undefined}
       onClick={(event) => followLink(event, () => props.navigate(props.destinationOf(destination.view)))}
     >
@@ -83,7 +85,7 @@ export function Shell(props: ShellProps) {
         <>
           <Icon name={destination.icon} />
           <span className="nav-label">{destination.label}</span>
-          {countOf(destination.view, props.waiting, props.suggestions) > 0 ? <span className="count count--hot">{countOf(destination.view, props.waiting, props.suggestions)}</span> : null}
+          {count(destination.view) > 0 ? <span className="count count--hot">{count(destination.view)}</span> : null}
         </>,
       )}
     </li>
@@ -141,7 +143,7 @@ export function Shell(props: ShellProps) {
                   <Icon name={destination.icon} />
                 </span>
                 <span>{destination.label}</span>
-                {countOf(destination.view, props.waiting, props.suggestions) > 0 ? <span className="tab-badge">{countOf(destination.view, props.waiting, props.suggestions)}</span> : null}
+                {count(destination.view) > 0 ? <span className="tab-badge">{count(destination.view)}</span> : null}
               </>,
             ),
           )}

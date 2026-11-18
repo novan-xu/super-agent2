@@ -67,7 +67,7 @@ describe("a round in the ticket's timeline", () => {
         <TicketView
           detail={detail}
           known={new Map()}
-          actions={{ stop: () => Promise.resolve(true), reassign: () => Promise.resolve(true), message: () => Promise.resolve(true), machines: () => Promise.resolve([]) }}
+          actions={{ stop: () => Promise.resolve(true), reassign: () => Promise.resolve(true), message: () => Promise.resolve(true), review: () => Promise.resolve(true), machines: () => Promise.resolve([]) }}
           origin="workbench"
           backHref="/workbench"
           back={() => undefined}

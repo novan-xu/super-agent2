@@ -602,6 +602,31 @@ export const migrations: readonly Migration[] = [
       DROP TABLE deployments;
     `,
   },
+  {
+    version: 25,
+    sql: `
+      CREATE TABLE ticket_decisions (
+        id INTEGER PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        source TEXT NOT NULL,
+        attempt INTEGER,
+        pull_request INTEGER,
+        chosen_en TEXT NOT NULL,
+        chosen_zh TEXT NOT NULL,
+        why_en TEXT NOT NULL,
+        why_zh TEXT NOT NULL,
+        options_en TEXT NOT NULL,
+        options_zh TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        verdict TEXT,
+        opinion TEXT,
+        reviewed_at INTEGER,
+        sent_at INTEGER
+      ) STRICT;
+      CREATE INDEX ticket_decisions_by_ticket ON ticket_decisions (ticket_id, id);
+      CREATE INDEX ticket_decisions_unsettled ON ticket_decisions (ticket_id) WHERE verdict IS NULL;
+    `,
+  },
 ];
 
 function sqlText(value: string): string {

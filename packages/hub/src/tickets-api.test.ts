@@ -130,6 +130,7 @@ describe("the brain's ticket tools", () => {
       "list_tickets",
       "read_ticket",
       "message_worker",
+      "record_decision",
       "stop_ticket",
       "arrange_chains",
       "report_deployment",
@@ -149,7 +150,7 @@ describe("the brain's ticket tools", () => {
     const running = await start();
     const conversation = running.conversations.create();
     const page = await pageSocket(running);
-    expect(page.find((message) => message.type === "tickets")).toEqual({ type: "tickets", tickets: [] });
+    expect(page.find((message) => message.type === "tickets")).toEqual({ type: "tickets", tickets: [], reviews: [] });
 
     const filed = await callTool(running, "file_issue", fileArguments, conversation.id);
     expect(filed.isError).toBe(false);

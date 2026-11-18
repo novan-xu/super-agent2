@@ -30,7 +30,7 @@ function handBack(files: Readonly<Record<string, string>>, handback: unknown) {
 describe("the text of a task result", () => {
   it("travels inline when it fits in one message of the link", () => {
     const paths = handBack({ "result.md": "Hello" }, { text: "result.md", summary });
-    expect(checkTaskHandback({ paths })).toEqual({ ok: true, outcome: "done", text: "Hello", files: [], report: summary });
+    expect(checkTaskHandback({ paths })).toEqual({ ok: true, outcome: "done", text: "Hello", files: [], report: summary, decisions: [] });
     expect(travelsInline("x".repeat(100))).toBe(true);
     expect(largestMessageBytes).toBe(64 * 1024 * 1024);
   });
@@ -47,6 +47,7 @@ describe("the text of a task result", () => {
         { name: "table.csv", size: 3, mediaType: "text/csv" },
       ],
       report: summary,
+      decisions: [],
     });
   });
 });
@@ -54,7 +55,7 @@ describe("the text of a task result", () => {
 describe("a task's hand-back", () => {
   it("may be a report alone, done or failed", () => {
     const report = { en: "Deployed", zh: "部署好了" };
-    expect(checkTaskHandback({ paths: handBack({}, { outcome: "done", report }) })).toEqual({ ok: true, outcome: "done", text: null, files: [], report });
+    expect(checkTaskHandback({ paths: handBack({}, { outcome: "done", report }) })).toEqual({ ok: true, outcome: "done", text: null, files: [], report, decisions: [] });
     expect(checkTaskHandback({ paths: handBack({}, { outcome: "failed", report }) })).toMatchObject({ ok: true, outcome: "failed" });
   });
 
@@ -62,6 +63,18 @@ describe("a task's hand-back", () => {
     const wrong = checkTaskHandback({ paths: handBack({}, { outcome: "partly", report: { en: "x", zh: "好" } }) });
     expect(wrong.ok ? "" : wrong.problem).toContain('"outcome" ("done" or "failed")');
     expect(checkTaskHandback({ paths: handBack({}, { outcome: "done", report: { en: "x", zh: "x" } }) }).ok).toBe(false);
+  });
+
+  it("carries the decisions the worker made on the owner's behalf, and asks again for one without its Chinese copy", () => {
+    const report = { en: "Deployed", zh: "部署好了" };
+    const decision = {
+      chosen: { en: "Kept the old port", zh: "沿用旧端口" },
+      why: { en: "The proxy points at it", zh: "反向代理指向它" },
+      otherOptions: { en: "A new port and a proxy change", zh: "换新端口并改代理" },
+    };
+    expect(checkTaskHandback({ paths: handBack({}, { outcome: "done", report, decisions: [decision] }) })).toMatchObject({ ok: true, decisions: [decision] });
+    const wrong = checkTaskHandback({ paths: handBack({}, { outcome: "done", report, decisions: [{ ...decision, why: { en: "x", zh: "x" } }] }) });
+    expect(wrong.ok ? "" : wrong.problem).toContain('"decisions" (each with "chosen", "why" and "otherOptions"');
   });
 });
 

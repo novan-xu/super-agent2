@@ -35,6 +35,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     work: (id, after) => answer(`work ${id} ${after}`, { events: [] }),
     messageWorker: (id, text) => answer(`message ${id} ${text}`, { id: "m1" }),
     stopTicket: (id) => answer(`stop ${id}`, { ticket: ticket(id, { state: "stopped", updatedAt: 99_000 }) }),
+    reviewDecision: (id, decision, review) => answer(`review ${id} ${decision} ${review.verdict}`, { ticket: ticket(id, { updatedAt: 99_000 }) }),
     answerStuck: (id, request) => answer(`answer ${id} ${JSON.stringify(request)}`, { ticket: ticket(id, { state: request.answer === "resume" ? "working" : "stopped", updatedAt: 99_000 }) }),
     machines: () => answer("machines", { machines: [] }),
     startChains: (chains) => answer(`start ${chains.map((chain) => `${chain.ticket}:${chain.fingerprint.slice(0, 1)}`).join(" ")}`, { tickets: [] }),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ticket } from "./fixtures.js";
 import { pageReducer, initialPage } from "./page.js";
-import { initialTickets, receiveTicket, receiveTickets } from "./tickets.js";
+import { initialTickets, receiveTicket, receiveTickets, reviewCount, toReview } from "./tickets.js";
 
 const ids = (state: { readonly open: readonly { readonly id: number }[] }) => state.open.map((entry) => entry.id);
 
@@ -36,10 +36,45 @@ describe("the open tickets", () => {
   });
 
   it("reach the page state from the socket", () => {
-    const snapshot = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [ticket(1)] } });
+    const snapshot = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [ticket(1)], reviews: [] } });
     expect(ids(snapshot.tickets)).toEqual([1]);
     const changed = pageReducer(snapshot, { type: "server", message: { type: "ticket", ticket: ticket(2) } });
     expect(ids(changed.tickets)).toEqual([2, 1]);
     expect(pageReducer(changed, { type: "server", message: { type: "ticket", ticket: ticket(9, { state: "stopped" }) } })).toBe(changed);
+  });
+});
+
+describe("the decisions to review", () => {
+  const decision = (id: number, verdict: "ok" | "opinion" | null = null) => ({
+    id,
+    source: "worker" as const,
+    attempt: 1,
+    pullRequest: null,
+    chosen: { en: "c", zh: "选了" },
+    why: { en: "w", zh: "因为" },
+    otherOptions: { en: "o", zh: "不选" },
+    at: 1,
+    verdict,
+    opinion: verdict === "opinion" ? "不对" : null,
+    reviewedAt: verdict === null ? null : 2,
+    sentAt: null,
+  });
+
+  it("are counted only on finished tickets, from the hub's list and then from each change", () => {
+    expect(toReview(ticket(1, { state: "working", decisions: [decision(1)] }))).toBe(0);
+    expect(toReview(ticket(1, { state: "merged", endedAt: 9, decisions: [decision(1), decision(2, "ok")] }))).toBe(1);
+    let state = receiveTickets([], [{ ticket: 5, count: 2 }]);
+    expect(reviewCount(state)).toBe(2);
+    state = receiveTicket(state, ticket(6, { state: "merged", endedAt: 9, decisions: [decision(3), decision(4), decision(5)] }));
+    expect(reviewCount(state)).toBe(5);
+    state = receiveTicket(state, ticket(5, { state: "merged", endedAt: 9, decisions: [decision(1, "ok"), decision(2, "opinion")] }));
+    expect(state.reviews).toEqual([{ ticket: 6, count: 3 }]);
+    const same = receiveTicket(state, ticket(6, { state: "merged", endedAt: 9, decisions: [decision(3), decision(4), decision(5)] }));
+    expect(same).toBe(state);
+  });
+
+  it("reach the page state from the socket", () => {
+    const state = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [], reviews: [{ ticket: 3, count: 4 }] } });
+    expect(reviewCount(state.tickets)).toBe(4);
   });
 });

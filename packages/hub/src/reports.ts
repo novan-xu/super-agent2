@@ -1,4 +1,4 @@
-import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketMove, type TicketWait } from "@super-agent2/protocol";
+import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
 
@@ -100,6 +100,52 @@ export function chainProgress(ticket: Ticket): string[] {
   return lines;
 }
 
+function decisionWho(decision: TicketDecision): string {
+  if (decision.source === "brain") {
+    return "recorded by you, the brain";
+  }
+  return decision.pullRequest === null ? "recorded by the worker" : `recorded by the worker with pull request #${decision.pullRequest}`;
+}
+
+function reviewWords(decision: TicketDecision): string {
+  if (decision.verdict === null) {
+    return "Not reviewed by the owner yet.";
+  }
+  if (decision.verdict === "ok") {
+    return "The owner reviewed it: OK.";
+  }
+  return `The owner reviewed it and disagrees; the owner's opinion, in their words: ${decision.opinion ?? ""}`;
+}
+
+export function decisionLine(decision: TicketDecision, review = true): string {
+  return [
+    `Decision ${decision.id} (${decisionWho(decision)}):`,
+    `Chosen: ${decision.chosen.en}`,
+    `Why: ${decision.why.en}`,
+    `Other options: ${decision.otherOptions.en}`,
+    ...(review ? [reviewWords(decision)] : []),
+  ].join(" ");
+}
+
+export function decisionLines(ticket: Ticket): string[] {
+  if (ticket.decisions.length === 0) {
+    return ["Decisions made on the owner's behalf: none is recorded for this ticket."];
+  }
+  return [`Decisions made on the owner's behalf, as recorded for this ticket (${ticket.decisions.length}):`, ...ticket.decisions.map((decision, index) => `${index + 1}. ${decisionLine(decision)}`)];
+}
+
+export function decisionReport(ticket: Ticket): string[] {
+  if (ticket.decisions.length === 0) {
+    return decisionLines(ticket);
+  }
+  return [
+    ...decisionLines(ticket),
+    "Their Chinese copies, as recorded, in the same order:",
+    ...ticket.decisions.map((decision, index) => `${index + 1}. ${decision.chosen.zh}；${decision.why.zh}`),
+    "Report every one of these decisions to the owner in Chinese in your answer, briefly: what was chosen, and why. The owner reviews them on the ticket's page, where each shows with 可以 and a box for an opinion; nothing waits on that review, and you are told what the owner says once they have gone through them.",
+  ];
+}
+
 export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []): string {
   const lines = [
     ticketLine(ticket),
@@ -177,6 +223,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   if (ticket.stopReason !== null) {
     lines.push(`Stopped because: ${ticket.stopReason.en}`);
   }
+  lines.push(...decisionLines(ticket));
   if (ticket.conversation !== null) {
     lines.push(`Filed in conversation ${ticket.conversation}`);
   }

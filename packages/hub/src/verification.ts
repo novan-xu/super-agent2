@@ -21,7 +21,7 @@ import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi, type MergeMethod, type MergeMethods, type PullRequestState } from "./github-api.js";
 import type { FailureReport } from "./failure-loop.js";
 import { createPipelineTimes, durationChinese, durationWords, defaultFirstAllowanceMinutes, noticesDue, overrunFactor, thresholdOf, usualMinimum } from "./pipeline-times.js";
-import { clip, tail } from "./reports.js";
+import { clip, decisionReport, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type PipelineWorkflow, type WoodpeckerApi } from "./woodpecker.js";
@@ -523,6 +523,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]
         : []),
       "Tell the owner in Chinese, in a line or two.",
+      ...decisionReport(ticket),
     ];
     save(id, { reported_at: clock.now() });
     tell(ticket.conversation, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));

@@ -1,6 +1,11 @@
 import {
   canMoveTicket,
   capReached,
+  Decision,
+  type DecisionReview,
+  type DecisionSource,
+  TicketDecision,
+  type TicketReviewCount,
   countsAsRound,
   cursorAt,
   finishedTicketStates,
@@ -147,6 +152,11 @@ export interface MergedPullRequest {
   readonly deployment: boolean | null;
 }
 
+export interface DecisionPlace {
+  readonly attempt?: number | null | undefined;
+  readonly pullRequest?: number | null | undefined;
+}
+
 export interface TicketWrites {
   get(id: number): Ticket | undefined;
   open(request: TicketToOpen): number;
@@ -174,6 +184,9 @@ export interface TicketWrites {
   stick(id: number, failure: LoopFailure): Ticket;
   describeStuck(id: number, where: GeneratedText): Ticket;
   resume(id: number, reason: GeneratedText): Ticket;
+  recordDecisions(id: number, source: DecisionSource, decisions: readonly Decision[], place?: DecisionPlace): TicketDecision[];
+  settleDecision(id: number, decision: number, review: DecisionReview): TicketDecision;
+  sentDecisions(id: number, decisions: readonly number[]): void;
 }
 
 export interface TicketService {
@@ -187,6 +200,7 @@ export interface TicketService {
   task(id: number): TicketTask | undefined;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
+  reviews(): TicketReviewCount[];
   move(id: number, to: TicketState, reason?: GeneratedText): MoveResult;
   stop(id: number, reason: GeneratedText): MoveResult;
   change<T>(body: (writes: TicketWrites) => T): T;
@@ -315,6 +329,48 @@ const PullRequestRow = z.object({
   merged_at: z.number().int().nullable(),
 });
 
+const DecisionRow = z.object({
+  id: z.number().int(),
+  source: z.string(),
+  attempt: z.number().int().nullable(),
+  pull_request: z.number().int().nullable(),
+  chosen_en: z.string(),
+  chosen_zh: z.string(),
+  why_en: z.string(),
+  why_zh: z.string(),
+  options_en: z.string(),
+  options_zh: z.string(),
+  recorded_at: z.number().int(),
+  verdict: z.string().nullable(),
+  opinion: z.string().nullable(),
+  reviewed_at: z.number().int().nullable(),
+  sent_at: z.number().int().nullable(),
+});
+
+function decisionOf(row: unknown): TicketDecision {
+  const value = DecisionRow.parse(row);
+  return TicketDecision.parse({
+    id: value.id,
+    source: value.source,
+    attempt: value.attempt,
+    pullRequest: value.pull_request,
+    chosen: { en: value.chosen_en, zh: value.chosen_zh },
+    why: { en: value.why_en, zh: value.why_zh },
+    otherOptions: { en: value.options_en, zh: value.options_zh },
+    at: value.recorded_at,
+    verdict: value.verdict,
+    opinion: value.opinion,
+    reviewedAt: value.reviewed_at,
+    sentAt: value.sent_at,
+  });
+}
+
+function sameDecision(a: Decision, b: Decision): boolean {
+  return a.chosen.en.trim() === b.chosen.en.trim() && a.why.en.trim() === b.why.en.trim() && a.otherOptions.en.trim() === b.otherOptions.en.trim();
+}
+
+const ReviewRow = z.object({ ticket_id: z.number().int(), count: z.number().int() });
+
 function pullRequestOf(row: unknown): TicketPullRequest {
   const value = PullRequestRow.parse(row);
   return TicketPullRequest.parse({
@@ -436,6 +492,16 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateMergedPullRequest = connection.prepare(
     "UPDATE ticket_pull_requests SET state = 'merged', closes = ?, merge_commit = ?, deployment = ?, merged_at = COALESCE(merged_at, ?) WHERE ticket_id = ? AND number = ?",
   );
+  const selectDecisions = connection.prepare("SELECT * FROM ticket_decisions WHERE ticket_id = ? ORDER BY id");
+  const insertDecision = connection.prepare(
+    "INSERT INTO ticket_decisions (ticket_id, source, attempt, pull_request, chosen_en, chosen_zh, why_en, why_zh, options_en, options_zh, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const updateVerdict = connection.prepare("UPDATE ticket_decisions SET verdict = ?, opinion = ?, reviewed_at = ? WHERE ticket_id = ? AND id = ? AND verdict IS NULL");
+  const moveDecisions = connection.prepare("UPDATE ticket_decisions SET ticket_id = ? WHERE ticket_id = ?");
+  const updateSent = connection.prepare("UPDATE ticket_decisions SET sent_at = ? WHERE ticket_id = ? AND id = ? AND sent_at IS NULL");
+  const selectReviews = connection.prepare(
+    `SELECT d.ticket_id AS ticket_id, COUNT(*) AS count FROM ticket_decisions d JOIN tickets t ON t.id = d.ticket_id WHERE d.verdict IS NULL AND t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${finishedTicketStates.map(() => "?").join(", ")}) GROUP BY d.ticket_id ORDER BY d.ticket_id`,
+  );
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
@@ -523,6 +589,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const verification = selectVerification.get(value.id);
     const pullRequests = selectPullRequests.all(value.id).map(pullRequestOf);
     const task = taskOf(value.id);
+    const decisions = selectDecisions.all(value.id).map(decisionOf);
     return Ticket.parse({
       id: value.id,
       form: value.form,
@@ -551,6 +618,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       branch: value.branch,
       pullRequest: value.pull_request,
       pullRequests,
+      decisions,
       report: pair(value.report_en, value.report_zh),
       work: attempt === undefined ? null : workStatusOf(attempt),
       verification: verification === undefined ? null : verificationOf(verification),
@@ -803,9 +871,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (into === id) {
           throw new TicketError(`Ticket ${id} cannot join itself`);
         }
-        const ticket = writes.move(id, "stopped", reason);
+        writes.move(id, "stopped", reason);
         updateJoined.run(into, id);
-        return ticket;
+        if (moveDecisions.run(into, id).changes > 0) {
+          touch(into);
+        }
+        return existing(id);
       },
       touched: (id) => touch(id),
       state: (id, statement) => {
@@ -951,6 +1022,70 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         touched.add(id);
         return existing(id);
       },
+      recordDecisions: (id, source, decisions, place = {}) => {
+        const current = existing(id);
+        const known: Decision[] = [...current.decisions];
+        const recorded: TicketDecision[] = [];
+        const now = clock.now();
+        for (const given of decisions) {
+          const decision = Decision.parse(given);
+          if (known.some((entry) => sameDecision(entry, decision))) {
+            continue;
+          }
+          const result = insertDecision.run(
+            id,
+            source,
+            place.attempt ?? null,
+            place.pullRequest ?? null,
+            decision.chosen.en,
+            decision.chosen.zh,
+            decision.why.en,
+            decision.why.zh,
+            decision.otherOptions.en,
+            decision.otherOptions.zh,
+            now,
+          );
+          known.push(decision);
+          recorded.push({
+            ...decision,
+            id: Number(result.lastInsertRowid),
+            source,
+            attempt: place.attempt ?? null,
+            pullRequest: place.pullRequest ?? null,
+            at: now,
+            verdict: null,
+            opinion: null,
+            reviewedAt: null,
+            sentAt: null,
+          });
+        }
+        if (recorded.length > 0) {
+          touch(id);
+        }
+        return recorded;
+      },
+      settleDecision: (id, decision, review) => {
+        const current = existing(id);
+        const found = current.decisions.find((entry) => entry.id === decision);
+        if (found === undefined) {
+          throw new TicketError(`Ticket ${id} has no decision ${decision}`);
+        }
+        if (found.verdict !== null) {
+          throw new TicketError(`Decision ${decision} of ticket ${id} is already settled`);
+        }
+        const now = clock.now();
+        const opinion = review.verdict === "opinion" ? review.opinion.trim() : null;
+        updateVerdict.run(review.verdict, opinion, now, id, decision);
+        touch(id);
+        return { ...found, verdict: review.verdict, opinion, reviewedAt: now };
+      },
+      sentDecisions: (id, decisions) => {
+        const now = clock.now();
+        for (const decision of decisions) {
+          updateSent.run(now, id, decision);
+        }
+        touch(id);
+      },
     };
     inside = true;
     let result: T;
@@ -1038,6 +1173,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       selectWaitingFor.all(id).flatMap((row) => {
         const ticket = get(IdRow.parse(row).ticket_id);
         return ticket === undefined ? [] : [ticket];
+      }),
+    reviews: () =>
+      selectReviews.all(...finishedTicketStates).map((row) => {
+        const value = ReviewRow.parse(row);
+        return { ticket: value.ticket_id, count: value.count };
       }),
     move,
     stop: (id, reason) => {

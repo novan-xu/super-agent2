@@ -125,7 +125,18 @@ interface Planned {
   readonly effort?: string;
   readonly after?: string;
   readonly task?: string;
+  readonly decision?: {
+    readonly chosen: GeneratedTextShape;
+    readonly why: GeneratedTextShape;
+    readonly other_options: GeneratedTextShape;
+  };
 }
+
+const chainDecision: NonNullable<Planned["decision"]> = {
+  chosen: { en: "Put the three date issues on one chain, in the order parse, relative, show", zh: "三个日期问题排成一条链，顺序是解析、相对日期、显示" },
+  why: { en: "They touch the same parser and each builds on the one before", zh: "它们改的是同一个解析器，后一个建立在前一个上" },
+  other_options: { en: "Three chains in parallel, which would conflict in the parser", zh: "拆成三条并行的链，会在解析器上冲突" },
+};
 
 const scenarioPlan: readonly Planned[] = [
   {
@@ -448,6 +459,7 @@ export function createHarness(options: HarnessOptions): Harness {
           behaviour,
           machine: "studio",
           engine: "claude",
+          ...(name === "chain" ? { decision: chainDecision } : {}),
         },
       ],
       response,
@@ -638,6 +650,13 @@ export function createHarness(options: HarnessOptions): Harness {
       });
       ids.set(plan.name, ticket.id);
       options.scripted.behave(ticket.id, plan.behaviour);
+      if (plan.decision !== undefined) {
+        const recorded = await callTool("record_decision", { ticket: ticket.id, ...plan.decision });
+        if (recorded.isError) {
+          json(response, 409, { error: `record_decision refused for ${plan.name}: ${recorded.text}` });
+          return;
+        }
+      }
       const stated = options.hub.chains.arranger.state([
         plan.repository === null
           ? { ticket: ticket.id, kind: "writing", reason: { en: "Scripted writing", zh: "脚本写作" }, platform: "any" }

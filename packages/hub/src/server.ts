@@ -13,6 +13,7 @@ import {
   ClientMessage,
   conversationHeader,
   ConversationId,
+  DecisionReview,
   type ConversationDetail,
   type ConversationList,
   type ConversationResponse,
@@ -75,6 +76,7 @@ import type { CommandService } from "./commands.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import type { FailureLoop, StuckAnswerError } from "./failure-loop.js";
+import type { DecisionReviews } from "./reviews.js";
 import type { TicketFiles } from "./files.js";
 import type { AttachmentStore, ChosenAttachments } from "./attachments.js";
 import { serveAttachments } from "./attachments-api.js";
@@ -139,6 +141,8 @@ const ticketRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})$/;
 
 const ticketFileRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/files\/([^/]{1,400})$/;
 
+const ticketDecisionRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/decisions\/([1-9][0-9]{0,15})$/;
+
 const ticketWorkRoute = /^\/api\/tickets\/([1-9][0-9]{0,15})\/(work|messages|stop|answer)$/;
 
 const stuckAnswerStatus: Readonly<Record<StuckAnswerError, number>> = {
@@ -177,6 +181,7 @@ export interface HubServerOptions {
   readonly work?: WorkService;
   readonly chains?: ChainStarter;
   readonly loop?: FailureLoop;
+  readonly reviews?: DecisionReviews;
   readonly defaults?: StartDefaults;
   readonly heartbeatMilliseconds?: number;
   readonly version?: string;
@@ -569,6 +574,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path.startsWith(ticketsPath) && (await serveTicketWork(request, response, path, method))) {
+      return;
+    }
+    if (path.startsWith(ticketsPath) && (await serveDecisionReview(request, response, path, method))) {
       return;
     }
     if (path.startsWith(memoriesPath) && options.memories !== undefined && (await serveMemories(request, response, path, method, options.memories))) {
@@ -1164,6 +1172,29 @@ export function createHubServer(options: HubServerOptions): HubServer {
     return true;
   };
 
+  const serveDecisionReview = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
+    const reviews = options.reviews;
+    const route = ticketDecisionRoute.exec(path);
+    if (reviews === undefined || route?.[1] === undefined || route[2] === undefined || method !== "POST") {
+      return false;
+    }
+    if (!ownerAction(request, response)) {
+      return true;
+    }
+    const given = parseJson(await readBody(request), DecisionReview);
+    if (given === undefined) {
+      sendJson(response, 400, { error: "bad_request" });
+      return true;
+    }
+    const outcome = reviews.review(Number(route[1]), Number(route[2]), given);
+    if (!outcome.ok) {
+      sendJson(response, outcome.error === "not_found" ? 404 : 409, { error: outcome.error });
+      return true;
+    }
+    sendJson(response, 202, { ticket: outcome.ticket });
+    return true;
+  };
+
   const serveTicketWork = async (request: IncomingMessage, response: ServerResponse, path: string, method: string): Promise<boolean> => {
     const tickets = options.tickets;
     const work = options.work;
@@ -1412,7 +1443,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       send({ type: "waiting", cards: options.waiting.cards() });
     }
     if (options.tickets !== undefined) {
-      send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit }) });
+      send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit }), reviews: options.tickets.reviews() });
     }
     if (options.memories !== undefined) {
       send({ type: "memories", ...options.memories.snapshot() });
