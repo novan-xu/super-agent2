@@ -5,8 +5,9 @@ import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
 import { machineReport } from "./machine.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
+import { createProgramUpdater, systemProgramUpdateSteps, type ProgramUpdateSteps } from "./program-update.js";
 import { createUpdater, systemSteps, type Updater, type UpdateSteps } from "./update.js";
-import { createWorks, type Works, type WorksOptions } from "./works.js";
+import { createWorks, type WorkMessage, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
   readonly files: RunnerFiles;
@@ -24,6 +25,7 @@ export interface RunnerServiceOptions {
   readonly supervised?: boolean;
   readonly restart?: () => void;
   readonly updateSteps?: UpdateSteps;
+  readonly programUpdateSteps?: ProgramUpdateSteps;
 }
 
 export interface RunnerService {
@@ -77,6 +79,9 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   let allowances: AllowanceReading[] = [];
   let bound: RunnerLink | undefined;
   let updater: Updater | undefined;
+  let programUpdater: ReturnType<typeof createProgramUpdater> | undefined;
+  let updatingPrograms = false;
+  const queued: WorkMessage[] = [];
   const works = createWorks({
     home: files.home,
     environment: options.environment,
@@ -87,14 +92,15 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     changed: () => {
       bound?.update();
       updater?.changed();
+      programUpdater?.changed();
     },
     ...(options.now === undefined ? {} : { now: options.now }),
     ...options.work,
   });
   const link = createRunnerLink({
     config,
-    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
-    works: () => works,
+    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
+    works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
     onEvent: (event) => {
@@ -122,7 +128,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
           environment: options.environment,
           nodePath: process.execPath,
         }),
-      busy: () => works.busy(),
+      busy: () => works.busy() + (updatingPrograms ? 1 : 0),
       restart: options.restart ?? (() => undefined),
       log,
       now,
@@ -139,10 +145,26 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     );
     link.update();
   };
+  if (options.environment.SUPERAGENT2_PROGRAM_AUTO_UPDATE !== "0") {
+    programUpdater = createProgramUpdater({
+      steps: options.programUpdateSteps ?? systemProgramUpdateSteps(prober),
+      busy: () => works.busy(),
+      report: () => programs,
+      publish: (reports) => { programs = reports; link.update(); },
+      reprobe: probe,
+      lock: (active) => {
+        updatingPrograms = active;
+        link.update();
+        if (!active) for (const message of queued.splice(0)) works.receive(message);
+        if (!active) updater?.changed();
+      },
+      log,
+    });
+  }
   link.start();
-  const probed = probe().catch((error: unknown) => log(`Could not list the programs: ${error instanceof Error ? error.message : String(error)}`));
+  const probed = probe().then(() => programUpdater?.check()).catch((error: unknown) => log(`Could not list the programs: ${error instanceof Error ? error.message : String(error)}`));
   const timer = setInterval(() => {
-    void probe().catch(() => undefined);
+    if (!updatingPrograms) void probe().then(() => programUpdater?.check()).catch(() => undefined);
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
   let reading = false;
@@ -177,6 +199,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     close: async () => {
       clearInterval(timer);
       clearInterval(allowanceTimer);
+      await programUpdater?.close();
       await works.close();
       await link.close();
     },
