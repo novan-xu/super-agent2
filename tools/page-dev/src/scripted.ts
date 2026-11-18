@@ -1,7 +1,7 @@
 import type { Hub, RunnerLink } from "@super-agent2/hub";
 import { type HubToRunner, type MachinePlatform, type MachineReport, protocolVersion, type WorkEvent } from "@super-agent2/protocol";
 
-export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "deliver";
+export type Behaviour = "long" | "finish" | "fail" | "fails" | "red-once" | "red-always" | "deliver" | "deploy";
 
 export interface HandBack {
   readonly ticket: number;
@@ -25,6 +25,7 @@ interface Running {
   readonly behaviour: Behaviour;
   readonly repository: string | null;
   readonly branch: string | null;
+  readonly commit: string | null;
   readonly planned: Behaviour;
   readonly closes: readonly number[];
   readonly piece: number;
@@ -98,6 +99,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
   const behaviours = new Map<number, Behaviour>();
   const running = new Map<number, Running>();
   const descriptions = new Map<number, string | null>();
+  const checkouts = new Map<number, { readonly commit: string | null; readonly deploys: boolean }>();
   const branches = new Map<number, string>();
   const pieces = new Map<number, { readonly branch: string; readonly count: number; readonly closes: readonly number[] }>();
   const outputs = new Map<number, Map<string, Buffer>>();
@@ -224,12 +226,34 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
           outputs.set(work.ticket, new Map([["notice.md", data]]));
           emit(work, {
             kind: "delivered",
+            outcome: "done",
             text: letter,
             files: [{ name: "notice.md", size: data.length, mediaType: "text/markdown" }],
             report: { en: "Wrote the notice and a Markdown copy.", zh: "写好了通知，另附一份 Markdown。" },
           });
           end(work);
         }),
+      ),
+    );
+  };
+
+  const deploy = (work: Running) => {
+    const commit = work.commit ?? "unknown";
+    stream(work, "recipe", words(`读了部署配方，按它在这台机器上部署 ${commit.slice(0, 7)}。`), () =>
+      tool(work, "deploy", `node scripts/deploy.mjs ${commit}`, ["fetching the commit\n", "building\n", "switching to the new version\n", "the service restarted\n"], true, () =>
+        tool(work, "health", "curl -fsS http://127.0.0.1:8080/health", [`{"status":"ok","version":"${commit}"}\n`], true, () =>
+          stream(work, "deployed", words("新版本起来了，健康检查通过。"), () => {
+            emit(work, {
+              kind: "delivered",
+              outcome: "done",
+              ...(work.commit === null ? {} : { commit: work.commit }),
+              text: null,
+              files: [],
+              report: { en: `Deployed ${commit.slice(0, 7)}; the health check passed.`, zh: `部署了 ${commit.slice(0, 7)}，健康检查通过。` },
+            });
+            end(work);
+          }),
+        ),
       ),
     );
   };
@@ -242,7 +266,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
     if (previous !== undefined) {
       end(previous);
     }
-    const planned = behaviours.get(ticket) ?? "finish";
+    const planned = behaviours.get(ticket) ?? (checkouts.get(ticket)?.deploys === true ? "deploy" : checkouts.has(ticket) ? "deliver" : "finish");
     const behaviour: Behaviour = planned === "fail" && attempt > 1 ? "finish" : planned === "fails" ? "fail" : planned === "red-once" || planned === "red-always" ? "finish" : planned;
     const piece = pieces.get(ticket);
     const work: Running = {
@@ -253,6 +277,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
       planned,
       repository: descriptions.get(ticket) ?? null,
       branch: branches.get(ticket) ?? null,
+      commit: checkouts.get(ticket)?.commit ?? null,
       closes: piece?.closes ?? [],
       piece: piece?.count ?? 1,
       seq: 0,
@@ -273,6 +298,8 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
           fail(work);
         } else if (work.behaviour === "deliver") {
           deliver(work);
+        } else if (work.behaviour === "deploy") {
+          deploy(work);
         } else {
           finish(work);
         }
@@ -298,8 +325,9 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
         begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);
         return;
       }
-      case "work.write":
+      case "work.task":
         descriptions.set(message.task.ticket, null);
+        checkouts.set(message.task.ticket, { commit: message.task.checkout?.commit ?? null, deploys: message.task.deploys });
         begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);
         return;
       case "work.message": {
