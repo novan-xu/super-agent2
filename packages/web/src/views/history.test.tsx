@@ -72,7 +72,7 @@ describe("历史", () => {
     expect(html).toContain("status--info");
     expect(html).toContain("status--ok");
     expect(plain(html)).toContain("已停止");
-    expect(plain(html)).toContain("已交付");
+    expect(plain(html)).toContain("已完成");
     expect(plain(html)).toContain("已合并");
     expect(html).toContain("你停止了它");
   });

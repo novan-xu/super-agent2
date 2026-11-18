@@ -52,6 +52,7 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   const summary = { en: "Do it", zh: "做这件事" };
   return {
     id,
+    form: "code",
     repository,
     issues: [{ repository, number: id, url: `https://github.com/${repository}/issues/${id}`, title, summary }],
     title,
@@ -60,6 +61,10 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     difficulty: null,
     difficultyReason: null,
     platform: null,
+    requiredMachine: null,
+    commitRef: null,
+    commit: null,
+    deploys: false,
     brainEngine: null,
     ownerChoice: { machine: null, engine: null, model: null, effort: null },
     state: "pending",
@@ -93,7 +98,7 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   };
 }
 
-export function holdCard(id: string, overrides: { readonly at?: number; readonly command?: string; readonly cwd?: string | null; readonly environment?: Readonly<Record<string, string>>; readonly fingerprint?: string } = {}): WaitingCard {
+export function holdCard(id: string, overrides: { readonly at?: number; readonly command?: string; readonly cwd?: string | null; readonly fingerprint?: string } = {}): WaitingCard {
   const at = overrides.at ?? 1_000;
   return {
     kind: "hold",
@@ -105,7 +110,6 @@ export function holdCard(id: string, overrides: { readonly at?: number; readonly
       command: overrides.command ?? "gh repo delete novan-xu/old --yes",
       account: "novan-xu",
       cwd: overrides.cwd === undefined ? "/srv/projects/app" : overrides.cwd,
-      environment: { ...(overrides.environment ?? {}) },
       state: "held",
       exitCode: null,
       signal: null,

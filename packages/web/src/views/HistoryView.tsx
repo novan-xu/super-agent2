@@ -2,6 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { chineseOf, type Ticket } from "@super-agent2/protocol";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { type HistoryState, historyLine, matchNote } from "../live/history.js";
+import { kindKey } from "../live/phase.js";
 import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
 import { ChainNumbers, momentOf, PhaseStatus, PullRequestNumbers } from "./TicketParts.js";
@@ -35,7 +36,7 @@ const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: 
       <span className="lrow-main">
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
-          <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
+          <span className="chip">{text(kindKey(ticket))}</span>
           {ticket.repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />

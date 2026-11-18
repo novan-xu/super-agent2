@@ -124,10 +124,11 @@ export interface DeliveryBodyProps {
   readonly title: string;
   readonly at: number;
   readonly text: string | null;
+  readonly report?: string | null;
   readonly files: readonly { readonly name: string; readonly size: number }[];
 }
 
-export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, files }: DeliveryBodyProps) {
+export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files }: DeliveryBodyProps) {
   return (
     <div className="msg delivery">
       <div className="msg-who">
@@ -135,7 +136,7 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
         <strong>{title}</strong>
         <span className="num">{clockOf(at)}</span>
       </div>
-      {body === null ? null : <div className="msg-text msg-plain delivery-text">{body}</div>}
+      {body === null ? report === null ? null : <div className="msg-text msg-plain">{report}</div> : <div className="msg-text msg-plain delivery-text">{body}</div>}
       {files.length === 0 ? null : (
         <div className="msg-files">
           {files.map((file) => (
@@ -152,7 +153,7 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
 });
 
 function Delivery({ entry }: { readonly entry: DeliveryEntry }) {
-  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} files={entry.files} />;
+  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} />;
 }
 
 function Notice({ entry }: { readonly entry: NoticeEntry }) {

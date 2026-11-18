@@ -197,6 +197,7 @@ export const messages = {
   "ticket.where": "执行",
   "ticket.repository": "仓库",
   "ticket.branch": "分支",
+  "ticket.commit": "提交",
   "ticket.pullRequest": "PR",
   "ticket.pullState.open": "未合并",
   "ticket.pullState.merged": "已合并",
