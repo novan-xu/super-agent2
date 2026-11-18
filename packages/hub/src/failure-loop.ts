@@ -61,7 +61,6 @@ export interface FailureLoopOptions {
 
 export const failureWords: Readonly<Record<LoopFailureKind, string>> = {
   workflow: "a Woodpecker workflow on its pull request's head is red",
-  conflict: "its pull request still conflicts with the base branch after the worker had it back",
   "no-pull-request": "the worker ended without handing back a valid result",
   program: "the worker's program failed (it exited, refused, or ran out of allowance)",
   lost: "the worker was lost: its machine came back without it",
@@ -119,9 +118,6 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       const logs = options.verification?.()?.logs(ticket.id) ?? [];
       return logs.flatMap((log) => [`The log of workflow ${log.workflow}, step ${log.step}, ends with:`, tail(log.log || "(empty)", 8_000)]).join("\n");
     }
-    if (failure.kind === "conflict") {
-      return "";
-    }
     const output = options.work()?.output(ticket.id, 8_000) ?? "";
     return output === "" ? "" : `The worker's output ends with:\n${output}`;
   };
@@ -164,7 +160,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const counting = next.counted
       ? `Guided rounds so far: ${ticket.round} of ${roundCap}. Your guidance starts round ${next.round}${next.round === roundCap ? ", the last: if it fails too, the hub stops the ticket for the owner" : ""}.`
       : `This failure is the machine's, not the worker's, so your guidance starts a retry that is not counted as a guided round (still ${ticket.round} of ${roundCap}). A second failure of the machine in a row is counted.`;
-    const verifying = report.failure.kind === "workflow" || report.failure.kind === "conflict";
+    const verifying = report.failure.kind === "workflow";
     tell(
       ticket.conversation,
       text(verifying ? "notice.verificationFailed" : "notice.workerFailed", { ticket: ticket.id }),

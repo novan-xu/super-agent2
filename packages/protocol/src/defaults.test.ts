@@ -146,12 +146,18 @@ describe("resolving a chain's start", () => {
     expect(choice.by).toEqual({ machine: "owner", engine: "owner", model: "owner", effort: "owner" });
   });
 
-  it("says a model and effort the machine does not offer is missing, instead of taking a neighbour", () => {
+  it("says an effort the machine does not offer for the model is missing, instead of taking a neighbour", () => {
     const owner = { ...noOwnerChoice, model: "gpt-6.1-sol", effort: "max" };
     const choice = resolveStart(input({ brainEngine: "codex", platform: "windows", owner }), startingEngineTable, [pc], available);
-    expect(choice).toMatchObject({ model: "gpt-6.1-sol", effort: "max", missing: ["model"] });
+    expect(choice).toMatchObject({ model: "gpt-6.1-sol", effort: "max", missing: ["effort"] });
     expect(isComplete(choice)).toBe(false);
     expect(ownerGivesUnoffered(owner, choice, [pc])).toBe(true);
+  });
+
+  it("says a model the machine does not offer is missing", () => {
+    const owner = { ...noOwnerChoice, model: "gpt-99", effort: "high" };
+    const choice = resolveStart(input({ brainEngine: "codex", platform: "windows", owner }), startingEngineTable, [pc], available);
+    expect(choice).toMatchObject({ model: "gpt-99", effort: "high", missing: ["model"] });
   });
 
   it("says what is missing when nothing is stated, no runner fits, or the engine is nowhere", () => {

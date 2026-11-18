@@ -39,7 +39,7 @@ describe("a worker's log", () => {
 
   it("shows a delivery's files without their bytes", () => {
     const log = receiveWork(emptyLog(1), [
-      workEvent(1, { kind: "delivered", text: "Hello", files: [{ name: "a.txt", size: 3, mediaType: "text/plain", data: "" }], report: { en: "Sent", zh: "交了" } }),
+      workEvent(1, { kind: "delivered", text: "Hello", files: [{ name: "a.txt", size: 3, mediaType: "text/plain" }], report: { en: "Sent", zh: "交了" } }),
     ]);
     expect(log.attempts[0]?.items[0]).toEqual({ kind: "delivered", key: "1:end:1", at: 10_001, text: "Hello", files: [{ name: "a.txt", size: 3 }], report: { en: "Sent", zh: "交了" } });
   });

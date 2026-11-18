@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { holdCard } from "./fixtures.js";
+import { holdCard, stuckCard } from "./fixtures.js";
 import { canAnswer, initialWaiting, useOf, waitingCount, type WaitingAction, waitingReducer, type WaitingState } from "./waiting.js";
 
 function run(...actions: WaitingAction[]): WaitingState {
@@ -8,6 +8,7 @@ function run(...actions: WaitingAction[]): WaitingState {
 
 const one = holdCard("a1", { at: 1000 });
 const two = holdCard("b2", { at: 2000 });
+const stuck = stuckCard(7);
 
 describe("what waits", () => {
   it("knows nothing until the hub has said what waits", () => {
@@ -43,32 +44,30 @@ describe("what waits", () => {
 });
 
 describe("answering a card", () => {
-  it("lets 确认 be pressed only after the card was armed", () => {
+  it("lets 确认 and 拒绝 of a held command be pressed once, with nothing to arm", () => {
     const shown = run({ type: "snapshot", cards: [one] });
-    expect(canAnswer(shown, "hold:a1", "release")).toBe(false);
-    const armed = waitingReducer(shown, { type: "arm", key: "hold:a1" });
-    expect(useOf(armed, "hold:a1").step).toBe("armed");
-    expect(canAnswer(armed, "hold:a1", "release")).toBe(true);
-    expect(canAnswer(armed, "hold:a1", "refuse")).toBe(true);
+    expect(canAnswer(shown, "hold:a1", "release")).toBe(true);
+    expect(canAnswer(shown, "hold:a1", "refuse")).toBe(true);
+    expect(waitingReducer(shown, { type: "arm", key: "hold:a1" })).toBe(shown);
   });
 
-  it("lets 拒绝 be pressed without arming", () => {
-    expect(canAnswer(run({ type: "snapshot", cards: [one] }), "hold:a1", "refuse")).toBe(true);
-  });
-
-  it("lets the owner change their mind", () => {
-    const state = run({ type: "snapshot", cards: [one] }, { type: "arm", key: "hold:a1" }, { type: "disarm", key: "hold:a1" });
-    expect(useOf(state, "hold:a1").step).toBe("idle");
-    expect(canAnswer(state, "hold:a1", "release")).toBe(false);
+  it("lets 放弃 of a stuck ticket be pressed only after it was armed, and lets the owner change their mind", () => {
+    const shown = run({ type: "snapshot", cards: [stuck] });
+    expect(canAnswer(shown, stuck.key, "give-up")).toBe(false);
+    const armed = waitingReducer(shown, { type: "arm", key: stuck.key });
+    expect(useOf(armed, stuck.key).step).toBe("armed");
+    expect(canAnswer(armed, stuck.key, "give-up")).toBe(true);
+    const state = waitingReducer(armed, { type: "disarm", key: stuck.key });
+    expect(useOf(state, stuck.key).step).toBe("idle");
+    expect(canAnswer(state, stuck.key, "give-up")).toBe(false);
   });
 
   it("cannot be pressed twice while the answer is on its way", () => {
-    const sending = run({ type: "snapshot", cards: [one] }, { type: "arm", key: "hold:a1" }, { type: "sending", key: "hold:a1", verdict: "release" });
+    const sending = run({ type: "snapshot", cards: [one] }, { type: "sending", key: "hold:a1", verdict: "release" });
     expect(useOf(sending, "hold:a1")).toEqual({ step: "sending", verdict: "release", failure: null });
     expect(canAnswer(sending, "hold:a1", "release")).toBe(false);
     expect(canAnswer(sending, "hold:a1", "refuse")).toBe(false);
     expect(waitingReducer(sending, { type: "sending", key: "hold:a1", verdict: "refuse" })).toBe(sending);
-    expect(waitingReducer(sending, { type: "arm", key: "hold:a1" })).toBe(sending);
   });
 
   it("does not begin to answer a card that is not there", () => {
@@ -79,21 +78,21 @@ describe("answering a card", () => {
   });
 
   it("keeps the state of a card across the hub's lists, so a list arriving mid-answer changes nothing", () => {
-    const sending = run({ type: "snapshot", cards: [one, two] }, { type: "arm", key: "hold:a1" }, { type: "sending", key: "hold:a1", verdict: "release" });
+    const sending = run({ type: "snapshot", cards: [one, two] }, { type: "sending", key: "hold:a1", verdict: "release" });
     const later = waitingReducer(sending, { type: "snapshot", cards: [one, two] });
     expect(useOf(later, "hold:a1").step).toBe("sending");
     expect(useOf(later, "hold:b2").step).toBe("idle");
   });
 
   it("starts again from the beginning when what the card holds has changed", () => {
-    const armed = run({ type: "snapshot", cards: [one] }, { type: "arm", key: "hold:a1" });
+    const failed = run({ type: "snapshot", cards: [one] }, { type: "failed", key: "hold:a1", failure: "conflict" });
     const changed = holdCard("a1", { at: 1000, fingerprint: "e".repeat(64) });
-    const later = waitingReducer(armed, { type: "snapshot", cards: [changed] });
-    expect(useOf(later, "hold:a1").step).toBe("idle");
+    const later = waitingReducer(failed, { type: "snapshot", cards: [changed] });
+    expect(useOf(later, "hold:a1")).toEqual({ step: "idle", verdict: null, failure: null });
   });
 
   it("returns to idle with the reason when the hub refuses, so the owner can try again", () => {
-    const state = run({ type: "snapshot", cards: [one] }, { type: "arm", key: "hold:a1" }, { type: "sending", key: "hold:a1", verdict: "release" }, { type: "failed", key: "hold:a1", failure: "conflict" });
+    const state = run({ type: "snapshot", cards: [one] }, { type: "sending", key: "hold:a1", verdict: "release" }, { type: "failed", key: "hold:a1", failure: "conflict" });
     expect(useOf(state, "hold:a1")).toEqual({ step: "idle", verdict: null, failure: "conflict" });
     expect(waitingCount(state)).toBe(1);
   });

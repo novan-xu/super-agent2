@@ -4,10 +4,7 @@ import {
   type DeliveredFile,
   DeliveryFileName,
   type GeneratedText,
-  maximumDeliveredBytes,
-  maximumDeliveredFileBytes,
-  maximumDeliveredFiles,
-  maximumDeliveredText,
+  largestMessageBytes,
   type WritingMaterial,
   WritingHandback,
   type WritingTask,
@@ -82,12 +79,13 @@ export type WritingOutcome =
 
 export interface WritingCheck {
   readonly paths: WorkPaths;
+  readonly inlineBytes?: number;
 }
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-function megabytes(bytes: number): string {
-  return `${bytes / (1024 * 1024)} MB`;
+export function travelsInline(text: string, limit: number = largestMessageBytes): boolean {
+  return Buffer.byteLength(JSON.stringify(text), "utf8") <= limit;
 }
 
 export function checkWritingHandback(check: WritingCheck): WritingOutcome {
@@ -123,11 +121,7 @@ export function checkWritingHandback(check: WritingCheck): WritingOutcome {
   if (new Set(names).size !== names.length) {
     return { ok: false, problem: `The hand-back file ${handback} names a file twice. Each file is named once: the text file in "text", every other file in "files".` };
   }
-  if (given.files.length > maximumDeliveredFiles) {
-    return { ok: false, problem: `You listed ${given.files.length} files; at most ${maximumDeliveredFiles} can be delivered. Combine them and write the hand-back file again.` };
-  }
-  const read = new Map<string, Buffer>();
-  let total = 0;
+  const sizes = new Map<string, number>();
   for (const name of names) {
     if (!DeliveryFileName.safeParse(name).success) {
       return { ok: false, problem: `"${name}" is not a file name. Name files that are directly in the output folder ${output}, without a folder path.` };
@@ -143,34 +137,33 @@ export function checkWritingHandback(check: WritingCheck): WritingOutcome {
     } catch {
       return { ok: false, problem: `The hand-back file names "${name}", but there is no such file in the output folder ${output}. Create it there or correct the name.` };
     }
-    if (size > maximumDeliveredFileBytes) {
-      return { ok: false, problem: `"${name}" is ${size} bytes; a delivered file can be at most ${megabytes(maximumDeliveredFileBytes)}. Make it smaller or split it, then write the hand-back file again.` };
-    }
-    total += size;
-    if (total > maximumDeliveredBytes) {
-      return { ok: false, problem: `The files together are more than ${megabytes(maximumDeliveredBytes)}. Deliver less, then write the hand-back file again.` };
-    }
-    read.set(name, readFileSync(path));
+    sizes.set(name, size);
   }
   let delivered: string | null = null;
+  const listed = [...given.files];
   if (given.text !== undefined && given.text !== null) {
-    const bytes = read.get(given.text);
-    try {
-      delivered = decoder.decode(bytes).replace(/^﻿/, "");
-    } catch {
-      return { ok: false, problem: `"${given.text}" is not valid UTF-8 text. Write your text result as a UTF-8 file.` };
-    }
-    if (delivered.trim() === "") {
-      return { ok: false, problem: `"${given.text}" is empty. Write your result into it.` };
-    }
-    if (delivered.length > maximumDeliveredText) {
-      return { ok: false, problem: `"${given.text}" is ${delivered.length} characters; a text result can be at most ${maximumDeliveredText}. Deliver the rest as a file listed in "files", or shorten it.` };
+    const name = given.text;
+    const inline = check.inlineBytes ?? largestMessageBytes;
+    if ((sizes.get(name) ?? 0) > inline) {
+      listed.unshift(name);
+    } else {
+      let decoded: string;
+      try {
+        decoded = decoder.decode(readFileSync(join(output, name))).replace(/^\uFEFF/, "");
+      } catch {
+        return { ok: false, problem: `"${name}" is not valid UTF-8 text. Write your text result as a UTF-8 file.` };
+      }
+      if (decoded.trim() === "") {
+        return { ok: false, problem: `"${name}" is empty. Write your result into it.` };
+      }
+      if (travelsInline(decoded, inline)) {
+        delivered = decoded;
+      } else {
+        listed.unshift(name);
+      }
     }
   }
-  const files: DeliveredFile[] = given.files.map((name) => {
-    const bytes = read.get(name) ?? Buffer.alloc(0);
-    return { name, size: bytes.length, mediaType: mediaTypeOf(name), data: bytes.toString("base64") };
-  });
+  const files: DeliveredFile[] = listed.map((name) => ({ name, size: sizes.get(name) ?? 0, mediaType: mediaTypeOf(name) }));
   return { ok: true, text: delivered, files, report: given.summary };
 }
 

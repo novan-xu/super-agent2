@@ -14,7 +14,7 @@ export type TargetName = z.infer<typeof TargetName>;
 
 export const VariableName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(100);
 
-export const CommandEnvironment = z.record(VariableName, z.string().max(10_000));
+export const CommandEnvironment = z.record(VariableName, z.string());
 
 export type CommandEnvironment = z.infer<typeof CommandEnvironment>;
 

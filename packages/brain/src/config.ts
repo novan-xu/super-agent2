@@ -1,4 +1,4 @@
-import type { Provider } from "@super-agent2/protocol";
+import { type Provider, startingOrder } from "@super-agent2/protocol";
 import { z } from "zod";
 import { providerOrder } from "./providers.js";
 
@@ -27,7 +27,7 @@ const text = z.string().trim().min(1, { error: "must not be empty" });
 
 const Preferred = z
   .string()
-  .default("gpt,claude")
+  .default(startingOrder.join(","))
   .transform((value) => value.split(",").map((item) => item.trim()).filter((item) => item !== ""))
   .pipe(
     z

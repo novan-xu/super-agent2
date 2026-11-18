@@ -8,6 +8,7 @@ import {
   protocolVersion,
   runnerCloseCodes,
   type RunnerToHub,
+  type FilePart,
   type RunnerWorkEvent,
   type WorkHeld,
 } from "@super-agent2/protocol";
@@ -25,11 +26,12 @@ export interface RunnerLink {
   closed(): void;
 }
 
-export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" }>;
+export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" }>;
 
 export interface WorkLink {
   hello(machine: string, works: readonly WorkHeld[]): void;
   event(machine: string, message: RunnerWorkEvent): void;
+  part(machine: string, message: FilePart): void;
   closed(machine: string): void;
 }
 
@@ -222,6 +224,10 @@ export function createRunners(options: RunnersOptions): Runners {
           }
           if (message.type === "work.event") {
             tellWork((bound) => bound.event(machine.name, message));
+            return;
+          }
+          if (message.type === "work.file.part") {
+            tellWork((bound) => bound.part(machine.name, message));
             return;
           }
           const pending = link.pending.get(message.id);

@@ -489,7 +489,7 @@ describe("a conflict at merge time", () => {
     expect(sentBack).toHaveLength(1);
   });
 
-  it("does not send the same conflict back twice, and tells the brain it was not resolved", async () => {
+  it("sends the same conflict back as often as it comes, counts each time on the ticket, and never reports it as a failure", async () => {
     const ticket = verifying([52], 22, "y1", ["docs/a.md"]);
     const pull = forge.repository(repository).pulls.get(22);
     if (pull === undefined) {
@@ -497,14 +497,24 @@ describe("a conflict at merge time", () => {
     }
     pull.mergeable = false;
     await settle();
+    for (let time = 2; time <= 4; time += 1) {
+      handBack(ticket.id);
+      await settle();
+      await poll();
+      expect(current(ticket.id).state).toBe("working");
+      expect(sentBack).toHaveLength(time);
+      expect(sentBack.at(-1)?.note).toContain(`this is time ${time}`);
+    }
+    expect(sentBack[0]?.note).not.toContain("this is time");
+    expect(current(ticket.id).verification).toMatchObject({ state: "conflict", conflictReturns: 4 });
+    expect(current(ticket.id).round).toBe(0);
+    expect(told).toEqual([]);
+    pull.head = "y2";
+    pull.mergeable = true;
     handBack(ticket.id);
     await settle();
-    await poll();
-    expect(sentBack).toHaveLength(1);
-    expect(current(ticket.id).state).toBe("verifying");
-    expect(current(ticket.id).verification).toMatchObject({ state: "conflict" });
-    expect(told.map((entry) => entry.notice)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`]);
-    expect(told[0]?.prompt).toContain("without resolving it");
+    expect(current(ticket.id).state).toBe("merged");
+    expect(current(ticket.id).verification?.conflictReturns).toBe(4);
   });
 });
 

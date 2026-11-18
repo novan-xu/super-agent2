@@ -257,7 +257,7 @@ describe("the failure loop, unattended", () => {
     expect(detail.moves.map((move) => [move.from, move.to, move.reason?.zh ?? null])).toContainEqual(["verifying", "working", "第 1 轮引导"]);
   });
 
-  it("hands the brain an unresolved conflict with the files changed on both sides, and counts only the brain's round", async () => {
+  it("sends a conflict back to the worker each time, with the files changed on both sides, and never counts it or tells the brain of a failure", async () => {
     const { running, runner, sent, conversation } = await start();
     const ticket = begin(running, conversation, 5);
     const branch = current(running, ticket.id).branch ?? "";
@@ -277,13 +277,15 @@ describe("the failure loop, unattended", () => {
     event(runner, ticket.id, 2, { kind: "phase", phase: "resumed", detail: "Resumed" });
     event(runner, ticket.id, 2, { kind: "finished", pullRequest: 13, url: `https://github.com/${repository}/pull/13`, report: { en: "Done", zh: "做完了" } });
     await settled(running);
-    expect(current(running, ticket.id)).toMatchObject({ state: "verifying", round: 0, verification: { state: "conflict" } });
-    const told = notices(running, conversation).at(-1);
-    expect(told?.prompt).toContain("still conflicts with the base branch");
-    expect(told?.prompt).toContain("Files changed both by the pull request and on main since it branched: src/greet.ts");
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Merge main and keep both greetings.", zh: "合并 main，两句问候都留下。" } }, conversation);
-    expect(guided.isError, guided.text).toBe(false);
-    expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 3 } });
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 0, work: { attempt: 3 }, verification: { conflictReturns: 2 } });
+    expect(starts(sent, ticket.id)).toHaveLength(3);
+    expect(JSON.stringify(starts(sent, ticket.id).at(-1))).toContain("Files changed both by the pull request and on main since it branched: src/greet.ts");
+    expect(notices(running, conversation).filter((entry) => entry.prompt.includes("failed"))).toEqual([]);
+    const refused = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Merge main and keep both greetings.", zh: "合并 main，两句问候都留下。" } }, conversation);
+    expect(refused.isError).toBe(true);
+    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    expect(read.text).toContain("went back to its worker for a conflict 2 times");
+    expect(current(running, ticket.id).round).toBe(0);
   });
 
   it("does not count one retry after the machine lost the worker, and counts the next", async () => {

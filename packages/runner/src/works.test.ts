@@ -8,7 +8,7 @@ import { createGit, type ProcessRunner, runProcess } from "./git.js";
 import type { PullRequestState } from "./handback.js";
 import { tokenVariable } from "./identity.js";
 import { workPaths } from "./workplace.js";
-import { createWorks, maximumCorrections, type Works, type WorksOptions } from "./works.js";
+import { createWorks, type Works, type WorksOptions } from "./works.js";
 import { writingPaths } from "./writing.js";
 
 class Recorder<T> {
@@ -303,7 +303,7 @@ describe("a worker on the runner", () => {
     expect(readFileSync(join(paths.folder, "work.json"), "utf8")).not.toContain(token);
   });
 
-  it("asks the worker to fix a missing or wrong hand-back, and fails after the allowed corrections", async () => {
+  it("asks the worker to fix a missing or wrong hand-back for as long as it is wrong, and hands back once it is right", async () => {
     const works = start();
     works.receive({ type: "work.start", task: task(6) });
     let handle = await programs.prompted(1);
@@ -315,11 +315,12 @@ describe("a worker on the runner", () => {
     handle.emit({ type: "turn.finished", outcome: "completed" });
     handle = await programs.prompted(3, handle);
     expect(handle.prompts[2]).toContain("does not close #12");
-    expect(maximumCorrections).toBe(2);
     handle.emit({ type: "turn.finished", outcome: "completed" });
-    const last = await ended(6);
-    expect(last).toMatchObject({ kind: "failed", failure: "no-pull-request" });
-    expect(last.kind === "failed" ? last.reason : "").toContain("does not close #12");
+    handle = await programs.prompted(4, handle);
+    expect(handle.prompts[3]).toContain("does not close #12");
+    handBack(6, 41, [11, 12]);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(6)).toMatchObject({ kind: "finished", pullRequest: 41 });
   });
 
   it("takes a message into the running turn, or queues it for the next turn when the program cannot", async () => {
@@ -504,7 +505,7 @@ describe("a writing worker on the runner", () => {
     expect(last).toEqual({
       kind: "delivered",
       text: "Hello, world.\n",
-      files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]).toString("base64") }],
+      files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf" }],
       report: summary,
     });
     expect(kinds(20)).toEqual(["phase:preparing", "phase:prepared", "phase:started", "phase:turn", "session", "ran", "phase:checking", "delivered"]);
@@ -525,13 +526,12 @@ describe("a writing worker on the runner", () => {
     handle.emit({ type: "turn.finished", outcome: "completed" });
     handle = await programs.prompted(3, handle);
     expect(handle.prompts[2]).toContain("is not valid JSON");
-    expect(maximumCorrections).toBe(2);
+    writeOutput(21, { "table.xlsx": "cells" }, { files: ["table.xlsx"], summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
-    const last = await ended(21);
-    expect(last).toMatchObject({ kind: "failed", failure: "no-pull-request" });
+    expect(await ended(21)).toEqual({ kind: "delivered", text: null, files: [{ name: "table.xlsx", size: 5, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }], report: summary });
   });
 
-  it("refuses a hand-back that names a missing file, a path outside the output folder, an empty text or an oversized file", async () => {
+  it("refuses a hand-back that names a missing file or a path outside the output folder", async () => {
     const works = start();
     works.receive({ type: "work.write", task: writingTask(22) });
     const handle = await programs.prompted(1);
@@ -545,22 +545,34 @@ describe("a writing worker on the runner", () => {
     await programs.prompted(3, handle);
     expect(handle.prompts[2]).toContain("is not a file name");
     expect(existsSync(paths.handback)).toBe(true);
-    handle.emit({ type: "turn.finished", outcome: "completed" });
-    expect((await ended(22)).kind).toBe("failed");
   });
 
-  it("checks sizes and text before delivering", async () => {
+  it("refuses an empty text, and delivers files of any size and number, sending each part the hub asks for", async () => {
     const works = start();
     works.receive({ type: "work.write", task: writingTask(23) });
     const handle = await programs.prompted(1);
-    writeOutput(23, { "empty.txt": "  \n", "big.bin": Buffer.alloc(4 * 1024 * 1024 + 1) }, { text: "empty.txt", summary });
+    const big = Buffer.alloc(9 * 1024 * 1024, 3);
+    big[big.length - 1] = 9;
+    const many = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`part-${index}.txt`, `piece ${index}`]));
+    writeOutput(23, { "empty.txt": "  \n", "big.bin": big, ...many }, { text: "empty.txt", summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
     await programs.prompted(2, handle);
     expect(handle.prompts[1]).toContain('"empty.txt" is empty');
-    writeOutput(23, {}, { files: ["big.bin"], summary });
+    writeOutput(23, {}, { files: ["big.bin", ...Object.keys(many)], summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
-    await programs.prompted(3, handle);
-    expect(handle.prompts[2]).toContain("a delivered file can be at most 4 MB");
+    const last = await ended(23);
+    expect(last.kind === "delivered" ? last.files.length : 0).toBe(31);
+    expect(last.kind === "delivered" ? last.files[0] : undefined).toEqual({ name: "big.bin", size: big.length, mediaType: "application/octet-stream" });
+    const asked = { type: "work.file" as const, ticket: 23, attempt: 1, name: "big.bin", offset: 8 * 1024 * 1024, length: 1024 * 1024 };
+    works.receive(asked);
+    works.receive({ ...asked, name: "missing.bin", offset: 0 });
+    const parts = await sent.until(() => sent.items.filter((message) => message.type === "work.file.part").length === 2).then(() =>
+      sent.items.flatMap((message) => (message.type === "work.file.part" ? [message] : [])),
+    );
+    const served = parts.find((message) => message.name === "big.bin");
+    expect(Buffer.from(served?.data ?? "", "base64").equals(big.subarray(8 * 1024 * 1024))).toBe(true);
+    expect(served).toMatchObject({ offset: 8 * 1024 * 1024, problem: null });
+    expect(parts.find((message) => message.name === "missing.bin")).toMatchObject({ data: null, problem: expect.stringContaining("missing.bin") as unknown as string });
   });
 
   it("stops and removes the scratch folder without touching Git, and lists the work after a restart", async () => {

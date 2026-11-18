@@ -48,6 +48,7 @@ export const TicketVerification = z.object({
   mergeCommit: z.string().nullable(),
   deployment: z.boolean().nullable(),
   skipReason: z.string().nullable(),
+  conflictReturns: z.number().int().nonnegative(),
   checkedAt: z.number().int().nullable(),
 });
 export type TicketVerification = z.infer<typeof TicketVerification>;

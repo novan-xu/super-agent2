@@ -139,7 +139,7 @@ export function defaultMachine(platform: Platform, engine: ProgramId, machines: 
   return candidates[0]?.name ?? null;
 }
 
-export const missingParts = ["defaults", "machine", "engine", "model"] as const;
+export const missingParts = ["defaults", "machine", "engine", "model", "effort"] as const;
 export const MissingPart = z.enum(missingParts);
 export type MissingPart = z.infer<typeof MissingPart>;
 
@@ -183,7 +183,7 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   } else if (engine !== null && engineOn(chosen, engine) === undefined) {
     missing.add("engine");
   } else if (engine !== null && model !== null && effort !== null && !offers(chosen, engine, model, effort)) {
-    missing.add("model");
+    missing.add(engineOn(chosen, engine)?.models.some((offered) => offered.id === model) === true ? "effort" : "model");
   }
   if ((machine === null || engine === null || model === null || effort === null) && missing.size === 0) {
     missing.add("defaults");

@@ -6,7 +6,7 @@ export const defaultHealthEverySeconds = 5;
 export const defaultHealthWithinSeconds = 120;
 
 export const DeploymentHealth = z.strictObject({
-  command: z.string().trim().min(1).max(20_000),
+  command: z.string().trim().min(1),
   everySeconds: z.number().int().min(1).max(3_600).default(defaultHealthEverySeconds),
   withinSeconds: z.number().int().min(1).max(86_400).default(defaultHealthWithinSeconds),
 });
@@ -15,9 +15,9 @@ export type DeploymentHealth = z.infer<typeof DeploymentHealth>;
 export const DeploymentFile = z.strictObject({
   target: TargetName,
   folder: z.string().trim().min(1).max(1_000).optional(),
-  deploy: z.string().trim().min(1).max(20_000),
+  deploy: z.string().trim().min(1),
   health: DeploymentHealth,
-  rollback: z.string().trim().min(1).max(20_000),
+  rollback: z.string().trim().min(1),
 });
 export type DeploymentFile = z.infer<typeof DeploymentFile>;
 
@@ -59,7 +59,7 @@ export const deploymentOutcomeMarker = "superagent2-deployment-outcome";
 
 export const DeploymentOutcome = z.object({
   result: DeploymentResult,
-  reason: z.string().trim().min(1).max(4_000),
+  reason: z.string().trim().min(1),
   previous: z
     .string()
     .regex(/^[0-9a-f]{7,40}$/)
