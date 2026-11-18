@@ -10,6 +10,7 @@ import {
   ConversationDetail as DetailShape,
   ConversationList,
   conversationHeader,
+  turnHeader,
   MemoryList,
   type Provider,
 } from "@super-agent2/protocol";
@@ -202,6 +203,7 @@ async function callTool(options: OpenOptions, name: string, args: Record<string,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       [conversationHeader]: tools.conversation,
+      [turnHeader]: tools.turn,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
   });
@@ -252,7 +254,9 @@ describe("the brain's session", () => {
 
     await say(conversation.id, "今天天气不错。");
     const second = await programs.gpt.next();
-    expect(second.handle).toBe(opening.handle);
+    expect(second.handle).not.toBe(opening.handle);
+    expect(second.handle.options.session).toBe("gpt-session-1");
+    expect(second.handle.options.tools?.turn).not.toBe(opening.handle.options.tools?.turn);
     expect(second.text).toBe("今天天气不错。");
     second.handle.finish("是的。");
     await turnEnded(conversation.id, 2);
@@ -276,7 +280,7 @@ describe("the brain's session", () => {
     await until(() => running().conversations.linked());
     await say(conversation.id, "它几岁了？我没说过。");
     const afterHub = await programs.gpt.next();
-    expect(afterHub.handle).toBe(afterBrain.handle);
+    expect(afterHub.handle.options.session).toBe("gpt-session-1");
     expect(afterHub.text).toBe("它几岁了？我没说过。");
     afterHub.handle.finish("你没告诉过我。");
     await turnEnded(conversation.id, 4);
@@ -561,7 +565,7 @@ describe("the brain's session", () => {
     clock.advance(1000);
     await say(first.id, "回到第一个。");
     const back = await programs.gpt.next();
-    expect(back.handle).toBe(one.handle);
+    expect(back.handle.options.session).toBe("session-one");
     back.handle.finish("回来了。");
     await turnEnded(first.id, 2);
 
@@ -610,7 +614,7 @@ describe("the brain's session", () => {
     expect(edited.status).toBe(200);
     await say(second.id, "部署呢？");
     const told = await programs.gpt.next();
-    expect(told.handle).toBe(fresh.handle);
+    expect(told.handle.options.session).toBe("gpt-two");
     expect(told.text).toContain('The owner edited #1; it now reads: "你希望先说结论，再列细节。"');
     expect(told.text).toContain('- #1 "你希望先说结论，再列细节。"');
     told.handle.emit({ type: "unavailable", reason: "usage limit", until: null });

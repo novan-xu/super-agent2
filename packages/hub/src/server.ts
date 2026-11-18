@@ -12,6 +12,7 @@ import {
   brainToolsPath,
   ClientMessage,
   conversationHeader,
+  turnHeader,
   ConversationId,
   DecisionReview,
   type ConversationDetail,
@@ -450,13 +451,15 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     const header = request.headers[conversationHeader];
     const conversation = typeof header === "string" && ConversationId.safeParse(header).success ? header : undefined;
+    const turnId = request.headers[turnHeader];
+    const turn = typeof turnId === "string" && turnId !== "" ? turnId : undefined;
     const aborted = new AbortController();
     response.on("close", () => {
       if (!response.writableFinished) {
         aborted.abort();
       }
     });
-    const reply = await tools.handle({ body, conversation, aborted: aborted.signal });
+    const reply = await tools.handle({ body, conversation, turn, aborted: aborted.signal });
     if (aborted.signal.aborted) {
       return;
     }

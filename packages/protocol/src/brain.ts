@@ -210,3 +210,4 @@ export type HubToBrain = z.infer<typeof HubToBrain>;
 export const brainLinkPath = "/brain/link";
 export const brainToolsPath = "/brain/mcp";
 export const conversationHeader = "x-super-agent-conversation";
+export const turnHeader = "x-super-agent-turn";

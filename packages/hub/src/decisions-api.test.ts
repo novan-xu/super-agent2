@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, type Decision, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
+import { type Decision, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
@@ -147,20 +148,6 @@ function base(running: Hub): string {
   return `http://127.0.0.1:${running.address.port}`;
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${readFileSync(join(dataDir, "brain.token"), "utf8").trim()}`,
-      "content-type": "application/json",
-      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
-  return reply.result === undefined ? { isError: true, text: reply.error?.message ?? "" } : { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 async function review(running: Hub, ticket: number, id: number, body: unknown, options: { readonly origin?: string; readonly owner?: boolean } = {}): Promise<Response> {
   return fetch(`${base(running)}/api/tickets/${ticket}/decisions/${id}`, {
     method: "POST",
@@ -228,12 +215,12 @@ describe("decisions made on the owner's behalf", () => {
   it("are recorded from the worker's hand-ins and from the brain, and the end report of a merged chain lists every one", async () => {
     const { running, runner, conversation } = await start();
     const ticket = chain(running, conversation);
-    const recorded = await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one chain").chosen, why: decision("one chain").why, other_options: decision("one chain").otherOptions }, conversation);
+    const recorded = await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one chain").chosen, why: decision("one chain").why, other_options: decision("one chain").otherOptions }, conversation);
     expect(recorded.isError, recorded.text).toBe(false);
     expect(recorded.text).toContain("Chosen: Chose one chain");
-    const again = await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one chain").chosen, why: decision("one chain").why, other_options: decision("one chain").otherOptions }, conversation);
+    const again = await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one chain").chosen, why: decision("one chain").why, other_options: decision("one chain").otherOptions }, conversation);
     expect(again.text).toContain("already has this decision recorded");
-    expect((await callTool(running, "record_decision", { ticket: 999, ...decision("x"), other_options: decision("x").otherOptions })).isError).toBe(true);
+    expect((await callBrainTool(running, "record_decision", { ticket: 999, ...decision("x"), other_options: decision("x").otherOptions })).isError).toBe(true);
 
     const first = current(running, ticket.id).branch ?? "";
     event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
@@ -260,7 +247,7 @@ describe("decisions made on the owner's behalf", () => {
     expect(told?.prompt).toContain("Report every one of these decisions to the owner in Chinese");
     expect(running.tickets.reviews()).toEqual([{ ticket: ticket.id, count: 3 }]);
 
-    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id }, conversation);
     expect(read.text).toContain("Chose a new column");
     expect(read.text).toContain("Not reviewed by the owner yet.");
   });
@@ -284,7 +271,7 @@ describe("decisions made on the owner's behalf", () => {
   it("are listed when the owner stops a ticket, even with nothing merged", async () => {
     const { running, conversation } = await start();
     const ticket = chain(running, conversation);
-    await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision("a cut").chosen, why: decision("a cut").why, other_options: decision("a cut").otherOptions }, conversation);
+    await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision("a cut").chosen, why: decision("a cut").why, other_options: decision("a cut").otherOptions }, conversation);
     const response = await fetch(`${base(running)}/api/tickets/${ticket.id}/stop`, {
       method: "POST",
       body: "{}",
@@ -301,7 +288,7 @@ describe("decisions made on the owner's behalf", () => {
     const ticket = chain(running, conversation);
     const ids: number[] = [];
     for (const name of ["one", "two", "three"]) {
-      await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision(name).chosen, why: decision(name).why, other_options: decision(name).otherOptions }, conversation);
+      await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision(name).chosen, why: decision(name).why, other_options: decision(name).otherOptions }, conversation);
     }
     ids.push(...current(running, ticket.id).decisions.map((entry) => entry.id));
     const [one, two, three] = ids as [number, number, number];
@@ -330,7 +317,7 @@ describe("decisions made on the owner's behalf", () => {
     expect(current(running, ticket.id).decisions.every((entry) => entry.sentAt !== null)).toBe(true);
     expect(current(running, ticket.id).state).toBe("working");
 
-    await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision("four").chosen, why: decision("four").why, other_options: decision("four").otherOptions }, conversation);
+    await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision("four").chosen, why: decision("four").why, other_options: decision("four").otherOptions }, conversation);
     const four = current(running, ticket.id).decisions.at(-1)?.id ?? 0;
     expect((await review(running, ticket.id, four, { verdict: "opinion", opinion: "再想想" })).status).toBe(202);
     const later = notices(running, conversation);
@@ -339,7 +326,7 @@ describe("decisions made on the owner's behalf", () => {
     expect(later[1]?.prompt).not.toContain("Chose two");
     expect(later[1]?.prompt).not.toContain("Accepted as they were");
 
-    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id }, conversation);
     expect(read.text).toContain("The owner reviewed it: OK.");
     expect(read.text).toContain("the owner's opinion, in their words: 应该用 UTC");
   });
@@ -347,7 +334,7 @@ describe("decisions made on the owner's behalf", () => {
   it("send nothing to the brain when the owner accepts every one, and are counted only for finished tickets", async () => {
     const { running, conversation } = await start();
     const ticket = chain(running, conversation);
-    await callTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one").chosen, why: decision("one").why, other_options: decision("one").otherOptions }, conversation);
+    await callBrainTool(running, "record_decision", { ticket: ticket.id, chosen: decision("one").chosen, why: decision("one").why, other_options: decision("one").otherOptions }, conversation);
     expect(running.tickets.reviews()).toEqual([]);
     running.tickets.stop(ticket.id, { en: "Stopped for the test", zh: "测试停止" });
     expect(running.tickets.reviews()).toEqual([{ ticket: ticket.id, count: 1 }]);

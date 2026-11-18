@@ -15,6 +15,7 @@ import {
   WaitingList,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import { createPushDevice, receivePush } from "./push-device.js";
@@ -129,7 +130,7 @@ async function stateDefaults(running: Hub, engine: "codex" | "claude" = "codex")
   if (pending.length === 0) {
     return;
   }
-  const stated = await callTool(running, "choose_defaults", {
+  const stated = await callBrainTool(running, "choose_defaults", {
     chains: pending.map((ticket) => ({
       ticket: ticket.id,
       kind: ticket.kind,
@@ -169,21 +170,8 @@ function brainToken(): string {
   return readFileSync(join(dataDir, "brain.token"), "utf8").trim();
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }> {
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${brainToken()}`, "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
-  if (reply.result === undefined) {
-    return { isError: true, text: reply.error?.message ?? "" };
-  }
-  return { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 async function fileIssue(running: Hub, title: string, zh: string, repository = sandbox): Promise<void> {
-  const filed = await callTool(running, "file_issue", {
+  const filed = await callBrainTool(running, "file_issue", {
     repository,
     title: { en: title, zh },
     summary: { en: `${title}.`, zh: `${zh}。` },
@@ -229,7 +217,7 @@ async function fileThree(running: Hub): Promise<void> {
   await fileIssue(running, "Parse dates", "解析日期");
   await fileIssue(running, "Parse times", "解析时间");
   await fileIssue(running, "Write the guide", "写使用说明");
-  const arranged = await callTool(running, "arrange_chains", {
+  const arranged = await callBrainTool(running, "arrange_chains", {
     chains: [
       { name: "parser", repository: sandbox, issues: [1, 2], title: { en: "Parse dates and times", zh: "解析日期和时间" }, summary: { en: "Both change the parser.", zh: "两件都改解析器。" } },
       { name: "guide", repository: sandbox, issues: [3] },
@@ -306,7 +294,7 @@ describe("chains from filing to start", () => {
     await inbox.until(() => inbox.ticketState(1) === "working" && inbox.ticketState(3) === "working" && inbox.lastCards().length === 0);
     await running.chains.idle();
     expect(begun.sort()).toEqual([1, 3]);
-    expect((await callTool(running, "read_ticket", { ticket: 1 })).text).toContain("pending -> working");
+    expect((await callBrainTool(running, "read_ticket", { ticket: 1 })).text).toContain("pending -> working");
   });
 
   it("counts pending chains as waiting for the owner, and sends one notification when new chains are ready", async () => {
@@ -327,7 +315,7 @@ describe("chains from filing to start", () => {
     expect(payloads.length).toBeLessThanOrEqual(2);
     expect(payloads[0]).toMatchObject({ title: "等你", body: "有新的工单可以开始", tag: "start" });
     const before = pushes.length;
-    await callTool(running, "arrange_chains", { chains: [{ name: "a", repository: sandbox, issues: [1] }, { name: "b", repository: sandbox, issues: [2], after: ["a"] }] });
+    await callBrainTool(running, "arrange_chains", { chains: [{ name: "a", repository: sandbox, issues: [1] }, { name: "b", repository: sandbox, issues: [2], after: ["a"] }] });
     await running.push?.idle();
     expect(pushes.length).toBe(before);
   });
@@ -337,7 +325,7 @@ describe("chains from filing to start", () => {
     await fileIssue(running, "Parse dates", "解析日期");
     await fileIssue(running, "Parse times", "解析时间");
     const cards = await startCards(running);
-    const refused = await callTool(running, "arrange_chains", {
+    const refused = await callBrainTool(running, "arrange_chains", {
       chains: [
         { name: "a", repository: sandbox, issues: [1], after: ["b"] },
         { name: "b", repository: sandbox, issues: [2], after: ["a"] },
@@ -345,7 +333,7 @@ describe("chains from filing to start", () => {
     });
     expect(refused).toEqual({ isError: true, text: "Nothing was changed: it has a cycle: chain a waits for chain b waits for chain a" });
     expect(await startCards(running)).toEqual(cards);
-    const missing = await callTool(running, "arrange_chains", { chains: [{ name: "a", repository: sandbox, issues: [1, 5], title: { en: "x", zh: "某事" }, summary: { en: "x", zh: "某事" } }] });
+    const missing = await callBrainTool(running, "arrange_chains", { chains: [{ name: "a", repository: sandbox, issues: [1, 5], title: { en: "x", zh: "某事" }, summary: { en: "x", zh: "某事" } }] });
     expect(missing.isError).toBe(true);
     expect(missing.text).toContain("#5");
     expect(await startCards(running)).toEqual(cards);
@@ -356,7 +344,7 @@ describe("chains from filing to start", () => {
     const inbox = await page(running);
     await fileIssue(running, "Add the endpoint", "加接口");
     await fileIssue(running, "Call the endpoint", "调用接口", other);
-    const arranged = await callTool(running, "arrange_chains", {
+    const arranged = await callBrainTool(running, "arrange_chains", {
       chains: [
         { name: "server", repository: sandbox, issues: [1] },
         { name: "client", repository: other, issues: [1], after: ["server"] },
@@ -379,20 +367,20 @@ describe("chains from filing to start", () => {
     const conversation = running.conversations.create();
     await fileIssue(running, "Add the endpoint", "加接口");
     await fileIssue(running, "Call the endpoint", "调用接口");
-    await callTool(running, "arrange_chains", {
+    await callBrainTool(running, "arrange_chains", {
       chains: [
         { name: "server", repository: sandbox, issues: [1] },
         { name: "client", repository: sandbox, issues: [2], after: ["server"] },
       ],
     });
     expect((await startCall(running, { body: await startBody(running, 1) })).status).toBe(202);
-    await callTool(running, "stop_ticket", { ticket: 1, reason: { en: "Wrong approach", zh: "方法不对" } });
+    await callBrainTool(running, "stop_ticket", { ticket: 1, reason: { en: "Wrong approach", zh: "方法不对" } });
     const waitingTopic = running.tickets.get(2)?.conversation;
     expect(waitingTopic).toBeTruthy();
     const notices = running.conversations.entries(waitingTopic ?? "").filter((entry) => entry.kind === "notice");
     expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual(["工单 1 停止了，排在它后面的工单 2 由大脑决定是否继续"]);
     expect(running.conversations.entries(conversation.id)).toEqual([]);
-    const proceeded = await callTool(running, "proceed_ticket", { ticket: 2 });
+    const proceeded = await callBrainTool(running, "proceed_ticket", { ticket: 2 });
     expect(proceeded.isError).toBe(false);
     expect(running.tickets.get(2)?.state).toBe("working");
   });
@@ -451,8 +439,8 @@ describe("only the owner starts a chain", () => {
     });
     const names = ((await listed.json()) as { result: { tools: { name: string }[] } }).result.tools.map((tool) => tool.name);
     expect(names.filter((name) => /start|begin/.test(name))).toEqual([]);
-    expect((await callTool(running, "start_chain", { ticket: 1 })).text).toBe("Unknown tool: start_chain");
-    expect((await callTool(running, "proceed_ticket", { ticket: 1 })).isError).toBe(true);
+    expect((await callBrainTool(running, "start_chain", { ticket: 1 })).text).toBe("Unknown tool: start_chain");
+    expect((await callBrainTool(running, "proceed_ticket", { ticket: 1 })).isError).toBe(true);
     await unchanged(running);
   });
 
@@ -486,7 +474,7 @@ describe("only the owner starts a chain", () => {
   it("refuses a start of an arrangement other than the one the page showed", async () => {
     const { running, body } = await prepared();
     await fileIssue(running, "Parse times", "解析时间");
-    await callTool(running, "arrange_chains", {
+    await callBrainTool(running, "arrange_chains", {
       chains: [{ name: "both", repository: sandbox, issues: [1, 2], title: { en: "Both", zh: "两件" }, summary: { en: "Both.", zh: "两件。" } }],
     });
     const response = await startCall(running, { body });
@@ -522,7 +510,7 @@ async function cardOf(running: Hub, ticket: number): Promise<StartCard> {
 }
 
 async function stateOne(running: Hub, platform: "windows" | "macos" | "any", engine: "codex" | "claude", difficulty = "complex"): Promise<void> {
-  const stated = await callTool(running, "choose_defaults", {
+  const stated = await callBrainTool(running, "choose_defaults", {
     chains: [
       {
         ticket: 1,
@@ -567,10 +555,10 @@ describe("start defaults", () => {
     const running = await start();
     const before = running.defaults.table();
     const row = { ...before.claude, complex: { model: "claude-opus-5-5", effort: "max" } };
-    expect((await callTool(running, "set_engine_row", { engine: "claude", row })).isError).toBe(false);
+    expect((await callBrainTool(running, "set_engine_row", { engine: "claude", row })).isError).toBe(false);
     expect(running.defaults.table().claude).toEqual(row);
     const bad = { ...row, complex: { model: "unknown-model", effort: "high" } };
-    expect((await callTool(running, "set_engine_row", { engine: "claude", row: bad })).isError).toBe(true);
+    expect((await callBrainTool(running, "set_engine_row", { engine: "claude", row: bad })).isError).toBe(true);
     expect(running.defaults.table().claude).toEqual(row);
   });
 
@@ -608,7 +596,7 @@ describe("start defaults", () => {
       chosenBy: { machine: "default", engine: "default", model: "owner", effort: "owner" },
       ran: null,
     });
-    const read = await callTool(running, "read_ticket", { ticket: 1 });
+    const read = await callBrainTool(running, "read_ticket", { ticket: 1 });
     expect(read.text).toContain("chosen by: machine default, engine default, model owner, effort owner");
   });
 
@@ -629,7 +617,7 @@ describe("start defaults", () => {
       ],
     };
     connect(running, "mac", agy);
-    const opened = await callTool(running, "open_task_ticket", {
+    const opened = await callBrainTool(running, "open_task_ticket", {
       title: { en: "Translate a notice", zh: "翻译一则通知" },
       summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
       task: "Translate the notice into English.",
@@ -639,7 +627,7 @@ describe("start defaults", () => {
     expect(opened.isError, opened.text).toBe(false);
     const before = await cardOf(running, 1);
     expect(before.choice.missing).toEqual(["defaults"]);
-    const stated = await callTool(running, "choose_defaults", {
+    const stated = await callBrainTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
     });
     expect(stated.isError, stated.text).toBe(false);
@@ -709,7 +697,7 @@ describe("start defaults", () => {
     expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "dsh", model: "deepseek-flash", effort: "high", missing: [] });
     const allowance = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
     expect(((await allowance.json()) as { subscriptions: { state: string }[] }).subscriptions.map((entry) => entry.state)).toEqual(["exhausted", "exhausted"]);
-    const told = await callTool(running, "read_allowance", {});
+    const told = await callBrainTool(running, "read_allowance", {});
     expect(told.text).toContain("GPT subscription (codex): used up");
     connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now()), reading("claude", "available", clock.now())]));
     expect((await cardOf(running, 1)).choice.engine).toBe("claude");
@@ -734,14 +722,14 @@ describe("start defaults", () => {
     };
     expect(allowance.subscriptions.map((entry) => entry.state)).toEqual(["unknown", "unknown"]);
     expect(allowance.unavailable).toEqual([{ program: "claude", reason: "You've hit your limit", since: clock.now(), until: clock.now() + 3_600_000, given: true }]);
-    const told = await callTool(running, "read_allowance", {});
+    const told = await callBrainTool(running, "read_allowance", {});
     expect(told.text).toContain("Claude Code (Claude): You've hit your limit; until");
     expect(told.text).toContain("An unknown reading is not used up.");
     expect(running.settings.snapshot().unavailable).toEqual(allowance.unavailable);
     clock.advance(3_600_000);
     expect(running.settings.snapshot().unavailable).toEqual([]);
     expect((await cardOf(running, 1)).choice.engine).toBe("claude");
-    expect((await callTool(running, "read_allowance", {})).text).toContain("No worker program is marked unavailable.");
+    expect((await callBrainTool(running, "read_allowance", {})).text).toContain("No worker program is marked unavailable.");
   });
 
   it("keeps the table of models in the hub, read by the owner and changed only from the owner's page", async () => {
@@ -800,16 +788,16 @@ describe("start defaults", () => {
   it("refuses defaults that do not name every issue, or a code chain without its engine", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");
-    const wrong = await callTool(running, "choose_defaults", {
+    const wrong = await callBrainTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "feature", issues: [{ number: 2, difficulty: "complex" }], reason: { en: "x", zh: "某事" }, platform: "any", engine: "codex" }],
     });
     expect(wrong).toMatchObject({ isError: true });
     expect(wrong.text).toContain("give the difficulty of each of them");
-    const noEngine = await callTool(running, "choose_defaults", {
+    const noEngine = await callBrainTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "feature", issues: [{ number: 1, difficulty: "complex" }], reason: { en: "x", zh: "某事" }, platform: "any" }],
     });
     expect(noEngine.text).toContain("choose its engine");
-    const twoLines = await callTool(running, "choose_defaults", {
+    const twoLines = await callBrainTool(running, "choose_defaults", {
       chains: [{ ticket: 1, kind: "feature", issues: [{ number: 1, difficulty: "complex" }], reason: { en: "a\nb", zh: "某事" }, platform: "any", engine: "codex" }],
     });
     expect(twoLines.text).toContain("one line");
@@ -822,9 +810,9 @@ describe("start defaults", () => {
     await fileIssue(running, "Show the state", "显示状态");
     await stateDefaults(running);
     expect(running.tickets.get(1)?.difficultyReason).not.toBeNull();
-    await callTool(running, "arrange_chains", { chains: [{ name: "one", repository: sandbox, issues: [1] }] });
+    await callBrainTool(running, "arrange_chains", { chains: [{ name: "one", repository: sandbox, issues: [1] }] });
     expect(running.tickets.get(1)?.difficultyReason).not.toBeNull();
-    await callTool(running, "arrange_chains", {
+    await callBrainTool(running, "arrange_chains", {
       chains: [{ name: "both", repository: sandbox, issues: [1, 2], title: { en: "Both", zh: "两件" }, summary: { en: "Both.", zh: "两件。" } }],
     });
     expect(running.tickets.get(1)).toMatchObject({ difficultyReason: null, brainEngine: null });

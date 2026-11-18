@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { conversationHeader, isNativeImage } from "@super-agent2/protocol";
+import { conversationHeader, isNativeImage, turnHeader } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
@@ -32,13 +32,13 @@ export function claudeEnvironment(environment: Readonly<Record<string, string | 
   return result;
 }
 
-export function claudeToolConfig(url: string, conversation: string): string {
+export function claudeToolConfig(url: string, conversation: string, turn: string): string {
   return JSON.stringify({
     mcpServers: {
       hub: {
         type: "http",
         url,
-        headers: { Authorization: `Bearer \${${toolTokenVariable}}`, [conversationHeader]: conversation },
+        headers: { Authorization: `Bearer \${${toolTokenVariable}}`, [conversationHeader]: conversation, [turnHeader]: turn },
         alwaysLoad: true,
       },
     },
@@ -62,7 +62,7 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     "--setting-sources",
     "project",
     "--mcp-config",
-    options.tools === null ? JSON.stringify({ mcpServers: {} }) : claudeToolConfig(options.tools.url, options.tools.conversation),
+    options.tools === null ? JSON.stringify({ mcpServers: {} }) : claudeToolConfig(options.tools.url, options.tools.conversation, options.tools.turn),
     "--strict-mcp-config",
     session.resume ? "--resume" : "--session-id",
     session.id,

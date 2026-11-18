@@ -23,6 +23,7 @@ import type { FailureReport } from "./failure-loop.js";
 import { createPipelineTimes, durationChinese, durationWords, defaultFirstAllowanceMinutes, noticesDue, overrunFactor, thresholdOf, usualMinimum } from "./pipeline-times.js";
 import { clip, decisionReport, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
 import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type PipelineWorkflow, type WoodpeckerApi } from "./woodpecker.js";
 
@@ -70,7 +71,7 @@ export type SkipOutcome = { readonly ok: true; readonly ticket: Ticket } | { rea
 export interface VerificationService {
   check(ticket: number): Promise<void>;
   poll(): Promise<void>;
-  skip(ticket: number, reason: string): Promise<SkipOutcome>;
+  skip(ticket: number, reason: string, turn?: TicketTurn): Promise<SkipOutcome>;
   logs(ticket: number): StepLog[];
   waitedFor(ticket: number): WaitedFor | null;
   resume(): void;
@@ -250,7 +251,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     return true;
   };
 
-  const save = (id: number, patch: Patch) => {
+  const save = (id: number, patch: Patch, turn?: TicketTurn) => {
     if (closed) {
       return;
     }
@@ -258,7 +259,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       if (write(id, patch)) {
         writes.touched(id);
       }
-    });
+    }, turn);
   };
 
   const unwatched: Patch = { wait_since: null };
@@ -929,7 +930,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
   return {
     check,
     poll,
-    skip: async (id, reason) => {
+    skip: async (id, reason, turn) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
         return { ok: false, reason: `There is no ticket ${id}.` };
@@ -946,7 +947,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       if (reason.trim() === "") {
         return { ok: false, reason: "Say why the rules are skipped: what the owner asked." };
       }
-      save(id, { skip_at: clock.now(), skip_reason: reason.trim() });
+      save(id, { skip_at: clock.now(), skip_reason: reason.trim() }, turn);
       await check(id);
       const after = tickets.get(id);
       return after === undefined ? { ok: false, reason: `There is no ticket ${id}.` } : { ok: true, ticket: after };

@@ -20,6 +20,7 @@ import type { Clock } from "./clock.js";
 import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import type { TicketService } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
 
 export interface GitHubIssue {
   readonly number: number;
@@ -200,8 +201,8 @@ export type FilingOutcome =
   | { readonly ok: false; readonly reason: string; readonly held: boolean };
 
 export interface IssueFiler {
-  file(request: FileIssueRequest): Promise<FilingOutcome>;
-  open(request: OpenIssueRequest): Promise<FilingOutcome>;
+  file(request: FileIssueRequest, turn?: TicketTurn): Promise<FilingOutcome>;
+  open(request: OpenIssueRequest, turn?: TicketTurn): Promise<FilingOutcome>;
 }
 
 export function accountFor(repository: string, given?: GitHubAccount): GitHubAccount {
@@ -217,7 +218,7 @@ export function sameText(a: string, b: string): boolean {
   return normal(a) === normal(b);
 }
 
-function failed(reason: string, held = false): FilingOutcome {
+function failed(reason: string, held = false): Extract<FilingOutcome, { ok: false }> {
   return { ok: false, reason, held };
 }
 
@@ -280,9 +281,10 @@ function filingRecords(database: HubDatabase, clock: Clock) {
 export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
   const { host, tickets } = options;
   const records = filingRecords(options.database, options.clock);
-  const inFlight = new Map<string, Promise<FilingOutcome>>();
+  type Filed = { readonly ok: true; readonly issue: IssueReference; readonly created: boolean } | Extract<FilingOutcome, { ok: false }>;
+  const inFlight = new Map<string, Promise<Filed>>();
 
-  const once = (key: string, work: () => Promise<FilingOutcome>): Promise<FilingOutcome> => {
+  const once = (key: string, work: () => Promise<Filed>): Promise<Filed> => {
     const running = inFlight.get(key);
     if (running !== undefined) {
       return running;
@@ -301,6 +303,7 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
     title: GeneratedText,
     summary: GeneratedText,
     issueCreated: boolean,
+    turn?: TicketTurn,
   ): FilingOutcome => {
     const existing = liveTicket(request.repository, issue.number);
     if (existing !== undefined) {
@@ -316,10 +319,11 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
         difficulty: request.difficulty,
         platform: request.platform,
         conversation: request.conversation,
-      });
+      }, turn);
       return { ok: true, ticket, issueCreated, ticketExisted: false };
     } catch (error) {
-      return failed(error instanceof Error ? error.message : String(error));
+      const reason = error instanceof Error ? error.message : String(error);
+      return failed(issueCreated ? `The GitHub issue was filed at ${issue.url}. No ticket was opened: ${reason}` : reason);
     }
   };
 
@@ -334,25 +338,25 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
   };
 
   return {
-    file: (request) => {
+    file: async (request, turn) => {
       const problem = checkCommon(request.repository, request.kind);
       if (problem !== undefined) {
-        return Promise.resolve(failed(problem));
+        return failed(problem);
       }
       const title = GeneratedText.safeParse(request.title);
       const summary = GeneratedText.safeParse(request.summary);
       if (!title.success || !summary.success) {
-        return Promise.resolve(failed("The title and the summary each need an English original and a Chinese copy"));
+        return failed("The title and the summary each need an English original and a Chinese copy");
       }
       if (request.body.trim() === "") {
-        return Promise.resolve(failed("The issue body is empty"));
+        return failed("The issue body is empty");
       }
       const account = request.account ?? (options.accountOf ?? accountFor)(request.repository);
       const key = filingKey(request.repository, title.data.en, request.body);
-      return once(key, async () => {
+      const filed = await once(key, async () => {
         const record = records.get(key);
         if (record?.issue !== undefined) {
-          return openFor(request, record.issue, title.data, summary.data, false);
+          return { ok: true, issue: record.issue, created: false };
         }
         if (record !== undefined) {
           const recent = await host.recent(request.repository, account, record.createdAt - lookBack);
@@ -362,50 +366,52 @@ export function createIssueFiler(options: IssueFilerOptions): IssueFiler {
           const found = recent.value.find((issue) => !issue.pullRequest && sameText(issue.title, title.data.en) && sameText(issue.body, request.body));
           if (found !== undefined) {
             records.found(key, found);
-            return openFor(request, found, title.data, summary.data, false);
+            return { ok: true, issue: found, created: false };
           }
         } else {
           records.start(key, request.repository);
+        }
+        if (turn !== undefined) {
+          tickets.versions.requireActive(turn);
         }
         const created = await host.create(request.repository, account, title.data.en.trim(), request.body.trim());
         if (!created.ok) {
           return failed(created.reason, created.held !== undefined);
         }
         records.found(key, created.value);
-        return openFor(request, created.value, title.data, summary.data, true);
+        return { ok: true, issue: created.value, created: true };
       });
+      return filed.ok ? openFor(request, filed.issue, title.data, summary.data, filed.created, turn) : filed;
     },
-    open: (request) => {
+    open: async (request, turn) => {
       const problem = checkCommon(request.repository, request.kind);
       if (problem !== undefined) {
-        return Promise.resolve(failed(problem));
+        return failed(problem);
       }
       const summary = GeneratedText.safeParse(request.summary);
       if (!summary.success) {
-        return Promise.resolve(failed("The summary needs an English original and a Chinese copy"));
+        return failed("The summary needs an English original and a Chinese copy");
       }
       const account = request.account ?? (options.accountOf ?? accountFor)(request.repository);
-      return once(JSON.stringify([request.repository.toLowerCase(), request.number]), async () => {
-        const existing = liveTicket(request.repository, request.number);
-        if (existing !== undefined) {
-          return { ok: true, ticket: existing, issueCreated: false, ticketExisted: true };
-        }
-        const read = await host.read(request.repository, request.number, account);
-        if (!read.ok) {
-          return failed(read.reason, read.held !== undefined);
-        }
-        if (read.value.pullRequest) {
-          return failed(`#${request.number} in ${request.repository} is a pull request, not an issue`);
-        }
-        if (!read.value.open) {
-          return failed(`Issue #${request.number} in ${request.repository} is closed`);
-        }
-        const title = GeneratedText.safeParse({ en: read.value.title, zh: request.titleZh });
-        if (!title.success) {
-          return failed("The Chinese title must be Chinese");
-        }
-        return openFor(request, read.value, title.data, summary.data, false);
-      });
+      const existing = liveTicket(request.repository, request.number);
+      if (existing !== undefined) {
+        return { ok: true, ticket: existing, issueCreated: false, ticketExisted: true };
+      }
+      const read = await host.read(request.repository, request.number, account);
+      if (!read.ok) {
+        return failed(read.reason, read.held !== undefined);
+      }
+      if (read.value.pullRequest) {
+        return failed(`#${request.number} in ${request.repository} is a pull request, not an issue`);
+      }
+      if (!read.value.open) {
+        return failed(`Issue #${request.number} in ${request.repository} is closed`);
+      }
+      const title = GeneratedText.safeParse({ en: read.value.title, zh: request.titleZh });
+      if (!title.success) {
+        return failed("The Chinese title must be Chinese");
+      }
+      return openFor(request, read.value, title.data, summary.data, false, turn);
     },
   };
 }

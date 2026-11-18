@@ -261,6 +261,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     taskTickets = createTaskTickets({
       database,
       tickets,
+      attachments,
       credentials,
       fetch: options.forgeFetch ?? fetch,
       ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
