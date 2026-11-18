@@ -770,6 +770,18 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 32,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN needs_repository INTEGER NOT NULL DEFAULT 0
+        CHECK (needs_repository IN (0, 1) AND (needs_repository = 0 OR (repository IS NULL AND system = 0)));
+      CREATE TABLE pending_topic_inputs (
+        id TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

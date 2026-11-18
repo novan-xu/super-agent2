@@ -579,10 +579,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
-  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND repository IS ? COLLATE NOCASE");
+  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND needs_repository = 0 AND repository IS ? COLLATE NOCASE");
   const claimTopic = connection.prepare(
-    `UPDATE conversations SET repository = ?
-     WHERE id = ? AND system = 0 AND repository IS NULL AND NOT EXISTS (
+    `UPDATE conversations SET repository = ?, needs_repository = 0
+     WHERE id = ? AND system = 0 AND repository IS NULL AND (
+       needs_repository = 1 OR NOT EXISTS (SELECT 1 FROM conversation_entries WHERE conversation_id = conversations.id)
+     ) AND NOT EXISTS (
        SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE
      )`,
   );

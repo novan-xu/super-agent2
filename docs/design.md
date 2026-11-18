@@ -84,12 +84,13 @@ the hub.
 ## The brain's topics
 
 - The owner talks to the brain in one continuous stream. The hub records owner messages on arrival and appends
-  answers as they arrive from parallel topics. A topic view shows the messages and work for that topic alone.
+  answers as they arrive from parallel topics. A routed message appears in the stream once its topic is known.
+  A topic view shows the messages and work for that topic alone.
 - Each topic has its own long-lived program session. It answers one turn at a time, independently of other topics.
   Topics share the hub's confirmed memory, tickets, decisions and attachments.
-- Each topic belongs to one project, identified by its GitHub repository as `owner/name`. A topic without a repository
-  belongs to 日常. Confirmed memory is shared across projects. The stream can be read across all projects or filtered
-  to one repository or to topics without a repository.
+- Each project is one GitHub repository, identified by `owner/name`. Each topic belongs to one project or to 日常.
+  A new topic from 代码 may temporarily have no repository while it waits for the owner to name one. It stays in
+  代码 while it waits. Confirmed memory, tickets and the topic board are shared across projects.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - The brain gives each topic a title. The owner can rename, merge and archive topics. A merge combines the histories
@@ -108,10 +109,18 @@ the hub.
   quote across topics. Both forms of direct routing skip the router.
 - For other messages in the main stream, a resident router uses the [topic board](#topic-board) and the message to
   choose an existing topic or a new one. It uses a fast model through the provider's program, with about one second
-  of routing latency as the target. The router has no tools.
+  of routing latency as the target. The router has no tools. It sees titles and statuses, with up to three recent
+  owner or assistant excerpts for topics without a status.
+- The composer for 日常 matches daily topics. A repository composer matches topics in that repository. The composer
+  for all of 代码 matches topics across repositories, including topics waiting for a repository. For a new topic in
+  all of 代码, the router can pick a repository from active topics and open tickets. If it cannot pick one, the new
+  topic asks the owner which repository it belongs to and assigns it when the owner names it.
 - When unsure, the router starts a new topic. If there is a plausible match, it marks the new topic as possibly
   belonging to that topic. The owner can move the message to another topic with 移到…. A topic session can also
   hand a message over to another topic.
+- A new topic uses the router's title or, if routing fails, a short title derived from the first message. The hub
+  records the chosen topic and any possible match with the owner's message. It keeps an input while routing is
+  pending and opens a fresh topic for it if the hub restarts before routing completes.
 - A move or handover changes where the original message belongs and queues it at the destination. Pending work on that
   message is removed from the source. If the source is answering it, that turn is interrupted before the destination
   handles it. Earlier replies stay in their source topic and completed work is kept.
@@ -138,7 +147,8 @@ The seed is an index. The brain reads details through tools. Completeness comes 
 history. The input and its attachments accompany the seed. The seed goes to new and reopened sessions, in this order.
 
 1. **Quoted message.** Include it in full on any quoted turn, including one in a session that is already open. If it
-   exceeds the program's available input, give its reference and the tool for reading it in parts.
+   exceeds the reserved inline quote budget or the provider's input capacity, give its reference and read it in
+   parts with `read_quote`. The same rule applies to input steered into a running turn.
 2. **This topic's history.** Include the whole history when it has at most 50 turns. Otherwise include the full summary
    and the last 50 turns verbatim. Keep the summary and newest complete turns when the provider's hard input capacity
    requires omissions; omit older turns first.
@@ -546,10 +556,14 @@ Kept from it:
 
 Changed by this design:
 
-- 对话 opens the single live stream. Each brain answer and each owner message has a small topic label that opens
-  the topic view. An owner message's label shows where it was routed.
+- 对话 keeps a switch at the top, 代码 | 日常 | 传输. 代码 shows all repository topics or the topics in one selected
+  repository. 日常 shows daily topics, including System. 传输 is a separate device-to-device store. Each brain
+  answer and each owner message has a small topic label that opens the topic view. The label also shows the
+  repository when reading all of 代码.
 - The topic list shows automatically recognised topics. Selecting a topic filters the view and sends input directly
   there. Topics can be renamed, merged or archived from the list or the topic view.
+- 工作台 shows repositories on the left, the selected repository's chains in the centre and its conversation on
+  the right. The conversation panel uses the same stream, topic list and composer scoped to that repository.
 - The owner can quote a message when replying, as in Teams. The composer shows the quoted message. Picking a
   destination under 移到… moves an owner message immediately. A possible match from the router can be used in one tap.
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.

@@ -93,7 +93,7 @@ describe("the topic seed", () => {
 
     const oversized = { ...input, quote: { id: "quoted", item: { kind: "notice" as const, text: "quote ".repeat(4_000) } } };
     const narrowed = build(1_000, prepared, oversized);
-    expect(narrowed).toContain('1 quoted message omitted. Use read_topic_history with message="quoted"');
+    expect(narrowed).toContain('1 quoted message omitted. Use read_quote with id="quoted"');
     expect(narrowed).toContain("1 older history turn(s) omitted");
     expect(narrowed.endsWith(input.text)).toBe(true);
     expect(estimateTokens(narrowed, "gpt")).toBeLessThanOrEqual(1_000);

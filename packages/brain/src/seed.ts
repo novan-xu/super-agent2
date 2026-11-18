@@ -1,6 +1,6 @@
-import type { BrainInput, Prepared, Provider, TopicBoardEntry } from "@super-agent2/protocol";
+import { type BrainInput, type Prepared, type Provider, quoteInlineLimit, type TopicBoardEntry } from "@super-agent2/protocol";
 import type { PromptImage } from "@super-agent2/programs";
-import { describeHistory, inputText, memoryPrompt, promptImages, withAttachments } from "./prompt.js";
+import { attachmentPath, describeHistory, inputText, memoryPrompt, promptImages, withAttachments } from "./prompt.js";
 
 export const defaultSoftShare = 0.15;
 export const fallbackInputCapacity: Readonly<Record<Provider, number>> = { gpt: 128_000, claude: 200_000, deepseek: 128_000 };
@@ -42,10 +42,12 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
   const { conversation, inputs, prepared, provider, capacity, softShare, attachments } = options;
   const cost = (text: string) => estimateTokens(text, provider);
   const make = (section: Section, text: string): Part => ({ section, text, tokens: cost(text) + 1, visible: true });
-  const quoteParts = inputs.flatMap(({ quote }) => quote === undefined ? [] : [{
-    ...make("quote", `[hub] Quoted message ${quote.id}\n${describeHistory([quote.item], attachments, true)}`),
+  const quotes = new Map(inputs.flatMap(({ quote }) => quote === undefined ? [] : [[quote.id, quote] as const]));
+  const quoteParts = [...quotes.values()].map((quote) => ({
+    ...make("quote", quote.item === undefined ? "" :
+      `[hub] Quoted message ${quote.id}\n${describeHistory([quote.item], attachments, true)}\n[hub] End of quoted message.`),
     quote,
-  }]);
+  }));
   const summary = prepared.seed?.summary ? make("summary", prepared.seed.summary) : undefined;
   const history = (prepared.seed?.turns ?? [prepared.history])
     .filter((items) => items.length > 0)
@@ -68,6 +70,9 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     : inputText(inputs, attachments);
   const continuation = options.continuing
     ? "[hub] Another assistant was answering the owner and stopped because it became unavailable. Continue answering the latest input using the work already done. Do not repeat a command that already ran unless it needs to run again."
+    : "";
+  const repositoryPrompt = inputs.some(({ needsRepository }) => needsRepository === true)
+    ? "[hub] This code topic is waiting for a repository. Ask the owner which GitHub repository it belongs to if they haven't identified it. Once they identify it, call set_topic_repository with its owner/name before carrying on."
     : "";
   const parts = [...quoteParts, ...history, ...tickets, ...board.flatMap(({ title, status }) => status === undefined ? [title] : [title, status])];
   if (summary !== undefined) {
@@ -97,7 +102,11 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     };
     for (const { visible, quote } of quoteParts) {
       if (!visible) {
-        lines.push(`[hub] 1 quoted message omitted. Use read_topic_history with message="${quote.id}" to read it in parts.`);
+        lines.push(`[hub] 1 quoted message omitted. Use read_quote with id="${quote.id}" and offset=0 to read it in parts. Follow the next offsets until null.`);
+        const files = quote.item?.kind === "owner" ? quote.item.attachments : quote.attachments ?? [];
+        for (const file of files) {
+          lines.push(`[hub] Quoted file ${file.name} (attachment id ${file.id}), at ${attachmentPath(attachments, file)}`);
+        }
       }
     }
     add("summary", "topic summary", `read_topic_history with topic="${conversation}" and summary=true`);
@@ -112,7 +121,7 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     return lines;
   };
 
-  const fixed = cost([continuation, input].filter(Boolean).join("\n\n"));
+  const fixed = cost([continuation, repositoryPrompt, input].filter(Boolean).join("\n\n"));
   const withHeading = (heading: string, content: readonly string[]) => content.length === 0 ? "" : [heading, ...content].join("\n");
   const render = () => [
     ...quoteParts.filter((part) => part.visible).map((part) => part.text),
@@ -124,15 +133,21 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
       .map(({ title, status }) => title.text + (status?.visible === true ? status.text : ""))),
     ...notes(),
     continuation,
+    repositoryPrompt,
     input,
   ].filter(Boolean).join("\n\n");
 
   if (fixed > capacity) {
     throw new Error(`The current input exceeds the estimated ${capacity}-token input capacity.`);
   }
-  for (const quote of quoteParts) {
-    if (fixed + quote.tokens > capacity) {
-      omit(quote);
+  let inline = quoteInlineLimit;
+  for (const part of quoteParts) {
+    const item = part.quote.item;
+    const length = item === undefined || item.kind === "tool" ? part.text.length : item.text.length;
+    if (item === undefined || length > inline || fixed + part.tokens > capacity) {
+      omit(part);
+    } else {
+      inline -= length;
     }
   }
   const soft = capacity * softShare;
@@ -175,6 +190,6 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
       throw new Error(`The input and the references to omitted material exceed the estimated ${capacity}-token input capacity.`);
     }
   }
-  const quotedImages = quoteParts.flatMap(({ visible, quote }) => visible && quote.item.kind === "owner" ? [quote.item] : []);
+  const quotedImages = quoteParts.flatMap(({ visible, quote }) => visible && quote.item?.kind === "owner" ? [quote.item] : []);
   return { text, images: promptImages([...inputs, ...quotedImages], attachments) };
 }

@@ -1122,13 +1122,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return true;
       }
       if (id === undefined) {
-        const item = conversations.sendToStream(message.topic, message.text, chosen.attachments);
+        const item = await conversations.sendToStream(message.topic, message.text, chosen.attachments, message);
         if (item === undefined) {
           return false;
         }
         sendJson(response, 202, item);
       } else {
-        const entry = conversations.send(id, message.text, chosen.attachments);
+        const entry = conversations.send(id, message.text, chosen.attachments, message.quotedMessage);
         if (entry === undefined) {
           return false;
         }

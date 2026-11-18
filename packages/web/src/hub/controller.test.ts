@@ -81,6 +81,25 @@ describe("PageController", () => {
     expect(page.store.getState().current).toBeNull();
   });
 
+  it("carries a quote to the stream or to the topic that owned the draft", async () => {
+    const sent: unknown[][] = [];
+    const page = controller(api({
+      send: async (...args) => {
+        sent.push(args);
+        return { ok: true, value: { entry } };
+      },
+      sendToStream: async (...args) => {
+        sent.push(args);
+        return { ok: true, value: { entry, topic: conversation, position: 1 } };
+      },
+    }));
+    page.open(null, true);
+    expect(await page.send("回复", [], "source")).toBe(true);
+    page.open("c8");
+    expect(await page.send("继续", [], "source", "c9")).toBe(true);
+    expect(sent).toEqual([["回复", [], "source"], ["c9", "继续", [], "source"]]);
+  });
+
   it("opens an explicitly created topic and sends directly to it", async () => {
     const hub = api();
     const page = controller(hub);

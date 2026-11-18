@@ -6,6 +6,7 @@ import type { Schedule } from "./link.js";
 import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt } from "./prompt.js";
 import { defaultSoftShare, fallbackInputCapacity, topicPrompt } from "./seed.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
+import { createRouter } from "./router.js";
 
 export interface PrepareCall {
   readonly conversation: string;
@@ -36,6 +37,7 @@ export interface BrainOptions {
   readonly seedSoftShare?: number;
   readonly inputCapacity?: Readonly<Record<Provider, number>>;
   readonly newId?: () => string;
+  readonly router?: { readonly adapters: ReadonlyMap<Provider, ProgramAdapter>; readonly workspace: string };
 }
 
 export interface Brain {
@@ -159,6 +161,8 @@ export function createBrain(options: BrainOptions): Brain {
       tell();
     },
   };
+  const router = options.router === undefined ? undefined : createRouter(options.router.adapters, providers.candidates, options.router.workspace);
+  router?.warm();
   const states = new Map<string, State>();
   const work = new Set<Promise<void>>();
   let uses = 0;
@@ -404,7 +408,7 @@ export function createBrain(options: BrainOptions): Brain {
     const call: PrepareCall = {
       conversation: state.id,
       provider,
-      exclude: turn.inputs.map((input) => input.id),
+      exclude: turn.inputs.flatMap((input) => input.quote === undefined ? [input.id] : [input.id, input.quote.id]),
       fresh: freshSession,
       seed: state.live?.provider !== provider || freshSession || mode === "continue",
       continuing: mode === "continue",
@@ -452,7 +456,7 @@ export function createBrain(options: BrainOptions): Brain {
 
     let prompt: ReturnType<typeof topicPrompt>;
     try {
-      if (prepared.board !== undefined || prepared.seed !== undefined || turn.inputs.some((input) => input.quote !== undefined)) {
+      if (prepared.board !== undefined || prepared.seed !== undefined || turn.inputs.some((input) => input.quote !== undefined || input.needsRepository === true)) {
         prompt = preparePrompt(state, provider, turn.inputs, prepared, mode === "continue");
       } else if (mode === "fresh") {
         prompt = { text: turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), images: promptImages(turn.inputs, attachments) };
@@ -549,13 +553,17 @@ export function createBrain(options: BrainOptions): Brain {
     for (const state of states.values()) {
       dropLive(state);
     }
+    const outstanding = [...work, router?.reset()];
     track((async () => {
       try {
-        await Promise.all([...work]);
+        await Promise.all(outstanding);
         await task.action();
       } finally {
         maintaining = false;
         task.done();
+        if (!closing) {
+          router?.warm();
+        }
         pump();
       }
     })());
@@ -621,6 +629,19 @@ export function createBrain(options: BrainOptions): Brain {
       }
       if (message.type === "order") {
         providers.setOrder(message.order);
+        if (maintenance === undefined && !maintaining) {
+          router?.warm();
+        }
+        return;
+      }
+      if (message.type === "route") {
+        const reply = async () => {
+          const choice = await (maintenance === undefined && !maintaining ? router?.route(message).catch(() => null) : null);
+          if (!closing) {
+            transport.send({ type: "routed", request: message.request, choice: choice ?? null });
+          }
+        };
+        track(reply());
         return;
       }
       if (message.type === "input") {
@@ -652,6 +673,7 @@ export function createBrain(options: BrainOptions): Brain {
       for (const state of states.values()) {
         dropLive(state);
       }
+      await router?.reset();
       while (work.size > 0) {
         await Promise.all([...work]);
       }

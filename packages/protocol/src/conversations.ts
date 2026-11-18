@@ -8,6 +8,14 @@ export const Provider = z.enum(providers);
 export type Provider = z.infer<typeof Provider>;
 
 export const ConversationId = z.string().regex(/^[0-9A-Za-z-]{1,64}$/);
+export const MessageId = z.string().min(1).max(256);
+
+export const TopicScope = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("daily") }),
+  z.object({ kind: z.literal("code") }),
+  z.object({ kind: z.literal("repository"), repository: RepositoryName }),
+]);
+export type TopicScope = z.infer<typeof TopicScope>;
 
 export const ConversationState = z.enum(["idle", "working"]);
 export type ConversationState = z.infer<typeof ConversationState>;
@@ -18,6 +26,7 @@ export const Conversation = z.object({
   state: ConversationState,
   topicState: z.enum(["active", "archived"]).default("active"),
   repository: RepositoryName.nullable().default(null),
+  needsRepository: z.literal(true).optional(),
   provider: Provider.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -57,6 +66,8 @@ export const OwnerEntry = z.object({
   text: z.string(),
   attachments: z.array(Attachment).default([]),
   taken: z.boolean(),
+  quotedMessage: MessageId.optional(),
+  possibleMatch: ConversationId.optional(),
 });
 export type OwnerEntry = z.infer<typeof OwnerEntry>;
 
@@ -122,16 +133,17 @@ export const OwnerMessage = z
   .object({
     text: z.string().trim(),
     attachments: z.array(AttachmentId).default([]),
+    quotedMessage: MessageId.optional(),
   })
   .refine((message) => message.text !== "" || message.attachments.length > 0, { message: "needs text or an attachment" });
 export type OwnerMessage = z.infer<typeof OwnerMessage>;
 
-export const StreamMessage = OwnerMessage.safeExtend({ topic: ConversationId.optional() });
+export const StreamMessage = OwnerMessage.safeExtend({ topic: ConversationId.optional(), scope: TopicScope.optional() });
 export type StreamMessage = z.infer<typeof StreamMessage>;
 
 export const StreamEntry = z.object({
   position: z.number().int().positive(),
-  topic: Conversation.pick({ id: true, title: true, repository: true }),
+  topic: Conversation.pick({ id: true, title: true, repository: true, needsRepository: true }),
   entry: ConversationEntry,
 });
 export type StreamEntry = z.infer<typeof StreamEntry>;

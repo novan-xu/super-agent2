@@ -185,8 +185,8 @@ export function App() {
     }
   };
   const send = useCallback(
-    (message: string, attachments: readonly string[] = []) => controller.send(message, attachments),
-    [controller],
+    (message: string, attachments: readonly string[] = [], quotedMessage?: string) => controller.send(message, attachments, quotedMessage, conversationId),
+    [controller, conversationId],
   );
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(

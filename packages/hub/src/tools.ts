@@ -17,6 +17,7 @@ import {
   defaultGitHubAccount,
   deploymentFile,
   MaterialName,
+  MessageId,
   mergedCommit,
   AttachmentId,
   type Attachment,
@@ -79,6 +80,8 @@ const ReadArguments = z.object({
 });
 
 const StopArguments = z.object({ id: z.string().min(1) });
+const QuoteArguments = z.strictObject({ id: MessageId, offset: z.number().int().nonnegative().default(0) });
+const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName });
 
 const CodeKind = z.enum(codeKinds);
 
@@ -792,6 +795,28 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "read_quote",
+        title: "Read a quoted message",
+        description: "Read a quote referenced by an owner message in this topic. Start at offset 0 and use each returned next offset until it is null.",
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "string" }, offset: { type: "integer", minimum: 0, default: 0 } },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "set_topic_repository",
+        title: "Set the repository for this topic",
+        description: "Assign the repository for a code topic waiting for one, after the owner identifies it.",
+        inputSchema: {
+          type: "object",
+          properties: { repository: { type: "string", description: "A GitHub repository in owner/name form" } },
+          required: ["repository"],
+          additionalProperties: false,
+        },
+      },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
@@ -1251,6 +1276,19 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       case "stop_command":
         result = stop(parsed.data.arguments ?? {});
         break;
+      case "read_quote": {
+        const args = QuoteArguments.safeParse(parsed.data.arguments);
+        const part = conversation === undefined || !args.success ? undefined : conversations.readQuote(conversation, args.data.id, args.data.offset);
+        result = part === undefined ? { text: "No quote at that offset in this topic.", isError: true } : { text: JSON.stringify(part) };
+        break;
+      }
+      case "set_topic_repository": {
+        const args = AssignRepositoryArguments.safeParse(parsed.data.arguments);
+        const assigned = conversation !== undefined && turn !== undefined && !aborted.aborted && args.success
+          && conversations.assignRepository(conversation, turn, args.data.repository);
+        result = assigned ? { text: "Repository assigned to this topic." } : { text: "An active turn in a pending code topic and a repository in owner/name form are required.", isError: true };
+        break;
+      }
       default: {
         const scope = conversation === undefined || turn === undefined ? undefined : {
           conversation,
