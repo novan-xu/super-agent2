@@ -33,7 +33,7 @@ describe("the runner's settings", () => {
     });
     expect(ok).toMatchObject({
       ok: true,
-      config: { slots: 2, models: { dsh: [{ id: "deepseek-flash", efforts: ["low", "high"] }, { id: "deepseek-pro", efforts: ["max"] }] } },
+      config: { slots: 8, models: { dsh: [{ id: "deepseek-flash", efforts: ["low", "high"] }, { id: "deepseek-pro", efforts: ["max"] }] } },
     });
     const bad = loadConfig({ SUPERAGENT2_HUB: "ftp://x", MACHINE_NAME: "hub", RUNNER_TOKEN: "short", RUNNER_SLOTS: "two" });
     expect(bad.ok).toBe(false);
@@ -51,6 +51,18 @@ describe("the runner's settings", () => {
   it("keeps the settings under a folder of the runner's own", () => {
     const files = runnerFiles(join(folder, ".superagent2"));
     expect(files.settings).toBe(join(folder, ".superagent2", "runner.env"));
+  });
+
+  it("uses the default slot count unless RUNNER_SLOTS overrides it", () => {
+    const required = {
+      SUPERAGENT2_HUB: "https://agent.example.com",
+      MACHINE_NAME: "pc",
+      ACCESS_CLIENT_ID: "id.access",
+      ACCESS_CLIENT_SECRET: "secret",
+      RUNNER_TOKEN: token,
+    };
+    expect(loadConfig(required)).toMatchObject({ ok: true, config: { slots: 8 } });
+    expect(loadConfig({ ...required, RUNNER_SLOTS: "4" })).toMatchObject({ ok: true, config: { slots: 4 } });
   });
 });
 

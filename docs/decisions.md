@@ -4059,3 +4059,10 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   creates a topic immediately and opens its composer. Selecting a topic label opens its filtered view.
 - **Why** The owner can start a separate topic while the router is pending and continue to send to a known topic.
 - **Other options** Reserving a separate draft route or waiting for the router to create all new topics.
+
+## 2026-11-18 — Runner default work slots (#110)
+
+- **Chosen:** Set the runner's default work slots to 8. Keep `RUNNER_SLOTS` as a per-machine override.
+- **Why:** The owner requires both the Mac mini and PC to run up to 8 tickets at once, and neither machine currently
+  sets an override.
+- **Other options:** Keep the default at 2 and configure each machine separately.
