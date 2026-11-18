@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { conversationHeader } from "@super-agent2/protocol";
+import { readFileSync } from "node:fs";
+import { conversationHeader, isNativeImage } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { type ProgramSettings, toolTokenVariable } from "./settings.js";
 
@@ -134,6 +135,23 @@ export function claudeFailure(result: Output, lastError: string | undefined, lim
     return { type: "unavailable", reason, until: null };
   }
   return { type: "failed", reason, lostSession: false };
+}
+
+export const claudeImageBytes = 20 * 1024 * 1024;
+
+export function claudeContent(text: string, images: readonly PromptImage[]): string | Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
+  for (const image of images) {
+    if (!isNativeImage(image.mediaType) || image.size > claudeImageBytes) {
+      continue;
+    }
+    try {
+      blocks.push({ type: "image", source: { type: "base64", media_type: image.mediaType.toLowerCase(), data: readFileSync(image.path).toString("base64") } });
+    } catch {
+      continue;
+    }
+  }
+  return blocks.length === 0 ? text : [{ type: "text", text }, ...blocks];
 }
 
 function resultText(content: unknown): string {
@@ -281,28 +299,28 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
     finish({ type: "failed", reason: exitReason("claude", exit, child.stderr()), lostSession: /No conversation found/.test(child.stderr()) });
   });
 
-  const send = (text: string): string => {
+  const send = (text: string, images: readonly PromptImage[]): string => {
     const uuid = randomUUID();
     outstanding.add(uuid);
-    child.write({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, uuid });
+    child.write({ type: "user", message: { role: "user", content: claudeContent(text, images) }, parent_tool_use_id: null, uuid });
     return uuid;
   };
 
   return {
-    start: (prompt) => {
+    start: (prompt, images = []) => {
       if (!child.alive()) {
         throw new Error(exitReason("claude", { code: null, signal: null }, child.stderr()));
       }
       running = true;
       interruptRequested = false;
       lastError = undefined;
-      send(prompt);
+      send(prompt, images);
     },
-    steer: (text): Promise<SteerResult> => {
+    steer: (text, images = []): Promise<SteerResult> => {
       if (!running || interruptRequested || !child.alive()) {
         return Promise.resolve("queued");
       }
-      send(text);
+      send(text, images);
       return Promise.resolve("steered");
     },
     interrupt: () => {

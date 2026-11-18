@@ -206,7 +206,7 @@ describe("work for a started ticket", () => {
     expect(told[0]?.prompt).toContain("could not prepare");
   });
 
-  it("passes a message to the running worker, and refuses when nothing runs", () => {
+  it("passes a message to the running worker, keeps it while the machine is away, and refuses when nothing runs", () => {
     const ticket = working();
     expect(work.message(ticket.id, "hello", "owner")).toEqual({ ok: false, reason: `Ticket ${ticket.id} has no running worker` });
     runners.connect("pc", 2);
@@ -215,7 +215,7 @@ describe("work for a started ticket", () => {
     expect(sent.ok).toBe(true);
     expect(runners.of("work.message")).toEqual([{ type: "work.message", ticket: ticket.id, attempt: 1, id: sent.ok ? sent.id : "", from: "brain", text: "Also update the README" }]);
     runners.drop("pc");
-    expect(work.message(ticket.id, "again", "owner")).toMatchObject({ ok: false });
+    expect(work.message(ticket.id, "again", "owner")).toMatchObject({ ok: true, delivered: false });
   });
 
   it("stops the worker and removes its worktree when the ticket stops, or once it merges", () => {

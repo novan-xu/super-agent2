@@ -539,6 +539,34 @@ export const migrations: readonly Migration[] = [
   {
     version: 22,
     sql: `
+      CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE ticket_attachments (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        attachment_id TEXT NOT NULL REFERENCES attachments (id),
+        PRIMARY KEY (ticket_id, attachment_id)
+      ) STRICT;
+      CREATE TABLE worker_messages (
+        id TEXT PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        attempt INTEGER NOT NULL,
+        sender TEXT NOT NULL,
+        text TEXT NOT NULL,
+        attachments TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        delivered_at INTEGER
+      ) STRICT;
+      CREATE INDEX worker_messages_waiting ON worker_messages (ticket_id, attempt) WHERE delivered_at IS NULL;
+    `,
+  },
+  {
+    version: 23,
+    sql: `
       CREATE TABLE pipeline_durations (
         repository TEXT NOT NULL,
         number INTEGER NOT NULL,

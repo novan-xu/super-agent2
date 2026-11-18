@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
+  Attachment,
+  attachmentRelativePath,
+  type BrainAttachment,
   type BrainInput,
   type BrainMessage,
   type BrainProviders,
@@ -52,7 +55,7 @@ export interface ConversationService {
   list(limit?: number): Conversation[];
   detail(id: string): ConversationDetail | undefined;
   entries(id: string, after?: number): ConversationEntry[];
-  send(id: string, message: string): OwnerEntry | undefined;
+  send(id: string, message: string, attachments?: readonly Attachment[]): OwnerEntry | undefined;
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
   tell(conversation: string | null, notice: string, prompt: string): string;
@@ -133,6 +136,7 @@ const Body = z.looseObject({
   ticket: z.number().optional(),
   title: z.unknown().optional(),
   files: z.unknown().optional(),
+  attachments: z.unknown().optional(),
   name: z.string().optional(),
   input: z.string().optional(),
   output: z.string().optional(),
@@ -176,7 +180,7 @@ function toEntry(row: EntryRow): ConversationEntry {
   const base = { id: row.id, conversation: row.conversation_id, seq: row.seq, at: row.created_at };
   switch (row.kind) {
     case "owner":
-      return ConversationEntry.parse({ ...base, kind: "owner", text: body.text, taken: row.taken === 1 });
+      return ConversationEntry.parse({ ...base, kind: "owner", text: body.text, attachments: body.attachments ?? [], taken: row.taken === 1 });
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id });
     case "delivery":
@@ -204,8 +208,12 @@ function toEntry(row: EntryRow): ConversationEntry {
   }
 }
 
-function titleOf(message: string): string {
-  const line = message.trim().split(/\r?\n/)[0] ?? "";
+function forBrain(attachments: readonly Attachment[]): BrainAttachment[] {
+  return attachments.map((attachment) => ({ ...attachment, path: attachmentRelativePath(attachment) }));
+}
+
+function titleOf(message: string, attachments: readonly Attachment[] = []): string {
+  const line = message.trim().split(/\r?\n/)[0] || (attachments[0]?.name ?? "");
   return [...line].length > titleLength ? `${[...line].slice(0, titleLength - 1).join("")}…` : line;
 }
 
@@ -393,7 +401,8 @@ export function createConversationService(options: ConversationServiceOptions): 
     if (row.prompt === null) {
       return;
     }
-    const input: BrainInput = { id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt };
+    const attached = row.kind === "owner" ? z.array(Attachment).catch([]).parse(Body.parse(JSON.parse(row.body)).attachments ?? []) : [];
+    const input: BrainInput = { id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached) };
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
@@ -424,7 +433,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         const provider = row.provider === null ? null : Provider.parse(row.provider);
         switch (entry.kind) {
           case "owner":
-            return { kind: "owner", text: entry.text };
+            return { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
           case "notice":
             return { kind: "notice", text: entry.text };
           case "delivery":
@@ -717,13 +726,13 @@ export function createConversationService(options: ConversationServiceOptions): 
       };
     },
     entries: (id, after = 0) => selectEntries.all(id, after, id).map((row) => toEntry(EntryRow.parse(row))),
-    send: (id, message) => {
+    send: (id, message, attachments = []) => {
       const conversation = get(id);
       if (conversation === undefined) {
         return undefined;
       }
-      const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message }, prompt: message });
-      updateConversation(id, conversation.title === "" ? { title: titleOf(message) } : {});
+      const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message });
+      updateConversation(id, conversation.title === "" ? { title: titleOf(message, attachments) } : {});
       const row = selectEntry.get(entryId);
       if (row !== undefined) {
         deliver(EntryRow.parse(row));

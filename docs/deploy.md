@@ -26,6 +26,7 @@ moves is checked to be inside its own folder and every image it tags or removes 
 | Copies of `authorized_keys` taken before a change | `/share/Container/superagent2/backups` |
 | Hub database | volume `superagent2-hub-data` (`hub.sqlite`) |
 | Brain's token to the hub | volume `superagent2-brain-link`, made by the hub at its first start |
+| The owner's attachments | volume `superagent2-brain-link`, folder `attachments` (`HUB_ATTACHMENTS_DIR` for the hub, `BRAIN_ATTACHMENTS_DIR` for the brain, both `/var/lib/superagent2/link/attachments`); kept, never pruned, and not part of a release's database backup |
 | Hub's home folder (`known_hosts`, `gh` and `git` settings) | volume `superagent2-hub-home` |
 | Codex, Claude Code and `dsh` logins and sessions | volumes `superagent2-brain-codex`, `superagent2-brain-claude`, `superagent2-brain-dsh` |
 | Brain's working folder | volume `superagent2-brain-workspace` |

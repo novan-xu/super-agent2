@@ -49,6 +49,7 @@ const Environment = z.object({
     }),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
+  HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
   HUB_SOURCE_REPOSITORY: unlessEmpty(RepositoryName),
   HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: unlessEmpty(
@@ -73,6 +74,7 @@ export interface Config {
   readonly projectFolders: readonly string[];
   readonly brainTokenFile: string;
   readonly pageDir?: string;
+  readonly attachmentsDir?: string;
   readonly vapid?: VapidSettings;
   readonly version?: string;
   readonly sourceRepository?: string;
@@ -129,6 +131,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       projectFolders: value.HUB_PROJECT_FOLDERS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
+      attachmentsDir: value.HUB_ATTACHMENTS_DIR ?? join(value.HUB_DATA_DIR, "attachments"),
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),

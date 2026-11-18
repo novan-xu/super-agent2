@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Attachment } from "./attachments.js";
 import { ConversationId, Provider } from "./conversations.js";
 import { MemoryBrief } from "./memory.js";
 import { ProtocolVersion } from "./version.js";
@@ -6,15 +7,21 @@ import { ProtocolVersion } from "./version.js";
 export const InputSource = z.enum(["owner", "hub"]);
 export type InputSource = z.infer<typeof InputSource>;
 
+export const BrainAttachment = Attachment.extend({
+  path: z.string().min(1),
+});
+export type BrainAttachment = z.infer<typeof BrainAttachment>;
+
 export const BrainInput = z.object({
   id: z.string().min(1),
   source: InputSource,
-  text: z.string().min(1),
+  text: z.string(),
+  attachments: z.array(BrainAttachment).default([]),
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 
 export const HistoryItem = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("owner"), text: z.string() }),
+  z.object({ kind: z.literal("owner"), text: z.string(), attachments: z.array(BrainAttachment).default([]) }),
   z.object({ kind: z.literal("notice"), text: z.string() }),
   z.object({ kind: z.literal("text"), provider: Provider.nullable(), text: z.string() }),
   z.object({ kind: z.literal("tool"), provider: Provider.nullable(), name: z.string(), input: z.string(), output: z.string() }),

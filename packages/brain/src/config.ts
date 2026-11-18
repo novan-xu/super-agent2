@@ -1,4 +1,5 @@
 import { type Provider, startingOrder } from "@super-agent2/protocol";
+import { defaultAttachmentsFolder } from "./prompt.js";
 import { z } from "zod";
 import { providerOrder } from "./providers.js";
 
@@ -12,6 +13,7 @@ export interface BrainConfig {
   readonly hubUrl: string;
   readonly tokenFile: string;
   readonly workspace: string;
+  readonly attachments: string;
   readonly order: readonly Provider[];
   readonly providers: Readonly<Record<Provider, ProviderSettings>>;
   readonly maximumOpen: number;
@@ -39,6 +41,7 @@ const Environment = z.object({
   BRAIN_HUB_URL: z.url({ protocol: /^https?$/, error: "must be the hub's http or https address" }),
   BRAIN_TOKEN_FILE: text,
   BRAIN_WORKSPACE: text,
+  BRAIN_ATTACHMENTS_DIR: text.default(defaultAttachmentsFolder),
   BRAIN_PROVIDERS: Preferred,
   BRAIN_MAX_OPEN: z
     .string()
@@ -70,6 +73,7 @@ export function loadBrainConfig(env: Readonly<Record<string, string | undefined>
       hubUrl: value.BRAIN_HUB_URL,
       tokenFile: value.BRAIN_TOKEN_FILE,
       workspace: value.BRAIN_WORKSPACE,
+      attachments: value.BRAIN_ATTACHMENTS_DIR,
       order: providerOrder(value.BRAIN_PROVIDERS, "deepseek"),
       maximumOpen: value.BRAIN_MAX_OPEN,
       providers: {

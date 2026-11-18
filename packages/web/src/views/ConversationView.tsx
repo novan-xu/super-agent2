@@ -4,6 +4,7 @@ import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, u
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { streamItems } from "../live/stream.js";
+import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
@@ -58,7 +59,7 @@ function ConversationList({ list, current, hrefOf, open, now }: ListProps) {
 interface ComposerProps {
   readonly working: boolean;
   readonly canStop: boolean;
-  readonly send: (message: string) => Promise<boolean>;
+  readonly send: (message: string, attachments: readonly string[]) => Promise<boolean>;
   readonly stop: () => void;
   readonly draftKey: string;
 }
@@ -68,6 +69,8 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const draft = drafts[draftKey] ?? "";
+  const attaching = useAttachments(draftKey);
+  const empty = draft.trim() === "" && attaching.items.length === 0;
 
   useLayoutEffect(() => {
     const element = field.current;
@@ -79,17 +82,19 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
 
   const submit = useCallback(async () => {
     const message = draft.trim();
-    if (message === "" || sending) {
+    if (empty || sending) {
       return;
     }
     setSending(true);
-    const sent = await send(message);
+    const attachments = await attaching.settle();
+    const sent = attachments === undefined ? false : await send(message, attachments);
     setSending(false);
     if (sent) {
       setDrafts((all) => ({ ...all, [draftKey]: "" }));
+      attaching.clear();
     }
     field.current?.focus();
-  }, [draft, draftKey, send, sending]);
+  }, [attaching, draft, draftKey, empty, send, sending]);
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!sendsOnEnter(event)) {
@@ -107,7 +112,10 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
           event.preventDefault();
           void submit();
         }}
+        onDragOver={attaching.over}
+        onDrop={attaching.drop}
       >
+        <PendingList attaching={attaching} />
         <textarea
           ref={field}
           rows={1}
@@ -118,8 +126,10 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
             setDrafts((all) => ({ ...all, [draftKey]: value }));
           }}
           onKeyDown={keyDown}
+          onPaste={attaching.paste}
         />
         <div className="composer-foot">
+          <AttachButton add={attaching.add} />
           <span className="od-fill" />
           {working && canStop ? (
             <button className="btn btn-sm" type="button" onClick={stop}>
@@ -127,7 +137,7 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
               {text("composer.stop")}
             </button>
           ) : null}
-          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={draft.trim() === "" || sending}>
+          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={empty || sending}>
             <Icon name="send" />
             {text("composer.send")}
           </button>
@@ -145,7 +155,7 @@ export interface ConversationViewProps {
   readonly model: string | null;
   readonly hrefOf: (conversation: string) => string;
   readonly open: (conversation: string) => void;
-  readonly send: (message: string) => Promise<boolean>;
+  readonly send: (message: string, attachments: readonly string[]) => Promise<boolean>;
   readonly stop: () => void;
   readonly now: number;
 }
@@ -186,9 +196,9 @@ export function ConversationView(props: ConversationViewProps) {
   }, []);
 
   const send = useCallback(
-    async (message: string) => {
+    async (message: string, attachments: readonly string[]) => {
       following.current = true;
-      return props.send(message);
+      return props.send(message, attachments);
     },
     [props.send],
   );

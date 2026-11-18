@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -313,5 +314,63 @@ describe("a chain handed in as several pull requests", () => {
     expect(told[0]?.prompt).toContain("Pull requests merged, in order: #41 (closed #7, commit merge-of-eee555).");
     expect(told[0]?.prompt).toContain(`Still open: #8, #9; open pull request: #42 from ${second}.`);
     expect(told[0]?.prompt).toContain("the repository has a deployment");
+  });
+});
+
+describe("a message for a chain's worker between two pieces", () => {
+  it("is kept while the ticket waits on verification and reaches the next attempt, with its attachment, once", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    const branch = current(running, ticket.id).branch ?? "";
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    pullAt(41, "eee555", branch, [7]);
+    pipeline(1, "eee555", 41, "failure");
+    handIn(runner, ticket.id, 1, 41, [7]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "verifying" });
+
+    const upload = running.attachments.create({ name: "screenshot.png", size: 3, mediaType: "image/png" });
+    await running.attachments.write(upload.attachment.id, 0, Readable.from([Buffer.from([1, 2, 3])]));
+    const work = running.work;
+    if (work === undefined) {
+      throw new Error("no work service");
+    }
+    const kept = work.message(ticket.id, "Look at this too", "owner", [upload.attachment]);
+    expect(kept).toMatchObject({ ok: true, delivered: false });
+    const id = kept.ok ? kept.id : "";
+    expect(sent.filter((message) => message.type === "work.message")).toEqual([]);
+
+    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing test.", zh: "修好失败的测试。" } }, conversation);
+    expect(guided.isError, guided.text).toBe(false);
+    const after = sent.findIndex((message) => message.type === "work.start" && message.task.attempt === 2);
+    expect(after).toBeGreaterThanOrEqual(0);
+    expect(sent.slice(after).filter((message) => message.type === "work.message")).toEqual([
+      { type: "work.message", ticket: ticket.id, attempt: 2, id, from: "owner", text: "Look at this too", attachments: [upload.attachment] },
+    ]);
+
+    const part = new Promise<HubToRunner>((resolve) => {
+      const before = sent.length;
+      runner.receive({ type: "work.attachment", ticket: ticket.id, attempt: 2, attachment: upload.attachment.id, offset: 0, length: 3 });
+      const check = () => {
+        const found = sent.slice(before).find((message) => message.type === "work.attachment.part");
+        if (found === undefined) {
+          setImmediate(check);
+        } else {
+          resolve(found);
+        }
+      };
+      check();
+    });
+    expect(await part).toMatchObject({ data: Buffer.from([1, 2, 3]).toString("base64"), problem: null });
+
+    event(runner, ticket.id, 2, { kind: "message", id, from: "owner", text: "Look at this too", attachments: [upload.attachment], delivery: "steered" });
+    pullAt(41, "fff666", branch, [7]);
+    pipeline(2, "fff666", 41, "success");
+    handIn(runner, ticket.id, 2, 41, [7]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", work: { attempt: 3 } });
+    const third = sent.findIndex((message) => message.type === "work.start" && message.task.attempt === 3);
+    expect(third).toBeGreaterThanOrEqual(0);
+    expect(sent.slice(third).filter((message) => message.type === "work.message")).toEqual([]);
   });
 });

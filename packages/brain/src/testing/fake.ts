@@ -1,9 +1,10 @@
 import type { Provider } from "@super-agent2/protocol";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "@super-agent2/programs";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "@super-agent2/programs";
 
 export class FakeHandle implements ProgramHandle {
   readonly prompts: string[] = [];
   readonly steers: string[] = [];
+  readonly images: (readonly PromptImage[])[] = [];
   interrupts = 0;
   closed = false;
   running = false;
@@ -14,20 +15,22 @@ export class FakeHandle implements ProgramHandle {
     private readonly listener: ProgramListener,
   ) {}
 
-  start(prompt: string): void {
+  start(prompt: string, images: readonly PromptImage[] = []): void {
     if (this.program.refuseStart !== undefined) {
       throw new Error(this.program.refuseStart);
     }
     this.prompts.push(prompt);
+    this.images.push(images);
     this.running = true;
     this.program.notify({ kind: "start", handle: this, text: prompt });
   }
 
-  steer(text: string): Promise<SteerResult> {
+  steer(text: string, images: readonly PromptImage[] = []): Promise<SteerResult> {
     if (!this.program.steering || !this.running) {
       return Promise.resolve("queued");
     }
     this.steers.push(text);
+    this.images.push(images);
     this.program.notify({ kind: "steer", handle: this, text });
     return Promise.resolve("steered");
   }

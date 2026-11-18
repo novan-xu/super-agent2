@@ -32,6 +32,7 @@ describe("loadConfig", () => {
         projectFolders: [],
         brainTokenFile: join("/data", "brain.token"),
         pageDir: defaultPageDir,
+        attachmentsDir: join("/data", "attachments"),
       },
     });
   });

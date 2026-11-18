@@ -40,12 +40,12 @@ function startedWith(sent: readonly BrainMessage[]): Provider[] {
 describe("the brain's provider order", () => {
   it("is changed by the hub and applies to the next message", async () => {
     const { brain, sent, programs } = setup(["gpt", "claude", "deepseek"]);
-    brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "hello" } });
+    brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "hello", attachments: [] } });
     (await programs.gpt.next()).handle.finish("hi");
     await brain.settled();
     brain.receive({ type: "order", order: ["claude", "gpt", "deepseek"] });
     expect(sent.at(-1)).toMatchObject({ type: "providers", order: ["claude", "gpt", "deepseek"] });
-    brain.receive({ type: "input", conversation: "c1", input: { id: "i2", source: "owner", text: "again" } });
+    brain.receive({ type: "input", conversation: "c1", input: { id: "i2", source: "owner", text: "again", attachments: [] } });
     (await programs.claude.next()).handle.finish("hi");
     await brain.settled();
     expect(startedWith(sent)).toEqual(["gpt", "claude"]);
@@ -63,7 +63,7 @@ describe("the brain's provider order", () => {
         { provider: "deepseek", model: "deepseek-model", effort: "high", available: true, until: null },
       ],
     });
-    brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "hello" } });
+    brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "hello", attachments: [] } });
     (await programs.gpt.next()).handle.emit({ type: "unavailable", reason: "usage limit", until: clock.now() + 60_000 });
     (await programs.claude.next()).handle.finish("hi");
     await brain.settled();

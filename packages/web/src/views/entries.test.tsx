@@ -27,7 +27,7 @@ const delivery: ConversationEntry = {
 describe("a delivery in the conversation", () => {
   it("shows the text as written, the Chinese title, and each file as a download of its own ticket", () => {
     const items = streamItems(
-      { id, conversation: undefined, turns: [], entries: [{ id: "o1", conversation: id, seq: 1, at, kind: "owner", text: "翻译一下", taken: true }, delivery] },
+      { id, conversation: undefined, turns: [], entries: [{ id: "o1", conversation: id, seq: 1, at, kind: "owner", text: "翻译一下", attachments: [], taken: true }, delivery] },
       at,
     );
     const item = items.find((entry) => entry.kind === "entry" && entry.entry.kind === "delivery");
@@ -56,5 +56,18 @@ describe("a delivery in the conversation", () => {
 
   it("writes sizes in the nearest unit", () => {
     expect([0, 12, 1024, 1536, 10_240, 4_300_000, 3_221_225_472].map(sizeOf)).toEqual(["0 B", "12 B", "1 KB", "1.5 KB", "10 KB", "4.1 MB", "3 GB"]);
+  });
+});
+
+describe("the owner's attachments in the conversation", () => {
+  it("show an image as a picture and any other file by name and size, each a download, with no empty text", () => {
+    const photo = { id: "a".repeat(32), name: "照片.jpg", size: 2_000_000, mediaType: "image/jpeg" };
+    const sheet = { id: "b".repeat(32), name: "budget.xlsx", size: 2_048, mediaType: "application/vnd.ms-excel" };
+    const items = streamItems({ id, conversation: undefined, turns: [], entries: [{ id: "o1", conversation: id, seq: 1, at, kind: "owner", text: "", attachments: [photo, sheet], taken: true }] }, at);
+    const html = items.map((item) => renderToString(<StreamEntry item={item} thisYear={2026} />)).join("");
+    expect(html).toContain(`<img src="/api/attachments/${photo.id}" alt="照片.jpg"`);
+    expect(html).toContain(`href="/api/attachments/${sheet.id}" download="budget.xlsx"`);
+    expect(html).toContain(sizeOf(2_048));
+    expect(html).not.toContain("msg-text");
   });
 });

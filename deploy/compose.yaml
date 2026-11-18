@@ -26,6 +26,7 @@ services:
       HUB_PORT: "8080"
       HUB_HOST: 0.0.0.0
       HUB_BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
+      HUB_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
       HUB_PROJECT_FOLDERS: ${SUPERAGENT2_ROOT}/projects
       HUB_SOURCE_REPOSITORY: novan-xu/super-agent2
     extra_hosts:
@@ -67,6 +68,7 @@ services:
       BRAIN_HUB_URL: http://hub:8080
       BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
       BRAIN_WORKSPACE: /home/node/workspace
+      BRAIN_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
       CLAUDE_CONFIG_DIR: /home/node/.claude
     volumes:
       - brain-link:/var/lib/superagent2/link:ro

@@ -7,6 +7,7 @@ import type { Day, StreamItem } from "../live/stream.js";
 import { toolName, toolSummary } from "../live/tool.js";
 import { Icon, Logo } from "../parts/icons.js";
 import { Markdown } from "../parts/Markdown.js";
+import { SentAttachments } from "../parts/Attachments.js";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -34,7 +35,8 @@ const OwnerMessage = memo(function OwnerMessage({ entry }: { readonly entry: Own
         )}
         <span className="num">{clockOf(entry.at)}</span>
       </div>
-      <div className="msg-text msg-plain">{entry.text}</div>
+      {entry.text === "" ? null : <div className="msg-text msg-plain">{entry.text}</div>}
+      <SentAttachments attachments={entry.attachments} />
     </div>
   );
 });

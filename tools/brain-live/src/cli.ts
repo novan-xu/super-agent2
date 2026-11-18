@@ -17,6 +17,7 @@ import {
 import { fingerprintOf, type Hub, startHub } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, type ConversationEntry, type Provider, Provider as ProviderShape } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { solidPng } from "./png.js";
 
 const team = "live-check";
 const audience = "a".repeat(64);
@@ -119,6 +120,7 @@ function startBrain(broken: readonly Provider[] = []): void {
     clock: systemClock,
     tools: { url: `${hubUrl}${brainToolsPath}`, token },
     workspace,
+    attachments: hub.attachments.root,
   });
   const current = brain;
   link.bind({ receive: (message) => current.receive(message), running: () => current.running() });
@@ -206,6 +208,43 @@ async function ask(conversation: string, text: string, turns: number): Promise<s
   return replyAfter(conversation, before);
 }
 
+async function ownerRequest(path: string, method: string, body: string | Uint8Array, type: string): Promise<unknown> {
+  const response = await fetch(`${hubUrl}${path}`, {
+    method,
+    headers: { "cf-access-jwt-assertion": await ownerAssertion(), origin: hubUrl, "content-type": type, accept: "application/json" },
+    body,
+  });
+  const value: unknown = await response.json();
+  if (!response.ok) {
+    throw new Error(`${method} ${path} answered ${response.status}: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+async function attach(name: string, mediaType: string, data: Uint8Array): Promise<string> {
+  const created = (await ownerRequest("/api/attachments", "POST", JSON.stringify({ name, size: data.length, mediaType }), "application/json")) as { attachment: { id: string } };
+  const id = created.attachment.id;
+  const half = Math.floor(data.length / 2);
+  await ownerRequest(`/api/attachments/${id}/upload?offset=0`, "PUT", data.subarray(0, half), "application/octet-stream");
+  await ownerRequest(`/api/attachments/${id}/upload?offset=${half}`, "PUT", data.subarray(half), "application/octet-stream");
+  return id;
+}
+
+async function sendWith(conversation: string, text: string, attachments: readonly string[]): Promise<void> {
+  await ownerRequest(`/api/conversations/${conversation}/messages`, "POST", JSON.stringify({ text, attachments }), "application/json");
+}
+
+const colours = [
+  { en: "red", zh: "红", rgb: [220, 30, 30] },
+  { en: "green", zh: "绿", rgb: [30, 170, 60] },
+  { en: "blue", zh: "蓝", rgb: [30, 70, 220] },
+  { en: "yellow", zh: "黄", rgb: [240, 210, 20] },
+] as const;
+
+function namesColour(reply: string, colour: (typeof colours)[number]): boolean {
+  return reply.toLowerCase().includes(colour.en) || reply.includes(colour.zh);
+}
+
 startBrain();
 
 if (only.has("gh")) {
@@ -272,6 +311,39 @@ if (only.has("interrupt")) {
     "the program and its session carry on after an interrupt",
     program !== undefined && after === program && opened.at(-1) === handle && next?.state === "completed" && reply.includes("120000"),
     `process before ${program}, after ${after}; next turn: ${next?.state}; reply: ${reply.slice(0, 200)}`,
+  );
+}
+
+if (only.has("attachments")) {
+  const conversation = hub.conversations.create().id;
+  const colour = colours[randomInt(colours.length)] ?? colours[0];
+  const word = `${["OKAPI", "TAPIR", "QUOKKA", "NUMBAT", "DINGO"][randomInt(5)]}-${randomInt(100, 1000)}`;
+  const image = await attach("photo.png", "image/png", solidPng(96, 64, colour.rgb));
+  const file = await attach("note.txt", "text/plain", new TextEncoder().encode(`The code word is ${word}.\n`));
+  const before = lastSeq(conversation);
+  await sendWith(conversation, "我附了一张图片和一个文本文件。图片整个是什么颜色？文本文件里的暗号是什么？用一行回答：颜色，暗号。", [image, file]);
+  await turnsDone(conversation, 1);
+  const reply = replyAfter(conversation, before);
+  const tools = entriesOf(conversation).filter((entry) => entry.kind === "tool").map((entry) => (entry.kind === "tool" ? entry.name : ""));
+  note("an attached image is seen", namesColour(reply, colour), `colour ${colour.en}; tools: ${tools.join(", ") || "none"}; reply: ${reply.slice(0, 300)}`);
+  note("an attached file is read at its path", reply.includes(word), `code word ${word}; reply: ${reply.slice(0, 300)}`);
+
+  const second = colours.filter((candidate) => candidate.en !== colour.en)[randomInt(colours.length - 1)] ?? colours[1];
+  const later = await attach("second.png", "image/png", solidPng(64, 96, second.rgb));
+  const start = lastSeq(conversation);
+  await sendWith(conversation, `用 run_command 在 hub 上运行这条命令（会等 20 秒）：node -e "setTimeout(()=>console.log('done'),20000)"，然后用一句话告诉我结果。`, []);
+  await waitFor(() => entriesOf(conversation).some((entry) => entry.kind === "tool" && entry.seq > start));
+  await sendWith(conversation, "另外：我刚又附了一张图。回答的最后一个词必须是这张新图的颜色（英文单词）。", [later]);
+  await waitFor(() => {
+    const detail = hub.conversations.detail(conversation);
+    return detail !== undefined && detail.turns.every((turn) => turn.state !== "running") && detail.entries.every((entry) => entry.kind !== "owner" || entry.taken);
+  });
+  const turns = hub.conversations.detail(conversation)?.turns ?? [];
+  const steered = replyAfter(conversation, start);
+  note(
+    "an image sent into a running turn is seen",
+    turns.length === 2 && namesColour(steered.slice(-80), second),
+    `second colour ${second.en}; turns: ${turns.length}; reply: ${steered.slice(-200)}`,
   );
 }
 

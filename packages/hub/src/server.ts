@@ -33,6 +33,7 @@ import {
   type ServerMessage,
   type Session,
   type WaitingList,
+  attachmentsPath,
   type MachineList,
   type TicketDetail,
   type TicketList,
@@ -75,6 +76,8 @@ import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import type { FailureLoop, StuckAnswerError } from "./failure-loop.js";
 import type { TicketFiles } from "./files.js";
+import type { AttachmentStore, ChosenAttachments } from "./attachments.js";
+import { serveAttachments } from "./attachments-api.js";
 import type { AnswerError, ConfirmationLock } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
@@ -170,6 +173,7 @@ export interface HubServerOptions {
   readonly runners?: Runners;
   readonly tickets?: TicketService;
   readonly files?: TicketFiles;
+  readonly attachments?: AttachmentStore;
   readonly work?: WorkService;
   readonly chains?: ChainStarter;
   readonly loop?: FailureLoop;
@@ -554,6 +558,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(conversationsPath) && (await serveConversations(request, response, path, method))) {
       return;
     }
+    if (
+      path.startsWith(attachmentsPath) &&
+      options.attachments !== undefined &&
+      (await serveAttachments({ request, response, path, method, store: options.attachments, sameOrigin: isSameOrigin(request), readBody: () => readBody(request) }))
+    ) {
+      return;
+    }
     if (path.startsWith(ticketsPath) && serveTickets(request, response, path, method)) {
       return;
     }
@@ -760,6 +771,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     options.waiting?.refresh();
     sendJson(response, 202, { tickets: [...outcome.tickets] });
+  };
+
+  const chooseAttachments = (ids: readonly string[]): ChosenAttachments => {
+    if (ids.length === 0) {
+      return { ok: true, attachments: [] };
+    }
+    return options.attachments?.choose(ids) ?? { ok: false, reason: "There is no attachment store" };
   };
 
   const ownerAction = (request: IncomingMessage, response: ServerResponse): boolean => {
@@ -1049,7 +1067,12 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 400, { error: "bad_request" });
         return true;
       }
-      const entry = conversations.send(id, message.text);
+      const chosen = chooseAttachments(message.attachments);
+      if (!chosen.ok) {
+        sendJson(response, 409, { error: "conflict" });
+        return true;
+      }
+      const entry = conversations.send(id, message.text, chosen.attachments);
       if (entry === undefined) {
         return false;
       }
@@ -1208,12 +1231,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 404, { error: "not_found" });
       return true;
     }
-    const given = parseJson(await readBody(request), WorkerMessage.strict());
+    const given = parseJson(await readBody(request), WorkerMessage);
     if (given === undefined) {
       sendJson(response, 400, { error: "bad_request" });
       return true;
     }
-    const sent = work.message(id, given.text, "owner");
+    const chosen = chooseAttachments(given.attachments);
+    if (!chosen.ok) {
+      sendJson(response, 409, { error: "conflict" });
+      return true;
+    }
+    const sent = work.message(id, given.text, "owner", chosen.attachments);
     if (!sent.ok) {
       sendJson(response, 409, { error: "conflict" });
       return true;
