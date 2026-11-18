@@ -36,6 +36,7 @@ export interface WorkLink {
 export interface Runners {
   bindWork(link: WorkLink): void;
   sendWork(machine: string, message: WorkMessageToRunner): boolean;
+  refreshAllowance(): number;
   report(machine: string): MachineReport | undefined;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
   attach(machine: Machine, connection: RunnerConnection): RunnerLink;
@@ -141,6 +142,13 @@ export function createRunners(options: RunnersOptions): Runners {
       }
       link.connection.send(message);
       return true;
+    },
+    refreshAllowance: () => {
+      let count = 0;
+      for (const link of links.values()) {
+        if (link.report !== undefined) { link.connection.send({ type: "allowance.refresh" }); count++; }
+      }
+      return count;
     },
     report: (name) => links.get(name)?.report,
     admit: (identity, token) => {

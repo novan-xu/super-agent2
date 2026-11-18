@@ -1,4 +1,4 @@
-import type { Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
+import type { AllowanceReport, Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
@@ -22,6 +22,7 @@ export interface PageState {
   readonly history: HistoryState;
   readonly memory: MemoryState;
   readonly settings: SettingsSnapshot | null;
+  readonly allowance: AllowanceReport | null;
 }
 
 export type PageAction =
@@ -48,7 +49,7 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, list: [], current: null, streaming: false, stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null };
+export const initialPage: PageState = { status: "connecting", linked: false, list: [], current: null, streaming: false, stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -119,6 +120,7 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return { ...state, settings: action.settings };
     case "server": {
       const { message } = action;
+      if (message.type === "allowance") return { ...state, allowance: message.allowance };
       if (message.type === "settings") {
         return { ...state, settings: message.settings };
       }

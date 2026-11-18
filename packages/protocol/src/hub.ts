@@ -3,6 +3,7 @@ import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./
 import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, ReadStreamPage, StreamEntryUpdate, StreamPageUpdate, TurnUpdate, UnwatchConversation, UnwatchStream, WatchConversation, WatchStream } from "./conversations.js";
 import { ProtocolVersion } from "./version.js";
 import { MemoriesUpdate } from "./memory.js";
+import { AllowanceReport } from "./providers.js";
 import { SettingsUpdate } from "./settings.js";
 import { TicketsUpdate, TicketUpdate } from "./tickets.js";
 import { WaitingUpdate } from "./waiting.js";
@@ -77,6 +78,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   WorkEventUpdate,
   MemoriesUpdate,
   SettingsUpdate,
+  z.object({ type: z.literal("allowance"), allowance: AllowanceReport }),
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessage>;

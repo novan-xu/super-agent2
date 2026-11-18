@@ -55,6 +55,7 @@ export interface ShellProps {
   readonly waiting: number;
   readonly suggestions?: number;
   readonly reviews?: number;
+  readonly allowance?: ReactNode;
   readonly children?: ReactNode;
 }
 
@@ -100,6 +101,7 @@ export function Shell(props: ShellProps) {
             <span>{text("app.name")}</span>
           </div>
           <ul className="nav">{main.map(navItem)}</ul>
+          {props.allowance}
           <div className="side-foot">
             <div className="hub-card">
               <div className="hub-line">

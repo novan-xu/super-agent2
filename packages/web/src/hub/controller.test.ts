@@ -43,6 +43,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     chooseChain: (id, change) => answer(`choose ${id} ${JSON.stringify(change)}`, { tickets: [] }),
     reassign: (id, change) => answer(`reassign ${id} ${JSON.stringify(change)}`, { tickets: [] }),
     pushKey: () => answer("pushKey", { publicKey: null }),
+    refreshAllowance: () => answer("refreshAllowance", { requested: 1 }),
     subscribePush: () => answer("subscribePush", { subscribed: true }),
     unsubscribePush: () => answer("unsubscribePush", { subscribed: false }),
     addMemory: (text) => answer(`addMemory ${text}`, { memories: [], suggestions: [] }),

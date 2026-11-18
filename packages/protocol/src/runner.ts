@@ -90,7 +90,9 @@ export const RunnerWelcome = z.object({
 });
 export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
+export const RefreshAllowance = z.object({ type: z.literal("allowance.refresh") });
+
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {

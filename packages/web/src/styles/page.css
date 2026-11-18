@@ -248,3 +248,32 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .att-item .att-name, .msg-attachments .att-name { overflow: hidden; text-overflow: ellipsis; }
 
 .brain-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-xs); }
+
+.allowance-sidebar { min-height: 0; overflow-y: auto; padding: 0 var(--space-2); }
+.allowance-panel { display: grid; gap: var(--space-4); font-size: var(--text-xs); }
+.allowance-heading, .allowance-name, .allowance-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.allowance-heading { color: var(--fg-2); }
+.allowance-heading .icon-btn { width: 28px; height: 28px; min-height: 28px; }
+.allowance-provider { display: grid; gap: var(--space-2); }
+.allowance-name { font-size: var(--text-sm); }
+.allowance-window { display: grid; gap: 4px; }
+.allowance-meta, .allowance-reset, .allowance-fresh { color: var(--muted); }
+.allowance-track { height: 4px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border); }
+.allowance-fill { height: 100%; border-radius: inherit; }
+.allowance-fill--ok { background: var(--success); }
+.allowance-fill--warn { background: var(--warn); }
+.allowance-fill--bad { background: var(--danger); }
+.allowance-text--ok { color: var(--success); }
+.allowance-text--warn { color: var(--warn); }
+.allowance-text--bad { color: var(--danger); }
+.allowance-text--unknown { color: var(--muted); }
+.allowance-mobile { display: none; }
+.allowance-dialog { padding: var(--space-5); }
+.allowance-dialog .allowance-panel { gap: var(--space-5); }
+.allowance-close { float: right; margin-left: var(--space-3); }
+.allowance-compact { display: flex; flex-wrap: wrap; gap: var(--space-2); width: 100%; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); font-size: var(--text-xs); text-align: left; }
+.allowance-compact span + span::before { content: "·"; color: var(--muted); margin-right: var(--space-2); }
+@media (max-width: 1023px) {
+  .allowance-sidebar { display: none; }
+  .allowance-mobile { display: block; margin-bottom: var(--space-5); }
+}

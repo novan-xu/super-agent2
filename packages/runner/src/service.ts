@@ -97,8 +97,10 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     ...(options.now === undefined ? {} : { now: options.now }),
     ...options.work,
   });
+  let requestAllowance: () => void = () => undefined;
   const link = createRunnerLink({
     config,
+    refreshAllowance: () => requestAllowance(),
     report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
@@ -185,6 +187,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
       reading = false;
     }
   };
+  requestAllowance = () => { void probed.then(readAllowance).catch(() => undefined); };
   const allowanceRead = probed.then(readAllowance).catch((error: unknown) => log(`Could not read the allowance: ${error instanceof Error ? error.message : String(error)}`));
   const allowanceTimer = setInterval(() => {
     void readAllowance().catch(() => undefined);
