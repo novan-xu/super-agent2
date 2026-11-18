@@ -20,7 +20,7 @@ function Provider({ provider, now }: { readonly provider: ProviderView; readonly
     <div className="allowance-name"><strong>{provider.name}</strong>{provider.id === "dsh" ? <span className={`allowance-text--${provider.tone}`}>{provider.amount ?? text("allowance.unknown")}</span> : null}</div>
     {provider.unavailableUntil !== undefined ? <div className="allowance-text--bad">{provider.unavailableUntil === null ? text("allowance.unavailable") : text("allowance.unavailableUntil", { time: time(provider.unavailableUntil) })}</div> : null}
     {provider.windows.map((window) => <div className="allowance-window" key={window.name}>
-      <div className="allowance-meta"><span>{text(`allowance.${window.name}`)}</span><span>{window.remaining === null ? text("allowance.unknown") : text("allowance.left", { percent: Math.round(window.remaining) })}</span></div>
+      <div className={`allowance-meta allowance-text--${window.tone}`}><span>{text(`allowance.${window.name}`)}</span><span>{window.remaining === null ? text("allowance.unknown") : text("allowance.left", { percent: Math.round(window.remaining) })}</span></div>
       {window.remaining === null ? null : <div className="allowance-track"><div className={`allowance-fill allowance-fill--${window.tone}`} style={{ width: `${window.remaining}%` }} /></div>}
       {window.resetsAt === null ? null : <div className="allowance-reset">{text("allowance.reset", { time: resetTime(window.resetsAt) })}</div>}
     </div>)}
