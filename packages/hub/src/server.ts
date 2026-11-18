@@ -239,6 +239,7 @@ type Body =
   | WorkerMessageResponse
   | EngineTableBody
   | AllowanceList
+  | { readonly requested: number }
   | MemoryList
   | SettingsSnapshot
   | MachineAdded
@@ -854,13 +855,27 @@ export function createHubServer(options: HubServerOptions): HubServer {
     sendOutcome(response, await chains.reassign({ assertion: headerValue(request), ticket, change }));
   };
 
+  const allowanceSnapshot = (defaults: StartDefaults) => {
+    const subscriptions = defaults.subscriptions();
+    const balance = defaults.balance();
+    const unavailable = defaults.unavailable();
+    const dsh = defaults.out().get("dsh");
+    if (dsh !== undefined && !unavailable.some((mark) => mark.program === "dsh")) {
+      unavailable.push({ program: "dsh", reason: dsh.reason, since: balance.readAt, until: dsh.until, given: dsh.given });
+    }
+    return { subscriptions: [subscriptions.codex, subscriptions.claude], balance, unavailable };
+  };
+
   const serveDefaults = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, defaults: StartDefaults): Promise<boolean> => {
     if (path === allowancePath) {
-      if (method !== "GET") {
-        return false;
+      if (method === "POST") {
+        if (!ownerAction(request, response)) return true;
+        if (parseJson(await readBody(request), z.object({}).strict()) === undefined) { sendJson(response, 400, { error: "bad_request" }); return true; }
+        sendJson(response, 200, { requested: options.runners?.refreshAllowance() ?? 0 });
+        return true;
       }
-      const subscriptions = defaults.subscriptions();
-      sendJson(response, 200, { subscriptions: [subscriptions.codex, subscriptions.claude], balance: defaults.balance(), unavailable: defaults.unavailable() });
+      if (method !== "GET") return false;
+      sendJson(response, 200, allowanceSnapshot(defaults));
       return true;
     }
     if (method === "GET") {
@@ -1424,6 +1439,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
     const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
     const unsubscribeMemories = options.memories?.subscribe((list) => send({ type: "memories", ...list })) ?? (() => undefined);
+    const unsubscribeAllowance = options.defaults?.subscribe(() => send({ type: "allowance", allowance: allowanceSnapshot(options.defaults!) })) ?? (() => undefined);
     const unsubscribeSettings = options.settings?.subscribe((settings) => send({ type: "settings", settings })) ?? (() => undefined);
     const unsubscribeWork =
       options.work?.subscribe((event) => {
@@ -1439,6 +1455,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       unsubscribeTickets();
       unsubscribeMemories();
       unsubscribeSettings();
+      unsubscribeAllowance();
     });
     client.on("message", (data, binary) => {
       let message: ClientMessage;
@@ -1508,6 +1525,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
     });
     send({ type: "hello", protocol: protocolVersion, identity });
+    if (options.defaults !== undefined) send({ type: "allowance", allowance: allowanceSnapshot(options.defaults) });
     if (options.waiting !== undefined) {
       send({ type: "waiting", cards: options.waiting.cards() });
     }

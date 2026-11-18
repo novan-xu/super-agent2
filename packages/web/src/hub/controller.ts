@@ -198,6 +198,11 @@ export class PageController {
     return this.memoryCall(() => this.options.api.decideSuggestion(id, decision));
   }
 
+  async refreshAllowance(): Promise<void> {
+    const answer = await this.options.api.refreshAllowance();
+    if (!answer.ok) this.options.onFailure(answer.error);
+  }
+
   async loadSettings(): Promise<void> {
     const answer = await this.options.api.settings();
     if (answer.ok) {

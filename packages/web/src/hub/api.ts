@@ -33,7 +33,7 @@ import {
   type Provider,
   SettingsSnapshot,
 } from "@super-agent2/protocol";
-import type { z } from "zod";
+import { z } from "zod";
 
 export type Failure = Refusal["error"] | "network";
 
@@ -118,6 +118,7 @@ export const hubApi = {
   editMemory: (id: number, text: string) => call(`/api/memories/${id}`, MemoryList, { text }, "PUT"),
   deleteMemory: (id: number) => call(`/api/memories/${id}`, MemoryList, {}, "DELETE"),
   decideSuggestion: (id: number, decision: "confirm" | "decline") => call(`/api/memories/suggestions/${id}/${decision}`, MemoryList, {}),
+  refreshAllowance: () => call("/api/allowance", z.object({ requested: z.number() }), {}),
   settings: () => call("/api/settings", SettingsSnapshot),
   addMachine: (name: string, system: MachineSystem) => call("/api/machines", MachineAdded, { name, system }),
   revokeMachine: (name: string) => call(`/api/machines/${encodeURIComponent(name)}/revoke`, MachineRevoked, {}),

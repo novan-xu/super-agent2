@@ -12,6 +12,7 @@ import { reviewCount } from "./live/tickets.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
+import { AllowanceSidebar, AllowanceCompact } from "./parts/Allowance.js";
 import { useRoute } from "./parts/route.js";
 import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
@@ -278,6 +279,7 @@ export function App() {
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
       reviews={reviewCount(page.tickets)}
+      allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
       actions={
         inConversation ? (
           <button className="btn btn-sm" type="button" disabled={creatingTopic} onClick={() => void newTopic()}>
@@ -310,6 +312,7 @@ export function App() {
       ) : route.view === "workbench" ? (
         <WorkbenchView
           waiting={page.waiting}
+          allowance={<AllowanceCompact report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
           actions={cardActions}
           focus={focus}
           focused={clearFocus}

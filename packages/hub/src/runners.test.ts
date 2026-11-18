@@ -120,6 +120,15 @@ describe("a runner's link", () => {
     expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true, report })]);
   });
 
+  it("requests an allowance reading only from connected runners", async () => {
+    const running = await start();
+    running.machines.add({ name: "pc", accessClientId: clientId });
+    running.machines.add({ name: "mac", accessClientId: clientId });
+    const runner = new FakeRunner().connect(running, "pc");
+    expect(running.runners.refreshAllowance()).toBe(1);
+    expect(runner.sent.at(-1)).toEqual({ type: "allowance.refresh" });
+  });
+
   it("is no target for a command: a command named after a machine fails, and nothing reaches the runner", async () => {
     const running = await start(true);
     running.machines.add({ name: "pc", accessClientId: clientId });
