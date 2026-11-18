@@ -18,6 +18,7 @@ import {
   type StuckAnswerRequest,
   StreamEntry,
   streamPath,
+  type TopicScope,
   TicketDetail,
   TicketHistory,
   TicketList,
@@ -89,13 +90,12 @@ export function historyPath(page: HistoryRequest): string {
 }
 
 export const hubApi = {
-  conversations: () => call("/api/conversations", ConversationList),
+  conversations: () => call("/api/conversations?all=1", ConversationList),
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
-  create: () => call("/api/conversations", ConversationResponse, {}),
   send: (id: string, text: string, attachments: readonly string[] = [], quotedMessage?: string) =>
     call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments, quotedMessage }),
-  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string) =>
-    call(streamPath, StreamEntry, { text, attachments, quotedMessage }),
+  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope) =>
+    call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope }),
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),

@@ -13,8 +13,10 @@ export interface PageState {
   readonly status: SocketStatus;
   readonly linked: boolean;
   readonly list: readonly Conversation[];
+  readonly repositories: readonly string[];
   readonly current: ConversationState | null;
   readonly streaming: boolean;
+  readonly streamKey: string;
   readonly stream: TopicStreamState;
   readonly waiting: WaitingState;
   readonly tickets: TicketsState;
@@ -31,9 +33,8 @@ export type PageAction =
   | { readonly type: "list"; readonly list: ConversationList }
   | { readonly type: "detail"; readonly detail: ConversationDetail }
   | { readonly type: "open"; readonly conversation: string | null }
-  | { readonly type: "created"; readonly conversation: Conversation }
   | { readonly type: "own"; readonly entry: ConversationEntry }
-  | { readonly type: "stream.open"; readonly watching: boolean }
+  | { readonly type: "stream.open"; readonly watching: boolean; readonly key: string; readonly restart?: boolean }
   | { readonly type: "stream.more" }
   | { readonly type: "waiting"; readonly action: WaitingAction }
   | { readonly type: "ticket.open"; readonly ticket: number | null }
@@ -49,7 +50,7 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, list: [], current: null, streaming: false, stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
+export const initialPage: PageState = { status: "connecting", linked: false, list: [], repositories: [], current: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -68,7 +69,7 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
     case "status":
       return action.status === state.status ? state : { ...state, status: action.status, stream: state.stream.loading ? { ...state.stream, loading: false } : state.stream };
     case "list":
-      return { ...state, linked: action.list.brain.linked, list: mergeConversations(state.list, action.list.conversations) };
+      return { ...state, linked: action.list.brain.linked, list: mergeConversations(state.list, action.list.conversations), repositories: action.list.repositories ?? [] };
     case "detail": {
       const list = upsertConversation(state.list, action.detail.conversation);
       const next = list === state.list ? state : { ...state, list };
@@ -79,11 +80,12 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         return state;
       }
       return { ...state, current: action.conversation === null ? null : emptyConversation(action.conversation) };
-    case "created":
-      return { ...state, list: upsertConversation(state.list, action.conversation) };
     case "own":
       return withCurrent(state, state.current === null ? null : receiveOwn(state.current, action.entry));
     case "stream.open":
+      if (action.watching && (action.restart === true || action.key !== state.streamKey)) {
+        return { ...state, streaming: true, streamKey: action.key, stream: initialTopicStream };
+      }
       return state.streaming === action.watching ? state : { ...state, streaming: action.watching, stream: state.stream.loading ? { ...state.stream, loading: false } : state.stream };
     case "stream.more":
       return { ...state, stream: { ...state.stream, loading: true } };

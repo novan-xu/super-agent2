@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Navigate = (route: PageRoute, replace?: boolean) => void;
 
 function current(): PageRoute {
-  return pageRoute(window.location.pathname) ?? { view: "home" };
+  return pageRoute(window.location.pathname, window.location.search) ?? { view: "home" };
 }
 
 export function useRoute(): readonly [PageRoute, Navigate] {
@@ -16,7 +16,7 @@ export function useRoute(): readonly [PageRoute, Navigate] {
   }, []);
   const navigate = useCallback<Navigate>((next, replace = false) => {
     const path = pagePath(next);
-    if (path !== window.location.pathname) {
+    if (path !== window.location.pathname + window.location.search) {
       if (replace) {
         window.history.replaceState(null, "", path);
       } else {

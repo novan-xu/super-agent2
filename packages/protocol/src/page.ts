@@ -1,4 +1,5 @@
-import { ConversationId } from "./conversations.js";
+import { ConversationId, type TopicScope } from "./conversations.js";
+import { RepositoryName } from "./repositories.js";
 import { SettingsSection } from "./settings.js";
 
 export const pageViews = ["workbench", "conversations", "history", "memory", "settings"] as const;
@@ -6,7 +7,8 @@ export type PageView = (typeof pageViews)[number];
 
 export type PageRoute =
   | { readonly view: "home" }
-  | { readonly view: "conversations"; readonly conversation: string | null }
+  | { readonly view: "conversations"; readonly conversation: string | null; readonly scope?: TopicScope | undefined }
+  | { readonly view: "transfer" }
   | { readonly view: "ticket"; readonly ticket: number }
   | { readonly view: "settings"; readonly section: SettingsSection }
   | { readonly view: Exclude<PageView, "conversations"> };
@@ -37,10 +39,13 @@ function isView(value: string): value is PageView {
   return (pageViews as readonly string[]).includes(value);
 }
 
-export function pageRoute(path: string): PageRoute | undefined {
+export function pageRoute(path: string, search = ""): PageRoute | undefined {
   const trimmed = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
   if (trimmed === "/") {
     return { view: "home" };
+  }
+  if (trimmed === "/transfer") {
+    return { view: "transfer" };
   }
   const parts = trimmed.split("/").slice(1);
   const [view, conversation, ...rest] = parts;
@@ -51,10 +56,14 @@ export function pageRoute(path: string): PageRoute | undefined {
     return undefined;
   }
   if (view === "conversations") {
-    if (conversation === undefined) {
-      return { view, conversation: null };
+    if (conversation !== undefined && !ConversationId.safeParse(conversation).success) {
+      return undefined;
     }
-    return ConversationId.safeParse(conversation).success ? { view, conversation } : undefined;
+    const params = new URLSearchParams(search);
+    const repository = RepositoryName.safeParse(params.get("repository"));
+    const scope: TopicScope | undefined = repository.success ? { kind: "repository", repository: repository.data }
+      : params.get("scope") === "code" ? { kind: "code" } : undefined;
+    return { view, conversation: conversation ?? null, ...(scope === undefined ? {} : { scope }) };
   }
   if (view === "settings" && conversation !== undefined) {
     const section = SettingsSection.safeParse(conversation);
@@ -67,8 +76,14 @@ export function pagePath(route: PageRoute): string {
   switch (route.view) {
     case "home":
       return "/";
-    case "conversations":
-      return route.conversation === null ? "/conversations" : `/conversations/${route.conversation}`;
+    case "conversations": {
+      const path = route.conversation === null ? "/conversations" : `/conversations/${route.conversation}`;
+      const scope = route.scope;
+      if (scope?.kind === "repository") {
+        return `${path}?${new URLSearchParams({ repository: scope.repository })}`;
+      }
+      return scope?.kind === "code" ? `${path}?scope=code` : path;
+    }
     case "ticket":
       return ticketAddress(route.ticket);
     case "settings":

@@ -26,7 +26,9 @@ export function dayLabel(day: Day, thisYear: number): string {
   return day.year === thisYear ? text("day.date", { month: day.month, day: day.day }) : text("day.dateWithYear", day);
 }
 
-const OwnerMessage = memo(function OwnerMessage({ entry, topic, action }: { readonly entry: OwnerEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
+const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, quoted }: {
+  readonly entry: OwnerEntry; readonly topic?: ReactNode; readonly action?: ReactNode; readonly match?: ReactNode; readonly quoted?: ReactNode;
+}) {
   return (
     <div className="msg msg--me">
       <div className="msg-who">
@@ -37,8 +39,10 @@ const OwnerMessage = memo(function OwnerMessage({ entry, topic, action }: { read
         <span className="num">{clockOf(entry.at)}</span>
         {action}
       </div>
+      {quoted}
       {entry.text === "" ? null : <div className="msg-text msg-plain">{entry.text}</div>}
       <SentAttachments attachments={entry.attachments} />
+      {match}
     </div>
   );
 });
@@ -78,14 +82,14 @@ const BrainText = memo(function BrainText({
   );
 });
 
-export function LiveStatus({ tool, idle }: { readonly tool: { readonly name: string; readonly input: string } | null; readonly idle: string }) {
+export function LiveStatus({ tool, idle, topic }: { readonly tool: { readonly name: string; readonly input: string } | null; readonly idle: string; readonly topic?: ReactNode }) {
   const summary = tool === null ? "" : toolSummary(tool.input);
   const status = tool === null
     ? idle
     : summary === ""
       ? text("brain.calling", { tool: toolName(tool.name) })
       : text("brain.callingWithSummary", { tool: toolName(tool.name), summary });
-  return <div className="brain-status" aria-live="polite">{status}</div>;
+  return <div className="brain-status" aria-live="polite">{topic}<span className="od-truncate">{status}</span></div>;
 }
 
 export interface DeliveryBodyProps {
@@ -152,17 +156,19 @@ function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNod
   );
 }
 
-export function StreamEntry({ item, thisYear, topic, quote }: {
+export function StreamEntry({ item, thisYear, topic, quote, match, quoted }: {
   readonly item: StreamItem;
   readonly thisYear: number;
   readonly topic?: ReactNode;
   readonly quote?: (() => void) | undefined;
+  readonly match?: ReactNode;
+  readonly quoted?: ReactNode;
 }) {
   switch (item.kind) {
     case "day":
       return <div className="day">{dayLabel(item.day, thisYear)}</div>;
     case "status":
-      return <LiveStatus tool={item.tool} idle={text("brain.thinking")} />;
+      return <LiveStatus tool={item.tool} idle={text("brain.thinking")} topic={topic} />;
     case "ended":
       return <Ended turn={item.turn} topic={topic} />;
     case "entry": {
@@ -174,7 +180,7 @@ export function StreamEntry({ item, thisYear, topic, quote }: {
       );
       switch (entry.kind) {
         case "owner":
-          return <OwnerMessage entry={entry} topic={topic} action={action} />;
+          return <OwnerMessage entry={entry} topic={topic} action={action} match={match} quoted={quoted} />;
         case "text":
           return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} action={action} />;
         case "notice":

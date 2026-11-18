@@ -25,8 +25,8 @@ export function receiveStream(state: TopicStreamState, message: ServerMessage): 
       }
       return {
         entries: [...entries.values()].sort((a, b) => a.position - b.position),
-        turns: message.turns.reduce(mergeTurn, state.turns),
-        before: message.before,
+        turns: message.turns.reduce(mergeTurn, message.resumed === true ? state.turns.filter((turn) => turn.state !== "running") : state.turns),
+        before: message.resumed === true ? state.before : message.before,
         loading: false,
       };
     }

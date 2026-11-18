@@ -560,6 +560,8 @@ Changed by this design:
   repository. 日常 shows daily topics, including System. 传输 is a separate device-to-device store. Each brain
   answer and each owner message has a small topic label that opens the topic view. The label also shows the
   repository when reading all of 代码.
+- 对话 opens in 日常 at the root and at the unqualified conversation list. Repository selections and all of 代码
+  have shareable addresses. The repository chooser uses repositories the hub knows from tickets and topics.
 - The topic list shows automatically recognised topics. Selecting a topic filters the view and sends input directly
   there. Topics can be renamed, merged or archived from the list or the topic view.
 - 工作台 shows repositories on the left, the selected repository's chains in the centre and its conversation on

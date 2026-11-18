@@ -32,6 +32,7 @@ import {
   type StreamPage,
   streamPageSize,
   TopicScope,
+  topicInScope,
   Turn,
   type TurnOutcome,
   type TurnUpdate,
@@ -42,7 +43,7 @@ import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { commandReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
-import { topicInScope, topicRouter } from "./topic-routing.js";
+import { topicRouter } from "./topic-routing.js";
 import { createTopicContext, type TopicContext } from "./topic-context.js";
 
 export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate;
@@ -66,8 +67,8 @@ export interface ConversationService {
   announce(id: string): void;
   detail(id: string): ConversationDetail | undefined;
   entries(id: string, after?: number): ConversationEntry[];
-  stream(before?: number, limit?: number, repository?: string | null): StreamPage;
-  streamAfter(after: number): StreamPage;
+  stream(before?: number, limit?: number, repository?: string | null | TopicScope): StreamPage;
+  streamAfter(after: number, scope?: TopicScope): StreamPage;
   send(id: string, message: string, attachments?: readonly Attachment[], quotedMessage?: string): OwnerEntry | undefined;
   readonly topics: TopicContext;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
@@ -371,8 +372,13 @@ export function createConversationService(options: ConversationServiceOptions): 
   const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository, c.needs_repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
   const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
   const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
-  const selectStreamProject = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? AND c.repository IS ? COLLATE NOCASE AND c.needs_repository = 0 ORDER BY e.stream_seq DESC LIMIT ?`);
+  const scopeFilter = `AND CASE ?
+    WHEN 'code' THEN c.repository IS NOT NULL OR c.needs_repository = 1
+    WHEN 'daily' THEN c.repository IS NULL AND c.needs_repository = 0
+    ELSE c.repository = ? COLLATE NOCASE END`;
+  const selectStreamScoped = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ${scopeFilter} ORDER BY e.stream_seq DESC LIMIT ?`);
   const selectStreamAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ORDER BY e.stream_seq`);
+  const selectScopedAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ${scopeFilter} ORDER BY e.stream_seq`);
   const updateBody = connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?");
   const markTaken = connection.prepare(
     "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE id = ? AND conversation_id = ? AND taken = 0",
@@ -419,12 +425,20 @@ export function createConversationService(options: ConversationServiceOptions): 
     return row === undefined ? undefined : toTurn(row);
   };
 
-  const streamTurns = (entries: readonly StreamEntry[]): Turn[] => {
+  const streamTurns = (entries: readonly StreamEntry[], scope?: TopicScope): Turn[] => {
     const turns = new Map<string, Turn>();
     for (const { entry } of entries) {
       if (entry.kind !== "owner" && entry.turn !== null && !turns.has(entry.turn)) {
         const turn = getTurn(entry.turn);
         if (turn !== undefined) {
+          turns.set(turn.id, turn);
+        }
+      }
+    }
+    if (scope !== undefined) {
+      for (const turn of selectRunningTurns.all().map(toTurn)) {
+        const topic = get(turn.conversation);
+        if (topic !== undefined && topicInScope(topic, scope)) {
           turns.set(turn.id, turn);
         }
       }
@@ -974,14 +988,19 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     entries: (id, after = 0) => selectEntries.all(id, after, id).map((row) => toEntry(EntryRow.parse(row))),
     stream: (before = Number.MAX_SAFE_INTEGER, limit = streamPageSize, repository) => {
-      const rows = repository === undefined ? selectStreamPage.all(before, limit + 1) : selectStreamProject.all(before, repository, limit + 1);
+      const scope: TopicScope | undefined = repository === null ? { kind: "daily" }
+        : typeof repository === "string" ? { kind: "repository", repository } : repository;
+      const rows = scope === undefined ? selectStreamPage.all(before, limit + 1)
+        : selectStreamScoped.all(before, scope.kind, scope.kind === "repository" ? scope.repository : null, limit + 1);
       const entries = rows.slice(0, limit).reverse().map(toStreamEntry);
       const next = rows.length > limit ? (entries[0]?.position ?? null) : null;
-      return { entries, turns: streamTurns(entries), before: next };
+      return { entries, turns: streamTurns(entries, scope), before: next };
     },
-    streamAfter: (after) => {
-      const entries = selectStreamAfter.all(after).map(toStreamEntry);
-      return { entries, turns: streamTurns(entries), before: null };
+    streamAfter: (after, scope) => {
+      const rows = scope === undefined ? selectStreamAfter.all(after)
+        : selectScopedAfter.all(after, scope.kind, scope.kind === "repository" ? scope.repository : null);
+      const entries = rows.map(toStreamEntry);
+      return { entries, turns: streamTurns(entries, scope), before: null };
     },
     send: (topic, message, attachments = [], quotedMessage) => {
       const item = sendDirect(topic, message, attachments, quotedMessage);

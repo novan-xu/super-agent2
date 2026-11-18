@@ -1,5 +1,6 @@
 import {
   type ChoiceChange,
+  type Conversation,
   type DecisionReview,
   type EngineTable,
   type GitHubAccount,
@@ -12,12 +13,15 @@ import {
   type Provider,
   type StoredWorkEvent,
   type StuckAnswer,
+  type TopicScope,
+  topicInScope,
 } from "@super-agent2/protocol";
 import { startedWith } from "../live/chains.js";
 import { resumeAfter } from "../live/conversation.js";
 import { needsMoves } from "../live/detail.js";
 import { canLoadMore, needsCatchUp } from "../live/history.js";
 import { createPageStore, type PageStore } from "../live/page.js";
+import { topicScopeKey } from "../live/topic-scope.js";
 import { resumeStream } from "../live/topic-stream.js";
 import { lastEventId } from "../live/work.js";
 import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
@@ -35,6 +39,7 @@ export class PageController {
   readonly store: PageStore = createPageStore();
   private readonly socket: HubSocket;
   private opened: string | null = null;
+  private scope: TopicScope | undefined;
   private openedTicket: number | null = null;
   private pendingWork: StoredWorkEvent[] = [];
   private flushing = false;
@@ -56,8 +61,12 @@ export class PageController {
           this.queueWork(message.event);
           return;
         }
-        const before = this.store.getState().detail;
+        const previous = this.store.getState();
+        const before = previous.detail;
         this.store.dispatch({ type: "server", message });
+        if (message.type === "conversation") {
+          this.recheckStream(previous.list, [message.conversation]);
+        }
         if (message.type === "ticket" && before !== null && message.ticket.id === before.id && needsMoves(before, message.ticket)) {
           void this.readTicket(before.id);
         }
@@ -84,9 +93,10 @@ export class PageController {
     this.socket.reconnect(force);
   }
 
-  open(conversation: string | null, stream = false): void {
-    this.store.dispatch({ type: "stream.open", watching: stream });
-    this.socket.watchStream(stream);
+  open(conversation: string | null, stream = false, scope?: TopicScope): void {
+    this.scope = scope;
+    this.store.dispatch({ type: "stream.open", watching: stream, key: topicScopeKey(scope) });
+    this.socket.watchStream(stream, scope);
     if (conversation === this.opened) {
       return;
     }
@@ -95,6 +105,19 @@ export class PageController {
     this.socket.watch(conversation);
     if (conversation !== null) {
       void this.readDetail(conversation);
+    }
+  }
+
+  private recheckStream(previous: readonly Conversation[], topics: readonly Conversation[]): void {
+    const scope = this.scope;
+    if (scope === undefined || !this.store.getState().streaming) {
+      return;
+    }
+    const old = new Set(previous.filter((topic) => topicInScope(topic, scope)).map((topic) => topic.id));
+    const seen = new Set(previous.map((topic) => topic.id));
+    if (topics.some((topic) => seen.has(topic.id) && old.has(topic.id) !== topicInScope(topic, scope))) {
+      this.store.dispatch({ type: "stream.open", watching: true, key: topicScopeKey(scope), restart: true });
+      this.socket.watchStream(true, scope, true);
     }
   }
 
@@ -120,7 +143,9 @@ export class PageController {
   async refresh(): Promise<void> {
     const list = await this.options.api.conversations();
     if (list.ok) {
+      const previous = this.store.getState().list;
       this.store.dispatch({ type: "list", list: list.value });
+      this.recheckStream(previous, this.store.getState().list);
     }
     if (this.opened !== null) {
       await this.readDetail(this.opened);
@@ -377,19 +402,9 @@ export class PageController {
     }
   }
 
-  async createTopic(): Promise<string | undefined> {
-    const created = await this.options.api.create();
-    if (!created.ok) {
-      this.options.onFailure(created.error);
-      return undefined;
-    }
-    this.store.dispatch({ type: "created", conversation: created.value.conversation });
-    return created.value.conversation.id;
-  }
-
-  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened): Promise<boolean> {
+  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened, scope = this.scope): Promise<boolean> {
     if (conversation === null) {
-      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage);
+      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage, scope);
       if (!sent.ok) {
         this.options.onFailure(sent.error);
       }

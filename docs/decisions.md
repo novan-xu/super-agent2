@@ -4011,6 +4011,16 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   forcing it into a provider prompt.
 - **Other options:** Clip long quotes, or calculate a separate available token budget for each provider.
 
+## 2026-11-18 — Conversation destinations and the repository chooser (#100)
+
+- **Chosen:** Open the root and the unqualified conversation list in Daily. Keep Code and the selected repository
+  in the address, preserve a topic's address, and show the repository's stream when returning from a direct topic link.
+  Offer repositories known through tickets, repository settings or topics, and keep a selected repository from a shared link.
+- **Why:** The address and the composer use the same scope when opened directly or restored with browser history.
+  Known repositories are available even before their first conversation.
+- **Other options:** Open in all of Code, remember a browser-local tab and repository, or fetch a repository inventory
+  from GitHub when opening the conversation.
+
 ## 2026-11-18 — Quotes and routing corrections (#84)
 
 - **Chosen** Offer quotes from the current topic in a topic view and quotes from any topic in the main stream.

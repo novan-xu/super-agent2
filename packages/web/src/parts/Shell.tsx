@@ -21,7 +21,7 @@ const main: readonly Destination[] = [
 const foot: readonly Destination[] = [{ view: "settings", icon: "gear", label: text("navigation.settings") }];
 
 export function viewOf(route: PageRoute, ticketFrom: PageView = "workbench"): PageView {
-  if (route.view === "home") {
+  if (route.view === "home" || route.view === "transfer") {
     return "conversations";
   }
   return route.view === "ticket" ? ticketFrom : route.view;

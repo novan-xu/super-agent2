@@ -1,4 +1,4 @@
-import { type HubToBrain, openTicketStates, type RouteChoice, type RouteRequest, routeFits, type TopicScope } from "@super-agent2/protocol";
+import { type HubToBrain, openTicketStates, type RouteChoice, type RouteRequest, routeFits, topicInScope, type TopicScope } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 
@@ -7,17 +7,6 @@ const Recent = z.object({ kind: z.enum(["owner", "text"]), text: z.string() });
 const Ticket = z.object({ id: z.number().int().positive(), repository: z.string(), title: z.string() });
 const Issue = z.object({ number: z.number().int().positive() });
 const routingWait = 5_000;
-
-export function topicInScope(topic: { repository: string | null; needsRepository?: true | undefined }, scope: TopicScope): boolean {
-  switch (scope.kind) {
-    case "daily":
-      return topic.repository === null && topic.needsRepository !== true;
-    case "code":
-      return topic.repository !== null || topic.needsRepository === true;
-    case "repository":
-      return topic.repository?.toLowerCase() === scope.repository.toLowerCase();
-  }
-}
 
 export function topicRouter({ connection }: HubDatabase, send: (message: HubToBrain) => boolean) {
   const listTopics = connection.prepare(`

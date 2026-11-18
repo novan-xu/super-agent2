@@ -9,6 +9,7 @@ import { browserSocket } from "./hub/socket.js";
 import { destinationOfMessage } from "./live/address.js";
 import { initialPage } from "./live/page.js";
 import { reviewCount } from "./live/tickets.js";
+import { conversationRepositories, scopeOfTopic, topicScopeKey } from "./live/topic-scope.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
@@ -17,6 +18,7 @@ import { useRoute } from "./parts/route.js";
 import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
+import { ConversationTabs } from "./views/ConversationTabs.js";
 import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
@@ -55,7 +57,6 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const now = useNow();
   const toastTimer = useRef<number | undefined>(undefined);
-  const [creatingTopic, setCreatingTopic] = useState(false);
   const historyScroll = useRef(0);
   const [origin, setOrigin] = useState<TicketOrigin>("workbench");
   const [appearance, setAppearance] = useState<Appearance>(() => readAppearance(storageOf()));
@@ -133,7 +134,17 @@ export function App() {
 
   const conversationId = route.view === "conversations" ? route.conversation : null;
   const inConversation = route.view === "conversations" || route.view === "home";
+  const inTransfer = route.view === "transfer";
   const inStream = inConversation && conversationId === null;
+  const currentTopic = page.current?.id === conversationId ? page.current : null;
+  const selectedTopic = currentTopic?.conversation ?? page.list.find((topic) => topic.id === conversationId);
+  const preferredScope = route.view === "conversations" ? route.scope : undefined;
+  const scope = useMemo(() => scopeOfTopic(selectedTopic, preferredScope), [selectedTopic, preferredScope]);
+  const streamRoute = useMemo<PageRoute>(() => ({ view: "conversations", conversation: null, scope }), [scope]);
+  const repositories = useMemo(
+    () => conversationRepositories(page.repositories, [...page.tickets.open, ...page.list], scope),
+    [page.repositories, page.tickets.open, page.list, scope],
+  );
   const ticketId = route.view === "ticket" ? route.ticket : null;
 
   useEffect(() => {
@@ -163,30 +174,23 @@ export function App() {
   }, [controller, route.view]);
 
   useEffect(() => {
-    controller.open(conversationId, inStream);
-  }, [controller, conversationId, inStream]);
+    controller.open(conversationId, inStream, scope);
+  }, [controller, conversationId, inStream, scope]);
 
   const destinationOf = useCallback(
     (view: PageView): PageRoute => (view === "conversations" ? { view, conversation: null } : { view }),
     [],
   );
   const hrefOf = useCallback((view: PageView) => pagePath(destinationOf(view)), [destinationOf]);
-  const conversationHref = useCallback((conversation: string) => pagePath({ view: "conversations", conversation }), []);
-  const openConversation = useCallback((conversation: string) => navigate({ view: "conversations", conversation }), [navigate]);
-  const newTopic = async () => {
-    setCreatingTopic(true);
-    try {
-      const id = await controller.createTopic();
-      if (id !== undefined) {
-        openConversation(id);
-      }
-    } finally {
-      setCreatingTopic(false);
-    }
-  };
+  const topicRoute = useCallback((conversation: string): PageRoute => ({
+    view: "conversations", conversation, scope: scopeOfTopic(page.list.find((topic) => topic.id === conversation), scope),
+  }), [page.list, scope]);
+  const conversationHref = useCallback((conversation: string) => pagePath(topicRoute(conversation)), [topicRoute]);
+  const openConversation = useCallback((conversation: string) => navigate(topicRoute(conversation)), [navigate, topicRoute]);
+  const openStream = useCallback(() => navigate(streamRoute), [navigate, streamRoute]);
   const send = useCallback(
-    (message: string, attachments: readonly string[] = [], quotedMessage?: string) => controller.send(message, attachments, quotedMessage, conversationId),
-    [controller, conversationId],
+    (message: string, attachments: readonly string[] = [], quotedMessage?: string) => controller.send(message, attachments, quotedMessage, conversationId, scope),
+    [controller, conversationId, scope],
   );
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(
@@ -262,6 +266,7 @@ export function App() {
   const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
   const model = page.current?.turns.at(-1)?.model ?? null;
+  const conversationTabs = <ConversationTabs scope={scope} transfer={inTransfer} repositories={repositories} navigate={navigate} />;
 
   return (
     <Shell
@@ -273,7 +278,7 @@ export function App() {
       status={page.status}
       linked={page.linked}
       model={model}
-      fill={inConversation}
+      fill={inConversation || inTransfer}
       subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
       toast={toast}
       waiting={page.waiting.cards.length}
@@ -281,12 +286,7 @@ export function App() {
       reviews={reviewCount(page.tickets)}
       allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
       actions={
-        inConversation ? (
-          <button className="btn btn-sm" type="button" disabled={creatingTopic} onClick={() => void newTopic()}>
-            <Icon name="plus" />
-            {text("conversation.new")}
-          </button>
-        ) : route.view === "memory" ? (
+        route.view === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>
             <Icon name="plus" />
             {text("memory.new")}
@@ -296,19 +296,31 @@ export function App() {
     >
       {inConversation ? (
         <ConversationView
-          state={page.current?.id === conversationId ? page.current : null}
-          stream={inStream ? page.stream : null}
+          conversation={conversationId}
+          scope={scope}
+          state={currentTopic}
+          stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
           list={page.list}
           status={page.status}
           linked={page.linked}
           model={model}
           hrefOf={conversationHref}
           open={openConversation}
+          streamHref={pagePath(streamRoute)}
+          openStream={openStream}
+          navigation={conversationTabs}
           send={send}
           stop={stop}
           loadOlder={() => controller.loadOlderStream()}
           now={now}
         />
+      ) : inTransfer ? (
+        <div className="conv conv--solo">
+          <div className="conv-main">
+            <div className="conv-bar">{conversationTabs}</div>
+            <p className="transfer-placeholder">{text("conversation.transferPending")}</p>
+          </div>
+        </div>
       ) : route.view === "workbench" ? (
         <WorkbenchView
           waiting={page.waiting}

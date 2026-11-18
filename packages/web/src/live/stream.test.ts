@@ -1,7 +1,7 @@
 import type { ConversationEntry, StreamEntry, TextEntry, Turn } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationState } from "./conversation.js";
-import { streamItems } from "./stream.js";
+import { combinedStreamItems, streamItems } from "./stream.js";
 import { initialTopicStream, receiveStream, resumeStream } from "./topic-stream.js";
 
 const id = "c1";
@@ -84,6 +84,28 @@ describe("streamItems", () => {
   });
 });
 
+it("groups adjacent reply text and shows a live status for each answering topic", () => {
+  const time = at(17, 9);
+  const other = "c2";
+  const call = tool(7, time, "running");
+  const notices = [
+    owner(1, time), text(2, time), text(3, time),
+    { ...owner(4, time), conversation: other }, { ...text(5, time, "t2"), conversation: other },
+    text(6, time), call,
+  ];
+  const turns = [
+    turn({ state: "running", endedAt: null }), turn({ id: "t2", conversation: other, state: "running", endedAt: null }),
+  ];
+  const items = combinedStreamItems(notices, turns, now);
+  expect(items.flatMap((item) => item.kind === "entry" ? [[item.key, item.topic, item.lead]] : [])).toEqual([
+    ["o1", id, false], ["x2", id, true], ["x3", undefined, false], ["o4", other, false], ["x5", other, true], ["x6", id, true],
+  ]);
+  expect(items.filter((item) => item.kind === "status")).toEqual([
+    { kind: "status", key: "status-c1", topic: id, tool: call },
+    { kind: "status", key: "status-c2", topic: other, tool: null },
+  ]);
+});
+
 it("replays unfinished text across topics without changing position or duplicating deltas", () => {
   const time = at(17, 9);
   const item = (position: number, entry: ConversationEntry): StreamEntry => ({
@@ -103,4 +125,16 @@ it("replays unfinished text across topics without changing position or duplicati
   expect(older.entries.map(({ position }) => position)).toEqual([4, 5, 6]);
   expect(older.entries[1]?.entry).toMatchObject({ text: "ab" });
   expect(resumeStream(older)).toBe(6);
+});
+
+it("keeps the history cursor when resuming and removes live statuses for turns that ended offline", () => {
+  const time = at(17, 9);
+  const running = turn({ id: "stale", state: "running", endedAt: null });
+  const page = receiveStream(initialTopicStream, {
+    type: "stream.page", entries: [{ position: 20, entry: owner(1, time), topic: { id, title: "First", repository: null } }],
+    turns: [running], before: 20,
+  });
+  const resumed = receiveStream(page, { type: "stream.page", entries: [], turns: [], before: null, resumed: true });
+  expect(resumed).toMatchObject({ before: 20, turns: [] });
+  expect(resumed.entries).toEqual(page.entries);
 });

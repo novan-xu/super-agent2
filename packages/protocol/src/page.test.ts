@@ -12,6 +12,12 @@ describe("pageRoute", () => {
     expect(pageRoute("/settings/connections/")).toEqual({ view: "settings", section: "connections" });
     expect(pageRoute("/conversations")).toEqual({ view: "conversations", conversation: null });
     expect(pageRoute("/conversations/abc-123")).toEqual({ view: "conversations", conversation: "abc-123" });
+    expect(pageRoute("/conversations", "?scope=code")).toEqual({ view: "conversations", conversation: null, scope: { kind: "code" } });
+    const scoped = pageRoute("/conversations/abc-123", "?repository=owner%2Fproject");
+    expect(scoped).toEqual({ view: "conversations", conversation: "abc-123", scope: { kind: "repository", repository: "owner/project" } });
+    expect(pagePath(scoped!)).toBe("/conversations/abc-123?repository=owner%2Fproject");
+    expect(pageRoute("/transfer")).toEqual({ view: "transfer" });
+    expect(pagePath({ view: "transfer" })).toBe("/transfer");
     expect(pageRoute("/tickets/12")).toEqual({ view: "ticket", ticket: 12 });
   });
 
