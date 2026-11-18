@@ -2753,6 +2753,158 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why:** The prototype's look, with the owner's wish for the pending flow and for writing a memory by hand.
 - **Other options:** A link from each suggestion to the conversation it came from; a modal editor for 新记忆.
 
+## 2026-11-17 — A chain is handed in as several pull requests
+
+- **Chosen:** The worker owns the chain and decides how many pull requests to open. Whenever a piece is ready it opens a
+  pull request and hands it in with the same file as before, `{"pullRequest", "summary"}`; its turn ends there and it
+  waits, as the owner chose. The runner accepts a hand-in when GitHub says the pull request is open (or merged), comes
+  from the ticket's current branch, and closes at least one issue of the chain that no merged pull request of the
+  ticket has closed; otherwise it tells the worker what is wrong, as a wrong hand-back is corrected today. A turn that
+  ends with no hand-in while issues are open is told which are open. The runner's `finished` event now carries the
+  issues the pull request means to close, as GitHub listed them at the hand-in, which the page shows for an open pull
+  request; the hub never relies on it (see the next entries). This overturns "How a worker hands back its result"
+  (a pull request had to close every issue) and "What a worker is told" (one pull request for the chain).
+- **Why:** The owner's model: an issue is the unit, a chain is a list handed to one worker at once, and the worker
+  decides how to cut it. Requiring each hand-in to close an open issue catches a missing `Closes #n` before the merge,
+  when it can still be fixed by editing the body; after the merge it would need an extra pull request.
+- **Other options:** A `finished` flag in the hand-back file; accepting a pull request that closes nothing (a
+  preparatory refactor), which is allowed only by folding it into the issue it serves.
+
+## 2026-11-17 — Branches for the pieces of a chain, and which pull request is the ticket's
+
+- **Chosen:** Each piece has its own branch, named by the hub as before (`sa2/ticket-<n>-<four hex digits>`, a new
+  random part each time) and stored as the ticket's current branch when the piece starts. The merged branch is deleted
+  on GitHub as before. The runner moves the ticket's one worktree to the new branch in place, `git switch
+  --discard-changes --no-track -C <new> origin/<default>` after `git fetch --prune`, so the folder, its ignored files
+  (installed dependencies, build output) and the program's session stay; it deletes the previous local branch when it
+  is a hub branch that no longer exists on GitHub. When switching fails the worktree is made again from scratch, as
+  before. A pull request is the ticket's when its worker hands it in from the ticket's current branch; a different
+  pull request handed in from the same branch marks the earlier open one `closed` in the record. This overturns, in
+  "Where a worker works on a runner", that one branch serves every attempt of a ticket.
+- **Why:** A fresh branch from the updated default branch is what the next piece needs, and a new name keeps each
+  merged pull request's branch distinct in GitHub's history. Recognising the pull request by the hand-in and the
+  current branch needs no labels or naming rule the worker could get wrong.
+- **Other options:** Reusing the same branch name after it was deleted; letting the worker name its branches under a
+  ticket prefix; recreating the worktree for every piece.
+
+## 2026-11-17 — Continuing after a merge is done by the hub, in the same session
+
+- **Chosen:** When a handed-in pull request merges and issues of the chain are still open, the verification service
+  records the pull request as merged with the issues it closed and calls `WorkService.onward`. In one transaction it
+  moves the ticket from verifying to working ("PR #n 已合并，接着做 #a、#b"), deletes the verification record, sets the
+  new branch, sets the guided-round count to zero and inserts the next attempt, which resumes the program's session on
+  the same machine and engine in the same folder. Its note says which pull request merged and as which commit, which
+  issues it closed, which are closed so far, which remain with their titles and links, and the new branch made from the
+  updated default branch. No message goes to the brain. If it cannot continue (no machine chosen, say), the ticket
+  stays verifying with the reason, the brain is told once, and every check tries again. While the worker waits for a
+  merge it holds no slot on its machine; the next piece queues like any start when the machine is full.
+- **Why:** The owner wants no blocking point and one press of 开始 per chain. Each step is recorded and repeatable, so a
+  restart between the merge and the continuation finishes it at the next check, as a merge already is.
+- **Other options:** Keeping the attempt open across the wait (an attempt state that holds a slot and has to survive
+  restarts); telling the brain and letting it continue the worker.
+
+## 2026-11-17 — Which issues a pull request closed, and when a chain is done
+
+- **Chosen:** The hub reads the pull request's closing references from GitHub's GraphQL API (`closingIssuesReferences`,
+  paged, the same repository only) immediately before each merge, and again after a merge it did not make when none
+  was read for that head. It closes only those issues of the chain that are still open, not every issue of the chain.
+  The chain is done, and the ticket moves to merged, when every issue of the chain is closed by a merged pull request of
+  the ticket; an issue closed by hand does not count. A merged pull request that closed none of the open issues (its
+  body was edited after the hand-in, or the owner merged it on GitHub) is recorded with no issues, and the worker
+  continues with all that remain. This overturns, in "How the merge is done, exactly once", closing every issue of the
+  chain at the merge.
+- **Why:** The issue asks that the closed issues come from GitHub, not from the worker's file. Reading at the merge
+  rather than at the hand-in follows a body edited during a failure round.
+- **Other options:** Parsing `Closes #n` out of the pull request body; trusting the list the runner read at the hand-in.
+
+## 2026-11-17 — The record of a chain's pull requests
+
+- **Chosen:** Migration 21 adds `ticket_pull_requests`: per ticket, in the order handed in, the number, link, branch,
+  state (`open`, `merged`, `closed`), the issues it closes (for a merged one, as read at the merge), merge commit,
+  whether the repository had a deployment at that commit, and when it was handed in and merged; and
+  `ticket_verifications.closes`. `Ticket.pullRequests` carries the records, `Ticket.pullRequest` stays the latest, and
+  `mergedIssueNumbers`, `openIssueNumbers` and `openPullRequest` in the protocol derive the rest. The last pull
+  request's verification record stays with the merged ticket, so its merge commit is the ticket's for deployments.
+  For the live database, the migration gives every ticket with a pull request one record: merged, closing every issue
+  of its chain, with the merge commit and deployment flag of its verification, when the ticket is merged; open, closing
+  nothing yet, otherwise. A ticket working or verifying when the hub is updated continues under the new rules; its pull
+  request was made to close every issue, so it ends merged as it would have.
+- **Why:** The owner and the brain need to see which issues are merged and which pull requests exist; a later repair
+  ticket takes over exactly the open pull request and the open issues of a stopped chain.
+- **Other options:** JSON on the ticket row; deriving merged issues from GitHub on every read.
+
+## 2026-11-17 — The guided-round count across a chain's pull requests
+
+- **Chosen:** A merged pull request resets the count and the free retry to zero, in the transaction that starts the next
+  piece. Rounds stay recorded in `ticket_rounds`. This overturns, in "Where the count lives, and why nothing the brain
+  calls can start a fourth round", that the owner's answer is the only writer that lowers the count; the merge is the
+  second, and nothing the brain calls reaches it (`merge_ticket` merges only what the rules would, with a skip recorded).
+- **Why:** The recommended option: a merge is progress, and the cap is for work that keeps failing, not for a long chain.
+- **Other options:** One count for the whole chain; a count per issue.
+
+## 2026-11-17 — What the brain is told about a chain of several pull requests
+
+- **Chosen:** Nothing between pieces. When the chain is merged, one `[hub]` message lists the pull requests merged in
+  order with the issues each closed and its commit, the rule of the last, the final merge commit (which contains every
+  earlier one), and whether the repository has a deployment, so the brain deploys once. When the chain stops at the
+  cap, the existing message adds the same progress and what remains (open issues, open pull request). When the owner
+  gives it up, the existing message adds it too. When the owner stops a ticket with 停止 and something of it is merged,
+  the brain is told once (你停止了工单 n，已合并的部分保留) with the progress and whether the merged part needs deploying;
+  `stop_ticket`'s answer carries the same lines. `read_ticket` lists each issue as merged or not and every pull request
+  with its state; `list_tickets` marks merged issues and the pull requests on each line. `after` and `after_deployment`
+  keep their meaning, with "merged" meaning every issue closed.
+- **Why:** The owner wants the brain out of the hand-over, and a deployment once per chain. A stopped chain can leave
+  merged work on the default branch that needs deploying, which the brain would not otherwise learn of.
+- **Other options:** Telling the brain at every merge; telling it of every stop, including those with nothing merged.
+
+## 2026-11-17 — What the page shows of a chain's pull requests
+
+- **Chosen:** The ticket's panel lists the issues in order with a check on those closed by a merged pull request, and
+  under PR every pull request in the order handed in, with its state (已合并, 未合并, 已关闭) as a dot of a fixed hue, its
+  number linked to GitHub, and the issues it closes. The 代码 section no longer repeats the pull request; the summary
+  still shows the latest. Rows in 工作台 and 历史 show the issue numbers with a check on the merged ones, and the pull
+  request numbers with the PR icon, merged ones in the success colour. The timeline shows the move back to work with its
+  reason (PR #n 已合并，接着做 …) and each piece as the next attempt.
+- **Why:** The owner's rule: the layout explains itself, with no labels added; a check and a state dot say it.
+- **Other options:** A progress count such as 2/3; a separate section per pull request in the timeline.
+
+## 2026-11-17 — A chain in the development harness, and what was verified
+
+- **Chosen:** The scripted worker of `tools/page-dev` hands in, for each piece, a pull request closing the first half
+  (rounded up) of the chain's open issues, numbered `100 + ticket × 10 + piece`; `/__harness/loop?case=chain` starts a
+  chain of three issues whose first pull request is red once. Verified: the hub's tests (`chain-pieces-api.test.ts`)
+  drive a chain of three issues through a red pipeline, a guided round, a merge of the first pull request closing two
+  issues, the continuation in the same session on a new branch with the count at zero and no message to the brain, and
+  the second pull request to merged with one report; a merged pull request closing nothing; and the owner's stop with
+  one pull request merged and one open. The runner's tests switch a real worktree to the next branch from an updated
+  `main`, keeping an ignored file and the session, and correct a hand-in that closes no open issue. In the harness with
+  `--forge fake`, the chain went working, verifying, back to working on red, merged #111 closing two issues, continued
+  as attempt 3 with the reason PR #111 已合并，接着做 #6852, merged #112 and ended merged; the panel, 工作台 (mid-chain)
+  and 历史 showed the checks and the pull requests. Not verified: a real worker cutting a chain into pull requests, and
+  the GraphQL closing references against the real GitHub; the runner's `gh pr view` read of them was already live.
+- **Why:** The issue asks to see a chain of several issues go through two pull requests on the page.
+- **Other options:** A second scripted behaviour per chain size.
+
+## 2026-11-17 — Uncommitted work when the folder moves to the next piece
+
+- **Chosen:** Before the runner moves the worktree to the next piece's branch, it checks `git status` (untracked files
+  included, ignored ones not). Anything there is committed, without hooks, on a local branch named after the old branch
+  with `-unfinished` at the end; the worktree then switches to the new branch from the updated default branch, and the
+  runner tries to carry that commit over with `git cherry-pick --no-commit`, leaving the changes uncommitted on the new
+  branch. When it applies cleanly the changes are there and a copy stays on the `-unfinished` branch; when it does not,
+  the new branch starts clean and the work stays on that branch. The worker's continuation message says which, with the
+  branch and the commit, and the `prepared` line on the page says it too. If the switch itself fails, the attempt fails
+  (`prepare`) instead of the folder being made again, so nothing is thrown away. A run of the same step after a restart
+  finds the folder on the `-unfinished` branch and carries on from there. The `-unfinished` branch stays local and is
+  not pushed. `WORKER.md` advises committing or dropping everything before handing in. This replaces, in "Branches for
+  the pieces of a chain, and which pull request is the ticket's", switching with `--discard-changes`, which threw such
+  work away.
+- **Why:** A worker may start on the next issue before handing in, and nothing should disappear silently. A named
+  branch survives restarts and is not shared the way the stash list is between every worktree of one clone; carrying
+  the work over when it applies cleanly lets the worker continue as if nothing had happened.
+- **Other options:** A named stash; always carrying over and leaving conflict markers; refusing to switch until the
+  worker cleans up, which would block the chain.
+
 ## 2026-11-17 — Attachments are uploaded in parts the page sends, straight to disk
 
 - **Chosen:** The page creates an attachment with `POST /api/attachments` (name, size, media type) as soon as the owner
@@ -2763,7 +2915,7 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   pressing 发送, sends the rest from where the hub stopped. The message carries only the attachment ids, and the hub
   refuses a message whose attachments are not complete. Uploads need the owner's session and the page's own origin,
   like every other change. There is no cap on count or size; the only physical bound is the 64 MiB request guard,
-  which a part never reaches. An attachment's row (id, name, size, type) is in a new table (migration 21), its bytes
+  which a part never reaches. An attachment's row (id, name, size, type) is in a new table (migration 22), its bytes
   only on disk.
 - **Why:** Cloudflare refuses a request past its own body limit, and a phone on a mobile network drops connections; parts
   the page can resume are the only way a video of a few hundred megabytes arrives. Uploading before 发送 makes sending
@@ -2819,13 +2971,14 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   `<runner home>/work/t<ticket>/attachments/<id>/<stored name>`, beside the ticket's worktree and never inside it,
   resumes from what it already has, and gives the message to the program only when every file is there. The hub
   answers only for a file given to that ticket (by a message or as material) and only to the machine of that attempt.
-  Messages to a worker are now kept by the hub in a new table until the runner's `message` event for them arrives; one
-  sent while the machine is away is accepted and given again at every `hello` while its attempt is the current active
-  one. The runner remembers the ids it has handled (from its event log too), so a message given twice is taken once,
+  Messages to a worker are now kept by the hub in a new table until the runner's `message` event for them arrives. One
+  sent while the machine is away, or while the ticket is between two attempts (verifying a piece of a chain, waiting for
+  a guided round, or with its next attempt queued), is accepted and given to the ticket's current attempt whenever one
+  starts and at every `hello`; a message is refused only when the ticket is neither working nor verifying. The runner remembers the ids it has handled (from its event log too), so a message given twice is taken once,
   and delivers a ticket's messages one at a time in order. If the link drops while a file is on its way, the runner
-  forgets the message and takes it again from where the file stopped when the hub gives it again. The brain's
-  `message_worker` tool takes attachment ids, and says when the machine is away that the message is kept. A message for
-  an attempt that ends before it is delivered is not carried to the next attempt.
+  forgets the message and takes it again from where the file stopped when the hub gives it again. Files already fetched stay in the ticket's folder
+  when it moves to the next branch of a chain. The brain's `message_worker` tool takes attachment ids, and says when the
+  message is kept rather than delivered. A message that is still waiting when the ticket ends is not delivered.
 - **Why:** The worktree is committed by the worker; a file inside it would be committed by accident. Keeping the
   message on the hub is the only way a message to a machine that is asleep or rebooting is not lost, which was the case
   for text messages too (they were refused); with attachments the owner would otherwise have to upload again.

@@ -25,11 +25,21 @@ export type RemoteUrl = (repository: string) => string;
 
 export const gitHubRemote: RemoteUrl = (repository) => `https://github.com/${repository}.git`;
 
+export interface Leftover {
+  readonly branch: string;
+  readonly commit: string;
+  readonly carried: boolean;
+}
+
 export interface Prepared {
   readonly base: string;
   readonly created: boolean;
+  readonly switched: boolean;
   readonly from: string;
+  readonly leftover: Leftover | null;
 }
+
+export const leftoverSuffix = "-unfinished";
 
 const locks = new Locks();
 
@@ -48,6 +58,36 @@ async function currentBranch(git: Git, worktree: string): Promise<string | undef
   return result.code === 0 ? result.stdout.trim() : undefined;
 }
 
+async function setAside(git: Git, worktree: string, current: string): Promise<{ readonly branch: string; readonly commit: string } | null> {
+  if (current.endsWith(leftoverSuffix)) {
+    if ((await git.must(["status", "--porcelain", "--untracked-files=all"], worktree)).trim() !== "") {
+      await git.must(["add", "-A"], worktree);
+      await git.must(["commit", "--no-verify", "-m", "Work left uncommitted in the folder before it moved to the next branch"], worktree);
+    }
+    return { branch: current, commit: (await git.must(["rev-parse", "HEAD"], worktree)).trim() };
+  }
+  if ((await git.must(["status", "--porcelain", "--untracked-files=all"], worktree)).trim() === "") {
+    return null;
+  }
+  const branch = `${current}${leftoverSuffix}`;
+  await git.must(["switch", "-C", branch], worktree);
+  await git.must(["add", "-A"], worktree);
+  await git.must(["commit", "--no-verify", "-m", `Work left uncommitted in the folder when it moved on from ${current}`], worktree);
+  return { branch, commit: (await git.must(["rev-parse", "HEAD"], worktree)).trim() };
+}
+
+async function carryOver(git: Git, worktree: string, commit: string): Promise<boolean> {
+  if ((await git.run(["cherry-pick", "--no-commit", commit], worktree)).code === 0) {
+    await git.run(["cherry-pick", "--quit"], worktree);
+    await git.run(["reset", "-q"], worktree);
+    return true;
+  }
+  await git.run(["cherry-pick", "--quit"], worktree);
+  await git.must(["reset", "-q", "--hard", "HEAD"], worktree);
+  await git.must(["clean", "-fdq"], worktree);
+  return false;
+}
+
 export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: string, branch: string, paths: WorkPaths): Promise<Prepared> {
   return locks.with(paths.clone, async () => {
     if (!existsSync(join(paths.clone, ".git"))) {
@@ -59,8 +99,23 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
     }
     const base = await defaultBranch(git, paths.clone);
     if (existsSync(paths.worktree)) {
-      if ((await currentBranch(git, paths.worktree)) === branch) {
-        return { base, created: false, from: branch };
+      const current = await currentBranch(git, paths.worktree);
+      if (current === branch) {
+        return { base, created: false, switched: false, from: branch, leftover: null };
+      }
+      if (current !== undefined && current !== "HEAD") {
+        const aside = await setAside(git, paths.worktree, current);
+        const from = (await exists(git, `refs/heads/${branch}`, paths.clone)) ? branch : (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) ? `origin/${branch}` : `origin/${base}`;
+        const switching = from === branch ? ["switch", branch] : ["switch", from === `origin/${branch}` ? "--track" : "--no-track", "-C", branch, from];
+        const switched = await git.run(switching, paths.worktree);
+        if (switched.code !== 0) {
+          throw new Error(`git ${switching.join(" ")} failed in ${paths.worktree}${aside === null ? "" : `; the uncommitted work is kept on the local branch ${aside.branch}`}: ${`${switched.stderr}${switched.stdout}`.trim()}`);
+        }
+        const leftover = aside === null ? null : { ...aside, carried: await carryOver(git, paths.worktree, aside.commit) };
+        if (current.startsWith("sa2/ticket-") && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/origin/${current}`, paths.clone))) {
+          await git.run(["branch", "-D", current], paths.clone);
+        }
+        return { base, created: false, switched: true, from, leftover };
       }
       rmSync(paths.worktree, { recursive: true, force: true });
     }
@@ -68,14 +123,14 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
     mkdirSync(dirname(paths.worktree), { recursive: true });
     if (await exists(git, `refs/heads/${branch}`, paths.clone)) {
       await git.must(["worktree", "add", paths.worktree, branch], paths.clone);
-      return { base, created: true, from: branch };
+      return { base, created: true, switched: false, from: branch, leftover: null };
     }
     if (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) {
       await git.must(["worktree", "add", "--track", "-b", branch, paths.worktree, `origin/${branch}`], paths.clone);
-      return { base, created: true, from: `origin/${branch}` };
+      return { base, created: true, switched: false, from: `origin/${branch}`, leftover: null };
     }
     await git.must(["worktree", "add", "--no-track", "-b", branch, paths.worktree, `origin/${base}`], paths.clone);
-    return { base, created: true, from: `origin/${base}` };
+    return { base, created: true, switched: false, from: `origin/${base}`, leftover: null };
   });
 }
 

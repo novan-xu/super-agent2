@@ -6,7 +6,7 @@ import type { HubDatabase } from "./database.js";
 export interface WorkerMessages {
   add(message: MessageWork): void;
   delivered(ticket: number, id: string): void;
-  waiting(ticket: number, attempt: number): MessageWork[];
+  waiting(ticket: number): MessageWork[];
 }
 
 const Row = z.object({
@@ -25,7 +25,7 @@ export function createWorkerMessages(database: HubDatabase, clock: Clock): Worke
   );
   const markDelivered = connection.prepare("UPDATE worker_messages SET delivered_at = ? WHERE ticket_id = ? AND id = ? AND delivered_at IS NULL");
   const selectWaiting = connection.prepare(
-    "SELECT id, ticket_id, attempt, sender, text, attachments FROM worker_messages WHERE ticket_id = ? AND attempt = ? AND delivered_at IS NULL ORDER BY created_at, rowid",
+    "SELECT id, ticket_id, attempt, sender, text, attachments FROM worker_messages WHERE ticket_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid",
   );
   return {
     add: (message) => {
@@ -34,8 +34,8 @@ export function createWorkerMessages(database: HubDatabase, clock: Clock): Worke
     delivered: (ticket, id) => {
       markDelivered.run(clock.now(), ticket, id);
     },
-    waiting: (ticket, attempt) =>
-      selectWaiting.all(ticket, attempt).map((value) => {
+    waiting: (ticket) =>
+      selectWaiting.all(ticket).map((value) => {
         const row = Row.parse(value);
         return {
           type: "work.message",

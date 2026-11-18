@@ -38,6 +38,7 @@ import {
   brief,
   type BriefPlace,
   continueText,
+  leftoverText,
   lostSessionNote,
   messageText,
   resumeText,
@@ -376,11 +377,12 @@ export function createWorks(options: WorksOptions): Works {
       repository: work.record.repository,
       branch: work.record.branch,
       issues: work.record.issues.map((issue) => issue.number),
+      merged: task.merged ?? [],
       environment: environmentOf(task),
       cwd: work.paths.worktree,
       read: readPullRequest,
     });
-    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, report: outcome.report } } : outcome;
+    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, closes: [...outcome.closes], report: outcome.report } } : outcome;
   };
 
   const check = async (work: Work) => {
@@ -523,7 +525,17 @@ export function createWorks(options: WorksOptions): Works {
     emit(work, {
       kind: "phase",
       phase: "prepared",
-      detail: prepared.created ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}` : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
+      detail: prepared.created
+        ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}`
+        : prepared.switched
+          ? `Switched the worktree ${work.paths.worktree} to the new branch ${task.branch} from ${prepared.from}${
+              prepared.leftover === null
+                ? ""
+                : prepared.leftover.carried
+                  ? `, carrying over the uncommitted changes found there (a copy is on ${prepared.leftover.branch})`
+                  : `; the uncommitted changes found there did not apply cleanly and are kept on ${prepared.leftover.branch}`
+            }`
+          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
     });
     const session = task.session ?? work.record.session;
     try {
@@ -534,8 +546,9 @@ export function createWorks(options: WorksOptions): Works {
     }
     const where = place(work);
     const waiting = work.queue.splice(0);
+    const leftover = prepared.leftover === null ? [] : [leftoverText({ ...prepared.leftover, into: task.branch, base: prepared.base })];
     const withWaiting = (prompt: string) => {
-      const next = joined(waiting, prompt);
+      const next = joined(waiting, [prompt, ...leftover].join("\n\n"));
       startTurn(work, next.text, next.images);
     };
     if (session === null) {

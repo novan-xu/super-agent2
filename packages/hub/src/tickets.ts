@@ -25,6 +25,7 @@ import {
   TicketIssue,
   type TicketKind,
   TicketMove,
+  TicketPullRequest,
   TicketRun,
   type TicketState,
   type OwnerChoice,
@@ -120,6 +121,18 @@ export interface RoundToStart {
   readonly attempt: number;
 }
 
+export interface HandedInDetails {
+  readonly url?: string | undefined;
+  readonly closes?: readonly number[] | undefined;
+}
+
+export interface MergedPullRequest {
+  readonly number: number;
+  readonly closes: readonly number[];
+  readonly mergeCommit: string | null;
+  readonly deployment: boolean | null;
+}
+
 export interface TicketWrites {
   get(id: number): Ticket | undefined;
   open(request: TicketToOpen): number;
@@ -138,7 +151,9 @@ export interface TicketWrites {
   choose(id: number, chosen: ChosenRun): void;
   ran(id: number, run: TicketRun): void;
   setBranch(id: number, branch: string): void;
-  setPullRequest(id: number, pullRequest: number, report: GeneratedText): void;
+  setPullRequest(id: number, pullRequest: number, report: GeneratedText, details?: HandedInDetails): void;
+  pullRequestMerged(id: number, merged: MergedPullRequest): void;
+  nextPiece(id: number, branch: string): void;
   setReport(id: number, report: GeneratedText): void;
   startRound(id: number, round: RoundToStart): TicketRound;
   stick(id: number, failure: LoopFailure): Ticket;
@@ -270,6 +285,34 @@ export function workStatusOf(row: unknown): WorkStatus {
   });
 }
 
+const PullRequestRow = z.object({
+  seq: z.number().int(),
+  number: z.number().int(),
+  url: z.string(),
+  branch: z.string(),
+  state: z.string(),
+  closes: z.string(),
+  merge_commit: z.string().nullable(),
+  deployment: z.number().int().nullable(),
+  handed_at: z.number().int(),
+  merged_at: z.number().int().nullable(),
+});
+
+function pullRequestOf(row: unknown): TicketPullRequest {
+  const value = PullRequestRow.parse(row);
+  return TicketPullRequest.parse({
+    number: value.number,
+    url: value.url,
+    branch: value.branch,
+    state: value.state,
+    closes: z.array(z.number().int().positive()).catch([]).parse(parsedJson(value.closes)),
+    mergeCommit: value.merge_commit,
+    deployment: value.deployment === null ? null : value.deployment === 1,
+    handedAt: value.handed_at,
+    mergedAt: value.merged_at,
+  });
+}
+
 const MoveRow = z.object({
   ticket_id: z.number().int(),
   seq: z.number().int(),
@@ -366,6 +409,16 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
   const selectAttempts = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt");
   const selectVerification = connection.prepare("SELECT * FROM ticket_verifications WHERE ticket_id = ?");
+  const deleteVerification = connection.prepare("DELETE FROM ticket_verifications WHERE ticket_id = ?");
+  const selectPullRequests = connection.prepare("SELECT * FROM ticket_pull_requests WHERE ticket_id = ? ORDER BY seq");
+  const insertPullRequest = connection.prepare(
+    "INSERT INTO ticket_pull_requests (ticket_id, seq, number, url, branch, state, closes, handed_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+  );
+  const updateHandedIn = connection.prepare("UPDATE ticket_pull_requests SET url = ?, closes = ?, handed_at = ? WHERE ticket_id = ? AND seq = ? AND state <> 'merged'");
+  const closeReplaced = connection.prepare("UPDATE ticket_pull_requests SET state = 'closed' WHERE ticket_id = ? AND state = 'open' AND number <> ?");
+  const updateMergedPullRequest = connection.prepare(
+    "UPDATE ticket_pull_requests SET state = 'merged', closes = ?, merge_commit = ?, deployment = ?, merged_at = COALESCE(merged_at, ?) WHERE ticket_id = ? AND number = ?",
+  );
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
@@ -450,6 +503,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const begin = selectBegin.get(value.id);
     const attempt = selectAttempt.get(value.id);
     const verification = selectVerification.get(value.id);
+    const pullRequests = selectPullRequests.all(value.id).map(pullRequestOf);
     return Ticket.parse({
       id: value.id,
       repository: value.repository,
@@ -472,6 +526,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       ran: TicketRun.nullable().catch(null).parse(parsedJson(value.ran)),
       branch: value.branch,
       pullRequest: value.pull_request,
+      pullRequests,
       report: pair(value.report_en, value.report_zh),
       work: attempt === undefined ? null : workStatusOf(attempt),
       verification: verification === undefined ? null : verificationOf(verification),
@@ -743,10 +798,43 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         updateBranch.run(branch, id);
         touch(id);
       },
-      setPullRequest: (id, pullRequest, report) => {
-        existing(id);
+      setPullRequest: (id, pullRequest, report, details = {}) => {
+        const current = existing(id);
         const given = GeneratedText.parse(report);
         updatePullRequest.run(pullRequest, given.en, given.zh, id);
+        const url = details.url ?? `https://github.com/${current.repository ?? ""}/pull/${pullRequest}`;
+        const closes = JSON.stringify([...new Set(details.closes ?? [])]);
+        const now = clock.now();
+        closeReplaced.run(id, pullRequest);
+        const rows = selectPullRequests.all(id).map((row) => PullRequestRow.parse(row));
+        const row = rows.findLast((entry) => entry.number === pullRequest);
+        if (row !== undefined) {
+          updateHandedIn.run(url, closes, now, id, row.seq);
+        } else {
+          insertPullRequest.run(id, (rows.at(-1)?.seq ?? 0) + 1, pullRequest, url, current.branch ?? "", closes, now);
+        }
+        touch(id);
+      },
+      pullRequestMerged: (id, merged) => {
+        existing(id);
+        updateMergedPullRequest.run(
+          JSON.stringify([...new Set(merged.closes)]),
+          merged.mergeCommit,
+          merged.deployment === null ? null : merged.deployment ? 1 : 0,
+          clock.now(),
+          id,
+          merged.number,
+        );
+        touch(id);
+      },
+      nextPiece: (id, branch) => {
+        const current = existing(id);
+        if (current.state !== "working") {
+          throw new TicketError(`Ticket ${id} is ${current.state}; the next piece of its chain starts only when it goes back to work`);
+        }
+        deleteVerification.run(id);
+        updateBranch.run(branch, id);
+        updateRound.run(0, 0, id);
         touch(id);
       },
       setReport: (id, report) => {

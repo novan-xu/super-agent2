@@ -46,7 +46,7 @@ export function forgeHandBack(forge: FakeForge, hub: () => Hub | undefined, depl
     }
     const pull = repository.pulls.get(given.pullRequest);
     if (pull === undefined) {
-      forge.pull(given.repository, given.pullRequest, head, ["src/parser.ts"], given.branch);
+      forge.pull(given.repository, given.pullRequest, head, ["src/parser.ts"], given.branch, given.closes);
     } else {
       pull.head = head;
     }
@@ -415,13 +415,17 @@ export function createHarness(options: HarnessOptions): Harness {
 
   let nextIssue = 1000 + Math.floor(Math.random() * 8000);
 
-  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail", green: "finish" };
+  const loopCases: Readonly<Record<string, Behaviour>> = { fixed: "red-once", red: "red-always", stuck: "fails", worker: "fail", green: "finish", chain: "red-once" };
 
   const loopCase = async (url: URL, response: ServerResponse): Promise<void> => {
     const name = url.searchParams.get("case") ?? "";
     const behaviour = loopCases[name];
     if (behaviour === undefined) {
-      json(response, 400, { error: "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round), worker (the worker fails once) or green (green at once), and optionally repository=<owner/name>", cases: Object.keys(loopCases) });
+      json(response, 400, {
+        error:
+          "give case=fixed (red pipeline once, then green), red (red pipeline every round), stuck (the worker fails every round), worker (the worker fails once), green (green at once) or chain (three issues in two pull requests, the first red once), and optionally repository=<owner/name>",
+        cases: Object.keys(loopCases),
+      });
       return;
     }
     nextIssue += 1;
@@ -431,7 +435,14 @@ export function createHarness(options: HarnessOptions): Harness {
           name,
           repository: url.searchParams.get("repository") ?? "novan-xu/garden-notes",
           title: [`Failure loop: ${name}`, `失败循环：${name}`],
-          titles: [[`Parse relative dates (${name})`, `解析相对日期（${name}）`]],
+          titles:
+            name === "chain"
+              ? [
+                  ["Parse plain dates", "解析普通日期"],
+                  ["Parse relative dates", "解析相对日期"],
+                  ["Show parsed dates", "显示解析出的日期"],
+                ]
+              : [[`Parse relative dates (${name})`, `解析相对日期（${name}）`]],
           behaviour,
           machine: "studio",
           engine: "claude",
@@ -494,7 +505,10 @@ export function createHarness(options: HarnessOptions): Harness {
         } else {
           tickets.move(opened.id, "verifying");
           tickets.move(opened.id, "merged");
-          tickets.change((writes) => writes.setPullRequest(opened.id, 100 + index, { en: "The change is merged", zh: "改动已合并" }));
+          tickets.change((writes) => {
+            writes.setPullRequest(opened.id, 100 + index, { en: "The change is merged", zh: "改动已合并" });
+            writes.pullRequestMerged(opened.id, { number: 100 + index, closes: (writes.get(opened.id)?.issues ?? []).map((issue) => issue.number), mergeCommit: null, deployment: null });
+          });
         }
       }
       const endedAt = now - (index + 1) * 100 * 60_000;

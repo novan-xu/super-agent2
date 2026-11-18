@@ -5,6 +5,7 @@ import {
   deploymentFile,
   type FailedStep,
   type GeneratedText,
+  openIssueNumbers,
   type Ticket,
   VerificationRule,
   type VerificationWait,
@@ -21,7 +22,7 @@ import { createGitHubApi, type Fetch, type GitHubApi, type MergeMethod, type Mer
 import type { FailureReport } from "./failure-loop.js";
 import { clip, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
-import { closedIssuesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
+import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type WoodpeckerApi } from "./woodpecker.js";
 
 export type Ticker = (tick: () => void) => () => void;
@@ -29,6 +30,15 @@ export type Ticker = (tick: () => void) => () => void;
 export type AgainOutcome = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 export type SendBack = (ticket: number, note: string, reason: GeneratedText) => AgainOutcome;
+
+export interface MergedPart {
+  readonly pullRequest: number;
+  readonly mergeCommit: string | null;
+  readonly closes: readonly number[];
+  readonly base: string;
+}
+
+export type Onward = (ticket: number, merged: MergedPart) => AgainOutcome;
 
 export interface VerificationOptions {
   readonly accountOf?: (repository: string) => GitHubAccount;
@@ -39,6 +49,7 @@ export interface VerificationOptions {
   readonly fetch?: Fetch;
   readonly gitHubBase?: string;
   readonly sendBack?: SendBack;
+  readonly onward?: Onward;
   readonly tell?: Tell;
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
@@ -162,6 +173,7 @@ const columns = [
   "merge_commit",
   "merged_at",
   "closed_issues",
+  "closes",
   "branch_done",
   "deployment",
   "reported_at",
@@ -417,8 +429,12 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const own = options.ownRepository !== undefined && (ticket.repository ?? "").toLowerCase() === options.ownRepository.toLowerCase();
     const deployed = row.deployment === 1 && !own;
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
+    const merged = ticket.pullRequests.filter((pull) => pull.state === "merged");
+    const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
     const lines = [
-      `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: pull request #${ticket.pullRequest ?? 0} in ${ticket.repository ?? ""} was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}.`,
+      `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: every issue of its chain is closed by its merged pull requests.`,
+      `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
+      `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
       own
         ? "Deployment: this is Super-agent2 itself, which the hub does not deploy, since it cannot reach the NAS host. It is deployed on the NAS by hand, or by a worker when the owner files work for it. Tell the owner the new version is merged and waits to be deployed; once the owner says it is deployed, report it with report_deployment."
@@ -439,11 +455,19 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const before = rowOf(ticket.id);
     const commit = pull.mergeCommit ?? before?.merge_commit ?? null;
     save(ticket.id, { rule, state: "merging", waiting: null, reason: null, merge_commit: commit, merged_at: before?.merged_at ?? clock.now(), head: pull.head });
+    let closing: number[];
     try {
       const current = rowOf(ticket.id);
+      const read = current === undefined ? null : closesOf(current);
+      const closes = read ?? (await gitHub.closingIssues(repository, pull.number));
+      if (read === null) {
+        save(ticket.id, { closes: JSON.stringify(closes) });
+      }
+      const chain = ticket.issues.filter((issue) => issue.repository.toLowerCase() === repository.toLowerCase());
+      closing = chain.filter((issue) => closes.includes(issue.number)).map((issue) => issue.number);
       const done = new Set(current === undefined ? [] : closedIssuesOf(current));
-      for (const issue of ticket.issues) {
-        if (done.has(issue.number) || issue.repository.toLowerCase() !== repository.toLowerCase()) {
+      for (const issue of chain) {
+        if (done.has(issue.number) || !closing.includes(issue.number)) {
           continue;
         }
         const open = await gitHub.issueOpen(repository, issue.number);
@@ -477,13 +501,38 @@ export function createVerification(options: VerificationOptions): VerificationSe
     if (closed) {
       return;
     }
+    const deployment = rowOf(ticket.id)?.deployment ?? null;
+    let remaining: number[] = [];
     tickets.change((writes) => {
       if (writes.get(ticket.id)?.state !== "verifying") {
         return;
       }
+      writes.pullRequestMerged(ticket.id, { number: pull.number, closes: closing, mergeCommit: commit, deployment: deployment === null ? null : deployment === 1 });
+      const now = writes.get(ticket.id);
+      remaining = now === undefined ? [] : openIssueNumbers(now);
       write(ticket.id, { state: "merged", waiting: null, reason: null });
+      if (remaining.length > 0) {
+        return;
+      }
       writes.move(ticket.id, "merged", { en: `Merged: ${ruleWords[rule]}`, zh: text(`verification.merged.${rule}`) });
     });
+    if (remaining.length > 0) {
+      const outcome = options.onward?.(ticket.id, { pullRequest: pull.number, mergeCommit: commit, closes: closing, base: pull.base }) ?? {
+        ok: false,
+        reason: "The hub has no worker service to continue the chain with",
+      };
+      if (!outcome.ok && tickets.get(ticket.id)?.state === "verifying") {
+        const reason = `Pull request #${pull.number} is merged, and the worker could not continue with ${remaining.map((number) => `#${number}`).join(", ")}: ${outcome.reason}`;
+        wait(ticket.id, "finishing", reason, { state: "merging" });
+        tellOnce(
+          ticket,
+          `onward:${entryOf(ticket.id)}:${pull.number}`,
+          text("notice.verificationFailed", { ticket: ticket.id }),
+          `[hub] ${reason}. The ticket stays verifying and the hub tries again at every check. Tell the owner in Chinese what happened.`,
+        );
+      }
+      return;
+    }
     report(ticket.id);
   };
 
@@ -550,7 +599,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     const method = methodOf(await gitHub.mergeMethods(repository));
-    save(ticket.id, { rule, state: "merging", waiting: null, reason: null, merging_head: head, merging_rule: rule });
+    const closes = await gitHub.closingIssues(repository, number);
+    save(ticket.id, { rule, state: "merging", waiting: null, reason: null, merging_head: head, merging_rule: rule, closes: JSON.stringify(closes) });
     const answer = await gitHub.merge(repository, number, head, method);
     if (closed) {
       return;
@@ -647,7 +697,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         workflows: "[]",
         failures: "[]",
         logs: "[]",
-        ...(sameHead ? {} : { merging_head: null, merging_rule: null }),
+        ...(sameHead ? {} : { merging_head: null, merging_rule: null, closes: null }),
       });
     }
     const row = rowOf(id);

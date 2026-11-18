@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { type ChoiceChange, chineseOf, type MachineChoice, type Ticket } from "@super-agent2/protocol";
+import { type ChoiceChange, chineseOf, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
 import { panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
@@ -10,7 +10,7 @@ import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { clockOf, DeliveryBody, TextBody, ToolFold } from "./Entries.js";
-import { engineName, momentOf, PhaseStatus, problemLines, problemTone } from "./TicketParts.js";
+import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones } from "./TicketParts.js";
 
 const nearBottom = 48;
 
@@ -386,6 +386,7 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
   const engine = work?.engine ?? ticket.engine;
   const verification = ticket.verification;
   const rest = `ticket-panel-${ticket.id}`;
+  const merged = new Set(mergedIssueNumbers(ticket));
   return (
     <aside className={open ? "panel" : "panel is-collapsed"} aria-label={text("ticket.panel")}>
       <div className="panel-sec panel-sec--summary">
@@ -445,11 +446,31 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
             <h3>{text("ticket.issues")}</h3>
             <ol className="chain-issues">
               {ticket.issues.map((issue) => (
-                <li key={`${issue.repository}#${issue.number}`} className="chain-issue">
+                <li key={`${issue.repository}#${issue.number}`} className={merged.has(issue.number) ? "chain-issue is-merged" : "chain-issue"}>
                   <a className="check-title" href={issue.url} target="_blank" rel="noreferrer">
                     {chineseOf(issue.title)}
                   </a>
                   <span className="check-meta mono">{`#${issue.number}`}</span>
+                  {merged.has(issue.number) ? <Icon name="check" /> : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        {ticket.pullRequests.length === 0 ? null : (
+          <div className="panel-sec">
+            <h3>{text("ticket.pullRequest")}</h3>
+            <ol className="chain-pulls">
+              {ticket.pullRequests.map((pull) => (
+                <li key={pull.number} className="chain-pull">
+                  <span className="status">
+                    <span className={`dot dot--${pullRequestTones[pull.state]}`} />
+                    <span>{text(`ticket.pullState.${pull.state}`)}</span>
+                  </span>
+                  <a className="mono" href={pull.url} target="_blank" rel="noreferrer">
+                    {`#${pull.number}`}
+                  </a>
+                  <span className="check-meta mono">{pull.closes.map((number) => `#${number}`).join(" ")}</span>
                 </li>
               ))}
             </ol>
@@ -472,16 +493,6 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
                 ) : (
                   <a href={`${githubRepository(ticket.repository)}/tree/${ticket.branch}`} target="_blank" rel="noreferrer">
                     {ticket.branch}
-                  </a>
-                )}
-              </dd>
-              <dt>{text("ticket.pullRequest")}</dt>
-              <dd className="mono">
-                {ticket.pullRequest === null ? (
-                  "—"
-                ) : (
-                  <a href={`${githubRepository(ticket.repository)}/pull/${ticket.pullRequest}`} target="_blank" rel="noreferrer">
-                    {`#${ticket.pullRequest}`}
                   </a>
                 )}
               </dd>

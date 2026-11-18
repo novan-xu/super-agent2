@@ -98,6 +98,16 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .chain-issue::before { content: counter(chain); flex: none; min-width: 1.25em; color: var(--muted); font-family: var(--font-mono); font-size: var(--text-xs); text-align: right; }
 .chain-issue .check-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .chain-issue .check-meta { flex: none; }
+.chain-issue > .od-icon { --od-icon-size: 14px; flex: none; align-self: center; color: var(--success); }
+.chain-pulls { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
+.chain-pull { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; padding: var(--space-1) 0; }
+.chain-pull .status { flex: none; min-width: 4.5em; }
+.chain-pull .check-meta { flex: 1 1 auto; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.chain-numbers { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.chain-number { display: inline-flex; align-items: center; gap: 2px; }
+.chain-number .od-icon { --od-icon-size: 12px; flex: none; }
+.chain-number.is-merged { color: var(--success); }
+.chain-number.is-closed { color: var(--muted); }
 .chain-reason { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.6; overflow-wrap: anywhere; }
 .chain-missing { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--warn); font-size: var(--text-sm); }
 .field--owner, select.field--owner { border-color: var(--accent); }
@@ -209,6 +219,7 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 :root[data-theme="light"][data-accent="rose"] { --accent: #e46f8f; --accent-on: #1a1917; --accent-soft: rgba(228, 111, 143, 0.16); --meta: #ab536b; --focus-ring: 0 0 0 3px rgba(228, 111, 143, 0.45); }
 :root[data-accent="graphite"] { --accent: #d6d0c4; --accent-on: #1a1917; --accent-soft: rgba(214, 208, 196, 0.14); --meta: #d6d0c4; --focus-ring: 0 0 0 3px rgba(214, 208, 196, 0.45); }
 :root[data-theme="light"][data-accent="graphite"] { --accent: #cbc6ba; --accent-on: #1a1917; --accent-soft: rgba(203, 198, 186, 0.16); --meta: #706d66; --focus-ring: 0 0 0 3px rgba(203, 198, 186, 0.45); }
+.lrow-side > .chain-numbers { display: flex; justify-content: flex-end; column-gap: var(--space-3); }
 
 .att-item { position: relative; max-width: min(100%, 260px); overflow: hidden; }
 .att-item::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: var(--att-progress, 0%); background: var(--accent); transition: width var(--motion-fast) var(--ease-standard); }

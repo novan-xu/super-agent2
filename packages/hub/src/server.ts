@@ -1222,6 +1222,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, result.error === "not_found" ? 404 : 409, { error: result.error === "not_found" ? "not_found" : "conflict" });
         return true;
       }
+      options.loop?.ownerStopped(result.ticket);
       sendJson(response, 202, { ticket: result.ticket });
       return true;
     }

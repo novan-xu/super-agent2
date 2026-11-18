@@ -14,6 +14,7 @@ import {
   MaterialName,
   AttachmentId,
   type Attachment,
+  openIssueNumbers,
   Platform,
   platforms,
   RepositoryName,
@@ -33,7 +34,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
-import { allowanceReport, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
+import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
@@ -279,7 +280,7 @@ function verificationDefinitions() {
       title: "Merge a ticket with the verification rules skipped",
       description: [
         "Merge the pull request of a ticket in verifying now, skipping the verification rules. Use it only when the owner asked for the rules to be skipped.",
-        "The pull request's current head is merged once, as an ordinary merge: its issues are closed, its worktree is removed, the tickets that wait for it begin, and you are told whether the change needs deploying.",
+        "The pull request's current head is merged once, as an ordinary merge: the issues it closes are closed. When that closes the last open issue of the chain, the ticket is merged: its worktree is removed, the tickets that wait for it begin, and you are told whether the change needs deploying. Otherwise its worker continues with the open issues, and the rules apply again to its next pull request.",
         "A conflict with the default branch still goes back to the worker; once it hands back again the rules apply, and you call this again if the owner still wants them skipped.",
       ].join(" "),
       inputSchema: {
@@ -350,6 +351,12 @@ function mergedText(outcome: SkipOutcome): ToolResult {
   const commit = ticket.verification?.mergeCommit ?? null;
   if (ticket.state === "merged") {
     return { text: `Merged ticket ${ticket.id} with the rules skipped${commit === null ? "" : ` as commit ${commit}`}.\n${ticketLine(ticket)}\nYou are told separately what was closed and whether it needs deploying.` };
+  }
+  const last = ticket.pullRequests.at(-1);
+  if (ticket.state === "working" && last?.state === "merged") {
+    return {
+      text: `Merged pull request #${last.number} of ticket ${ticket.id} with the rules skipped${last.mergeCommit === null ? "" : ` as commit ${last.mergeCommit}`}. The chain is not done: its worker continues with ${openIssueNumbers(ticket).map((number) => `#${number}`).join(", ")}, and the rules apply again to its next pull request.\n${ticketLine(ticket)}`,
+    };
   }
   if (ticket.state === "working") {
     return { text: `Ticket ${ticket.id} was not merged: ${reason ?? "it went back to its worker"}. When the worker hands back the pull request again, the rules apply again.\n${ticketLine(ticket)}` };
@@ -431,7 +438,7 @@ function chainDefinitions() {
       name: "arrange_chains",
       title: "Arrange pending tickets into chains",
       description: [
-        "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: one worker, one branch, one pull request, its issues worked on in the order given.",
+        "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: its issues, worked on in the order given, handed once to one worker, which opens as many pull requests for them as it sees fit; the hub merges each one and gives the worker the rest, and the chain is merged when every issue of it is closed.",
         "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
         "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a deploy_repository that contains it succeeds, or you report the deployment with report_deployment).",
         "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again.",
@@ -1066,7 +1073,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return {
           text: sent.delivered
             ? `Sent to the worker of ticket ${parsed.data.ticket}. Read the ticket to see how it answers.`
-            : `The worker's machine is not connected now; the message is kept and reaches the worker of ticket ${parsed.data.ticket} when the machine is back.`,
+            : `The worker of ticket ${parsed.data.ticket} cannot take it right now (its machine is away, or the ticket is between attempts); the message is kept and reaches the worker when it next runs.`,
         };
       }
       case "stop_ticket": {
@@ -1079,7 +1086,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason);
         if (result.ok) {
-          return { text: `Stopped ticket ${result.ticket.id}.\n${ticketLine(result.ticket)}` };
+          return { text: [`Stopped ticket ${result.ticket.id}.`, ticketLine(result.ticket), ...chainProgress(result.ticket)].join("\n") };
         }
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }

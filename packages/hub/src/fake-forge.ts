@@ -12,6 +12,7 @@ export interface FakePull {
   mergeCommit: string | null;
   files: { path: string; previous?: string }[];
   baseFiles: string[];
+  closes: number[];
 }
 
 export interface FakeRepository {
@@ -68,7 +69,7 @@ export interface FakeForge {
   failing: RegExp | undefined;
   readonly closedMeanwhile: Set<number>;
   repository(name: string): FakeRepository;
-  pull(name: string, number: number, head: string, files: readonly string[], ref?: string): FakePull;
+  pull(name: string, number: number, head: string, files: readonly string[], ref?: string, closes?: readonly number[]): FakePull;
   tree(name: string, commit: string, paths: readonly string[]): void;
   file(name: string, commit: string, path: string, text: string): void;
   calledWith(pattern: RegExp): string[];
@@ -122,9 +123,21 @@ export function fakeForge(): FakeForge {
     failing: undefined,
     closedMeanwhile: new Set(),
     repository: repositoryOf,
-    pull: (name, number, head, files, ref) => {
+    pull: (name, number, head, files, ref, closes) => {
       const repository = repositoryOf(name);
-      const pull: FakePull = { number, open: true, merged: false, head, headRef: ref ?? `sa2/ticket-${number}`, base: "main", mergeable: true, mergeCommit: null, files: files.map((path) => ({ path })), baseFiles: [] };
+      const pull: FakePull = {
+        number,
+        open: true,
+        merged: false,
+        head,
+        headRef: ref ?? `sa2/ticket-${number}`,
+        base: "main",
+        mergeable: true,
+        mergeCommit: null,
+        files: files.map((path) => ({ path })),
+        baseFiles: [],
+        closes: [...(closes ?? repository.issues.keys())],
+      };
       repository.pulls.set(number, pull);
       repository.branches.add(pull.headRef);
       return pull;
@@ -160,7 +173,32 @@ export function fakeForge(): FakeForge {
     },
   };
 
+  const closing = (init: RequestInit | undefined): Response => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { variables?: { owner?: string; name?: string; number?: number } };
+    const variables = body.variables ?? {};
+    const name = `${variables.owner ?? ""}/${variables.name ?? ""}`;
+    const pull = github.get(name)?.pulls.get(variables.number ?? 0);
+    if (pull === undefined) {
+      return json(200, { data: { repository: github.has(name) ? { pullRequest: null } : null }, errors: [{ message: "Could not resolve to a PullRequest" }] });
+    }
+    return json(200, {
+      data: {
+        repository: {
+          pullRequest: {
+            closingIssuesReferences: {
+              nodes: pull.closes.map((number) => ({ number, repository: { nameWithOwner: name } })),
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      },
+    });
+  };
+
   const gitHub = (method: string, path: string, url: URL, init: RequestInit | undefined): Response => {
+    if (path === "/graphql" && method === "POST") {
+      return closing(init);
+    }
     const match = /^\/repos\/([^/]+\/[^/]+)(?:\/(.*))?$/.exec(path);
     if (match === null) {
       return json(404, { message: "Not Found" });
