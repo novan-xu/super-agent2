@@ -294,7 +294,7 @@ describe("the other settings", () => {
       { account: "novan-xu", configured: true },
       { account: "nuofan-island", configured: true },
     ]);
-    expect(snapshot.brain).toEqual({ linked: false, order: ["gpt", "claude", "deepseek"], providers: [] });
+    expect(snapshot.brain).toEqual({ linked: false, order: ["claude", "gpt", "deepseek"], providers: [] });
     expect(snapshot.repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false }]);
     expect((await fetch(`${base(running)}/api/settings`)).status).toBe(403);
   });

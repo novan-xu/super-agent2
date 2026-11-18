@@ -4,7 +4,7 @@ import { loadBrainConfig } from "./config.js";
 const valid = { BRAIN_HUB_URL: "http://hub:8080", BRAIN_TOKEN_FILE: "/run/secrets/brain.token", BRAIN_WORKSPACE: "/workspace" };
 
 describe("loadBrainConfig", () => {
-  it("starts with GPT, then Claude, then DeepSeek, on the design's starting models", () => {
+  it("starts with Claude, then GPT, then DeepSeek, on the design's starting models", () => {
     const result = loadBrainConfig(valid);
     expect(result).toEqual({
       ok: true,
@@ -12,7 +12,7 @@ describe("loadBrainConfig", () => {
         hubUrl: "http://hub:8080",
         tokenFile: "/run/secrets/brain.token",
         workspace: "/workspace",
-        order: ["gpt", "claude", "deepseek"],
+        order: ["claude", "gpt", "deepseek"],
         maximumOpen: 4,
         providers: {
           gpt: { program: "codex", model: "gpt-6-astra", effort: "high" },
@@ -24,8 +24,8 @@ describe("loadBrainConfig", () => {
   });
 
   it("takes the order of GPT and Claude from the configuration and keeps DeepSeek last", () => {
-    const result = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "claude, gpt" });
-    expect(result.ok && result.config.order).toEqual(["claude", "gpt", "deepseek"]);
+    const result = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "gpt, claude" });
+    expect(result.ok && result.config.order).toEqual(["gpt", "claude", "deepseek"]);
   });
 
   it("refuses DeepSeek in the order, an unknown provider and a missing hub address, naming each", () => {

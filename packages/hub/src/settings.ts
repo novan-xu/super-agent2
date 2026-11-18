@@ -8,6 +8,7 @@ import {
   Provider,
   pushServiceOf,
   type SettingsSnapshot,
+  startingOrder,
   type TableCell,
   unofferedChanges,
 } from "@super-agent2/protocol";
@@ -51,7 +52,7 @@ const ValueRow = z.object({ value: z.string() });
 const DeviceRow = z.object({ endpoint: z.string(), created_at: z.number().int() });
 
 export function brainSettings(linked: boolean, stored: readonly Provider[] | undefined, reported: { readonly order: readonly Provider[]; readonly providers: BrainSettings["providers"] } | undefined): BrainSettings {
-  const order = stored !== undefined ? [...stored] : (reported === undefined ? fullOrder(["gpt", "claude"]) : [...reported.order]);
+  const order = stored !== undefined ? [...stored] : (reported === undefined ? fullOrder(startingOrder) : [...reported.order]);
   return { linked, order, providers: reported === undefined ? [] : [...reported.providers] };
 }
 

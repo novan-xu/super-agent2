@@ -25,7 +25,7 @@ function note(name: string, ok: boolean, detail: string): void {
 }
 
 const failover = process.argv[2] === "failover";
-const provider: Provider = failover ? "gpt" : ProviderShape.parse(process.argv[2] ?? "claude");
+const provider: Provider = failover ? "claude" : ProviderShape.parse(process.argv[2] ?? "claude");
 const programs: Readonly<Record<Provider, string>> = {
   gpt: process.env["LIVE_CODEX_PROGRAM"] ?? startingModels.gpt.program,
   claude: process.env["LIVE_CLAUDE_PROGRAM"] ?? startingModels.claude.program,
@@ -75,7 +75,7 @@ let link: HubLink | undefined;
 
 function startBrain(broken: readonly Provider[] = []): void {
   link = createHubLink({ hubUrl, token, report: (line) => process.stdout.write(`\n<link> ${line}\n`) });
-  const order: readonly Provider[] = failover ? ["gpt", "claude", "deepseek"] : [provider];
+  const order: readonly Provider[] = failover ? ["claude", "gpt", "deepseek"] : [provider];
   const adapters = new Map(
     order.map((name) => [
       name,
@@ -305,16 +305,16 @@ if (only.has("failover")) {
   await ask(conversation, "记住：这次测试的暗号是 MANGO-23，只记在这段对话里，不要写文件。只回答“记住了”。", 1);
   const first = hub.conversations.detail(conversation)?.turns.at(-1);
   await stopBrain();
-  startBrain(["gpt"]);
+  startBrain(["claude"]);
   const second = await ask(conversation, "我们这段对话的暗号是什么？", 2);
   const secondTurn = hub.conversations.detail(conversation)?.turns.at(-1);
   note(
-    "Claude answers when GPT is unavailable",
-    first?.provider === "gpt" && secondTurn?.provider === "claude" && second.includes("MANGO-23"),
+    "GPT answers when Claude is unavailable",
+    first?.provider === "claude" && secondTurn?.provider === "gpt" && second.includes("MANGO-23"),
     `first by ${first?.provider}; second by ${secondTurn?.provider}; reply: ${second.slice(0, 200)}`,
   );
   await stopBrain();
-  startBrain(["gpt", "claude"]);
+  startBrain(["claude", "gpt"]);
   const third = await ask(conversation, "暗号是什么？上一位助手回答了什么？", 3);
   const thirdTurn = hub.conversations.detail(conversation)?.turns.at(-1);
   note(
@@ -326,7 +326,7 @@ if (only.has("failover")) {
   startBrain();
   const fourth = await ask(conversation, "再说一次暗号。", 4);
   const fourthTurn = hub.conversations.detail(conversation)?.turns.at(-1);
-  note("GPT takes the conversation back", fourthTurn?.provider === "gpt" && fourth.includes("MANGO-23"), `fourth by ${fourthTurn?.provider}; reply: ${fourth.slice(0, 200)}`);
+  note("Claude takes the conversation back", fourthTurn?.provider === "claude" && fourth.includes("MANGO-23"), `fourth by ${fourthTurn?.provider}; reply: ${fourth.slice(0, 200)}`);
 }
 
 await stopBrain();
