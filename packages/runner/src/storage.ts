@@ -112,7 +112,7 @@ export class MachineStorage {
       const chosen = problem === undefined ? asked : before;
       if (chosen !== undefined) accepted[folder] = chosen;
       const fallbackProblem = local === undefined || chosen === local ? undefined : this.problem(folder, local);
-      if (chosen !== undefined && (chosen === asked || this.problem(folder, chosen) === undefined)) {
+      if (chosen !== undefined && (chosen === asked ? problem === undefined : this.problem(folder, chosen) === undefined)) {
         selection[folder] = chosen;
       } else if (local !== undefined && chosen !== local && fallbackProblem === undefined) {
         selection[folder] = local;
