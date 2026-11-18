@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { BrainInput, BrainMessage, BrainProviders, HistoryItem, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
 import type { Clock } from "@super-agent2/programs";
 import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
-import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt, withAttachments } from "./prompt.js";
+import { continuationPrompt, defaultAttachmentsFolder, promptImages, steerPrompt, turnPrompt } from "./prompt.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
+import { createRouter } from "./router.js";
 
 export interface PrepareCall {
   readonly conversation: string;
@@ -27,6 +28,7 @@ export interface BrainOptions {
   readonly attachments?: string;
   readonly maximumOpen?: number;
   readonly newId?: () => string;
+  readonly router?: { readonly adapters: ReadonlyMap<Provider, ProgramAdapter>; readonly workspace: string };
 }
 
 export interface Brain {
@@ -60,7 +62,7 @@ interface Live {
 
 interface TurnRun {
   readonly id: string;
-  readonly inputs: readonly BrainInput[];
+  readonly inputs: BrainInput[];
   readonly tried: Set<Provider>;
   provider: Provider;
   tokens: number;
@@ -133,6 +135,8 @@ export function createBrain(options: BrainOptions): Brain {
       tell();
     },
   };
+  const router = options.router === undefined ? undefined : createRouter(options.router.adapters, providers.candidates, options.router.workspace);
+  router?.warm();
   const states = new Map<string, State>();
   const work = new Set<Promise<void>>();
   let uses = 0;
@@ -334,12 +338,13 @@ export function createBrain(options: BrainOptions): Brain {
         return;
       }
       const result = await live.handle
-        .steer(withAttachments(input.text, input.attachments, attachments), promptImages([input], attachments))
+        .steer(steerPrompt(input, attachments), promptImages([input], attachments))
         .catch(() => "queued" as const);
       if (result !== "steered" || state.turn !== turn) {
         return;
       }
       state.queue.shift();
+      turn.inputs.push(input);
       transport.send({ type: "input.taken", conversation: state.id, turn: turn.id, input: input.id });
     }
   };
@@ -355,7 +360,10 @@ export function createBrain(options: BrainOptions): Brain {
       prepared = await transport.prepare({
         conversation: state.id,
         provider,
-        exclude: mode === "fresh" ? turn.inputs.map((input) => input.id) : [],
+        exclude: turn.inputs.flatMap((input) => [
+          ...(mode === "fresh" ? [input.id] : []),
+          ...(input.quote === undefined ? [] : [input.quote.id]),
+        ]),
         fresh: freshSession,
       });
     } catch (error) {
@@ -396,7 +404,7 @@ export function createBrain(options: BrainOptions): Brain {
       if (mode === "fresh") {
         live.handle.start(turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), promptImages(turn.inputs, attachments));
       } else {
-        live.handle.start(continuationPrompt(prepared.history, prepared.memory, attachments), promptImages(lastOwner(prepared.history), attachments));
+        live.handle.start(continuationPrompt(prepared.history, prepared.memory, attachments, turn.inputs), promptImages(lastOwner(prepared.history), attachments));
       }
     } catch (error) {
       providers.markUnavailable(provider, messageOf(error), null);
@@ -477,13 +485,17 @@ export function createBrain(options: BrainOptions): Brain {
     for (const state of states.values()) {
       dropLive(state);
     }
+    const outstanding = [...work, router?.reset()];
     track((async () => {
       try {
-        await Promise.all([...work]);
+        await Promise.all(outstanding);
         await task.action();
       } finally {
         maintaining = false;
         task.done();
+        if (!closing) {
+          router?.warm();
+        }
         for (const state of states.values()) {
           startTurn(state);
         }
@@ -509,6 +521,19 @@ export function createBrain(options: BrainOptions): Brain {
       }
       if (message.type === "order") {
         providers.setOrder(message.order);
+        if (maintenance === undefined && !maintaining) {
+          router?.warm();
+        }
+        return;
+      }
+      if (message.type === "route") {
+        const reply = async () => {
+          const choice = await (maintenance === undefined && !maintaining ? router?.route(message).catch(() => null) : null);
+          if (!closing) {
+            transport.send({ type: "routed", request: message.request, choice: choice ?? null });
+          }
+        };
+        track(reply());
         return;
       }
       if (message.type === "input") {
@@ -539,6 +564,7 @@ export function createBrain(options: BrainOptions): Brain {
       for (const state of states.values()) {
         dropLive(state);
       }
+      await router?.reset();
       while (work.size > 0) {
         await Promise.all([...work]);
       }

@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { Attachment } from "./attachments.js";
-import { ConversationId, Provider } from "./conversations.js";
+import { ConversationId, MessageId, Provider, TopicScope } from "./conversations.js";
 import { MemoryBrief } from "./memory.js";
+import { RepositoryName } from "./repositories.js";
 import { ProtocolVersion } from "./version.js";
 
 export const InputSource = z.enum(["owner", "hub"]);
@@ -12,11 +13,24 @@ export const BrainAttachment = Attachment.extend({
 });
 export type BrainAttachment = z.infer<typeof BrainAttachment>;
 
+export const quoteInlineLimit = 16_000;
+export const quoteChunkLimit = 8_000;
+
+export const BrainQuote = z.object({
+  id: MessageId,
+  length: z.number().int().nonnegative(),
+  text: z.string().optional(),
+  attachments: z.array(BrainAttachment),
+});
+export type BrainQuote = z.infer<typeof BrainQuote>;
+
 export const BrainInput = z.object({
   id: z.string().min(1),
   source: InputSource,
   text: z.string(),
   attachments: z.array(BrainAttachment).default([]),
+  quote: BrainQuote.optional(),
+  needsRepository: z.literal(true).optional(),
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 
@@ -154,6 +168,63 @@ export const BrainProviders = z.object({
 });
 export type BrainProviders = z.infer<typeof BrainProviders>;
 
+const RouteTopic = z.object({
+  id: ConversationId,
+  title: z.string(),
+  repository: RepositoryName.nullable(),
+  recent: z.array(z.object({ speaker: z.enum(["owner", "assistant"]), text: z.string() })),
+});
+
+export const RouteRequest = z.object({
+  type: z.literal("route"),
+  request: z.string().min(1),
+  scope: TopicScope,
+  topics: z.array(RouteTopic),
+  repositories: z.array(RepositoryName),
+  tickets: z.array(z.object({
+    id: z.number().int().positive(),
+    repository: RepositoryName,
+    title: z.string(),
+    issues: z.array(z.number().int().positive()),
+  })),
+  text: z.string(),
+  files: z.array(z.string()),
+});
+export type RouteRequest = z.infer<typeof RouteRequest>;
+
+export const RouteChoice = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("existing"), topic: ConversationId }),
+  z.strictObject({
+    kind: z.literal("new"),
+    title: z.string().trim().min(1).max(120).regex(/^[^\r\n]+$/),
+    repository: RepositoryName.nullable().optional(),
+    possibleMatch: ConversationId.optional(),
+  }),
+]);
+export type RouteChoice = z.infer<typeof RouteChoice>;
+
+export function routeFits(request: RouteRequest, choice: RouteChoice): boolean {
+  if (choice.kind === "existing") {
+    return request.topics.some(({ id }) => id === choice.topic);
+  }
+  if (choice.possibleMatch !== undefined && !request.topics.some(({ id }) => id === choice.possibleMatch)) {
+    return false;
+  }
+  const repository = choice.repository?.toLowerCase();
+  return repository === undefined || (
+    request.scope.kind === "repository"
+      ? repository === request.scope.repository.toLowerCase()
+      : request.scope.kind === "code" && request.repositories.some((name) => name.toLowerCase() === repository)
+  );
+}
+
+export const RouteAnswer = z.object({
+  type: z.literal("routed"),
+  request: z.string().min(1),
+  choice: RouteChoice.nullable(),
+});
+export type RouteAnswer = z.infer<typeof RouteAnswer>;
+
 export const BrainMessage = z.discriminatedUnion("type", [
   BrainHello,
   TurnStarted,
@@ -167,6 +238,7 @@ export const BrainMessage = z.discriminatedUnion("type", [
   SessionRecorded,
   PrepareRequest,
   BrainProviders,
+  RouteAnswer,
 ]);
 export type BrainMessage = z.infer<typeof BrainMessage>;
 
@@ -204,7 +276,7 @@ export const SetProviderOrder = z.object({
 });
 export type SetProviderOrder = z.infer<typeof SetProviderOrder>;
 
-export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder]);
+export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder, RouteRequest]);
 export type HubToBrain = z.infer<typeof HubToBrain>;
 
 export const brainLinkPath = "/brain/link";

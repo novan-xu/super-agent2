@@ -74,6 +74,8 @@ export const messages = {
   "conversation.older": "更早消息",
   "conversation.stream": "对话内容",
   "conversation.close": "关闭",
+  "conversation.quote": "引用回复",
+  "conversation.removeQuote": "移除引用",
   "composer.label": "发给大脑的消息",
   "composer.send": "发送",
   "composer.stop": "停止",

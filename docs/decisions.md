@@ -3982,6 +3982,35 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options** Count the router within the topic budget, start a process for each routing request, or wait for
   a router provider to recover before accepting an unquoted input.
 
+## 2026-11-18 — Scoped routing and repository assignment (#99)
+
+- **Chosen:** All of 代码 can assign a new topic to a repository from active topics or open tickets. If none fits,
+  the topic stays in 代码 with a pending repository until the owner names one and the session assigns it. Unscoped
+  requests from older clients use 日常.
+- **Why:** The owner can continue the same conversation after naming a repository. A daily input always has a
+  defined matching scope.
+- **Other options:** Require a repository before accepting code input, or let the router guess a repository outside
+  the active board and open tickets.
+
+## 2026-11-18 — Resident routing, deadlines and titles (#99)
+
+- **Chosen:** Warm the preferred provider, reuse each provider process as it is needed and refresh its session after
+  16 requests. Give each attempt up to 1.45 seconds and the hub request up to five seconds. The hub saves the input
+  before routing, publishes it after assigning a topic and uses the first line or filename as a fallback title.
+- **Why:** Warm processes save startup time. Short context lifetimes and deadlines bound routing work. Saving the input
+  separately keeps it recoverable after a restart and lets direct messages continue through the stream during routing.
+- **Other options:** Keep one unbounded session, start a process for every route, or hold other stream updates while
+  a route is pending.
+
+## 2026-11-18 — Quoted message reads (#99)
+
+- **Chosen:** Reserve 16,000 UTF-16 code units per prompt for verbatim quote text. When a quote exceeds the remaining
+  space, give its ID and read it through a topic-scoped `read_quote` tool in chunks. Include references to any
+  attached files.
+- **Why:** Fresh, open and steered sessions get the same quote context, and long text remains available without
+  forcing it into a provider prompt.
+- **Other options:** Clip long quotes, or calculate a separate available token budget for each provider.
+
 ## 2026-11-18 — Quotes and routing corrections (#84)
 
 - **Chosen** Offer quotes from the current topic in a topic view and quotes from any topic in the main stream.

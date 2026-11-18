@@ -13,6 +13,10 @@ import {
   turnHeader,
   MemoryList,
   type Provider,
+  quoteChunkLimit,
+  quoteInlineLimit,
+  StreamEntry,
+  type StreamMessage,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Brain, createBrain } from "./brain.js";
@@ -81,7 +85,7 @@ function hubUrl(): string {
   return `http://127.0.0.1:${port}`;
 }
 
-function startBrain(order: readonly Provider[] = ["gpt", "claude", "deepseek"]): Brain {
+function startBrain(order: readonly Provider[] = ["gpt", "claude", "deepseek"], routers?: Record<Provider, FakeProgram>): Brain {
   link = createHubLink({ hubUrl: hubUrl(), token, schedule: manualSchedule, reconnectDelay: 0 });
   brain = createBrain({
     adapters: new Map(Object.entries(programs) as [Provider, FakeProgram][]),
@@ -90,6 +94,7 @@ function startBrain(order: readonly Provider[] = ["gpt", "claude", "deepseek"]):
     clock,
     tools: { url: `${hubUrl()}${brainToolsPath}`, token },
     workspace: dataDir,
+    ...(routers === undefined ? {} : { router: { adapters: new Map(Object.entries(routers) as [Provider, FakeProgram][]), workspace: dataDir } }),
   });
   const current = brain;
   link.bind({ receive: (message) => current.receive(message), running: () => current.running() });
@@ -186,9 +191,15 @@ async function newConversation(): Promise<Conversation> {
   return ((await response.json()) as { conversation: Conversation }).conversation;
 }
 
-async function say(conversation: string, text: string): Promise<void> {
-  const response = await owner(`/api/conversations/${conversation}/messages`, { method: "POST", body: JSON.stringify({ text }) });
+async function say(conversation: string, text: string, quotedMessage?: string): Promise<void> {
+  const response = await owner(`/api/conversations/${conversation}/messages`, { method: "POST", body: JSON.stringify({ text, quotedMessage }) });
   expect(response.status).toBe(202);
+}
+
+async function sayInStream(message: Omit<StreamMessage, "attachments">): Promise<StreamEntry> {
+  const response = await owner("/api/stream", { method: "POST", body: JSON.stringify(message) });
+  expect(response.status).toBe(202);
+  return StreamEntry.parse(await response.json());
 }
 
 async function callTool(options: OpenOptions, name: string, args: Record<string, unknown>, bearer?: string): Promise<string> {
@@ -213,6 +224,112 @@ async function callTool(options: OpenOptions, name: string, args: Record<string,
 }
 
 describe("the brain's session", () => {
+  it("bypasses routing for topic input and quotes, including steering a live session and reading a long quote", async () => {
+    const running = await startHub();
+    const routers = freshPrograms();
+    startBrain(["gpt", "claude", "deepseek"], routers);
+    const conversation = await newConversation();
+    const other = await newConversation();
+    await say(conversation.id, "Original topic input");
+    const first = await programs.gpt.next();
+    expect(first.text).toBe("Original topic input");
+    first.handle.emit({ type: "session", session: "gpt-with-quotes" });
+    const short = "完整引用\n第二行";
+    first.handle.finish(short);
+    await turnEnded(conversation.id, 1);
+    const original = detail(conversation.id).entries.at(-1)!;
+
+    const mismatch = await owner(`/api/conversations/${other.id}/messages`, {
+      method: "POST", body: JSON.stringify({ text: "Wrong topic", quotedMessage: original.id }),
+    });
+    expect(mismatch.status).toBe(404);
+    expect(detail(other.id).entries).toEqual([]);
+
+    await say(conversation.id, "Direct reply to the quote", original.id);
+    const direct = await programs.gpt.next();
+    expect(direct.handle.options.session).toBe("gpt-with-quotes");
+    expect(direct.text).toContain(short);
+    const steered = await sayInStream({ text: "One more point", quotedMessage: original.id, scope: { kind: "code" } });
+    expect(steered).toMatchObject({ topic: { id: conversation.id }, entry: { quotedMessage: original.id } });
+    expect((await programs.gpt.next("steer")).text).toContain(short);
+
+    const long = "中".repeat(quoteChunkLimit - 1) + "🌱" + "a".repeat(quoteInlineLimit) + "\nLast line";
+    direct.handle.finish(long);
+    await turnEnded(conversation.id, 2);
+    const longEntry = detail(conversation.id).entries.at(-1)!;
+    running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(conversation.id);
+    const quoted = await sayInStream({ text: "Reply to the long text", quotedMessage: longEntry.id });
+    expect(quoted.topic.id).toBe(conversation.id);
+    expect(detail(conversation.id).conversation.topicState).toBe("active");
+    const next = await programs.gpt.next();
+    expect(next.text).toContain(longEntry.id);
+    expect(next.text).toContain("read_quote");
+    expect(next.text).not.toContain(long.slice(0, 100));
+    let offset: number | null = 0;
+    let collected = "";
+    do {
+      const part: { text: string; next: number | null } = JSON.parse(await callTool(next.handle.options, "read_quote", { id: longEntry.id, offset }));
+      if (offset === 0) {
+        expect(part.text.endsWith("🌱")).toBe(true);
+      }
+      collected += part.text;
+      offset = part.next;
+    } while (offset !== null);
+    expect(collected).toBe(long);
+    expect(await callTool({ ...next.handle.options, tools: { ...next.handle.options.tools!, conversation: other.id } }, "read_quote", { id: longEntry.id }))
+      .toBe("No quote at that offset in this topic.");
+    expect(routers.gpt.happenings).toEqual([]);
+  });
+
+  it("reuses a tool-free router, falls through invalid providers and opens a fresh topic when all fail", async () => {
+    await startHub();
+    const routers = freshPrograms();
+    startBrain(["claude", "gpt", "deepseek"], routers);
+    const topic = await newConversation();
+    await say(topic.id, "A topic about mowing");
+    const session = await programs.claude.next();
+    session.handle.emit({ type: "session", session: "claude-mowing" });
+    session.handle.finish("Mow only when the grass is dry.");
+    await turnEnded(topic.id, 1);
+
+    const first = sayInStream({ text: "Does the grass need watering?" });
+    const route = await routers.claude.next();
+    expect(route.handle.options).toMatchObject({ tools: null, textOnly: true });
+    expect(route.text).toContain("Mow only when the grass is dry.");
+    route.handle.finish(JSON.stringify({ kind: "existing", topic: topic.id }));
+    expect((await first).topic.id).toBe(topic.id);
+    expect((await programs.claude.next()).handle.options.session).toBe("claude-mowing");
+
+    const unsure = sayInStream({ text: "How about starting a garden?" });
+    const reused = await routers.claude.next();
+    expect(reused.handle).toBe(route.handle);
+    reused.handle.emit({ type: "failed", reason: "Exited", lostSession: false });
+    const bad = await routers.gpt.next();
+    bad.handle.finish(JSON.stringify({ kind: "existing", topic: "not-a-candidate" }));
+    const fallback = await routers.deepseek.next();
+    fallback.handle.finish(JSON.stringify({ kind: "new", title: "Starting a garden", possibleMatch: topic.id }));
+    const result = await unsure;
+    expect(result.topic).toMatchObject({ title: "Starting a garden", repository: null });
+    expect(result.topic.id).not.toBe(topic.id);
+    expect(result.entry).toMatchObject({ possibleMatch: topic.id });
+    expect(detail(result.topic.id).entries[0]).toMatchObject({ id: result.entry.id, possibleMatch: topic.id });
+    expect((await programs.claude.next()).handle.options.tools?.conversation).toBe(result.topic.id);
+
+    for (const program of Object.values(routers)) {
+      program.refuseStart = "Unavailable";
+    }
+    const failed = await sayInStream({ text: "Start something else", scope: { kind: "code" } });
+    expect(failed.topic).toMatchObject({ title: "Start something else", repository: null, needsRepository: true });
+    expect(failed.entry).not.toHaveProperty("possibleMatch");
+    expect(routers.claude.handles).toHaveLength(2);
+    const pending = await programs.claude.next();
+    expect(pending.handle.options.tools?.conversation).toBe(failed.topic.id);
+    expect(pending.text).toContain("waiting for a repository");
+    expect(await callTool(pending.handle.options, "set_topic_repository", { repository: "owner/new-project" })).toBe("Repository assigned to this topic.");
+    expect(detail(failed.topic.id).conversation).toMatchObject({ repository: "owner/new-project" });
+    expect(detail(failed.topic.id).conversation).not.toHaveProperty("needsRepository");
+  });
+
   it("runs gh through the hub for a question about open pull requests and answers with the result", async () => {
     await startHub();
     startBrain();

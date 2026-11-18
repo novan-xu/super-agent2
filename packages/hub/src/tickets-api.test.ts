@@ -105,6 +105,8 @@ describe("the brain's ticket tools", () => {
       "run_command",
       "read_command",
       "stop_command",
+      "read_quote",
+      "set_topic_repository",
       "file_issue",
       "open_ticket",
       "open_task_ticket",

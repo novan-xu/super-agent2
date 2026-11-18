@@ -28,6 +28,7 @@ const shapes = {
     </>
   ),
   send: <path d="M12 19V5M6 11l6-6 6 6" />,
+  reply: <path d="M9 5L4 10l5 5M4 10h9a6 6 0 0 1 6 6v2" />,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
   chev: <path d="M9.5 6l6 6-6 6" />,
   down: <path d="M6 9.5l6 6 6-6" />,

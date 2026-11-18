@@ -382,16 +382,15 @@ export class PageController {
     return created.value.conversation.id;
   }
 
-  async send(text: string, attachments: readonly string[] = []): Promise<boolean> {
-    const conversation = this.opened;
+  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened): Promise<boolean> {
     if (conversation === null) {
-      const sent = await this.options.api.sendToStream(text, attachments);
+      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage);
       if (!sent.ok) {
         this.options.onFailure(sent.error);
       }
       return sent.ok;
     }
-    const sent = await this.options.api.send(conversation, text, attachments);
+    const sent = await this.options.api.send(conversation, text, attachments, quotedMessage);
     if (!sent.ok) {
       this.options.onFailure(sent.error);
       return false;

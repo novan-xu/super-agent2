@@ -60,12 +60,19 @@ function ConversationList({ list, current, hrefOf, open, now }: ListProps) {
 interface ComposerProps {
   readonly working: boolean;
   readonly canStop: boolean;
-  readonly send: (message: string, attachments: readonly string[]) => Promise<boolean>;
+  readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
   readonly stop: () => void;
   readonly draftKey: string;
+  readonly quote: QuotePreview | undefined;
+  readonly clearQuote: (id: string) => void;
 }
 
-function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
+interface QuotePreview {
+  readonly id: string;
+  readonly text: string;
+}
+
+function Composer({ working, canStop, send, stop, draftKey, quote, clearQuote }: ComposerProps) {
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -81,6 +88,12 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
     }
   }, [draft]);
 
+  useEffect(() => {
+    if (quote !== undefined) {
+      field.current?.focus();
+    }
+  }, [quote]);
+
   const submit = useCallback(async () => {
     const message = draft.trim();
     if (empty || sending) {
@@ -88,14 +101,17 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
     }
     setSending(true);
     const attachments = await attaching.settle();
-    const sent = attachments === undefined ? false : await send(message, attachments);
+    const sent = attachments === undefined ? false : await send(message, attachments, quote?.id);
     setSending(false);
     if (sent) {
       setDrafts((all) => ({ ...all, [draftKey]: "" }));
       attaching.clear();
+      if (quote !== undefined) {
+        clearQuote(quote.id);
+      }
     }
     field.current?.focus();
-  }, [attaching, draft, draftKey, empty, send, sending]);
+  }, [attaching, clearQuote, draft, draftKey, empty, quote, send, sending]);
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!sendsOnEnter(event)) {
@@ -116,6 +132,15 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
         onDragOver={attaching.over}
         onDrop={attaching.drop}
       >
+        {quote === undefined ? null : (
+          <div className="composer-quote">
+            <Icon name="reply" size={16} />
+            <span className="od-truncate">{quote.text}</span>
+            <button className="icon-btn" type="button" aria-label={text("conversation.removeQuote")} onClick={() => clearQuote(quote.id)}>
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        )}
         <PendingList attaching={attaching} />
         <textarea
           ref={field}
@@ -157,7 +182,7 @@ export interface ConversationViewProps {
   readonly model: string | null;
   readonly hrefOf: (conversation: string) => string;
   readonly open: (conversation: string) => void;
-  readonly send: (message: string, attachments: readonly string[]) => Promise<boolean>;
+  readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
   readonly stop: () => void;
   readonly loadOlder: () => void;
   readonly now: number;
@@ -169,6 +194,7 @@ export function ConversationView(props: ConversationViewProps) {
   const following = useRef(true);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const picker = useRef<HTMLDialogElement>(null);
+  const [quotes, setQuotes] = useState<Readonly<Record<string, QuotePreview | undefined>>>({});
   const items = useMemo(
     () => stream === null ? (state === null ? [] : streamItems(state, now)) : combinedStreamItems(stream.entries.map(({ entry }) => entry), stream.turns, now),
     [state, stream, now],
@@ -182,7 +208,11 @@ export function ConversationView(props: ConversationViewProps) {
   }, [stream, props.list]);
   const working = state !== null && isWorking(state);
   const conversationId = state?.id ?? null;
+  const draftKey = conversationId ?? "";
   const thisYear = new Date(now).getFullYear();
+  const clearQuote = useCallback((id: string) => {
+    setQuotes((all) => all[draftKey]?.id === id ? { ...all, [draftKey]: undefined } : all);
+  }, [draftKey]);
 
   useLayoutEffect(() => {
     following.current = true;
@@ -217,9 +247,9 @@ export function ConversationView(props: ConversationViewProps) {
   }, []);
 
   const send = useCallback(
-    async (message: string, attachments: readonly string[]) => {
+    async (message: string, attachments: readonly string[], quotedMessage?: string) => {
       following.current = true;
-      return props.send(message, attachments);
+      return props.send(message, attachments, quotedMessage);
     },
     [props.send],
   );
@@ -281,11 +311,17 @@ export function ConversationView(props: ConversationViewProps) {
                   {topics.get(id) || text("conversation.untitled")}
                 </a>
               );
-              return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={topic} />;
+              const quote = item.kind === "entry" ? () => {
+                const { entry } = item;
+                const fallback = entry.kind === "owner" ? entry.attachments[0]?.name : entry.kind === "delivery" ? entry.title.zh : undefined;
+                setQuotes((all) => ({ ...all, [draftKey]: { id: entry.id, text: (entry.text?.trim() || fallback || text("conversation.quote")).slice(0, 240) } }));
+              } : undefined;
+              return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={topic} quote={quote} />;
             })}
           </div>
         </div>
-        <Composer working={working} canStop={conversationId !== null} send={send} stop={props.stop} draftKey={conversationId ?? ""} />
+        <Composer working={working} canStop={conversationId !== null} send={send} stop={props.stop} draftKey={draftKey}
+          quote={quotes[draftKey]} clearQuote={clearQuote} />
       </div>
       <aside className="rail" aria-label={text("conversation.list")}>
         <ConversationList list={props.list} current={conversationId} hrefOf={props.hrefOf} open={props.open} now={now} />

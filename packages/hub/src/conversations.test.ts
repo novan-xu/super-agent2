@@ -151,7 +151,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -352,7 +352,7 @@ describe("the topic stream", () => {
     expect(running.conversations.stream().entries.at(-1)).toMatchObject({ position: 4, entry: { id: next?.id } });
   });
 
-  it("pages by arrival, filters by repository, and sends to explicit or recently active topics", async () => {
+  it("pages by stream position, filters by repository and creates a fresh topic when the brain is offline", async () => {
     const running = await start();
     const firstResponse = await streamRequest(running, "", { text: "First" });
     expect(firstResponse.status).toBe(202);
@@ -366,8 +366,11 @@ describe("the topic stream", () => {
     const explicit = StreamEntry.parse(await (await streamRequest(running, "", { text: "Back to first", topic: first.topic.id })).json());
     expect(explicit.topic.id).toBe(first.topic.id);
     clock.advance(10);
-    const implicit = StreamEntry.parse(await (await streamRequest(running, "", { text: "Back to latest" })).json());
-    expect(implicit.topic.id).toBe(second.id);
+    const implicit = StreamEntry.parse(await (await streamRequest(running, "", {
+      text: "A separate project topic", scope: { kind: "repository", repository: "owner/project" },
+    })).json());
+    expect(implicit.topic).toMatchObject({ title: "A separate project topic", repository: "owner/project" });
+    expect(implicit.topic.id).not.toBe(second.id);
 
     const latest = StreamPage.parse(await (await streamRequest(running, "?limit=2")).json());
     expect(latest.entries.map(({ position }) => position)).toEqual([3, 4]);
@@ -386,9 +389,71 @@ describe("the topic stream", () => {
     expect((await streamRequest(running, "", { text: "Unknown", topic: "missing" })).status).toBe(404);
 
     running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(second.id);
-    expect(StreamEntry.parse(await (await streamRequest(running, "", { text: "Skip archived" })).json()).topic.id).toBe(first.topic.id);
     expect((await streamRequest(running, "", { text: "Reopen", topic: second.id })).status).toBe(202);
     expect(running.conversations.get(second.id)?.topicState).toBe("active");
+  });
+
+  it("offers only active topics within scope and lets all-code routing choose from open ticket repositories", async () => {
+    const running = await start();
+    const daily = running.conversations.create().id;
+    running.conversations.send(daily, "Daily context");
+    const project = openTicket(running, undefined, "owner/project").conversation!;
+    const archived = openTicket(running, undefined, "owner/archive").conversation!;
+    const ticketWithoutTopic = openTicket(running, undefined, "owner/tickets");
+    running.database.connection.prepare("UPDATE tickets SET conversation_id = NULL WHERE id = ?").run(ticketWithoutTopic.id);
+    running.database.connection.prepare("DELETE FROM conversations WHERE id = ?").run(ticketWithoutTopic.conversation);
+    running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(archived);
+    const requests: Extract<HubToBrain, { type: "route" }>[] = [];
+    const brain = running.conversations.attach({
+      close: () => undefined,
+      send: (message) => {
+        if (message.type !== "route") {
+          return;
+        }
+        requests.push(message);
+        const choice = message.scope.kind === "code"
+          ? message.text === "Unknown project"
+            ? { kind: "new" as const, title: "Which project" }
+            : { kind: "new" as const, title: "Work on a ticket", repository: "Owner/Tickets", possibleMatch: project }
+          : { kind: "existing" as const, topic: message.scope.kind === "daily" ? daily : project };
+        brain.receive({ type: "routed", request: message.request, choice });
+      },
+    });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+
+    const dailyReply = await running.conversations.sendToStream(undefined, "Another daily message", [], { scope: { kind: "daily" } });
+    expect(dailyReply?.topic.id).toBe(daily);
+    expect(requests[0]?.topics).toEqual([{ id: daily, title: "Daily context", repository: null, recent: [{ speaker: "owner", text: "Daily context" }] }]);
+    const projectReply = await running.conversations.sendToStream(undefined, "Continue work", [], { scope: { kind: "repository", repository: "OWNER/Project" } });
+    expect(projectReply?.topic.id).toBe(project);
+    expect(requests[1]?.topics.map(({ id }) => id)).toEqual([project]);
+
+    const codeReply = await running.conversations.sendToStream(undefined, "Work for owner/tickets", [], { scope: { kind: "code" } });
+    expect(requests[2]?.topics.map(({ id }) => id)).toEqual([project]);
+    expect(requests[2]?.repositories).toEqual(expect.arrayContaining(["owner/project", "owner/tickets"]));
+    expect(codeReply).toMatchObject({
+      topic: { title: "Work on a ticket", repository: "owner/tickets" },
+      entry: { possibleMatch: project, text: "Work for owner/tickets" },
+    });
+    const pending = await running.conversations.sendToStream(undefined, "Unknown project", [], { scope: { kind: "code" } });
+    expect(pending?.topic).toMatchObject({ title: "Which project", repository: null, needsRepository: true });
+    expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
+    expect(openTicket(running, pending?.topic.id).conversation).not.toBe(pending?.topic.id);
+    expect(openTicket(running, daily, "owner/project").conversation).not.toBe(daily);
+    expect(running.conversations.get(daily)?.repository).toBeNull();
+  });
+
+  it("recovers a message recorded before routing completed", async () => {
+    const first = await start();
+    first.database.connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)").run(
+      "pending", JSON.stringify({ message: "Saved before restart", attachments: [], scope: { kind: "code" } }), clock.now(),
+    );
+    await first.close();
+    const running = await start();
+    expect(running.conversations.stream().entries).toMatchObject([
+      { topic: { title: "Saved before restart", needsRepository: true }, entry: { id: "pending", text: "Saved before restart", taken: false } },
+    ]);
+    expect(running.database.connection.prepare("SELECT * FROM pending_topic_inputs").all()).toEqual([]);
   });
 
   it("watches all topics together, replays by global cursor and continues with deltas", async () => {

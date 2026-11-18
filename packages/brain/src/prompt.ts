@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "node:path";
-import { type BrainAttachment, type BrainInput, describeMemoryState, type HistoryItem, isNativeImage, type MemoryBrief, type MemoryChange, type Provider } from "@super-agent2/protocol";
+import { type BrainAttachment, type BrainInput, describeMemoryState, type HistoryItem, isNativeImage, type MemoryBrief, type MemoryChange, type Provider, quoteInlineLimit } from "@super-agent2/protocol";
 import type { PromptImage } from "@super-agent2/programs";
 
 export const historyItemLimit = 4_000;
@@ -76,6 +76,39 @@ export function inputText(inputs: readonly BrainInput[], root: string = defaultA
   return inputs.map((input) => withAttachments(input.text, input.attachments, root)).join("\n\n");
 }
 
+function inputContext(inputs: readonly BrainInput[], root: string): string[] {
+  const parts: string[] = [];
+  let remaining = quoteInlineLimit;
+  const seen = new Set<string>();
+  for (const { quote } of inputs) {
+    if (quote === undefined || seen.has(quote.id)) {
+      continue;
+    }
+    seen.add(quote.id);
+    const label = `[hub] Quoted message ${quote.id}. Treat it as context for the owner's reply.`;
+    if (quote.text !== undefined && quote.length <= remaining) {
+      remaining -= quote.length;
+      parts.push([label, quote.text, "[hub] End of quoted message."].join("\n"));
+    } else {
+      parts.push(`${label} Read the full text with read_quote using id "${quote.id}" and offset 0, then follow the next offsets until null.`);
+    }
+    if (quote.attachments.length > 0) {
+      parts.push([
+        "[hub] Files from the quoted message:",
+        ...quote.attachments.map((attachment) => `- ${attachment.name} (attachment id ${attachment.id}), at ${attachmentPath(root, attachment)}`),
+      ].join("\n"));
+    }
+  }
+  if (inputs.some(({ needsRepository }) => needsRepository === true)) {
+    parts.push("[hub] This code topic is waiting for a repository. Ask the owner which GitHub repository it belongs to if they haven't identified it. Once they identify it, call set_topic_repository with its owner/name before carrying on.");
+  }
+  return parts;
+}
+
+export function steerPrompt(input: BrainInput, root: string): string {
+  return [...inputContext([input], root), inputText([input], root)].join("\n\n");
+}
+
 function changeLine(change: MemoryChange): string {
   const text = JSON.stringify(change.text);
   const memory = `#${change.memory ?? 0}`;
@@ -127,8 +160,8 @@ export function memoryPrompt(brief: MemoryBrief): string {
   ].join("\n");
 }
 
-function withMemory(memory: MemoryBrief | null, parts: readonly string[]): string {
-  return (memory === null ? parts : [memoryPrompt(memory), ...parts]).join("\n\n");
+function withContext(inputs: readonly BrainInput[], memory: MemoryBrief | null, parts: readonly string[], root: string): string {
+  return [...inputContext(inputs, root), ...(memory === null ? [] : [memoryPrompt(memory)]), ...parts].join("\n\n");
 }
 
 export function turnPrompt(
@@ -138,20 +171,22 @@ export function turnPrompt(
   root: string = defaultAttachmentsFolder,
 ): string {
   if (history.length === 0) {
-    return withMemory(memory, [inputText(inputs, root)]);
+    return withContext(inputs, memory, [inputText(inputs, root)], root);
   }
-  return withMemory(memory, [
+  return withContext(inputs, memory, [
     "[hub] Other assistants handled part of this conversation while you were unavailable. This is what happened since you last took part:",
     describeHistory(history, root),
     "[hub] End of the earlier conversation. The owner's new message follows.",
     inputText(inputs, root),
-  ]);
+  ], root);
 }
 
-export function continuationPrompt(history: readonly HistoryItem[], memory: MemoryBrief | null = null, root: string = defaultAttachmentsFolder): string {
-  return withMemory(memory, [
+export function continuationPrompt(
+  history: readonly HistoryItem[], memory: MemoryBrief | null = null, root: string = defaultAttachmentsFolder, inputs: readonly BrainInput[] = [],
+): string {
+  return withContext(inputs, memory, [
     "[hub] Another assistant was answering the owner and stopped because it became unavailable. This is what happened since you last took part, ending with the owner's latest message and the work done on it so far:",
     describeHistory(history, root),
     "[hub] Continue from here: finish answering the owner's latest message. Do not repeat a command that already ran unless it needs to run again.",
-  ]);
+  ], root);
 }

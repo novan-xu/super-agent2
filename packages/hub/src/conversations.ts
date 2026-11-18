@@ -7,6 +7,7 @@ import {
   type BrainInput,
   type BrainMessage,
   type BrainProviders,
+  type BrainQuote,
   type BrainUpdate,
   type CommandRecord,
   Conversation,
@@ -25,9 +26,13 @@ import {
   type OwnerEntry,
   Provider,
   protocolVersion,
+  quoteChunkLimit,
+  quoteInlineLimit,
+  type RouteChoice,
   type StreamEntry,
   type StreamPage,
   streamPageSize,
+  TopicScope,
   Turn,
   type TurnOutcome,
   type TurnUpdate,
@@ -38,6 +43,7 @@ import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { commandReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
+import { topicInScope, topicRouter } from "./topic-routing.js";
 
 export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate;
 
@@ -62,8 +68,10 @@ export interface ConversationService {
   entries(id: string, after?: number): ConversationEntry[];
   stream(before?: number, limit?: number, repository?: string | null): StreamPage;
   streamAfter(after: number): StreamPage;
-  send(id: string, message: string, attachments?: readonly Attachment[]): OwnerEntry | undefined;
-  sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[]): StreamEntry | undefined;
+  send(id: string, message: string, attachments?: readonly Attachment[], quotedMessage?: string): OwnerEntry | undefined;
+  sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
+  readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
+  assignRepository(conversation: string, turn: string, repository: string): boolean;
   interrupt(id: string): Conversation | undefined;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
@@ -76,6 +84,11 @@ export interface ConversationService {
   attach(connection: BrainConnection): BrainLink;
   subscribe(listener: ConversationListener): () => void;
   close(): void;
+}
+
+interface StreamSendOptions {
+  readonly quotedMessage?: string | undefined;
+  readonly scope?: TopicScope | undefined;
 }
 
 export interface Delivery {
@@ -101,11 +114,11 @@ export interface MemoryBriefing {
   revision(): number;
 }
 
-export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean } = {}): string {
+export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean; needsRepository?: boolean } = {}): string {
   const id = randomUUID();
   database.connection
-    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository) VALUES (?, ?, 'idle', ?, ?, ?, ?)")
-    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null);
+    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, needs_repository) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?)")
+    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null, options.needsRepository === true ? 1 : 0);
   return id;
 }
 
@@ -122,6 +135,7 @@ const ConversationRow = z.object({
   state: z.string(),
   topic_state: z.string(),
   repository: z.string().nullable(),
+  needs_repository: z.number().int(),
   provider: z.string().nullable(),
   created_at: z.number().int(),
   updated_at: z.number().int(),
@@ -163,14 +177,19 @@ const Body = z.looseObject({
   input: z.string().optional(),
   output: z.string().optional(),
   state: z.string().optional(),
+  quotedMessage: z.string().optional(),
+  possibleMatch: z.string().optional(),
 });
+
+const PendingInput = z.object({ id: z.string(), created_at: z.number().int(), body: z.string() });
+const PendingBody = z.object({ message: z.string(), attachments: z.array(Attachment), scope: TopicScope });
 
 const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int(), memory_seen: z.number().int() });
 
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int() });
-const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable() });
+const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable(), needs_repository: z.number().int() });
 
 function toConversation(row: unknown): Conversation {
   const value = ConversationRow.parse(row);
@@ -180,6 +199,7 @@ function toConversation(row: unknown): Conversation {
     state: value.state,
     topicState: value.topic_state,
     repository: value.repository,
+    ...(value.needs_repository === 1 ? { needsRepository: true } : {}),
     provider: value.provider,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
@@ -188,7 +208,11 @@ function toConversation(row: unknown): Conversation {
 
 function toStreamEntry(row: unknown): StreamEntry {
   const value = StreamRow.parse(row);
-  return { position: value.stream_seq, topic: { id: value.conversation_id, title: value.topic_title, repository: value.repository }, entry: toEntry(value) };
+  const topic = {
+    id: value.conversation_id, title: value.topic_title, repository: value.repository,
+    ...(value.needs_repository === 1 ? { needsRepository: true as const } : {}),
+  };
+  return { position: value.stream_seq, topic, entry: toEntry(value) };
 }
 
 function toTurn(row: unknown): Turn {
@@ -210,7 +234,11 @@ function toEntry(row: EntryRow): ConversationEntry {
   const base = { id: row.id, conversation: row.conversation_id, seq: row.seq, at: row.created_at };
   switch (row.kind) {
     case "owner":
-      return ConversationEntry.parse({ ...base, kind: "owner", text: body.text, attachments: body.attachments ?? [], taken: row.taken === 1 });
+      return ConversationEntry.parse({
+        ...base, kind: "owner", text: body.text, attachments: body.attachments ?? [], taken: row.taken === 1,
+        ...(body.quotedMessage === undefined ? {} : { quotedMessage: body.quotedMessage }),
+        ...(body.possibleMatch === undefined ? {} : { possibleMatch: body.possibleMatch }),
+      });
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id });
     case "delivery":
@@ -244,8 +272,9 @@ function forBrain(attachments: readonly Attachment[]): BrainAttachment[] {
 }
 
 function titleOf(message: string, attachments: readonly Attachment[] = []): string {
-  const line = message.trim().split(/\r?\n/)[0] || (attachments[0]?.name ?? "");
-  return [...line].length > titleLength ? `${[...line].slice(0, titleLength - 1).join("")}…` : line;
+  const line = message.trim().slice(0, titleLength * 2).split(/\r?\n/, 1)[0] || (attachments[0]?.name ?? "");
+  const characters = [...line];
+  return characters.length > titleLength ? `${characters.slice(0, titleLength - 1).join("")}…` : line;
 }
 
 function deliveryHistory(entry: DeliveryEntry): string {
@@ -268,6 +297,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const { clock, commands, tickets } = options;
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
+  let closing = false;
   let brainProviders: BrainProviders | undefined;
   const brainListeners = new Set<() => void>();
   const brainChanged = () => {
@@ -281,13 +311,16 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
+  const assignPendingRepository = connection.prepare(`
+    UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
+    WHERE id = ? AND needs_repository = 1 AND EXISTS (
+      SELECT 1 FROM turns WHERE id = ? AND conversation_id = conversations.id AND state = 'running' AND ticket_writes_revoked = 0
+    )
+  `);
   const selectConversations = connection.prepare("SELECT * FROM conversations ORDER BY updated_at DESC, rowid DESC LIMIT ?");
-  const selectActive = connection.prepare(
-    `SELECT * FROM conversations AS c WHERE topic_state = 'active'
-     ORDER BY updated_at DESC, (
-       SELECT max(stream_seq) FROM conversation_entries WHERE conversation_id = c.id
-     ) DESC, c.rowid DESC LIMIT 1`,
-  );
+  const savePending = connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)");
+  const listPending = connection.prepare("SELECT * FROM pending_topic_inputs ORDER BY created_at, rowid");
+  const deletePending = connection.prepare("DELETE FROM pending_topic_inputs WHERE id = ?");
   const selectSystem = connection.prepare("SELECT * FROM conversations WHERE system = 1");
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
   const selectTurns = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? ORDER BY started_at, rowid");
@@ -299,6 +332,9 @@ export function createConversationService(options: ConversationServiceOptions): 
   const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
   const selectEntry = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?");
+  const hasQuote = connection.prepare(`
+    SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' AND json_extract(body, '$.quotedMessage') = ? LIMIT 1
+  `);
   const selectEntries = connection.prepare(
     "SELECT * FROM conversation_entries WHERE conversation_id = ? AND (seq > ? OR turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY seq",
   );
@@ -309,10 +345,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
-  const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
+  const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository, c.needs_repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
   const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
   const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
-  const selectStreamProject = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? AND c.repository IS ? COLLATE NOCASE ORDER BY e.stream_seq DESC LIMIT ?`);
+  const selectStreamProject = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? AND c.repository IS ? COLLATE NOCASE AND c.needs_repository = 0 ORDER BY e.stream_seq DESC LIMIT ?`);
   const selectStreamAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ORDER BY e.stream_seq`);
   const updateBody = connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?");
   const markTaken = connection.prepare(
@@ -373,6 +409,18 @@ export function createConversationService(options: ConversationServiceOptions): 
     return row === undefined ? undefined : toEntry(EntryRow.parse(row));
   };
 
+  const quoteOf = (id: string) => {
+    const entry = getEntry(id);
+    if (entry === undefined || entry.kind === "tool") {
+      return undefined;
+    }
+    return {
+      conversation: entry.conversation,
+      text: entry.kind === "delivery" ? (entry.text ?? entry.report?.zh ?? entry.title.zh) : entry.text,
+      attachments: entry.kind === "owner" ? forBrain(entry.attachments) : [],
+    };
+  };
+
   const announce = (id: string) => {
     const conversation = get(id);
     if (conversation !== undefined) {
@@ -380,10 +428,14 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
-  const updateConversation = (id: string, fields: Readonly<Record<string, string | number | null>>) => {
+  const writeConversation = (id: string, fields: Readonly<Record<string, string | number | null>>) => {
     const names = Object.keys(fields);
     const assignments = [...names.map((name) => `${name} = ?`), "updated_at = ?"].join(", ");
     connection.prepare(`UPDATE conversations SET ${assignments} WHERE id = ?`).run(...names.map((name) => fields[name] ?? null), clock.now(), id);
+  };
+
+  const updateConversation = (id: string, fields: Readonly<Record<string, string | number | null>>) => {
+    writeConversation(id, fields);
     announce(id);
   };
 
@@ -411,9 +463,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     readonly provider?: Provider | null;
     readonly body: Readonly<Record<string, unknown>>;
     readonly prompt?: string;
+    readonly at?: number;
   }
 
-  const addEntry = (entry: NewEntry): string => {
+  const writeEntry = (entry: NewEntry): string => {
     const id = entry.id ?? randomUUID();
     insertEntry.run(
       id,
@@ -425,8 +478,13 @@ export function createConversationService(options: ConversationServiceOptions): 
       JSON.stringify(entry.body),
       entry.prompt ?? null,
       entry.prompt === undefined ? null : 0,
-      clock.now(),
+      entry.at ?? clock.now(),
     );
+    return id;
+  };
+
+  const addEntry = (entry: NewEntry): string => {
+    const id = writeEntry(entry);
     emitEntry(id);
     return id;
   };
@@ -457,13 +515,28 @@ export function createConversationService(options: ConversationServiceOptions): 
       return false;
     }
   };
+  const router = topicRouter(options.database, sendToBrain);
 
   const deliver = (row: EntryRow) => {
     if (row.prompt === null) {
       return;
     }
-    const attached = row.kind === "owner" ? z.array(Attachment).catch([]).parse(Body.parse(JSON.parse(row.body)).attachments ?? []) : [];
+    const body = row.kind === "owner" ? Body.parse(JSON.parse(row.body)) : undefined;
+    const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
     const input: BrainInput = { id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached) };
+    if (body?.quotedMessage !== undefined) {
+      const quoted = quoteOf(body.quotedMessage);
+      if (quoted !== undefined) {
+        const quote: BrainQuote = { id: body.quotedMessage, length: quoted.text.length, attachments: quoted.attachments };
+        if (quoted.text.length <= quoteInlineLimit) {
+          quote.text = quoted.text;
+        }
+        input.quote = quote;
+      }
+    }
+    if (body !== undefined && get(row.conversation_id)?.needsRepository === true) {
+      input.needsRepository = true;
+    }
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
@@ -529,6 +602,10 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const receive = (message: BrainMessage) => {
     switch (message.type) {
+      case "routed": {
+        router.answer(message.request, message.choice);
+        return;
+      }
       case "providers": {
         brainProviders = message;
         brainChanged();
@@ -759,20 +836,65 @@ export function createConversationService(options: ConversationServiceOptions): 
       prompt: delivery.prompt,
     });
 
-  const send = (id: string, message: string, attachments: readonly Attachment[] = []): OwnerEntry | undefined => {
-    const conversation = get(id);
-    if (conversation === undefined) {
+  const publishOwner = (id: string): StreamEntry => {
+    const row = selectStreamEntry.get(id);
+    const item = toStreamEntry(row);
+    announce(item.topic.id);
+    emit({ type: "entry", ...item });
+    deliver(EntryRow.parse(row));
+    return item;
+  };
+
+  const writeOwner = (
+    conversation: Conversation, message: string, attachments: readonly Attachment[],
+    { quotedMessage, possibleMatch, id, at }: { quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number } = {},
+  ): string => {
+    writeConversation(conversation.id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
+    return writeEntry({
+      ...(id === undefined ? {} : { id }), ...(at === undefined ? {} : { at }),
+      conversation: conversation.id, kind: "owner", turn: null,
+      body: { text: message, attachments, quotedMessage, possibleMatch }, prompt: message,
+    });
+  };
+
+  const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string): StreamEntry | undefined => {
+    const quote = quotedMessage === undefined ? undefined : quoteOf(quotedMessage);
+    if (quotedMessage !== undefined && (quote === undefined || (topic !== undefined && topic !== quote.conversation))) {
       return undefined;
     }
-    updateConversation(id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
-    const entryId = addEntry({ conversation: id, kind: "owner", turn: null, body: { text: message, attachments }, prompt: message });
-    const row = selectEntry.get(entryId);
-    if (row !== undefined) {
-      deliver(EntryRow.parse(row));
-    }
-    const entry = getEntry(entryId);
-    return entry?.kind === "owner" ? entry : undefined;
+    const id = topic ?? quote?.conversation;
+    const conversation = id === undefined ? undefined : get(id);
+    return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage }));
   };
+
+  const finishRouting = (id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, choice: RouteChoice | null): StreamEntry => {
+    const candidate = (topic: string | undefined) => {
+      const found = topic === undefined ? undefined : get(topic);
+      return found?.topicState === "active" && topicInScope(found, scope) ? found : undefined;
+    };
+    let conversation = candidate(choice?.kind === "existing" ? choice.topic : undefined);
+    const match = choice?.kind === "new" ? candidate(choice.possibleMatch) : undefined;
+    const repository = scope.kind === "repository" ? scope.repository : (choice?.kind === "new" ? choice.repository ?? null : null);
+    connection.exec("BEGIN IMMEDIATE");
+    try {
+      if (conversation === undefined) {
+        const title = choice?.kind === "new" ? choice.title : titleOf(message, attachments);
+        const topic = storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null });
+        conversation = toConversation(selectConversation.get(topic));
+      }
+      writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
+      deletePending.run(id);
+      connection.exec("COMMIT");
+    } catch (error) {
+      connection.exec("ROLLBACK");
+      throw error;
+    }
+    return publishOwner(id);
+  };
+
+  for (const row of listPending.all().map((row) => PendingInput.parse(row))) {
+    finishRouting(row.id, row.created_at, PendingBody.parse(JSON.parse(row.body)), null);
+  }
 
   return {
     create,
@@ -803,12 +925,39 @@ export function createConversationService(options: ConversationServiceOptions): 
       const entries = selectStreamAfter.all(after).map(toStreamEntry);
       return { entries, turns: streamTurns(entries), before: null };
     },
-    send,
-    sendToStream: (topic, message, attachments) => {
-      const latest = topic === undefined ? selectActive.get() : undefined;
-      const id = topic ?? (latest === undefined ? create().id : toConversation(latest).id);
-      const entry = send(id, message, attachments);
-      return entry === undefined ? undefined : toStreamEntry(selectStreamEntry.get(entry.id));
+    send: (topic, message, attachments = [], quotedMessage) => {
+      const item = sendDirect(topic, message, attachments, quotedMessage);
+      return item?.entry.kind === "owner" ? item.entry : undefined;
+    },
+    sendToStream: async (topic, message, attachments, { quotedMessage, scope = { kind: "daily" } as const } = {}) => {
+      if (topic !== undefined || quotedMessage !== undefined) {
+        return sendDirect(topic, message, attachments, quotedMessage);
+      }
+      const id = randomUUID();
+      const at = clock.now();
+      const body = { message, attachments: [...attachments], scope };
+      savePending.run(id, JSON.stringify(body), at);
+      const choice = await router.route(id, scope, message, attachments.map(({ name }) => name));
+      return closing ? undefined : finishRouting(id, at, body, choice);
+    },
+    readQuote: (conversation, id, offset) => {
+      const quote = hasQuote.get(conversation, id) === undefined ? undefined : quoteOf(id);
+      if (quote === undefined || offset > quote.text.length) {
+        return undefined;
+      }
+      let end = Math.min(offset + quoteChunkLimit, quote.text.length);
+      const last = quote.text.charCodeAt(end - 1);
+      if (end < quote.text.length && last >= 0xd800 && last <= 0xdbff) {
+        end += 1;
+      }
+      return { text: quote.text.slice(offset, end), next: end < quote.text.length ? end : null };
+    },
+    assignRepository: (conversation, turn, repository) => {
+      if (link?.ready !== true || assignPendingRepository.run(repository, clock.now(), conversation, turn).changes === 0) {
+        return false;
+      }
+      announce(conversation);
+      return true;
     },
     interrupt: (id) => {
       const conversation = get(id);
@@ -850,6 +999,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       const previous = link;
       const current = { connection, ready: false };
       link = current;
+      router.disconnect();
       previous?.connection.close();
       if (previous === undefined) {
         emit({ type: "brain", brain: { linked: true } });
@@ -865,6 +1015,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         detach: () => {
           if (link === current) {
             link = undefined;
+            router.disconnect();
             brainProviders = undefined;
             emit({ type: "brain", brain: { linked: false } });
             brainChanged();
@@ -879,6 +1030,8 @@ export function createConversationService(options: ConversationServiceOptions): 
       };
     },
     close: () => {
+      closing = true;
+      router.disconnect();
       unsubscribeCommands();
       link?.connection.close();
       link = undefined;

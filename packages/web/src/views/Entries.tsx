@@ -26,7 +26,7 @@ export function dayLabel(day: Day, thisYear: number): string {
   return day.year === thisYear ? text("day.date", { month: day.month, day: day.day }) : text("day.dateWithYear", day);
 }
 
-const OwnerMessage = memo(function OwnerMessage({ entry, topic }: { readonly entry: OwnerEntry; readonly topic?: ReactNode }) {
+const OwnerMessage = memo(function OwnerMessage({ entry, topic, action }: { readonly entry: OwnerEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
   return (
     <div className="msg msg--me">
       <div className="msg-who">
@@ -35,6 +35,7 @@ const OwnerMessage = memo(function OwnerMessage({ entry, topic }: { readonly ent
           <span className="dot dot--mute" role="img" aria-label={text("message.waiting")} title={text("message.waiting")} />
         )}
         <span className="num">{clockOf(entry.at)}</span>
+        {action}
       </div>
       {entry.text === "" ? null : <div className="msg-text msg-plain">{entry.text}</div>}
       <SentAttachments attachments={entry.attachments} />
@@ -55,18 +56,21 @@ const BrainText = memo(function BrainText({
   lead,
   live,
   topic,
+  action,
 }: {
   readonly entry: TextEntry;
   readonly lead: boolean;
   readonly live: boolean;
   readonly topic?: ReactNode;
+  readonly action?: ReactNode;
 }) {
   return (
     <div className={lead ? "msg msg--brain" : "msg msg--brain msg--more"}>
-      {lead || topic !== undefined ? (
+      {lead || topic !== undefined || action !== undefined ? (
         <div className="msg-who">
           {lead ? <><Logo size={16} /><strong>{text("brain.name")}</strong><span className="num">{clockOf(entry.at)}</span></> : null}
           {topic}
+          {action}
         </div>
       ) : null}
       <TextBody text={entry.text} live={live} />
@@ -92,9 +96,10 @@ export interface DeliveryBodyProps {
   readonly report?: string | null;
   readonly files: readonly { readonly name: string; readonly size: number }[];
   readonly topic?: ReactNode;
+  readonly action?: ReactNode;
 }
 
-export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files, topic }: DeliveryBodyProps) {
+export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files, topic, action }: DeliveryBodyProps) {
   return (
     <div className="msg delivery">
       <div className="msg-who">
@@ -102,6 +107,7 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
         <strong>{title}</strong>
         <span className="num">{clockOf(at)}</span>
         {topic}
+        {action}
       </div>
       {body === null ? report === null ? null : <div className="msg-text msg-plain">{report}</div> : <div className="msg-text msg-plain delivery-text">{body}</div>}
       {files.length === 0 ? null : (
@@ -119,17 +125,18 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
   );
 });
 
-function Delivery({ entry, topic }: { readonly entry: DeliveryEntry; readonly topic?: ReactNode }) {
-  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} topic={topic} />;
+function Delivery({ entry, topic, action }: { readonly entry: DeliveryEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
+  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} topic={topic} action={action} />;
 }
 
-function Notice({ entry, topic }: { readonly entry: NoticeEntry; readonly topic?: ReactNode }) {
+function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
   return (
     <div className="sysline sysline--note">
       <Icon name="swap" />
       <span>{entry.text}</span>
       {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href="/settings/models">{text("notice.newModelsLink")}</a> : null}
       {topic}
+      {action}
     </div>
   );
 }
@@ -145,7 +152,12 @@ function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNod
   );
 }
 
-export function StreamEntry({ item, thisYear, topic }: { readonly item: StreamItem; readonly thisYear: number; readonly topic?: ReactNode }) {
+export function StreamEntry({ item, thisYear, topic, quote }: {
+  readonly item: StreamItem;
+  readonly thisYear: number;
+  readonly topic?: ReactNode;
+  readonly quote?: (() => void) | undefined;
+}) {
   switch (item.kind) {
     case "day":
       return <div className="day">{dayLabel(item.day, thisYear)}</div>;
@@ -155,15 +167,20 @@ export function StreamEntry({ item, thisYear, topic }: { readonly item: StreamIt
       return <Ended turn={item.turn} topic={topic} />;
     case "entry": {
       const { entry } = item;
+      const action = quote === undefined ? undefined : (
+        <button className="icon-btn message-quote" type="button" aria-label={text("conversation.quote")} title={text("conversation.quote")} onClick={quote}>
+          <Icon name="reply" size={16} />
+        </button>
+      );
       switch (entry.kind) {
         case "owner":
-          return <OwnerMessage entry={entry} topic={topic} />;
+          return <OwnerMessage entry={entry} topic={topic} action={action} />;
         case "text":
-          return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} />;
+          return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} action={action} />;
         case "notice":
-          return <Notice entry={entry} topic={topic} />;
+          return <Notice entry={entry} topic={topic} action={action} />;
         case "delivery":
-          return <Delivery entry={entry} topic={topic} />;
+          return <Delivery entry={entry} topic={topic} action={action} />;
       }
     }
   }

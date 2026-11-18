@@ -24,6 +24,7 @@ export interface OpenOptions {
   readonly session: string | null;
   readonly tools: ToolEndpoint | null;
   readonly workspace: string;
+  readonly textOnly?: boolean;
 }
 
 export type SteerResult = "steered" | "queued";

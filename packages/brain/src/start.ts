@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
-import { brainToolsPath, providers } from "@super-agent2/protocol";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { brainToolsPath, providers, startingEngineTable } from "@super-agent2/protocol";
 import { type Brain, createBrain } from "./brain.js";
 import type { Clock } from "@super-agent2/programs";
 import { type BrainConfig, loadBrainConfig } from "./config.js";
 import { createHubLink, type HubLink } from "./link.js";
 import type { ProgramAdapter } from "@super-agent2/programs";
-import { programAdapter } from "@super-agent2/programs";
+import { conversationVariable, programAdapter, toolTokenVariable, turnVariable } from "@super-agent2/programs";
 import { startProgramUpdates } from "./program-update.js";
 import { join, delimiter } from "node:path";
 import { prepareWorkspace } from "./workspace.js";
@@ -24,6 +25,21 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
   const adapters = new Map<BrainConfig["order"][number], ProgramAdapter>(
     providers.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment: programEnvironment, clock })]),
   );
+  const routerWorkspace = mkdtempSync(join(tmpdir(), "super-agent2-router-"));
+  const routerEnvironment = { ...programEnvironment };
+  delete routerEnvironment[toolTokenVariable];
+  delete routerEnvironment[conversationVariable];
+  delete routerEnvironment[turnVariable];
+  const routerModels = {
+    claude: startingEngineTable.claude.mechanical.model,
+    gpt: startingEngineTable.codex.mechanical.model,
+    deepseek: startingEngineTable.dsh.mechanical.model,
+  };
+  const routerAdapters = new Map<BrainConfig["order"][number], ProgramAdapter>(
+    providers.map((provider) => [provider, programAdapter(provider, {
+      ...config.providers[provider], model: routerModels[provider], effort: "low", environment: routerEnvironment, clock, processTree: true,
+    })]),
+  );
   const link = createHubLink({ hubUrl: config.hubUrl, token, report });
   const brain = createBrain({
     adapters,
@@ -34,6 +50,7 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     workspace: config.workspace,
     attachments: config.attachments,
     maximumOpen: config.maximumOpen,
+    router: { adapters: routerAdapters, workspace: routerWorkspace },
   });
   const stopUpdates = programDir === undefined ? () => undefined : startProgramUpdates(brain, programDir, report);
   link.bind({ receive: (message) => brain.receive(message), running: () => brain.running(), status: () => brain.status() });
@@ -44,7 +61,11 @@ export function startBrain(config: BrainConfig, environment: Readonly<Record<str
     close: async () => {
       stopUpdates();
       await link.close();
-      await brain.close();
+      try {
+        await brain.close();
+      } finally {
+        rmSync(routerWorkspace, { recursive: true, force: true });
+      }
     },
   };
 }
