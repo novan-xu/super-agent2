@@ -3259,6 +3259,13 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   works in both Bash and PowerShell, the shells the workers use.
 - **Other options:** A Mac mini as the target; a recipe in words instead of commands.
 
+## 2026-11-18 — Deploy Super-agent2 from the Mac mini
+
+- **Chosen:** `.superagent2/deployment.json` names `mac-mini` as its target. The deploy, health and rollback commands
+  continue to use `novan-nas-maintenance`.
+- **Why:** The owner requires deployments to run from the Mac mini because the PC is often unavailable; the Mac mini has the same SSH alias to the NAS.
+- **Other options:** Keep `pc` as the target, or change the SSH commands or allow multiple deployment machines.
+
 ## 2026-11-17 — What broke when the hub was replaced under a running task ticket
 
 - **Chosen:** Two things, both fixed and covered by `packages/runner/src/end-to-end.test.ts`, which runs a real hub and a
