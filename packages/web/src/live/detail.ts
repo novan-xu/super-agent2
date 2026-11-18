@@ -1,4 +1,4 @@
-import type { StoredWorkEvent, Ticket, TicketDetail, TicketMove, TicketRound, WorkStatus } from "@super-agent2/protocol";
+import type { StoredWorkEvent, Ticket, TicketDetail, TicketMove, TicketRound, TicketSwitch, WorkStatus } from "@super-agent2/protocol";
 import { type AttemptLog, emptyLog, receiveWork, type WorkLog } from "./work.js";
 
 export interface DetailState {
@@ -7,12 +7,13 @@ export interface DetailState {
   readonly moves: readonly TicketMove[];
   readonly attempts: readonly WorkStatus[];
   readonly rounds: readonly TicketRound[];
+  readonly switches: readonly TicketSwitch[];
   readonly missing: boolean;
   readonly log: WorkLog;
 }
 
 export function openDetail(id: number): DetailState {
-  return { id, ticket: null, moves: [], attempts: [], rounds: [], missing: false, log: emptyLog(id) };
+  return { id, ticket: null, moves: [], attempts: [], rounds: [], switches: [], missing: false, log: emptyLog(id) };
 }
 
 function newer(before: Ticket | null, ticket: Ticket): boolean {
@@ -24,7 +25,7 @@ export function receiveDetail(state: DetailState, detail: TicketDetail): DetailS
     return state;
   }
   const ticket = newer(state.ticket, detail.ticket) ? detail.ticket : state.ticket;
-  return { ...state, ticket, moves: detail.moves, attempts: detail.attempts, rounds: detail.rounds, missing: false };
+  return { ...state, ticket, moves: detail.moves, attempts: detail.attempts, rounds: detail.rounds, switches: detail.switches, missing: false };
 }
 
 export function receiveMissing(state: DetailState): DetailState {
@@ -51,6 +52,13 @@ export function needsMoves(state: DetailState, ticket: Ticket): boolean {
   if (before !== null && (before.round !== ticket.round || before.freeRetry !== ticket.freeRetry)) {
     return true;
   }
+  const work = ticket.work;
+  if (work !== null) {
+    const known = state.attempts.find((attempt) => attempt.attempt === work.attempt);
+    if (known === undefined || (known.state !== work.state && work.state === "unavailable")) {
+      return true;
+    }
+  }
   const last = state.moves.at(-1);
   return last === undefined ? ticket.state !== "pending" : last.to !== ticket.state;
 }
@@ -63,6 +71,7 @@ export function receiveDetailWork(state: DetailState, events: readonly StoredWor
 export type TimelineEntry =
   | { readonly kind: "filed"; readonly key: string; readonly at: number }
   | { readonly kind: "move"; readonly key: string; readonly at: number; readonly move: TicketMove }
+  | { readonly kind: "switch"; readonly key: string; readonly at: number; readonly entry: TicketSwitch }
   | {
       readonly kind: "attempt";
       readonly key: string;
@@ -74,7 +83,7 @@ export type TimelineEntry =
       readonly round: TicketRound | null;
     };
 
-const order: Readonly<Record<TimelineEntry["kind"], number>> = { filed: 0, move: 1, attempt: 2 };
+const order: Readonly<Record<TimelineEntry["kind"], number>> = { filed: 0, move: 1, switch: 2, attempt: 3 };
 
 export function timeline(state: DetailState): TimelineEntry[] {
   const ticket = state.ticket;
@@ -86,6 +95,9 @@ export function timeline(state: DetailState): TimelineEntry[] {
     if (move.from !== null) {
       entries.push({ kind: "move", key: `move-${move.seq}`, at: move.at, move });
     }
+  }
+  for (const entry of state.switches) {
+    entries.push({ kind: "switch", key: `switch-${entry.seq}`, at: entry.at, entry });
   }
   const numbers = new Set<number>([...state.attempts.map((attempt) => attempt.attempt), ...state.log.attempts.map((attempt) => attempt.attempt)]);
   const latest = Math.max(0, ...numbers);
@@ -105,6 +117,9 @@ export function timeline(state: DetailState): TimelineEntry[] {
     }
     if (a.kind === "move" && b.kind === "move") {
       return a.move.seq - b.move.seq;
+    }
+    if (a.kind === "switch" && b.kind === "switch") {
+      return a.entry.seq - b.entry.seq;
     }
     if (a.kind === "attempt" && b.kind === "attempt") {
       return a.number - b.number;

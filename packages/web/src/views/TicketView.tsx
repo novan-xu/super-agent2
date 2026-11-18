@@ -166,6 +166,38 @@ function MoveEntry({ entry, now }: { readonly entry: Extract<TimelineEntry, { re
   );
 }
 
+function SwitchEntry({ entry, now }: { readonly entry: Extract<TimelineEntry, { readonly kind: "switch" }>; readonly now: number }) {
+  const item = entry.entry;
+  const from = engineName(item.from);
+  const to = item.to === null ? "" : engineName(item.to);
+  const model = item.model ?? "";
+  const effort = item.effort ?? "";
+  const head = item.kind === "switched" ? "timeline.switched" : item.kind === "waiting" ? "timeline.waitingProvider" : "timeline.providerBack";
+  const body =
+    item.kind === "switched"
+      ? text(item.owner ? "timeline.switchedOwner" : "timeline.switchedBody", { from, to, model, effort })
+      : item.kind === "waiting"
+        ? item.until === null
+          ? text("timeline.waitingBody", { from })
+          : text("timeline.waitingAt", { from, time: momentOf(item.until, now) })
+        : text("timeline.providerBackBody", { from });
+  return (
+    <li className={`tl${item.kind === "waiting" ? " tl--bad" : ""}`}>
+      <span className="tl-rail">
+        <span className="tl-dot" />
+      </span>
+      <div className="tl-body">
+        <div className="tl-head">
+          <strong>{text(head)}</strong>
+          <span className="muted">{momentOf(entry.at, now)}</span>
+        </div>
+        <div className="tl-text">{body}</div>
+        {item.reason === "" ? null : <div className="reason-raw">{item.reason}</div>}
+      </div>
+    </li>
+  );
+}
+
 function FiledEntry({ ticket, now }: { readonly ticket: Ticket; readonly now: number }) {
   return (
     <li className="tl">
@@ -739,6 +771,8 @@ export function TicketView({ detail, known, actions, origin, backHref, back, now
                   return <FiledEntry key={entry.key} ticket={ticket} now={now} />;
                 case "move":
                   return <MoveEntry key={entry.key} entry={entry} now={now} />;
+                case "switch":
+                  return <SwitchEntry key={entry.key} entry={entry} now={now} />;
                 case "attempt":
                   return <AttemptEntry key={entry.key} entry={entry} ticket={ticket} now={now} />;
               }

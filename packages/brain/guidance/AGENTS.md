@@ -183,8 +183,14 @@ for any chain an arrangement changed.
 - Platform: `macos` or `windows` when the work needs that system (building or testing something that only runs there),
   otherwise `any`.
 - Engine: read what is left on the GPT and Claude subscriptions with `read_allowance`, and choose `codex` (GPT) or
-  `claude` (Claude Code) by it, sparing the one with less left. An unknown reading is not used up. You never choose
-  `dsh`: the hub uses it only when both subscriptions are used up.
+  `claude` (Claude Code) by it, sparing the one with less left. An unknown reading is not used up: it mostly means no
+  machine could ask, not that the subscription is empty. `read_allowance` also lists the worker programs the hub has
+  marked unavailable because one of them reported it when a worker really called it (a used-up subscription, a rate
+  limit, a failed login, an overloaded service); a marked program counts as used up, and the hub's default follows. You
+  never choose `dsh`: the hub uses it only when both Codex and Claude Code are used up or marked, and it follows the
+  owner's order of providers (Claude, then GPT, then DeepSeek, unless the owner changed the first two).
+- A provider that becomes unavailable while a worker runs is not your concern: the hub switches that worker to the
+  next provider by itself, see "When a provider is unavailable" below.
 - The hub resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the
   model and effort from its table by engine and difficulty. The answer says what each chain would run with, or what is
   still missing, such as no machine online for its platform. Tell the owner, in Chinese, when something is missing.
@@ -298,11 +304,38 @@ machine.
   }
   ```
 
+## When a provider is unavailable
+
+When the program of a worker reports itself unavailable (a used-up subscription, a rate limit, a failed login, an
+overloaded or failing service), the hub continues the ticket on the next provider by itself, in the owner's order, with
+no failure, no guided round and no message to you. It uses the same machine when that machine has the next program,
+and for a code ticket otherwise another machine that fits the platform; the model and effort come from the start
+table for that provider and the ticket's difficulty. The new program is told that an earlier worker on another program
+worked in the same folder and stopped, and what state it finds: the branch, its commits, uncommitted changes, pull
+requests handed in or merged, issues closed, the messages the earlier worker was given and the end of its output. The
+owner's explicit choice of provider on the card is also switched away from when that provider is unavailable, and the
+ticket's timeline says so.
+
+- The hub remembers a provider as unavailable until the time the program gave, or for a short hold when it gave none,
+  or until a later attempt on it succeeds or a newer allowance reading shows it available; tickets started meanwhile
+  default to another provider. `read_allowance` lists what is marked.
+- When Claude Code and Codex are both unavailable the ticket goes to `dsh`; Antigravity unavailable for prose goes to
+  the code providers in the owner's order.
+- When every provider that could run a ticket is unavailable, the ticket waits and the hub tries again by itself when the
+  earliest time passes or a reading shows one back. You get one `[hub]` message that says it waits for a provider.
+  Nothing is asked of you: tell the owner in Chinese in a line, and do not guide, stop or reassign it for this. It is not
+  a failure and no round is counted.
+
 ## When work fails
 
 A `[hub]` message tells you when a ticket's work failed: a red workflow, with the failing step's log; a worker that
-ended without a pull request, or crashed, with the end of its output; a task worker that handed back failed, with its
-report (a deployment that did not come up, say); a worker its machine lost. Long logs are cut to their end, where the failure is. Nobody
+ended without a pull request, or whose program crashed or reported an error, with the end of its output; a task worker
+that handed back failed, with its report (a deployment that did not come up, say); a worker its machine lost. A
+`program` failure means the program itself went wrong. It never means a provider was unavailable (a used-up
+subscription, a rate limit, a failed login, an overloaded service): the hub handles that without you, see below. The one
+time a `program` failure says a provider was unavailable is when no other provider could take the work at all, and the
+message then says exactly that: no machine offers any provider with the model and effort the start table gives; guide
+it only if you can see what to change, and otherwise tell the owner. Long logs are cut to their end, where the failure is. Nobody
 needs to be at a computer: you answer the message, and the worker tries again.
 
 - Read the failure before anything else. Find the line that says what went wrong: the failing test and its assertion,

@@ -1,12 +1,21 @@
 import {
+  activeMarks,
   type AllowanceStates,
   EngineTable,
+  engineOrder,
+  type EngineContext,
   type MachineChoice,
   type MachineReading,
   machineChoices,
   machinesFor,
   type MachineStatus,
   type OwnerChoice,
+  type Provider,
+  ProgramId,
+  type ProviderMark,
+  type ProviderOut,
+  type ProviderUnavailable,
+  providersOut,
   resolveStart,
   type StartChoice,
   startingEngineTable,
@@ -26,6 +35,11 @@ export interface StartDefaults {
   table(): EngineTable;
   setTable(table: EngineTable): EngineTable;
   subscriptions(): Subscriptions;
+  unavailable(): ProviderUnavailable[];
+  out(): Map<ProgramId, ProviderOut>;
+  order(prose: boolean): ProgramId[];
+  markUnavailable(program: ProgramId, reason: string, until: number | null): void;
+  recovered(program: ProgramId, at: number): boolean;
   machines(): MachineChoice[];
   machinesFor(ticket: Ticket): MachineChoice[];
   resolve(ticket: Ticket, owner?: OwnerChoice): StartChoice;
@@ -38,11 +52,14 @@ export interface StartDefaultsOptions {
   readonly clock: Clock;
   readonly statuses: () => readonly MachineStatus[];
   readonly adjust?: SubscriptionAdjustment;
+  readonly providerOrder?: () => readonly Provider[] | undefined;
 }
 
 const tableKey = "engine_table";
 
 const ValueRow = z.object({ value: z.string() });
+
+const MarkRow = z.object({ program: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable() });
 
 export function allowanceStatesOf(subscriptions: Subscriptions): AllowanceStates {
   return { codex: subscriptions.codex.state, claude: subscriptions.claude.state };
@@ -74,6 +91,12 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     }
   };
 
+  const selectMarks = connection.prepare("SELECT * FROM provider_marks ORDER BY program");
+  const upsertMark = connection.prepare(
+    "INSERT INTO provider_marks (program, reason, since, until) VALUES (?, ?, ?, ?) ON CONFLICT (program) DO UPDATE SET reason = excluded.reason, since = excluded.since, until = excluded.until",
+  );
+  const deleteMark = connection.prepare("DELETE FROM provider_marks WHERE program = ? AND since < ?");
+
   const changed = () => {
     for (const listener of listeners) {
       try {
@@ -91,6 +114,33 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
 
   const machines = (): MachineChoice[] => machineChoices(options.statuses());
 
+  const marks = (): ProviderMark[] =>
+    selectMarks.all().flatMap((row) => {
+      const parsed = MarkRow.parse(row);
+      const program = ProgramId.safeParse(parsed.program);
+      return program.success ? [{ program: program.data, reason: parsed.reason, since: parsed.since, until: parsed.until }] : [];
+    });
+
+  const unavailable = (): ProviderUnavailable[] => {
+    const read = subscriptions();
+    return activeMarks(marks(), { codex: read.codex, claude: read.claude }, clock.now());
+  };
+
+  const out = (): Map<ProgramId, ProviderOut> => {
+    const read = subscriptions();
+    return providersOut(unavailable(), { codex: read.codex, claude: read.claude }, clock.now());
+  };
+
+  const order = (prose: boolean): ProgramId[] => engineOrder(options.providerOrder?.(), prose);
+
+  const contextOf = (): EngineContext => ({ out: new Set(out().keys()), order: order(false) });
+
+  const foldedStates = (): AllowanceStates => {
+    const states = allowanceStatesOf(subscriptions());
+    const unavailableNow = out();
+    return { codex: unavailableNow.has("codex") ? "exhausted" : states.codex, claude: unavailableNow.has("claude") ? "exhausted" : states.claude };
+  };
+
   return {
     table,
     setTable: (next) => {
@@ -100,6 +150,21 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
       return parsed;
     },
     subscriptions,
+    unavailable,
+    out,
+    order,
+    markUnavailable: (program, reason, until) => {
+      const now = clock.now();
+      upsertMark.run(program, reason, now, until !== null && until > now ? until : null);
+      changed();
+    },
+    recovered: (program, at) => {
+      if (Number(deleteMark.run(program, at).changes) === 0) {
+        return false;
+      }
+      changed();
+      return true;
+    },
     machines,
     machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.requiredMachine),
     resolve: (ticket, owner = ticket.ownerChoice) =>
@@ -115,7 +180,8 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
         },
         table(),
         machines(),
-        allowanceStatesOf(subscriptions()),
+        foldedStates(),
+        contextOf(),
       ),
     subscribe: (listener) => {
       listeners.add(listener);

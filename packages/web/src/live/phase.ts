@@ -6,6 +6,7 @@ export const ticketPhases = [
   "beginFailed",
   "starting",
   "queued",
+  "providerWaiting",
   "preparing",
   "running",
   "unreachable",
@@ -29,6 +30,7 @@ export const phaseLooks: Readonly<Record<TicketPhase, { readonly tone: Tone; rea
   beginFailed: { tone: "bad", live: false },
   starting: { tone: "mute", live: false },
   queued: { tone: "mute", live: false },
+  providerWaiting: { tone: "warn", live: false },
   preparing: { tone: "ok", live: true },
   running: { tone: "ok", live: true },
   unreachable: { tone: "warn", live: false },
@@ -65,6 +67,8 @@ export function ticketPhase(ticket: Ticket): TicketPhase {
       switch (work.state) {
         case "queued":
           return "queued";
+        case "unavailable":
+          return "providerWaiting";
         case "preparing":
         case "running":
           if (work.unreachableSince !== null) {
@@ -84,6 +88,7 @@ export type TicketProblem =
   | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
   | { readonly kind: "beginFailed"; readonly reason: string }
   | { readonly kind: "queued"; readonly machine: string }
+  | { readonly kind: "providerWaiting"; readonly reason: string }
   | { readonly kind: "unreachable"; readonly machine: string; readonly since: number }
   | { readonly kind: "failed"; readonly failure: WorkFailure; readonly reason: string }
   | { readonly kind: "stopped"; readonly reason: string }
@@ -107,6 +112,8 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
       return { kind: "beginFailed", reason: ticket.beginFailure ?? "" };
     case "queued":
       return work === null ? null : { kind: "queued", machine: work.machine };
+    case "providerWaiting":
+      return work === null ? null : { kind: "providerWaiting", reason: work.reason ?? "" };
     case "unreachable":
       return work === null || work.unreachableSince === null ? null : { kind: "unreachable", machine: work.machine, since: work.unreachableSince };
     case "failed":
@@ -142,7 +149,7 @@ export interface PanelOffers {
 export function panelOffers(ticket: Ticket): PanelOffers {
   const open = ticket.state === "waiting" || ticket.state === "working" || ticket.state === "verifying";
   const work = ticket.work;
-  const reachable = work !== null && activeWorkStates.includes(work.state) && work.unreachableSince === null;
+  const reachable = work !== null && ((activeWorkStates.includes(work.state) && work.unreachableSince === null) || work.state === "unavailable");
   return { stop: open, reassign: open, reply: (ticket.state === "working" || ticket.state === "verifying") && reachable };
 }
 

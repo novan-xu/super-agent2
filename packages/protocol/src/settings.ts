@@ -4,6 +4,7 @@ import { ProviderState } from "./brain.js";
 import { GitHubAccount } from "./commands.js";
 import { Provider } from "./conversations.js";
 import { EngineTable, type MachineChoice, offers } from "./defaults.js";
+import { ProviderUnavailable } from "./providers.js";
 import { MachineName, MachineStatus, type ProgramId } from "./runner.js";
 import { type Difficulty, difficulties, RepositoryName } from "./tickets.js";
 
@@ -152,6 +153,7 @@ export const SettingsSnapshot = z.object({
   brain: BrainSettings,
   table: EngineTable,
   subscriptions: z.array(Subscription),
+  unavailable: z.array(ProviderUnavailable).default([]),
   devices: z.array(Device),
 });
 export type SettingsSnapshot = z.infer<typeof SettingsSnapshot>;

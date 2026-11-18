@@ -193,7 +193,7 @@ describe("the open tickets in 工作台", () => {
       ]),
     );
     expect(text(html)).toContain("|执行失败|");
-    expect(html).toContain("程序出错或额度用完：exit code 3");
+    expect(html).toContain("程序出错了：exit code 3");
     expect(text(html)).toContain("|没能开始|");
     expect(html).toContain("Ticket 2 has no writing task");
     expect(text(html)).toContain("|联系不上|");

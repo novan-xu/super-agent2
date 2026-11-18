@@ -79,16 +79,17 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
+  z.object({ kind: z.literal("unavailable"), reason: z.string(), until: z.number().int().nullable(), unsent: z.array(z.string()).default([]) }),
 ]);
 export type WorkEvent = z.infer<typeof WorkEvent>;
 
-export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "delivered", "failed", "stopped"];
+export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "delivered", "failed", "stopped", "unavailable"];
 
 export function endsWork(event: WorkEvent): boolean {
   return endingWorkEvents.includes(event.kind);
 }
 
-export const workStates = ["queued", "preparing", "running", "finished", "failed", "stopped", "replaced"] as const;
+export const workStates = ["queued", "preparing", "running", "finished", "failed", "stopped", "replaced", "unavailable"] as const;
 export const WorkState = z.enum(workStates);
 export type WorkState = z.infer<typeof WorkState>;
 
@@ -133,6 +134,7 @@ export const WorkTask = z.object({
   effort: z.string().min(1),
   session: z.string().nullable(),
   note: z.string().nullable(),
+  takeover: z.boolean().default(false),
   environment: z.record(z.string(), z.string()),
 });
 export type WorkTask = z.infer<typeof WorkTask>;
@@ -166,6 +168,7 @@ export const TaskAssignment = z.object({
   effort: z.string().min(1),
   session: z.string().nullable(),
   note: z.string().nullable(),
+  takeover: z.boolean().default(false),
   environment: z.record(z.string(), z.string()).default({}),
 });
 export type TaskAssignment = z.infer<typeof TaskAssignment>;

@@ -1,4 +1,4 @@
-import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
+import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
 
@@ -252,12 +252,30 @@ function subscriptionLine(name: string, subscription: Subscription): string {
   return `${name}: ${subscription.state === "exhausted" ? "used up" : "available"}${left}${resets}${read}`;
 }
 
-export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[]): string {
+const programWords: Readonly<Record<ProviderUnavailable["program"], string>> = {
+  codex: "Codex (GPT)",
+  claude: "Claude Code (Claude)",
+  dsh: "dsh (DeepSeek)",
+  antigravity: "Antigravity",
+};
+
+export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = []): string {
   const lines = [
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
     "An unknown reading is not used up. dsh is the default only when both are used up.",
   ];
+  if (unavailable.length === 0) {
+    lines.push("No worker program is marked unavailable.");
+  } else {
+    lines.push("Worker programs marked unavailable, because a worker's program reported itself so when it was really called:");
+    for (const mark of unavailable) {
+      lines.push(
+        `- ${programWords[mark.program]}: ${mark.reason === "" ? "no reason given" : mark.reason}; ${mark.until === null ? "no time given" : `${mark.given ? "until" : "tried again at"} ${new Date(mark.until).toISOString()}`}`,
+      );
+    }
+    lines.push("A marked program counts as used up for choosing an engine. Running tickets switch away from it by themselves, and a mark clears when its time passes, when an attempt on that program succeeds, or when a newer allowance reading shows it available.");
+  }
   if (machines.length === 0) {
     lines.push("No work machine is online.");
   }

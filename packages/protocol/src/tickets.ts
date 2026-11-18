@@ -241,6 +241,27 @@ export const TicketMove = z.object({
 });
 export type TicketMove = z.infer<typeof TicketMove>;
 
+export const ticketSwitchKinds = ["switched", "waiting", "resumed"] as const;
+export const TicketSwitchKind = z.enum(ticketSwitchKinds);
+export type TicketSwitchKind = z.infer<typeof TicketSwitchKind>;
+
+export const TicketSwitch = z.object({
+  ticket: TicketId,
+  seq: z.number().int().positive(),
+  kind: TicketSwitchKind,
+  at: z.number().int(),
+  from: ProgramId,
+  to: ProgramId.nullable(),
+  machine: z.string().nullable(),
+  model: z.string().nullable(),
+  effort: z.string().nullable(),
+  reason: z.string(),
+  until: z.number().int().nullable(),
+  owner: z.boolean(),
+  attempt: z.number().int().positive().nullable(),
+});
+export type TicketSwitch = z.infer<typeof TicketSwitch>;
+
 export const TicketResponse = z.object({
   ticket: Ticket,
 });
@@ -256,6 +277,7 @@ export const TicketDetail = z.object({
   moves: z.array(TicketMove),
   attempts: z.array(WorkStatus),
   rounds: z.array(TicketRound),
+  switches: z.array(TicketSwitch).default([]),
 });
 export type TicketDetail = z.infer<typeof TicketDetail>;
 

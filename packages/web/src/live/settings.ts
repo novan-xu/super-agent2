@@ -10,6 +10,7 @@ import {
   type MachineStatus,
   type Provider,
   type ProviderState,
+  type ProviderUnavailable,
   type SettingsSection,
   type Subscription,
   type TableCell,
@@ -101,6 +102,11 @@ export function availableNow(state: ProviderState | undefined, now: number): boo
 export function subscriptionOf(subscriptions: readonly Subscription[], provider: Provider): Subscription | undefined {
   const program = provider === "gpt" ? "codex" : provider === "claude" ? "claude" : undefined;
   return program === undefined ? undefined : subscriptions.find((subscription) => subscription.program === program);
+}
+
+export function workersOut(unavailable: readonly ProviderUnavailable[], provider: Provider): ProviderUnavailable | undefined {
+  const program = provider === "gpt" ? "codex" : provider === "claude" ? "claude" : "dsh";
+  return unavailable.find((mark) => mark.program === program);
 }
 
 export interface PairOption {

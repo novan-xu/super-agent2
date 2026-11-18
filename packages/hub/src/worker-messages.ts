@@ -6,6 +6,7 @@ import type { HubDatabase } from "./database.js";
 export interface WorkerMessages {
   add(message: MessageWork): void;
   delivered(ticket: number, id: string): void;
+  undelivered(ticket: number, ids: readonly string[]): void;
   waiting(ticket: number): MessageWork[];
 }
 
@@ -24,6 +25,7 @@ export function createWorkerMessages(database: HubDatabase, clock: Clock): Worke
     "INSERT INTO worker_messages (id, ticket_id, attempt, sender, text, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
   );
   const markDelivered = connection.prepare("UPDATE worker_messages SET delivered_at = ? WHERE ticket_id = ? AND id = ? AND delivered_at IS NULL");
+  const markUndelivered = connection.prepare("UPDATE worker_messages SET delivered_at = NULL WHERE ticket_id = ? AND id = ?");
   const selectWaiting = connection.prepare(
     "SELECT id, ticket_id, attempt, sender, text, attachments FROM worker_messages WHERE ticket_id = ? AND delivered_at IS NULL ORDER BY created_at, rowid",
   );
@@ -33,6 +35,11 @@ export function createWorkerMessages(database: HubDatabase, clock: Clock): Worke
     },
     delivered: (ticket, id) => {
       markDelivered.run(clock.now(), ticket, id);
+    },
+    undelivered: (ticket, ids) => {
+      for (const id of ids) {
+        markUndelivered.run(ticket, id);
+      }
     },
     waiting: (ticket) =>
       selectWaiting.all(ticket).map((value) => {

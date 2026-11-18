@@ -35,6 +35,7 @@ import {
   TicketPullRequest,
   TicketRun,
   type TicketState,
+  TicketSwitch,
   type OwnerChoice,
   type ProgramId,
   WorkStatus,
@@ -197,6 +198,7 @@ export interface TicketService {
   moves(id: number): TicketMove[];
   detail(id: number): TicketDetail | undefined;
   rounds(id: number): TicketRound[];
+  switches(id: number): TicketSwitch[];
   task(id: number): TicketTask | undefined;
   forIssue(repository: string, number: number): Ticket[];
   waitingFor(id: number): Ticket[];
@@ -427,6 +429,41 @@ function roundOf(row: unknown): TicketRound {
   });
 }
 
+const SwitchRow = z.object({
+  ticket_id: z.number().int(),
+  seq: z.number().int(),
+  kind: z.string(),
+  at: z.number().int(),
+  from_engine: z.string(),
+  to_engine: z.string().nullable(),
+  machine: z.string().nullable(),
+  model: z.string().nullable(),
+  effort: z.string().nullable(),
+  reason: z.string(),
+  until: z.number().int().nullable(),
+  owner: z.number().int(),
+  attempt: z.number().int().nullable(),
+});
+
+export function switchOf(row: unknown): TicketSwitch {
+  const value = SwitchRow.parse(row);
+  return TicketSwitch.parse({
+    ticket: value.ticket_id,
+    seq: value.seq,
+    kind: value.kind,
+    at: value.at,
+    from: value.from_engine,
+    to: value.to_engine,
+    machine: value.machine,
+    model: value.model,
+    effort: value.effort,
+    reason: value.reason,
+    until: value.until,
+    owner: value.owner === 1,
+    attempt: value.attempt,
+  });
+}
+
 function stuckOf(row: z.infer<typeof TicketRow>): TicketStuck | null {
   if (row.state !== "stuck" || row.stuck_at === null || row.stuck_from === null || row.stuck_failure === null) {
     return null;
@@ -555,6 +592,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateChosen = connection.prepare("UPDATE tickets SET machine = ?, engine = ?, model = ?, effort = ?, chosen_by = ?, chosen_at = ? WHERE id = ?");
   const updateRan = connection.prepare("UPDATE tickets SET ran = ? WHERE id = ?");
   const selectRounds = connection.prepare("SELECT * FROM ticket_rounds WHERE ticket_id = ? ORDER BY seq");
+  const selectSwitches = connection.prepare("SELECT * FROM ticket_switches WHERE ticket_id = ? ORDER BY seq");
   const selectLastRound = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_rounds WHERE ticket_id = ?");
   const insertRound = connection.prepare(
     "INSERT INTO ticket_rounds (ticket_id, seq, round, attempt, failure, detail, guidance_en, guidance_zh, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1160,10 +1198,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     moves: movesOf,
     detail: (id) => {
       const ticket = get(id);
-      return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf) };
+      return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf), switches: selectSwitches.all(id).map(switchOf) };
     },
     task: taskOf,
     rounds: (id) => selectRounds.all(id).map(roundOf),
+    switches: (id) => selectSwitches.all(id).map(switchOf),
     forIssue: (repository, number) =>
       selectByIssue.all(repository, number).flatMap((row) => {
         const ticket = get(IdRow.parse(row).ticket_id);

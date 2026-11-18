@@ -407,6 +407,7 @@ describe("work for a task ticket", () => {
           effort: "high",
           session: null,
           note: null,
+          takeover: false,
           environment: {},
         },
       },

@@ -46,6 +46,8 @@ import {
   taskBrief,
   taskContinueText,
   taskLostSessionNote,
+  takeoverTaskText,
+  takeoverText,
   taskResumeText,
 } from "./brief.js";
 import { createGit, type Git, type ProcessRunner, runProcess } from "./git.js";
@@ -55,8 +57,8 @@ import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
-import { gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
-import { checkTaskHandback, clearOutput, deploymentProblem, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
+import { folderState, gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
+import { checkTaskHandback, clearOutput, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
   HubToRunner,
@@ -140,6 +142,7 @@ function messageOf(error: unknown): string {
 interface Prompt {
   readonly text: string;
   readonly images: readonly PromptImage[];
+  readonly id?: string;
 }
 
 function joined(prompts: readonly Prompt[], first?: string): Prompt {
@@ -543,9 +546,11 @@ export function createWorks(options: WorksOptions): Works {
         }
         track(end(work, { kind: "failed", failure: "program", reason: event.reason }));
         return;
-      case "unavailable":
-        track(end(work, { kind: "failed", failure: "program", reason: event.reason }));
+      case "unavailable": {
+        const unsent = work.queue.splice(0).flatMap((prompt) => (prompt.id === undefined ? [] : [prompt.id]));
+        track(end(work, { kind: "unavailable", reason: event.reason, until: event.until, unsent }));
         return;
+      }
     }
   };
 
@@ -590,8 +595,12 @@ export function createWorks(options: WorksOptions): Works {
     const where = place(work);
     const waiting = work.queue.splice(0);
     const leftover = prepared.leftover === null ? [] : [leftoverText({ ...prepared.leftover, into: task.branch, base: prepared.base })];
+    const state = task.takeover ? [takeoverText(await folderState(git, work.paths.worktree, prepared.base), task.branch, prepared.base)] : [];
+    if (work.task !== task || work.stopping) {
+      return;
+    }
     const withWaiting = (prompt: string) => {
-      const next = joined(waiting, [prompt, ...leftover].join("\n\n"));
+      const next = joined(waiting, [prompt, ...leftover, ...state].join("\n\n"));
       startTurn(work, next.text, next.images);
     };
     if (session === null) {
@@ -653,8 +662,14 @@ export function createWorks(options: WorksOptions): Works {
     }
     const where = placeOf(work, task);
     const waiting = work.queue.splice(0);
+    const credentialedNow = credentialedOf(task);
+    const checkoutState = task.takeover && task.checkout !== null && credentialedNow !== undefined ? await folderState(gitFor(credentialedNow), work.paths.worktree, null) : null;
+    const state = task.takeover ? [takeoverTaskText(listOutput(work.paths), checkoutState, where)] : [];
+    if (work.assignment !== task || work.stopping) {
+      return;
+    }
     const withWaiting = (prompt: string) => {
-      const next = joined(waiting, prompt);
+      const next = joined(waiting, [prompt, ...state].join("\n\n"));
       startTurn(work, next.text, next.images);
     };
     if (session === null) {
@@ -687,7 +702,7 @@ export function createWorks(options: WorksOptions): Works {
         }
       }
       rmSync(paths.handback, { force: true });
-      if ("assignment" in given) {
+      if ("assignment" in given && !given.assignment.takeover) {
         clearOutput(paths);
       }
     }
@@ -851,13 +866,13 @@ export function createWorks(options: WorksOptions): Works {
     if (work.turn && work.handle !== undefined) {
       const delivery = await work.handle.steer(prompt.text, prompt.images);
       if (delivery === "queued") {
-        work.queue.push(prompt);
+        work.queue.push({ ...prompt, id });
       }
       emit(work, { kind: "message", id, from, text, ...shown, delivery });
       return;
     }
     if (work.handle === undefined) {
-      work.queue.push(prompt);
+      work.queue.push({ ...prompt, id });
       emit(work, { kind: "message", id, from, text, ...shown, delivery: "queued" });
       return;
     }
@@ -893,9 +908,11 @@ export function createWorks(options: WorksOptions): Works {
       emit(work, { kind: "phase", phase: "saving", detail: "Saving the work on the branch before it moves" });
       saved = await saveWork(gitFor(task), ticket, work.record.branch, work.paths).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
     }
-    if (open) {
-      work.record = { ...work.record, ended: true };
-      save(work);
+    if (open || (keep && task !== undefined)) {
+      if (open) {
+        work.record = { ...work.record, ended: true };
+        save(work);
+      }
       emit(work, { kind: "stopped", saved: saved.saved, detail: saved.detail });
     }
     if (remove) {

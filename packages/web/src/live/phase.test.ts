@@ -18,6 +18,14 @@ describe("what a ticket's row and panel say", () => {
     expect(ticketPhase(ticket(1, { state: "verifying", work: workStatus({ state: "finished" }) }))).toBe("verifying");
   });
 
+  it("says a ticket waits for a provider when its program was unavailable and nothing could take over", () => {
+    const waiting = ticket(1, { state: "working", work: workStatus({ state: "unavailable", reason: "You've hit your limit" }) });
+    expect(ticketPhase(waiting)).toBe("providerWaiting");
+    expect(phaseLooks.providerWaiting).toEqual({ tone: "warn", live: false });
+    expect(ticketProblem(waiting, none)).toEqual({ kind: "providerWaiting", reason: "You've hit your limit" });
+    expect(panelOffers(waiting)).toEqual({ stop: true, reassign: true, reply: true });
+  });
+
   it("shows motion only for a worker that is running and reachable", () => {
     const moving = Object.entries(phaseLooks)
       .filter(([, look]) => look.live)

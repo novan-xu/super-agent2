@@ -65,6 +65,8 @@ export function problemLines(problem: TicketProblem, now: number): readonly stri
       return [problem.reason];
     case "queued":
       return [text("ticket.queuedOn", { machine: problem.machine })];
+    case "providerWaiting":
+      return withReason(text("ticket.waitsForProvider"), problem.reason);
     case "unreachable":
       return [text("ticket.unreachableSince", { time: momentOf(problem.since, now), machine: problem.machine })];
     case "failed":
@@ -106,6 +108,7 @@ export function problemTone(problem: TicketProblem): "bad" | "warn" | "mute" {
     case "verifyFailed":
       return "bad";
     case "unreachable":
+    case "providerWaiting":
     case "conflicted":
     case "stuck":
       return "warn";

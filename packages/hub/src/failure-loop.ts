@@ -63,7 +63,7 @@ export interface FailureLoopOptions {
 export const failureWords: Readonly<Record<LoopFailureKind, string>> = {
   workflow: "a Woodpecker workflow on its pull request's head is red",
   "no-pull-request": "the worker ended without handing back a valid result",
-  program: "the worker's program failed (it exited, refused, or ran out of allowance)",
+  program: "the worker's program failed (it exited, crashed, reported an error, or no other provider could take over from one that was unavailable)",
   lost: "the worker was lost: its machine came back without it",
   prepare: "the worker's folder could not be prepared",
   "task-failed": "the worker handed back that its task failed",
