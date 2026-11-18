@@ -60,7 +60,7 @@ export interface WorkServiceOptions {
   readonly credentials: CredentialSource;
   readonly tell?: Tell;
   readonly files?: TicketFiles;
-  readonly deliver?: (conversation: string | null, delivery: Delivery) => void;
+  readonly deliver?: (delivery: Delivery) => void;
   readonly branchSuffix?: () => string;
   readonly report?: (report: FailureReport) => void;
   readonly attachments?: AttachmentStore;
@@ -313,7 +313,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     tell(
-      ticket.conversation,
+      ticket.id,
       text("notice.workerFailed", { ticket: ticket.id }),
       [
         `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${failureWords[failure]}: ${reason}`,
@@ -663,7 +663,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const files = event.files.map((file) => ({ name: file.name, size: file.size }));
     const commit = ticket.commit ?? event.commit ?? null;
-    options.deliver(ticket.conversation, {
+    options.deliver({
       ticket: ticket.id,
       title: ticket.title,
       text: event.text,
@@ -1302,7 +1302,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     );
     const out = options.defaults?.out();
     tell(
-      ticket.conversation,
+      ticket.id,
       text("notice.waitingForProvider", { ticket: ticket.id }),
       [
         `[hub] Ticket ${ticket.id} (${ticket.title.en}) waits for a provider. Its program, ${programNames[previous.engine]}, reported itself unavailable: ${previous.reason ?? "no reason was given"}.`,

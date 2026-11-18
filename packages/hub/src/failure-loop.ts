@@ -127,7 +127,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       throw error;
     }
     tell(
-      stuck.conversation,
+      stuck.id,
       text("notice.ticketStuck", { ticket: stuck.id, round: stuck.round }),
       [
         `[hub] ${described(stuck)} failed again after ${stuck.round} guided rounds, the cap of ${roundCap}: ${failureWords[report.failure.kind]}.`,
@@ -158,7 +158,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       : `This failure is the machine's, not the worker's, so your guidance starts a retry that is not counted as a guided round (still ${ticket.round} of ${roundCap}). A second failure of the machine in a row is counted.`;
     const verifying = report.failure.kind === "workflow";
     tell(
-      ticket.conversation,
+      ticket.id,
       text(verifying ? "notice.verificationFailed" : "notice.workerFailed", { ticket: ticket.id }),
       [
         `[hub] ${described(ticket)} failed: ${failureWords[report.failure.kind]}.`,
@@ -227,7 +227,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       const ended = gave.ticket;
       const repair = gave.repair;
       tell(
-        ended.conversation,
+        ended.id,
         repair === null ? text("notice.ownerGaveUpEnded", { ticket: ticket.id }) : text("notice.ownerGaveUp", { ticket: ticket.id, repair: repair.id }),
         [
           `[hub] The owner gave up ${described(ticket)} on its card, after ${stuck.round} guided rounds. It is stopped, and nothing of it is destroyed: its branch and any pull request stay on GitHub, and its folder is kept for the repair and saved to the branch where its machine can.`,
@@ -257,7 +257,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     }
     const evidence = evidenceOf(resumed, stuck.failure);
     tell(
-      resumed.conversation,
+      resumed.id,
       words === "" ? text("notice.ownerResumed", { ticket: resumed.id }) : text("notice.ownerResumedWords", { ticket: resumed.id, words }),
       [
         `[hub] The owner resumed ${described(resumed)} on its card. Its guided rounds count from 0 of ${roundCap} again. It is ${resumed.state} again with the failure it stopped on, and nothing runs for it yet.`,
@@ -276,7 +276,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       return;
     }
     tell(
-      ticket.conversation,
+      ticket.id,
       text(merged ? "notice.ownerStoppedChain" : "notice.ownerStopped", { ticket: ticket.id }),
       [
         merged

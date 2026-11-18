@@ -41,6 +41,7 @@ const sampled = [
   "/api/commands/abc/stop",
   "/api/commands/abc/release",
   "/api/commands/abc/refuse",
+  "/api/stream",
   "/api/conversations/abc",
   "/api/conversations/abc/messages",
   "/api/conversations/abc/interrupt",

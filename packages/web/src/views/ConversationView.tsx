@@ -3,7 +3,8 @@ import type { Conversation } from "@super-agent2/protocol";
 import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
-import { streamItems } from "../live/stream.js";
+import { combinedStreamItems, streamItems } from "../live/stream.js";
+import type { TopicStreamState } from "../live/topic-stream.js";
 import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
@@ -12,8 +13,8 @@ import { clockOf, dayLabel, StreamEntry } from "./Entries.js";
 
 const nearBottom = 48;
 
-function titleOf(conversation: Conversation | undefined): string {
-  return conversation === undefined || conversation.title === "" ? text("conversation.new") : conversation.title;
+function titleOf(conversation: { readonly title: string } | undefined): string {
+  return conversation?.title || text("conversation.untitled");
 }
 
 function whenOf(at: number, now: number): string {
@@ -149,6 +150,7 @@ function Composer({ working, canStop, send, stop, draftKey }: ComposerProps) {
 
 export interface ConversationViewProps {
   readonly state: ConversationState | null;
+  readonly stream: TopicStreamState | null;
   readonly list: readonly Conversation[];
   readonly status: SocketStatus;
   readonly linked: boolean;
@@ -157,29 +159,48 @@ export interface ConversationViewProps {
   readonly open: (conversation: string) => void;
   readonly send: (message: string, attachments: readonly string[]) => Promise<boolean>;
   readonly stop: () => void;
+  readonly loadOlder: () => void;
   readonly now: number;
 }
 
 export function ConversationView(props: ConversationViewProps) {
-  const { state, now } = props;
+  const { state, stream, now } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const picker = useRef<HTMLDialogElement>(null);
-  const items = useMemo(() => (state === null ? [] : streamItems(state, now)), [state, now]);
+  const items = useMemo(
+    () => stream === null ? (state === null ? [] : streamItems(state, now)) : combinedStreamItems(stream.entries.map(({ entry }) => entry), stream.turns, now),
+    [state, stream, now],
+  );
+  const topics = useMemo(() => {
+    const titles = new Map(stream?.entries.map(({ topic }) => [topic.id, topic.title]));
+    for (const topic of props.list) {
+      titles.set(topic.id, topic.title);
+    }
+    return titles;
+  }, [stream, props.list]);
   const working = state !== null && isWorking(state);
   const conversationId = state?.id ?? null;
   const thisYear = new Date(now).getFullYear();
 
   useLayoutEffect(() => {
     following.current = true;
+    older.current = null;
   }, [conversationId]);
 
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (element !== null && following.current) {
+    if (element === null) {
+      return;
+    }
+    if (older.current !== null && !stream?.loading) {
+      element.scrollTop = older.current.top + element.scrollHeight - older.current.height;
+      older.current = null;
+    } else if (following.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [items]);
+  }, [items, stream?.loading]);
 
   useEffect(() => {
     const element = scroller.current;
@@ -208,7 +229,7 @@ export function ConversationView(props: ConversationViewProps) {
     props.open(conversation);
   };
 
-  const title = state === null ? text("conversation.new") : titleOf(state.conversation);
+  const title = stream === null ? titleOf(state?.conversation) : text("conversation.all");
   const online = props.status === "open";
   const lastModel = state?.turns.at(-1)?.model ?? props.model;
 
@@ -235,7 +256,7 @@ export function ConversationView(props: ConversationViewProps) {
           </span>
         </div>
         <div
-          className="stream"
+          className={stream === null ? "stream" : "stream stream--combined"}
           ref={scroller}
           onScroll={(event) => {
             const element = event.currentTarget;
@@ -243,9 +264,25 @@ export function ConversationView(props: ConversationViewProps) {
           }}
         >
           <div className="stream-inner" role="log" aria-label={text("conversation.stream")}>
-            {items.map((item) => (
-              <StreamEntry key={item.key} item={item} thisYear={thisYear} />
-            ))}
+            {stream?.before != null ? (
+              <button className="btn btn-sm stream-older" type="button" disabled={stream.loading || !online} onClick={() => {
+                const element = scroller.current;
+                if (element !== null) {
+                  following.current = false;
+                  older.current = { height: element.scrollHeight, top: element.scrollTop };
+                }
+                props.loadOlder();
+              }}>{text("conversation.older")}</button>
+            ) : null}
+            {items.map((item) => {
+              const id = item.kind === "entry" ? item.entry.conversation : item.kind === "ended" ? item.turn.conversation : null;
+              const topic = stream === null || id === null ? undefined : (
+                <a className="topic-label od-truncate" href={props.hrefOf(id)} onClick={(event) => followLink(event, () => props.open(id))}>
+                  {topics.get(id) || text("conversation.untitled")}
+                </a>
+              );
+              return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={topic} />;
+            })}
           </div>
         </div>
         <Composer working={working} canStop={conversationId !== null} send={send} stop={props.stop} draftKey={conversationId ?? ""} />
@@ -256,7 +293,7 @@ export function ConversationView(props: ConversationViewProps) {
       <dialog className="dlg" ref={picker} aria-label={text("conversation.list")}>
         <div className="dlg-in">
           <div className="dlg-head">
-            <h2>{text("navigation.conversation")}</h2>
+            <h2>{text("conversation.list")}</h2>
             <button className="icon-btn" type="button" aria-label={text("conversation.close")} onClick={() => picker.current?.close()}>
               <Icon name="x" />
             </button>

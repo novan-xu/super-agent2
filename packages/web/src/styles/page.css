@@ -27,6 +27,10 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .msg-plain { white-space: pre-wrap; }
 .msg--more { margin-top: calc(var(--space-3) * -1); }
 .msg-who .dot { width: 7px; height: 7px; }
+.stream--combined { overflow-anchor: none; }
+.stream-older { align-self: center; }
+.topic-label { max-width: 12rem; color: var(--muted); font-size: var(--text-xs); }
+.topic-label:hover { color: var(--accent); }
 
 .msg-text > :first-child { margin-top: 0; }
 .msg-text h1, .msg-text h2, .msg-text h3, .msg-text h4 { margin: var(--space-4) 0 var(--space-2); font-family: var(--font-display); font-weight: 700; line-height: 1.4; }

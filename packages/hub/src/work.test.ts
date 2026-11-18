@@ -20,8 +20,8 @@ let database: HubDatabase;
 let tickets: TicketService;
 let runners: FakeRunners;
 let work: WorkService;
-let told: { readonly conversation: string | null; readonly notice: string; readonly prompt: string }[];
-let delivered: { readonly conversation: string | null; readonly delivery: Delivery }[];
+let told: { readonly ticket: number; readonly notice: string; readonly prompt: string }[];
+let delivered: Delivery[];
 let files: TicketFiles;
 
 beforeEach(() => {
@@ -44,8 +44,8 @@ beforeEach(() => {
     tickets,
     runners,
     credentials: testCredentials,
-    tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
-    deliver: (conversation, delivery) => delivered.push({ conversation, delivery }),
+    tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }),
+    deliver: (delivery) => delivered.push(delivery),
     branchSuffix: () => "beef",
   });
   bound = work;
@@ -182,7 +182,7 @@ describe("work for a started ticket", () => {
     emit("pc", ticket.id, 1, 2, { kind: "failed", failure: "no-pull-request", reason: "You have not handed back" });
     expect(current(ticket.id)).toMatchObject({ state: "working", work: { state: "failed", failure: "no-pull-request", reason: "You have not handed back" } });
     expect(told).toHaveLength(1);
-    expect(told[0]?.conversation).toBe("c-1");
+    expect(told[0]?.ticket).toBe(ticket.id);
     expect(told[0]?.prompt).toContain("ended without a pull request");
     expect(told[0]?.prompt).toContain("I could not find the file");
     expect(work.output(ticket.id)).toContain("I could not find the file");
@@ -196,7 +196,7 @@ describe("work for a started ticket", () => {
       tickets,
       runners,
       credentials: () => ({ ok: false, reason: "GITHUB_TOKEN_NOVAN_XU is not set" }),
-      tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
+      tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }),
     });
     runners.connect("pc", 2);
     const ticket = working();
@@ -436,15 +436,14 @@ describe("work for a task ticket", () => {
       work: { state: "finished" },
     });
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]?.conversation).toBe("c-1");
-    expect(delivered[0]?.delivery).toMatchObject({
+    expect(delivered[0]).toMatchObject({
       ticket: ticket.id,
       title: { en: "Translate a notice", zh: "翻译一则通知" },
       text: "Hello, world.\n",
       files: [{ name: "notes.pdf", size: 4 }],
     });
-    expect(delivered[0]?.delivery.prompt).toContain("Hello, world.");
-    expect(delivered[0]?.delivery.prompt).toContain("Nothing was verified");
+    expect(delivered[0]?.prompt).toContain("Hello, world.");
+    expect(delivered[0]?.prompt).toContain("Nothing was verified");
     expect(files.list(ticket.id)).toEqual([{ name: "notes.pdf", size: 4 }]);
     expect(files.get(ticket.id, "notes.pdf")).toMatchObject({ mediaType: "application/pdf", size: 4 });
     expect(await read(files.get(ticket.id, "notes.pdf"))).toEqual(Buffer.from([1, 2, 3, 4]));
@@ -479,7 +478,7 @@ describe("work for a task ticket", () => {
     expect(current(ticket.id).state).toBe("delivered");
     expect((await read(files.get(ticket.id, "film.mp4"))).equals(big)).toBe(true);
     expect(await read(files.get(ticket.id, "empty.txt"))).toEqual(Buffer.alloc(0));
-    expect(delivered[0]?.delivery.files).toEqual([
+    expect(delivered[0]?.files).toEqual([
       { name: "film.mp4", size: big.length },
       { name: "empty.txt", size: 0 },
     ]);

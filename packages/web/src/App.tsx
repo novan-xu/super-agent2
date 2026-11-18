@@ -13,7 +13,7 @@ import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
 import { useRoute } from "./parts/route.js";
-import { followLink, Shell } from "./parts/Shell.js";
+import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
 import { HistoryView } from "./views/HistoryView.js";
@@ -54,7 +54,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const now = useNow();
   const toastTimer = useRef<number | undefined>(undefined);
-  const lastConversation = useRef<PageRoute>({ view: "home" });
+  const [creatingTopic, setCreatingTopic] = useState(false);
   const historyScroll = useRef(0);
   const [origin, setOrigin] = useState<TicketOrigin>("workbench");
   const [appearance, setAppearance] = useState<Appearance>(() => readAppearance(storageOf()));
@@ -131,6 +131,8 @@ export function App() {
   }, [controller]);
 
   const conversationId = route.view === "conversations" ? route.conversation : null;
+  const inConversation = route.view === "conversations" || route.view === "home";
+  const inStream = inConversation && conversationId === null;
   const ticketId = route.view === "ticket" ? route.ticket : null;
 
   useEffect(() => {
@@ -160,29 +162,30 @@ export function App() {
   }, [controller, route.view]);
 
   useEffect(() => {
-    if (route.view === "conversations") {
-      lastConversation.current = route;
-    }
-    controller.open(conversationId);
-  }, [controller, conversationId, route]);
-
-  useEffect(() => {
-    if (route.view === "home" && page.listed) {
-      const latest = page.list[0];
-      navigate({ view: "conversations", conversation: latest === undefined ? null : latest.id }, true);
-    }
-  }, [navigate, page.listed, page.list, route.view]);
+    controller.open(conversationId, inStream);
+  }, [controller, conversationId, inStream]);
 
   const destinationOf = useCallback(
-    (view: PageView): PageRoute => (view === "conversations" ? lastConversation.current : { view }),
+    (view: PageView): PageRoute => (view === "conversations" ? { view, conversation: null } : { view }),
     [],
   );
   const hrefOf = useCallback((view: PageView) => pagePath(destinationOf(view)), [destinationOf]);
   const conversationHref = useCallback((conversation: string) => pagePath({ view: "conversations", conversation }), []);
   const openConversation = useCallback((conversation: string) => navigate({ view: "conversations", conversation }), [navigate]);
+  const newTopic = async () => {
+    setCreatingTopic(true);
+    try {
+      const id = await controller.createTopic();
+      if (id !== undefined) {
+        openConversation(id);
+      }
+    } finally {
+      setCreatingTopic(false);
+    }
+  };
   const send = useCallback(
-    (message: string, attachments: readonly string[] = []) => controller.send(message, (conversation) => navigate({ view: "conversations", conversation }, true), attachments),
-    [controller, navigate],
+    (message: string, attachments: readonly string[] = []) => controller.send(message, attachments),
+    [controller],
   );
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(
@@ -257,9 +260,7 @@ export function App() {
   );
   const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
-  const inConversation = route.view === "conversations" || route.view === "home";
   const model = page.current?.turns.at(-1)?.model ?? null;
-  const newConversation = { view: "conversations", conversation: null } as const;
 
   return (
     <Shell
@@ -279,10 +280,10 @@ export function App() {
       reviews={reviewCount(page.tickets)}
       actions={
         inConversation ? (
-          <a className="btn btn-sm" href={pagePath(newConversation)} onClick={(event) => followLink(event, () => navigate(newConversation))}>
+          <button className="btn btn-sm" type="button" disabled={creatingTopic} onClick={() => void newTopic()}>
             <Icon name="plus" />
             {text("conversation.new")}
-          </a>
+          </button>
         ) : route.view === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>
             <Icon name="plus" />
@@ -293,7 +294,8 @@ export function App() {
     >
       {inConversation ? (
         <ConversationView
-          state={page.current}
+          state={page.current?.id === conversationId ? page.current : null}
+          stream={inStream ? page.stream : null}
           list={page.list}
           status={page.status}
           linked={page.linked}
@@ -302,6 +304,7 @@ export function App() {
           open={openConversation}
           send={send}
           stop={stop}
+          loadOlder={() => controller.loadOlderStream()}
           now={now}
         />
       ) : route.view === "workbench" ? (

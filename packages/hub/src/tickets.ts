@@ -46,6 +46,7 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
+import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import { verificationOf } from "./verification-record.js";
 
@@ -182,6 +183,7 @@ export type GiveUpOutcome =
 
 export interface TicketWrites {
   get(id: number): Ticket | undefined;
+  topic(id: number): string;
   open(request: TicketToOpen): number;
   setIssues(id: number, issues: readonly TicketIssue[]): void;
   describe(id: number, description: TicketDescription): void;
@@ -217,6 +219,7 @@ export interface TicketWrites {
 export interface TicketService {
   open(request: TicketToOpen): Ticket;
   get(id: number): Ticket | undefined;
+  topic(id: number): string;
   list(options?: ListOptions): Ticket[];
   history(options?: HistoryOptions): HistoryPage;
   moves(id: number): TicketMove[];
@@ -241,6 +244,7 @@ export interface TicketServiceOptions {
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly work?: TicketWork;
+  readonly topicChanged?: (id: string) => void;
 }
 
 export class TicketError extends Error {}
@@ -572,6 +576,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
+  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND repository IS ? COLLATE NOCASE");
+  const claimTopic = connection.prepare(
+    `UPDATE conversations SET repository = ?
+     WHERE id = ? AND system = 0 AND repository IS NULL AND NOT EXISTS (
+       SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE
+     )`,
+  );
+  const selectTicketTopic = connection.prepare("SELECT c.id FROM tickets AS t JOIN conversations AS c ON c.id = t.conversation_id WHERE t.id = ?");
+  const updateTicketTopic = connection.prepare("UPDATE tickets SET conversation_id = ? WHERE id = ?");
   const selectIssues = connection.prepare("SELECT * FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
   const selectWaits = connection.prepare("SELECT waits_for, deployment, waived_at FROM ticket_waits WHERE ticket_id = ? ORDER BY waits_for");
   const selectBegin = connection.prepare("SELECT failure FROM ticket_begins WHERE ticket_id = ? AND failed_at IS NOT NULL AND done_at IS NULL");
@@ -751,6 +764,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     return row === undefined ? undefined : toTicket(row);
   };
 
+  const topicOf = (id: number): string | undefined => {
+    const row = selectTicketTopic.get(id);
+    return row === undefined ? undefined : z.object({ id: z.string() }).parse(row).id;
+  };
+
   const earlierIds = (id: number): number[] => {
     const found: number[] = [];
     let at = id;
@@ -885,6 +903,25 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       throw new Error("Ticket changes do not nest");
     }
     const touched = new Set<number>();
+    const changedTopics = new Set<string>();
+    const openTopic = (title: string, repository: string | null) => {
+      const id = storeTopic(options.database, clock.now(), title, { repository });
+      changedTopics.add(id);
+      return id;
+    };
+    const chooseTopic = (request: TicketToOpen): string => {
+      const { conversation, repository } = request;
+      if (conversation !== undefined) {
+        if (selectTopic.get(conversation, repository) !== undefined) {
+          return conversation;
+        }
+        if (repository !== null && claimTopic.run(repository, conversation, repository).changes > 0) {
+          changedTopics.add(conversation);
+          return conversation;
+        }
+      }
+      return openTopic(request.title.zh.trim(), repository);
+    };
     const touch = (id: number) => {
       updateTouched.run(clock.now(), id);
       touched.add(id);
@@ -896,38 +933,57 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       }
       return ticket;
     };
+    const open = (request: TicketToOpen, inheritedTopic?: string): number => {
+      check(request);
+      const now = clock.now();
+      const topic = inheritedTopic ?? chooseTopic(request);
+      const result = insertTicket.run(
+        formOf(request),
+        request.requiredMachine ?? null,
+        request.repository,
+        request.kind,
+        request.title.en.trim(),
+        request.title.zh.trim(),
+        request.summary.en.trim(),
+        request.summary.zh.trim(),
+        request.difficulty ?? null,
+        request.platform ?? null,
+        topic,
+        now,
+        now,
+      );
+      const id = Number(result.lastInsertRowid);
+      insertIssues(id, request.issues);
+      if (request.task !== undefined) {
+        insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0);
+      }
+      for (const before of new Set(request.waitsFor ?? [])) {
+        insertWait.run(id, before, 0);
+      }
+      recordMove(id, null, "pending", undefined, now);
+      touched.add(id);
+      return id;
+    };
     const writes: TicketWrites = {
       get,
-      open: (request) => {
-        check(request);
-        const now = clock.now();
-        const result = insertTicket.run(
-          formOf(request),
-          request.requiredMachine ?? null,
-          request.repository,
-          request.kind,
-          request.title.en.trim(),
-          request.title.zh.trim(),
-          request.summary.en.trim(),
-          request.summary.zh.trim(),
-          request.difficulty ?? null,
-          request.platform ?? null,
-          request.conversation ?? null,
-          now,
-          now,
-        );
-        const id = Number(result.lastInsertRowid);
-        insertIssues(id, request.issues);
-        if (request.task !== undefined) {
-          insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0);
+      topic: (id) => {
+        const current = topicOf(id);
+        if (current !== undefined) {
+          return current;
         }
-        for (const before of new Set(request.waitsFor ?? [])) {
-          insertWait.run(id, before, 0);
+        const lineage = [...earlierIds(id), id];
+        const inherited = lineage.map(topicOf).findLast((topic) => topic !== undefined);
+        const root = existing(lineage[0] ?? id);
+        const topic = inherited ?? openTopic(root.title.zh, root.repository);
+        for (const ticket of lineage) {
+          if (topicOf(ticket) === undefined) {
+            updateTicketTopic.run(topic, ticket);
+            touch(ticket);
+          }
         }
-        recordMove(id, null, "pending", undefined, now);
-        touched.add(id);
-        return id;
+        return topic;
       },
+      open,
       setIssues: (id, issues) => {
         const ticket = existing(id);
         checkIssues(ticket.repository, issues);
@@ -982,23 +1038,22 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (!hasRemainingWork(old)) {
           throw new TicketError(`Every issue of ticket ${id} is closed by a merged pull request, so nothing remains to repair`);
         }
-        const open = new Set(openIssueNumbers(old));
+        const remaining = new Set(openIssueNumbers(old));
         const task = old.form === "task" ? taskOf(id) : undefined;
         const raw = TicketRow.parse(selectTicket.get(id));
         const stuck = raw.stuck_failure === null ? undefined : LoopFailureKind.safeParse(raw.stuck_failure);
-        const repair = writes.open({
+        const repair = open({
           form: old.form,
           repository: old.repository,
-          issues: old.issues.filter((issue) => open.has(issue.number)),
+          issues: old.issues.filter((issue) => remaining.has(issue.number)),
           title: old.title,
           summary: old.summary,
           kind: old.kind,
           difficulty: old.difficulty ?? undefined,
           platform: old.platform ?? undefined,
           requiredMachine: old.requiredMachine,
-          conversation: old.conversation ?? undefined,
           ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys } }),
-        });
+        }, writes.topic(id));
         if (task?.commit !== undefined && task.commit !== null) {
           writes.setCommit(repair, task.commit);
         }
@@ -1299,6 +1354,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     } finally {
       inside = false;
     }
+    for (const topic of changedTopics) {
+      options.topicChanged?.(topic);
+    }
     for (const id of [...touched].sort((a, b) => a - b)) {
       const ticket = get(id);
       if (ticket !== undefined) {
@@ -1331,6 +1389,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return ticket;
     },
     get,
+    topic: (id) => topicOf(id) ?? change((writes) => writes.topic(id)),
     list: (listing = {}) => {
       const limit = listing.limit ?? defaultLimit;
       const rows = listing.open === true ? selectOpen.all(...openTicketStates, limit) : selectAll.all(limit);

@@ -374,7 +374,7 @@ describe("chains from filing to start", () => {
     expect(begun).toEqual([1, 2]);
   });
 
-  it("tells the brain, in the conversation the work was filed in, when a ticket before a waiting one stops", async () => {
+  it("tells the brain in the waiting ticket's topic when its prerequisite stops", async () => {
     const running = await start();
     const conversation = running.conversations.create();
     await fileIssue(running, "Add the endpoint", "加接口");
@@ -387,8 +387,11 @@ describe("chains from filing to start", () => {
     });
     expect((await startCall(running, { body: await startBody(running, 1) })).status).toBe(202);
     await callTool(running, "stop_ticket", { ticket: 1, reason: { en: "Wrong approach", zh: "方法不对" } });
-    const notices = running.conversations.entries(conversation.id).filter((entry) => entry.kind === "notice");
+    const waitingTopic = running.tickets.get(2)?.conversation;
+    expect(waitingTopic).toBeTruthy();
+    const notices = running.conversations.entries(waitingTopic ?? "").filter((entry) => entry.kind === "notice");
     expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual(["工单 1 停止了，排在它后面的工单 2 由大脑决定是否继续"]);
+    expect(running.conversations.entries(conversation.id)).toEqual([]);
     const proceeded = await callTool(running, "proceed_ticket", { ticket: 2 });
     expect(proceeded.isError).toBe(false);
     expect(running.tickets.get(2)?.state).toBe("working");

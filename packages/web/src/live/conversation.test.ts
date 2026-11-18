@@ -5,7 +5,7 @@ import { type ConversationState, emptyConversation, isWorking, receive, receiveD
 const id = "c1";
 
 function conversation(fields: Partial<Conversation> = {}): Conversation {
-  return { id, title: "t", state: "idle", provider: null, createdAt: 1, updatedAt: 1, ...fields };
+  return { id, title: "t", state: "idle", topicState: "active", repository: null, provider: null, createdAt: 1, updatedAt: 1, ...fields };
 }
 
 function turn(fields: Partial<Turn> = {}): Turn {

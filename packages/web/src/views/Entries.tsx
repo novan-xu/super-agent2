@@ -1,6 +1,6 @@
 import { text } from "@super-agent2/catalog";
 import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, Turn } from "@super-agent2/protocol";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
 import type { Day, StreamItem } from "../live/stream.js";
@@ -26,10 +26,11 @@ export function dayLabel(day: Day, thisYear: number): string {
   return day.year === thisYear ? text("day.date", { month: day.month, day: day.day }) : text("day.dateWithYear", day);
 }
 
-const OwnerMessage = memo(function OwnerMessage({ entry }: { readonly entry: OwnerEntry }) {
+const OwnerMessage = memo(function OwnerMessage({ entry, topic }: { readonly entry: OwnerEntry; readonly topic?: ReactNode }) {
   return (
     <div className="msg msg--me">
       <div className="msg-who">
+        {topic}
         {entry.taken ? null : (
           <span className="dot dot--mute" role="img" aria-label={text("message.waiting")} title={text("message.waiting")} />
         )}
@@ -53,18 +54,19 @@ const BrainText = memo(function BrainText({
   entry,
   lead,
   live,
+  topic,
 }: {
   readonly entry: TextEntry;
   readonly lead: boolean;
   readonly live: boolean;
+  readonly topic?: ReactNode;
 }) {
   return (
     <div className={lead ? "msg msg--brain" : "msg msg--brain msg--more"}>
-      {lead ? (
+      {lead || topic !== undefined ? (
         <div className="msg-who">
-          <Logo size={16} />
-          <strong>{text("brain.name")}</strong>
-          <span className="num">{clockOf(entry.at)}</span>
+          {lead ? <><Logo size={16} /><strong>{text("brain.name")}</strong><span className="num">{clockOf(entry.at)}</span></> : null}
+          {topic}
         </div>
       ) : null}
       <TextBody text={entry.text} live={live} />
@@ -89,15 +91,17 @@ export interface DeliveryBodyProps {
   readonly text: string | null;
   readonly report?: string | null;
   readonly files: readonly { readonly name: string; readonly size: number }[];
+  readonly topic?: ReactNode;
 }
 
-export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files }: DeliveryBodyProps) {
+export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files, topic }: DeliveryBodyProps) {
   return (
     <div className="msg delivery">
       <div className="msg-who">
         <Icon name="doc" />
         <strong>{title}</strong>
         <span className="num">{clockOf(at)}</span>
+        {topic}
       </div>
       {body === null ? report === null ? null : <div className="msg-text msg-plain">{report}</div> : <div className="msg-text msg-plain delivery-text">{body}</div>}
       {files.length === 0 ? null : (
@@ -115,49 +119,51 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
   );
 });
 
-function Delivery({ entry }: { readonly entry: DeliveryEntry }) {
-  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} />;
+function Delivery({ entry, topic }: { readonly entry: DeliveryEntry; readonly topic?: ReactNode }) {
+  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} topic={topic} />;
 }
 
-function Notice({ entry }: { readonly entry: NoticeEntry }) {
+function Notice({ entry, topic }: { readonly entry: NoticeEntry; readonly topic?: ReactNode }) {
   return (
     <div className="sysline sysline--note">
       <Icon name="swap" />
       <span>{entry.text}</span>
       {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href="/settings/models">{text("notice.newModelsLink")}</a> : null}
+      {topic}
     </div>
   );
 }
 
-function Ended({ turn }: { readonly turn: Turn }) {
+function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNode }) {
   return (
     <div className={turn.state === "failed" ? "sysline sysline--bad" : "sysline sysline--warn"}>
       <Icon name="alert" />
       <span>{text(`turn.state.${turn.state}`)}</span>
       {turn.reason === null ? null : <span className="sysline-reason">{turn.reason}</span>}
+      {topic}
     </div>
   );
 }
 
-export function StreamEntry({ item, thisYear }: { readonly item: StreamItem; readonly thisYear: number }) {
+export function StreamEntry({ item, thisYear, topic }: { readonly item: StreamItem; readonly thisYear: number; readonly topic?: ReactNode }) {
   switch (item.kind) {
     case "day":
       return <div className="day">{dayLabel(item.day, thisYear)}</div>;
     case "status":
       return <LiveStatus tool={item.tool} idle={text("brain.thinking")} />;
     case "ended":
-      return <Ended turn={item.turn} />;
+      return <Ended turn={item.turn} topic={topic} />;
     case "entry": {
       const { entry } = item;
       switch (entry.kind) {
         case "owner":
-          return <OwnerMessage entry={entry} />;
+          return <OwnerMessage entry={entry} topic={topic} />;
         case "text":
-          return <BrainText entry={entry} lead={item.lead} live={item.live} />;
+          return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} />;
         case "notice":
-          return <Notice entry={entry} />;
+          return <Notice entry={entry} topic={topic} />;
         case "delivery":
-          return <Delivery entry={entry} />;
+          return <Delivery entry={entry} topic={topic} />;
       }
     }
   }

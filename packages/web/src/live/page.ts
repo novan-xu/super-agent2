@@ -6,14 +6,16 @@ import { mergeConversations, upsertConversation } from "./list.js";
 import { initialMemory, type MemoryState, receiveMemories } from "./memory.js";
 import { type DetailState, openDetail, receiveDetail as receiveTicketDetail, receiveDetailWork, receiveMissing, receiveTicketChange } from "./detail.js";
 import { initialTickets, receiveTicket, receiveTickets, type TicketsState } from "./tickets.js";
+import { initialTopicStream, receiveStream, type TopicStreamState } from "./topic-stream.js";
 import { initialWaiting, type WaitingAction, type WaitingState, waitingReducer } from "./waiting.js";
 
 export interface PageState {
   readonly status: SocketStatus;
   readonly linked: boolean;
-  readonly listed: boolean;
   readonly list: readonly Conversation[];
   readonly current: ConversationState | null;
+  readonly streaming: boolean;
+  readonly stream: TopicStreamState;
   readonly waiting: WaitingState;
   readonly tickets: TicketsState;
   readonly detail: DetailState | null;
@@ -30,6 +32,8 @@ export type PageAction =
   | { readonly type: "open"; readonly conversation: string | null }
   | { readonly type: "created"; readonly conversation: Conversation }
   | { readonly type: "own"; readonly entry: ConversationEntry }
+  | { readonly type: "stream.open"; readonly watching: boolean }
+  | { readonly type: "stream.more" }
   | { readonly type: "waiting"; readonly action: WaitingAction }
   | { readonly type: "ticket.open"; readonly ticket: number | null }
   | { readonly type: "ticket.detail"; readonly detail: TicketDetail }
@@ -44,7 +48,7 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, listed: false, list: [], current: null, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null };
+export const initialPage: PageState = { status: "connecting", linked: false, list: [], current: null, streaming: false, stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -61,9 +65,9 @@ function withCurrent(state: PageState, current: ConversationState | null): PageS
 export function pageReducer(state: PageState, action: PageAction): PageState {
   switch (action.type) {
     case "status":
-      return action.status === state.status ? state : { ...state, status: action.status };
+      return action.status === state.status ? state : { ...state, status: action.status, stream: state.stream.loading ? { ...state.stream, loading: false } : state.stream };
     case "list":
-      return { ...state, listed: true, linked: action.list.brain.linked, list: mergeConversations(state.list, action.list.conversations) };
+      return { ...state, linked: action.list.brain.linked, list: mergeConversations(state.list, action.list.conversations) };
     case "detail": {
       const list = upsertConversation(state.list, action.detail.conversation);
       const next = list === state.list ? state : { ...state, list };
@@ -78,6 +82,10 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return { ...state, list: upsertConversation(state.list, action.conversation) };
     case "own":
       return withCurrent(state, state.current === null ? null : receiveOwn(state.current, action.entry));
+    case "stream.open":
+      return state.streaming === action.watching ? state : { ...state, streaming: action.watching, stream: state.stream.loading ? { ...state.stream, loading: false } : state.stream };
+    case "stream.more":
+      return { ...state, stream: { ...state.stream, loading: true } };
     case "waiting": {
       const waiting = waitingReducer(state.waiting, action.action);
       return waiting === state.waiting ? state : { ...state, waiting };
@@ -139,7 +147,8 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };
       }
       const list = message.type === "conversation" ? upsertConversation(state.list, message.conversation) : state.list;
-      const next = list === state.list ? state : { ...state, list };
+      const stream = state.streaming ? receiveStream(state.stream, message) : state.stream;
+      const next = list === state.list && stream === state.stream ? state : { ...state, list, stream };
       return withCurrent(next, state.current === null ? null : receive(state.current, message));
     }
   }

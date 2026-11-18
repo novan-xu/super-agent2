@@ -102,7 +102,7 @@ function shown(...list: readonly (Ticket | undefined)[]) {
 }
 
 interface Told {
-  readonly conversation: string | null;
+  readonly ticket: number;
   readonly notice: string;
   readonly prompt: string;
 }
@@ -132,7 +132,7 @@ function setup(work?: Partial<TicketWork>, strict = false): Setup {
       stop: work?.stop ?? (() => undefined),
       ...(work?.reassign === undefined ? {} : { reassign: work.reassign }),
     },
-    tell: (conversation, notice, prompt) => told.push({ conversation, notice, prompt }),
+    tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }),
   });
   made.push(chains);
   chains.resume();
@@ -479,7 +479,7 @@ describe("a ticket that does not begin", () => {
     await chains.idle();
     expect(tickets.get(1)).toMatchObject({ state: "working", beginFailure: "No machine can take it" });
     expect(told).toHaveLength(1);
-    expect(told[0]).toMatchObject({ conversation: "c-1", notice: "工单 1 没能开始，大脑会决定怎么处理" });
+    expect(told[0]).toMatchObject({ ticket: 1, notice: "工单 1 没能开始，大脑会决定怎么处理" });
     expect(told[0]?.prompt).toMatch(/^\[hub\] The owner started ticket 1 \(Issue 1\), but its work could not begin: No machine can take it/);
   });
 

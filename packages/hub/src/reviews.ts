@@ -68,7 +68,7 @@ export function createDecisionReviews(options: DecisionReviewsOptions): Decision
       }
       const opinions = batch.filter((entry) => entry.verdict === "opinion");
       if (opinions.length > 0) {
-        tell(ticket.conversation, text("notice.decisionsReviewed", { ticket: ticket.id, count: opinions.length }), reviewPrompt(ticket, batch));
+        tell(ticket.id, text("notice.decisionsReviewed", { ticket: ticket.id, count: opinions.length }), reviewPrompt(ticket, batch));
       }
       return { ok: true, ticket, sent: batch };
     },

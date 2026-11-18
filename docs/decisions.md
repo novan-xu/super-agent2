@@ -4033,3 +4033,29 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Why** Topic turns cannot overwrite each other's work or use stale state. A lost turn can be recovered without
   time-based lock expiry, and the owner and hub can continue operating while a topic answers.
 - **Other options** Use expiring locks, check versions alone, or make owner and hub actions wait on topic turns.
+
+## 2026-11-18 — Topic stream foundation (#98)
+
+- **Chosen** Migration 29 keeps the original conversation IDs, per-conversation entry sequences and provider sessions.
+  A separate stream position is assigned in insertion order and used as the exclusive cursor for
+  `GET /api/stream?limit=&before=`. Pages are newest last. The existing WebSocket delivers the same entries and deltas
+  and can replay from a stream position. Per-topic HTTP and WebSocket addresses keep their existing paths.
+- **Why** A stable global cursor orders entries that arrive in the same millisecond and preserves the sequence used
+  by saved sessions. Keeping the paths preserves bookmarked conversations.
+- **Other options** Replacing the per-topic sequence with one global sequence or paging by timestamp and ID.
+
+- **Chosen** A ticket filed from a compatible topic keeps that topic. A repository ticket can assign its repository
+  to a topic that has no repository and no conflicting tickets. Filing without a compatible topic creates one named
+  after the ticket in its repository or in 日常. A repair inherits the original ticket's topic, including a legacy
+  topic with mixed tickets. Migration only assigns a repository when every linked ticket has the same one, comparing
+  GitHub names without regard to case. `GET /api/stream` accepts `repository=owner/name` for one project and an empty
+  `repository=` for 日常. The live page watches the combined stream. System has no repository.
+- **Why** A topic can acquire its project during normal filing before a project picker exists. Conflicting tickets
+  get their own topic and existing history keeps its ticket links.
+- **Other options** Assign every ticket its own topic or move a topic between projects when each ticket is filed.
+
+- **Chosen** During the placeholder routing phase, an untargeted post uses the most recently updated active topic,
+  including System if it is the most recent. Entry arrival breaks equal activity timestamps. The page's 新话题 action
+  creates a topic immediately and opens its composer. Selecting a topic label opens its filtered view.
+- **Why** The owner can start a separate topic while the router is pending and continue to send to a known topic.
+- **Other options** Reserving a separate draft route or waiting for the router to create all new topics.

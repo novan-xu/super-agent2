@@ -685,6 +685,29 @@ export const migrations: readonly Migration[] = [
       UPDATE machines SET access_expires_at = created_at + 31536000000 WHERE access_token_id IS NOT NULL;
     `,
   },
+  {
+    version: 29,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN topic_state TEXT NOT NULL DEFAULT 'active' CHECK (topic_state IN ('active', 'archived'));
+      ALTER TABLE conversations ADD COLUMN system INTEGER NOT NULL DEFAULT 0 CHECK (system IN (0, 1));
+      ALTER TABLE conversations ADD COLUMN repository TEXT CHECK (repository IS NULL OR system = 0);
+      CREATE UNIQUE INDEX conversations_system ON conversations (system) WHERE system = 1;
+      CREATE INDEX tickets_by_conversation ON tickets (conversation_id);
+      WITH topic_repos AS (
+        SELECT conversation_id, min(repository) AS repository FROM tickets WHERE conversation_id IS NOT NULL
+        GROUP BY conversation_id
+        HAVING count(*) = count(repository) AND count(DISTINCT lower(repository)) = 1
+      )
+      UPDATE conversations SET repository = topic_repos.repository FROM topic_repos WHERE conversations.id = topic_repos.conversation_id;
+      ALTER TABLE conversation_entries ADD COLUMN stream_seq INTEGER NOT NULL DEFAULT 0;
+      WITH arrivals AS (
+        SELECT id, row_number() OVER (ORDER BY rowid) AS position FROM conversation_entries
+      )
+      UPDATE conversation_entries SET stream_seq = arrivals.position FROM arrivals WHERE conversation_entries.id = arrivals.id;
+      CREATE UNIQUE INDEX entries_by_stream ON conversation_entries (stream_seq);
+      CREATE INDEX entries_by_topic_stream ON conversation_entries (conversation_id, stream_seq);
+    `,
+  },
 ];
 
 function sqlText(value: string): string {

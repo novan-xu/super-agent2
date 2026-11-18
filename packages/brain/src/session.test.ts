@@ -483,12 +483,17 @@ describe("the brain's session", () => {
     expect(release.status).toBe(202);
     const told = await programs.gpt.next();
     expect(told.text).toContain(`[hub] The command ${held.id} that was held for the owner's confirmation has an outcome.`);
+    expect(told.text).toContain(`originally requested in topic ${conversation.id}`);
     expect(told.text).toContain("exited with exit code 0");
     expect(jobs.map((job) => job.command)).toEqual([command]);
-    const notice = detail(conversation.id).entries.find((entry) => entry.kind === "notice");
+    const system = running().conversations.list().find(({ title }) => title === "System");
+    if (system === undefined) {
+      throw new Error("The command outcome has no System topic");
+    }
+    const notice = detail(system.id).entries.find((entry) => entry.kind === "notice");
     expect(notice).toMatchObject({ text: `等你确认的命令有了结果（已结束）：${command}` });
     told.handle.finish("仓库已经删掉了。");
-    await turnEnded(conversation.id, 2);
+    await turnEnded(system.id, 1);
   });
 
   it("does not let the brain's token release or refuse a held command", async () => {
