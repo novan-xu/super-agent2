@@ -153,7 +153,16 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
   }
   let text = render();
   if (cost(text) > capacity) {
-    const hardOrder = [...tickets, ...board.map(({ title }) => title), ...history, ...(summary === undefined ? [] : [summary]), ...quoteParts];
+    const hardOrder = [
+      ...board.flatMap(({ status }) => status === undefined ? [] : [status]),
+      ...tickets.filter(({ section }) => section === "otherTicket"),
+      ...(memory === undefined ? [] : [memory]),
+      ...tickets.filter(({ section }) => section === "ticket"),
+      ...board.map(({ title }) => title),
+      ...history,
+      ...(summary === undefined ? [] : [summary]),
+      ...quoteParts,
+    ];
     const overhead = cost(Object.values(headings).join("\n"));
     for (const part of hardOrder) {
       omit(part);

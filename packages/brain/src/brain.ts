@@ -374,7 +374,7 @@ export function createBrain(options: BrainOptions): Brain {
         if (state.turn !== turn || state.live !== live || turn.interrupting) {
           return;
         }
-        const prompt = preparePrompt(state, live.provider, [input], prepared);
+        const prompt = preparePrompt(state, live.provider, [input], { ...prepared, history: [] });
         const result = await live.handle.steer(prompt.text, prompt.images);
         if (result !== "steered" || state.turn !== turn || state.live !== live) {
           return;
@@ -400,23 +400,31 @@ export function createBrain(options: BrainOptions): Brain {
     turn.current = attempt;
     turn.provider = provider;
     turn.tried.add(provider);
+    const call: PrepareCall = {
+      conversation: state.id,
+      provider,
+      exclude: turn.inputs.map((input) => input.id),
+      fresh: freshSession,
+      seed: state.live?.provider !== provider || freshSession || mode === "continue",
+      continuing: mode === "continue",
+    };
+    const active = () => !closing && state.turn === turn && turn.current === attempt;
     let prepared: Prepared;
     try {
-      prepared = await transport.prepare({
-        conversation: state.id,
-        provider,
-        exclude: turn.inputs.map((input) => input.id),
-        fresh: freshSession,
-        seed: state.live?.provider !== provider || freshSession || mode === "continue",
-        continuing: mode === "continue",
-      });
+      prepared = await transport.prepare(call);
+      if (
+        active() && !turn.interrupting && prepared.board !== undefined && prepared.seed === undefined
+        && (state.live?.provider !== provider || state.live.session !== prepared.session)
+      ) {
+        prepared = await transport.prepare({ ...call, seed: true });
+      }
     } catch (error) {
-      if (state.turn === turn && turn.current === attempt) {
+      if (active()) {
         finishTurn(state, turn, "failed", messageOf(error));
       }
       return;
     }
-    if (state.turn !== turn || turn.current !== attempt || closing) {
+    if (!active()) {
       return;
     }
     if (turn.interrupting) {
@@ -428,13 +436,15 @@ export function createBrain(options: BrainOptions): Brain {
       dropLive(state);
       live = undefined;
     }
-    await state.retiring;
-    if (closing || state.turn !== turn || turn.current !== attempt) {
-      return;
-    }
-    if (turn.interrupting) {
-      finishTurn(state, turn, "interrupted", null);
-      return;
+    if (state.retiring !== undefined) {
+      await state.retiring;
+      if (!active()) {
+        return;
+      }
+      if (turn.interrupting) {
+        finishTurn(state, turn, "interrupted", null);
+        return;
+      }
     }
 
     let prompt: ReturnType<typeof topicPrompt>;

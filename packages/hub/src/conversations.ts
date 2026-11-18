@@ -313,6 +313,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
   const selectTurns = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? ORDER BY started_at, rowid");
   const selectRunningTurns = connection.prepare("SELECT * FROM turns WHERE state = 'running' ORDER BY rowid");
+  const selectRunningTurn = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? AND state = 'running' LIMIT 1");
+  const updateWorkState = connection.prepare("UPDATE conversations SET state = ?, updated_at = ? WHERE id = ?");
   const insertTurn = connection.prepare(
     "INSERT INTO turns (id, conversation_id, provider, model, state, started_at) VALUES (?, ?, ?, ?, 'running', ?)",
   );
@@ -498,11 +500,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
-  const runningTurnOf = (conversation: string): Turn | undefined =>
-    selectTurns
-      .all(conversation)
-      .map(toTurn)
-      .find((turn) => turn.state === "running");
+  const runningTurnOf = (conversation: string): Turn | undefined => {
+    const row = selectRunningTurn.get(conversation);
+    return row === undefined ? undefined : toTurn(row);
+  };
 
   const endTurn = (id: string, outcome: TurnOutcome, reason: string | null, applied = false) => {
     const turn = getTurn(id);
@@ -516,13 +517,14 @@ export function createConversationService(options: ConversationServiceOptions): 
       if (applied) {
         advanceSession.run(turn.conversation, turn.provider, SeqRow.parse(selectConsumedSeq.get(turn.conversation)).seq, clock.now());
       }
+      updateWorkState.run(runningTurnOf(turn.conversation) === undefined ? "idle" : "working", clock.now(), turn.conversation);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");
       throw error;
     }
     emitTurn(id);
-    updateConversation(turn.conversation, { state: runningTurnOf(turn.conversation) === undefined ? "idle" : "working" });
+    announce(turn.conversation);
   };
 
   const history = (conversation: string, through: number, exclude: ReadonlySet<string>, includeWaiting: boolean): HistoryItem[] =>

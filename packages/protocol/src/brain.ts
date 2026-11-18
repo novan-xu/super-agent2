@@ -12,15 +12,6 @@ export const BrainAttachment = Attachment.extend({
 });
 export type BrainAttachment = z.infer<typeof BrainAttachment>;
 
-export const BrainInput = z.object({
-  id: z.string().min(1),
-  source: InputSource,
-  text: z.string(),
-  attachments: z.array(BrainAttachment).default([]),
-  quote: z.object({ id: z.string().min(1), item: z.lazy(() => HistoryItem) }).optional(),
-});
-export type BrainInput = z.infer<typeof BrainInput>;
-
 export const HistoryItem = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("owner"), text: z.string(), attachments: z.array(BrainAttachment).default([]) }),
   z.object({ kind: z.literal("notice"), text: z.string() }),
@@ -28,6 +19,15 @@ export const HistoryItem = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("tool"), provider: Provider.nullable(), name: z.string(), input: z.string(), output: z.string() }),
 ]);
 export type HistoryItem = z.infer<typeof HistoryItem>;
+
+export const BrainInput = z.object({
+  id: z.string().min(1),
+  source: InputSource,
+  text: z.string(),
+  attachments: z.array(BrainAttachment).default([]),
+  quote: z.object({ id: z.string().min(1), item: HistoryItem }).optional(),
+});
+export type BrainInput = z.infer<typeof BrainInput>;
 
 export const TopicBoardEntry = z.object({
   id: ConversationId,
