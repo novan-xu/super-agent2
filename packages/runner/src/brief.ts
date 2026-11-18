@@ -86,7 +86,7 @@ export function messageText(from: WorkSender, text: string, files: readonly Atta
     `[Message from ${who}] ${text}`.trimEnd(),
     `[hub] ${files.length === 1 ? "A file is" : `${files.length} files are`} attached to this message, outside your worktree so they are never committed by accident:`,
     ...files.map((file) => `- ${attachmentLine(file.attachment, file.path)}`),
-    "Images are also shown to you with the message when your program can take them. Read any attached file with your own tools at its path; copy it into the repository only if the task needs it there.",
+    "An image (PNG, JPEG, GIF or WebP) of up to 20 MB is also shown to you with this message: look at it directly, without a tool. Read any other attached file with your own tools at its path; copy it into the repository only if the task needs it there.",
   ].join("\n");
 }
 

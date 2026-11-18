@@ -569,6 +569,23 @@ export const migrations: readonly Migration[] = [
   {
     version: 23,
     sql: `
+      CREATE TABLE pipeline_durations (
+        repository TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        PRIMARY KEY (repository, number)
+      ) STRICT;
+      CREATE INDEX pipeline_durations_recent ON pipeline_durations (repository, finished_at);
+      ALTER TABLE ticket_verifications ADD COLUMN head_at INTEGER;
+      ALTER TABLE ticket_verifications ADD COLUMN wait_since INTEGER;
+      ALTER TABLE ticket_verifications ADD COLUMN notice_key TEXT;
+      ALTER TABLE ticket_verifications ADD COLUMN notice_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 24,
+    sql: `
       ALTER TABLE tickets ADD COLUMN form TEXT NOT NULL DEFAULT 'code';
       UPDATE tickets SET form = 'task' WHERE kind = 'writing';
       ALTER TABLE tickets ADD COLUMN required_machine TEXT;

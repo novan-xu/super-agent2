@@ -38,7 +38,7 @@ function attachmentLines(attachments: readonly BrainAttachment[], root: string):
       (attachment) =>
         `- ${attachment.name} (${attachment.mediaType}, ${attachment.size} bytes), attachment id ${attachment.id}, at ${attachmentPath(root, attachment)}`,
     ),
-    "Images are also shown to you with the message when your program can take them. Read any attached file with your own tools at its path. To pass one on to a worker, give its attachment id (as material of a writing ticket, or with message_worker); the file itself reaches the worker.",
+    "An image (PNG, JPEG, GIF or WebP) of up to 20 MB is also shown to you with this message: look at it directly and answer from what you see, without a tool. Read any other attached file with your own tools at its path. To pass one on to a worker, give its attachment id (as material of a writing ticket, or with message_worker); the file itself reaches the worker.",
   ];
 }
 

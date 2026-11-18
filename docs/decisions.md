@@ -2956,10 +2956,9 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   images over 20 MiB go to Claude Code by path only. Antigravity gets the path.
 - **Why:** Checked against each program's own interface and in live runs: a solid-colour image and a text file with a
   random code word, as the first message and as a message into a running turn. Claude Code and Codex answered the colour
-  from the image itself and read the code word at its path. dsh 0.2.1-rc.2 with `deepseek-flash` on the DeepSeek
-  account accepted the image block, but that route is text only: dsh put a placeholder in its place, its `read_image`
-  tool gave the model only "image/png, 96x64 px", and the model found the colour by reading pixel values with
-  PowerShell. The path is what makes that possible, and what lets any program open a file it cannot see.
+  from the image itself and read the code word at its path. The path is what lets any program open a file it cannot
+  see. What this entry first said about dsh, that its route is text only and the model found the colour by reading
+  pixel values, was wrong; see "dsh sees images on deepseek-flash" below.
 - **Other options:** Paths only, which loses Claude's and GPT's sight of the image; images only, which loses every other
   file; converting HEIC to JPEG on the hub, which needs an image library and is unnecessary because Safari already
   converts a photo picked from the library to JPEG.
@@ -3011,3 +3010,122 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   message. A file input without a filter is the one way Safari offers all three sources at once.
 - **Other options:** A retention rule (for example removing attachments that no message refers to after a month), which
   is proposed in the pull request for the owner to decide; showing every image type inline, which would let an SVG run.
+
+## 2026-11-17 — Telling the brain when a pipeline runs far beyond the usual
+
+- **Chosen:** While a ticket is verifying and the pipeline for its head has not finished, or has not appeared, the hub
+  compares how long it has waited with what is usual for the repository. When the wait reaches three times the usual,
+  the hub sends the brain one `[hub]` message for that pipeline, and again each time the wait doubles again (3, 6, 12,
+  24 times the usual, and so on), never at every poll; a hub that was down and finds the wait at 40 times the usual
+  sends one message for the highest step, not one for each missed step. The count is kept per ticket, entry, head and
+  pipeline number, in the ticket's verification row (`notice_key`, `notice_count`), so a restart of the hub does not
+  repeat a message, and a pipeline restarted in Woodpecker (a new number for the same commit) is a new pipeline that is
+  told about afresh. The wait is measured from the pipeline's own `created` time in Woodpecker, the same start the
+  usual is measured from, so waiting for an agent counts; for a head with no pipeline at all it is measured from when
+  the hub first saw that head (`head_at`), and the same rule and threshold apply. The message gives the ticket, the pull
+  request, the head, the pipeline's link, how long it has waited, what is usual and how that was found, what
+  Woodpecker says right now (the pipeline's status and age, and each workflow pending, running or done, with its agent
+  where there is one), and when the next message comes. It says plainly that nothing is decided from the time. The
+  owner's conversation gets a Chinese notice with the wait and the usual, so the owner can see that the brain was told
+  and is looking. A notice changes no state: the ticket stays verifying, no check fails, no round is counted, nothing
+  is cancelled or restarted. The factor is 3 because pipelines vary by a factor of two or less for ordinary reasons
+  (queueing behind another run, a cold cache, a slower agent), and 3 is beyond that while still early: a 14-minute
+  usual is looked at after 42 minutes, not after a day. Doubling follows the owner's own words: growing intervals, so
+  a pipeline that stays stuck for a day costs the brain about six messages, not one at every one of the 2,880 checks. This refines "When the hub
+  checks, and what it never does", which listed "a time limit after which the brain is told" as an option not taken:
+  there is still no limit after which anything is decided or failed, and still nothing is decided from time; the time
+  only decides when the brain is asked to look, and the look decides, as "What a failure is, and what counts as a
+  guided round" still says: a pipeline that never reports is not a failure, and is not counted as one.
+- **Why:** The owner's decision: far beyond the baseline the brain should look at what the problem is without
+  interrupting anyone, and step in only when the look finds one. The system's first priority is unattended automation,
+  so a pipeline that never reports (an agent that is off, a step that hangs, a stuck queue, a webhook that never
+  arrived) must not leave a ticket verifying for days with nobody told, and no cap or fixed limit may turn a slow
+  pipeline into a failure.
+- **Other options:** A fixed limit, which would fail slow pipelines and miss fast repositories; telling at every poll or
+  at fixed intervals; a limit after which the hub cancels or restarts the pipeline itself; a floor under the threshold
+  for repositories whose pipelines take seconds (not done, so that no fixed time is hidden in the rule; a repository
+  that fast would simply be looked at sooner, and the look is cheap); also covering a pipeline that finished not green
+  (`killed`, `blocked`, `declined`), which has ended rather than run long and stays out of this change; also covering a
+  hub that cannot read Woodpecker at all, which the ticket already shows as waiting for Woodpecker.
+
+## 2026-11-17 — What is usual for a repository
+
+- **Chosen:** The hub records, for each repository, every pipeline it saw end green: its Woodpecker number and Woodpecker's
+  own `created` and `finished` times, so the length runs from creation to finish and includes the wait for an agent
+  (table `pipeline_durations`, one row per repository and pipeline, never trimmed). A pipeline is recorded when the hub
+  judges it green for a ticket, and also when a green pipeline shows up in the list of a pull request's pipelines that
+  the hub already reads to find the head's pipeline, so a repository's earlier pull requests give it history at once.
+  Pipelines of pushes to the default branch are not listed by that call and are not recorded. The usual is the median
+  of the 15 most recent green lengths, by finish time, and exists only from 3 runs. The median because one odd run, a
+  wedged agent that finally finished or a lucky cache hit, does not move it, where a mean would; 15 so that up to seven
+  odd runs still leave the middle honest, and recent so that it follows a pipeline that grows or shrinks over time; 3
+  because the median of one or two runs is those runs.
+- **Why:** The owner asked for the baseline to come from how long the repository's pipelines took when they ended green,
+  derived so that one odd run does not distort it, with no cap on what is kept. Woodpecker's own timestamps are used so
+  that the number does not depend on when the hub happened to poll.
+- **Other options:** The mean (moved by one odd run); a percentile such as the 90th (needs more history to mean
+  anything); measuring from the first poll that saw the pipeline; keeping only a fixed number of rows.
+
+## 2026-11-17 — A repository with no history yet
+
+- **Chosen:** Until a repository has three recorded green runs the hub uses a first-time allowance in place of three
+  times the usual: the brain is told when the wait reaches it, and again at each doubling. The allowance is a setting,
+  `HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES` in the hub's environment, with a default of 120 minutes. It is used only until
+  there is history, and the message says so. The default is generous because Woodpecker's own limit for one run is 60
+  minutes by default and a first run may queue behind others, so a first pipeline that is merely slow is not looked at.
+- **Why:** A repository whose first pipelines are still running has nothing to compare with, and a notice at every
+  first pipeline would be noise, while no notice at all would leave exactly the case the owner is worried about,
+  a new repository with an agent that is off, unnoticed.
+- **Other options:** No notice until there is history; a value kept in the page's settings, which no one is likely to
+  change; reading the allowance from a default that is tied to a repository's size; using the larger of the allowance
+  and three times a median of one or two runs.
+
+## 2026-11-17 — What Woodpecker says about an agent, and what the brain looks at
+
+- **Chosen:** The hub reads, in the pipeline it already fetches, each workflow's `state`, `agent_id` (0 when no agent
+  has taken it), `started` and `finished`, and the pipeline's `created`, `started` and `finished`. For a pending
+  workflow the message says whether an agent has picked it up: `agent_id` is set when an agent takes the work, so a
+  pending workflow without one is waiting for an agent, and one with one has been handed out and not yet started. The
+  hub does not call Woodpecker's agent list or its queue, which need an administrator's token and answer about the
+  whole server rather than one pipeline; the brain does that, with `run_command` on the hub's container, where
+  `WOODPECKER_SERVER` and `WOODPECKER_TOKEN` already are, and the owner's token has administrator rights. This was
+  written from Woodpecker's documented API and the shapes the hub already parses; it was not run against the real
+  server, so the guidance tells the brain to read the shapes before relying on them. What the hub cannot tell from the
+  pipeline alone: whether any agent is online, and how many workflows are queued ahead.
+- **Why:** The message should carry what is cheap and certain and leave the rest to the look, which is the brain's job
+  and needs a conversation's judgement.
+- **Other options:** The hub reading the agent list for every message; leaving out the agent and the workflow detail
+  and saying only how long it has waited.
+
+## 2026-11-17 — Where the wait shows
+
+- **Chosen:** `read_ticket` shows, while a ticket waits for a pipeline, how long it has waited, what is usual for the
+  repository and how that was found (or that there is none yet), when the brain is told, and that the time decides
+  nothing. The page is unchanged: its verification line already says what the ticket waits for, and a running count in
+  it would be a second label for something the owner reads in the conversation's notice.
+- **Why:** The owner's rule is no unnecessary secondary labels. The notice in the conversation is where the owner sees it.
+- **Other options:** Appending the wait and the usual to the verification line on the page.
+
+## 2026-11-17 — dsh sees images on deepseek-flash
+
+- **Chosen:** No change to how the dsh adapter passes images: `SdkEncodedImageBlock`s in `session/prompt`, and images
+  saved through dsh's attachment store for a message into a running turn, reach `deepseek-flash` as images. The
+  `[hub]` list under a message now says that an image of up to 20 MB is shown with the message and is to be looked at
+  directly, without a tool, and only other files are read at their paths; the brain's guidance says the same. The live
+  step in `tools/brain-live` now draws a random shape in a random colour and fails when the answer misses either, or
+  when any tool call names the image's attachment (that is, a tool opened the file instead of the model looking). This
+  overturns the earlier finding in "Each program gets an attachment in the best way it has, and always its path" that
+  dsh's route is text only.
+- **Why:** The owner said dsh's model is multimodal. Checked with the real dsh 0.2.1-rc.2 and the owner's account,
+  through dsh itself: the account's `GET /models` listing, read with dsh's own `llm.listModels("deepseek-account")`,
+  offers two models, `deepseek-flash` ("DeepSeek-V4.1-Flash", input text and image) and `deepseek-v4-pro`
+  ("DeepSeek-V4-Pro", input text only). A prompt with a 128-pixel shape and "do not use any tool" was answered
+  correctly three times in a row (green triangle, blue triangle, green triangle) with no tool call, and the strict live
+  step passed for the first message and for a message taken into a running turn. The image had reached the model in
+  the earlier run too. The model had been told to "read any attached file with your own tools", so it opened the image
+  with `read_image` (whose text result is only a description of the file) and then sampled pixels with PowerShell. I
+  read that as a sign the route could not see the image without testing that directly. The start defaults already use
+  `deepseek-flash` for dsh everywhere, so no model id changes; a dsh set to `deepseek-v4-pro` gets dsh's placeholder
+  instead of the image and still has the path.
+- **Other options:** A `modelOverrides` entry declaring image input, which is unnecessary because the listing already
+  declares it; moving dsh to another model id, which the account does not offer for images.

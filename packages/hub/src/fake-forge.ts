@@ -36,6 +36,8 @@ export interface FakeWorkflow {
   name: string;
   state: string;
   steps: FakeStep[];
+  agent?: number;
+  started?: number;
 }
 
 export interface FakePipeline {
@@ -47,6 +49,8 @@ export interface FakePipeline {
   workflows: FakeWorkflow[];
   config: string[];
   errors?: unknown;
+  created?: number;
+  finished?: number;
 }
 
 export interface FakeWoodpeckerRepository {
@@ -357,7 +361,15 @@ export function fakeForge(): FakeForge {
         .slice((page - 1) * size, page * size);
       return json(
         200,
-        matching.map((pipeline) => ({ number: pipeline.number, commit: pipeline.commit, ref: pipeline.ref, event: pipeline.event, status: pipeline.status })),
+        matching.map((pipeline) => ({
+          number: pipeline.number,
+          commit: pipeline.commit,
+          ref: pipeline.ref,
+          event: pipeline.event,
+          status: pipeline.status,
+          created: pipeline.created ?? 0,
+          finished: pipeline.finished ?? 0,
+        })),
       );
     }
     const one = /^\/api\/repos\/(\d+)\/pipelines\/(\d+)(\/config)?$/.exec(path);
@@ -377,9 +389,14 @@ export function fakeForge(): FakeForge {
         status: pipeline.status,
         commit: pipeline.commit,
         errors: pipeline.errors ?? null,
+        created: pipeline.created ?? 0,
+        started: pipeline.created ?? 0,
+        finished: pipeline.finished ?? 0,
         workflows: pipeline.workflows.map((workflow) => ({
           name: workflow.name,
           state: workflow.state,
+          agent_id: workflow.agent ?? 0,
+          started: workflow.started ?? 0,
           children: workflow.steps.map((step) => ({ id: step.id, name: step.name, state: step.state, exit_code: step.exitCode ?? 0 })),
         })),
       });

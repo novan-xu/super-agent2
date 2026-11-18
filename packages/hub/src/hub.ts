@@ -217,6 +217,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
       report: (report) => loop?.failed(report),
       accountOf,
+      ...(config.firstPipelineAllowanceMinutes === undefined ? {} : { firstAllowanceMinutes: config.firstPipelineAllowanceMinutes }),
       ...(worker === undefined
         ? {}
         : {

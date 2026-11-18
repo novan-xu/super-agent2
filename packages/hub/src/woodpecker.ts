@@ -13,6 +13,9 @@ export interface PipelineSummary {
   readonly commit: string;
   readonly ref: string;
   readonly event: string;
+  readonly status: string;
+  readonly created: number | null;
+  readonly finished: number | null;
 }
 
 export interface PipelineStep {
@@ -25,6 +28,9 @@ export interface PipelineStep {
 export interface PipelineWorkflow {
   readonly name: string;
   readonly state: string;
+  readonly agent: number | null;
+  readonly started: number | null;
+  readonly finished: number | null;
   readonly steps: readonly PipelineStep[];
 }
 
@@ -33,6 +39,9 @@ export interface Pipeline {
   readonly status: string;
   readonly commit: string;
   readonly errors: string | null;
+  readonly created: number | null;
+  readonly started: number | null;
+  readonly finished: number | null;
   readonly workflows: readonly PipelineWorkflow[];
 }
 
@@ -56,23 +65,47 @@ export const pipelinePageSize = 50;
 
 const RepositoryJson = z.looseObject({ id: z.number().int(), active: z.boolean().optional(), config_file: z.string().optional() });
 
-const SummaryJson = z.looseObject({ number: z.number().int(), commit: z.string(), ref: z.string().optional(), event: z.string().optional() });
+const Seconds = z.number().nullable().optional();
+
+const SummaryJson = z.looseObject({
+  number: z.number().int(),
+  commit: z.string(),
+  ref: z.string().optional(),
+  event: z.string().optional(),
+  status: z.string().optional(),
+  created: Seconds,
+  finished: Seconds,
+});
 
 const StepJson = z.looseObject({ id: z.number().int(), name: z.string(), state: z.string(), exit_code: z.number().int().nullable().optional() });
 
-const WorkflowJson = z.looseObject({ name: z.string(), state: z.string(), children: z.array(StepJson).nullable().optional() });
+const WorkflowJson = z.looseObject({
+  name: z.string(),
+  state: z.string(),
+  agent_id: z.number().int().nullable().optional(),
+  started: Seconds,
+  finished: Seconds,
+  children: z.array(StepJson).nullable().optional(),
+});
 
 const PipelineJson = z.looseObject({
   number: z.number().int(),
   status: z.string(),
   commit: z.string(),
   errors: z.unknown().optional(),
+  created: Seconds,
+  started: Seconds,
+  finished: Seconds,
   workflows: z.array(WorkflowJson).nullable().optional(),
 });
 
 const ConfigJson = z.array(z.looseObject({ name: z.string() }));
 
 const LogJson = z.array(z.looseObject({ line: z.number().int().optional(), data: z.string().nullable().optional() }));
+
+function milliseconds(seconds: number | null | undefined): number | null {
+  return seconds === undefined || seconds === null || seconds <= 0 ? null : Math.round(seconds * 1000);
+}
 
 function errorsText(errors: unknown): string | null {
   if (errors === undefined || errors === null) {
@@ -138,7 +171,15 @@ export function createWoodpeckerApi(options: WoodpeckerApiOptions): WoodpeckerAp
         `/api/repos/${repository}/pipelines?event=pull_request&ref=${encodeURIComponent(`refs/pull/${pullRequest}/`)}&perPage=${pipelinePageSize}&page=${page}`,
         z.array(SummaryJson).nullable(),
       );
-      return (list ?? []).map((entry) => ({ number: entry.number, commit: entry.commit, ref: entry.ref ?? "", event: entry.event ?? "" }));
+      return (list ?? []).map((entry) => ({
+        number: entry.number,
+        commit: entry.commit,
+        ref: entry.ref ?? "",
+        event: entry.event ?? "",
+        status: entry.status ?? "",
+        created: milliseconds(entry.created),
+        finished: milliseconds(entry.finished),
+      }));
     },
     pipeline: async (repository, number) => {
       const found = await read(`/api/repos/${repository}/pipelines/${number}`, PipelineJson);
@@ -147,9 +188,15 @@ export function createWoodpeckerApi(options: WoodpeckerApiOptions): WoodpeckerAp
         status: found.status,
         commit: found.commit,
         errors: errorsText(found.errors),
+        created: milliseconds(found.created),
+        started: milliseconds(found.started),
+        finished: milliseconds(found.finished),
         workflows: (found.workflows ?? []).map((workflow) => ({
           name: workflow.name,
           state: workflow.state,
+          agent: workflow.agent_id === undefined || workflow.agent_id === null || workflow.agent_id <= 0 ? null : workflow.agent_id,
+          started: milliseconds(workflow.started),
+          finished: milliseconds(workflow.finished),
           steps: (workflow.children ?? []).map((step) => ({ id: step.id, name: step.name, state: step.state, exitCode: step.exit_code ?? null })),
         })),
       };

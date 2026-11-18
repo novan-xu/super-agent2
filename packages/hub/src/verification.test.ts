@@ -33,6 +33,7 @@ let begun: number[];
 let sentBack: { readonly ticket: number; readonly note: string }[];
 let ticks: (() => void)[];
 let withWoodpecker: boolean;
+let allowanceMinutes: number | undefined;
 
 const noDefaults: ChainDefaults = {
   resolve: () => {
@@ -71,6 +72,7 @@ function open(): void {
     credentials,
     fetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
+    ...(allowanceMinutes === undefined ? {} : { firstAllowanceMinutes: allowanceMinutes }),
     ticker: (tick) => {
       ticks.push(tick);
       return () => undefined;
@@ -107,6 +109,7 @@ beforeEach(() => {
   sentBack = [];
   ticks = [];
   withWoodpecker = true;
+  allowanceMinutes = undefined;
   open();
 });
 
@@ -360,18 +363,6 @@ describe("a code pull request", () => {
     pipeline(6, "h3", 12, "success", [["check", "success"]], ["check", "docs"]);
     await poll();
     expect(current(ticket.id).state).toBe("merged");
-  });
-
-  it("stays honestly verifying while its pipeline never reports, whatever the time", async () => {
-    woodpeckerRepository();
-    const ticket = verifying([36], 13, "h4", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
-    for (let round = 0; round < 5; round += 1) {
-      clock.advance(24 * 60 * 60 * 1000);
-      await poll();
-    }
-    expect(current(ticket.id).state).toBe("verifying");
-    expect(current(ticket.id).verification).toMatchObject({ state: "waiting", waiting: "pipeline" });
-    expect(told).toEqual([]);
   });
 
   it("records a red workflow with its failing step and log, tells the brain once, and does not retry", async () => {
@@ -704,12 +695,256 @@ describe("merging exactly once", () => {
 });
 
 describe("judging a pipeline", () => {
-  const base = { number: 4, status: "success", commit: "abc", errors: null };
+  const base = { number: 4, status: "success", commit: "abc", errors: null, created: null, started: null, finished: null };
+  const flow = (name: string, state: string) => ({ name, state, agent: null, started: null, finished: null, steps: [] });
 
   it("is green only when every workflow of the head's pipeline succeeded", () => {
-    expect(judge("abc", ["a", "b"], { ...base, workflows: [{ name: "a", state: "success", steps: [] }, { name: "b", state: "success", steps: [] }] }, ["a", "b"]).kind).toBe("green");
-    expect(judge("abd", ["a"], { ...base, workflows: [{ name: "a", state: "success", steps: [] }] }, ["a"]).kind).toBe("waiting");
+    expect(judge("abc", ["a", "b"], { ...base, workflows: [flow("a", "success"), flow("b", "success")] }, ["a", "b"]).kind).toBe("green");
+    expect(judge("abd", ["a"], { ...base, workflows: [flow("a", "success")] }, ["a"]).kind).toBe("waiting");
     expect(judge("abc", ["a"], { ...base, workflows: [] }, ["a"]).kind).toBe("waiting");
     expect(judge("abc", ["a"], { ...base, status: "error", errors: "config not found", workflows: [] }, ["a"])).toMatchObject({ kind: "red", failed: [{ workflow: "", step: "" }] });
+  });
+});
+
+const minute = 60_000;
+
+function ago(minutes: number): number {
+  return (clock.now() - minutes * minute) / 1000;
+}
+
+function past(number: number, commit: string, pull: number, length: number, endedMinutesAgo: number): void {
+  const done = pipeline(number, commit, pull, "success", [
+    ["check-macos", "success"],
+    ["check-windows", "success"],
+  ]);
+  done.created = ago(endedMinutesAgo + length);
+  done.finished = ago(endedMinutesAgo);
+}
+
+function running(number: number, commit: string, pull: number): FakePipeline {
+  const live = pipeline(number, commit, pull, "running", [
+    ["check-macos", "success"],
+    ["check-windows", "running"],
+  ]);
+  live.created = ago(0);
+  return live;
+}
+
+function history(pull: number): void {
+  woodpeckerRepository();
+  past(1, "o1", pull, 8, 300);
+  past(2, "o2", pull, 10, 200);
+  past(3, "o3", pull, 40, 100);
+}
+
+async function after(minutes: number): Promise<void> {
+  clock.advance(minutes * minute);
+  await poll();
+}
+
+describe("a pipeline that runs far beyond the usual", () => {
+  it("tells the brain once at three times the usual and again at each doubling, and decides nothing", async () => {
+    history(8);
+    const ticket = verifying([31], 8, "new2", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "new2", 8);
+    await settle();
+    await after(29);
+    expect(told).toEqual([]);
+    await after(1);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 的验证已等了 30 分钟，通常 10 分钟，大脑会先去看一眼，没有问题就不打扰你`);
+    const prompt = told[0]?.prompt ?? "";
+    expect(prompt).toContain(`ticket ${ticket.id}`);
+    expect(prompt).toContain("has waited 30 minutes");
+    expect(prompt).toContain("Pull request #8 in novan-xu/super-agent-sandbox, head new2");
+    expect(prompt).toContain(`pipeline ${fakeWoodpeckerServer}/repos/6/pipeline/4`);
+    expect(prompt).toContain("pipeline #4 is running, created 30 minutes ago");
+    expect(prompt).toContain("check-macos: success");
+    expect(prompt).toContain("check-windows: running");
+    expect(prompt).toContain("What is usual for novan-xu/super-agent-sandbox: 10 minutes, the median of its last 3 green pipelines");
+    expect(prompt).toContain("3 times that, 30 minutes");
+    expect(prompt).toContain("Nothing is decided from the time: the ticket stays verifying, nothing failed, no guided round is counted, and nothing was cancelled or restarted.");
+    expect(prompt).toContain("tells you again at 1 hour");
+    await after(10);
+    await after(10);
+    expect(told).toHaveLength(1);
+    await after(10);
+    expect(told).toHaveLength(2);
+    expect(told[1]?.prompt).toContain("notice 2");
+    expect(told[1]?.prompt).toContain("tells you again at 2 hours");
+    await after(60 * 10);
+    expect(told).toHaveLength(3);
+    expect(told[2]?.prompt).toContain("has waited 11 hours");
+    expect(told[2]?.prompt).toContain("notice 5");
+    await after(1);
+    expect(told).toHaveLength(3);
+    const now = current(ticket.id);
+    expect(now.state).toBe("verifying");
+    expect(now.round).toBe(0);
+    expect(now.verification).toMatchObject({ state: "waiting", waiting: "workflows" });
+    expect(sentBack).toEqual([]);
+    expect(mergeCalls()).toEqual([]);
+    expect(forge.calledWith(/^(POST|PUT|PATCH|DELETE) https:\/\/woodpecker\.test/)).toEqual([]);
+  });
+
+  it("says whether a pending workflow has been picked up by an agent", async () => {
+    history(9);
+    verifying([32], 9, "h1", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    const queued = pipeline(4, "h1", 9, "pending", [
+      ["check-macos", "pending"],
+      ["check-windows", "pending"],
+    ]);
+    queued.created = ago(0);
+    const taken = queued.workflows[1];
+    if (taken === undefined) {
+      throw new Error("workflow missing");
+    }
+    taken.agent = 3;
+    await settle();
+    await after(30);
+    const prompt = told[0]?.prompt ?? "";
+    expect(prompt).toContain("check-macos: pending, no agent has picked it up");
+    expect(prompt).toContain("check-windows: pending, assigned to agent 3, not started");
+  });
+
+  it("says which agent a running workflow is on, and for how long", async () => {
+    history(10);
+    verifying([33], 10, "h2", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    const live = running(4, "h2", 10);
+    const busy = live.workflows[1];
+    if (busy === undefined) {
+      throw new Error("workflow missing");
+    }
+    busy.agent = 2;
+    busy.started = ago(-5);
+    await settle();
+    await after(30);
+    expect(told[0]?.prompt).toContain("check-windows: running on agent 2, started 25 minutes ago");
+  });
+
+  it("covers a head for which no pipeline appeared, counted from when the hub first saw the head, with the first-time allowance", async () => {
+    woodpeckerRepository();
+    const ticket = verifying([36], 13, "h4", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    await settle();
+    await after(119);
+    expect(told).toEqual([]);
+    await after(1);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 的验证已等了 2 小时，这个仓库还没有足够的历史，先按 2 小时 算，大脑会先去看一眼，没有问题就不打扰你`);
+    expect(told[0]?.prompt).toContain("Woodpecker says: it has no pipeline for this head, 2 hours after the hub first saw the head.");
+    expect(told[0]?.prompt).toContain("This is notice 1 for this head.");
+    expect(told[0]?.prompt).toContain("The hub has no usual time for novan-xu/super-agent-sandbox yet (0 green pipelines recorded, 3 needed), so it uses a first-time allowance of 2 hours");
+    expect(told[0]?.prompt).toContain("tells you again at 4 hours");
+    await after(60 * 24 * 5);
+    expect(told).toHaveLength(2);
+    expect(current(ticket.id).state).toBe("verifying");
+    expect(current(ticket.id).verification).toMatchObject({ state: "waiting", waiting: "pipeline" });
+  });
+
+  it("uses the allowance setting only until the repository has history", async () => {
+    allowanceMinutes = 20;
+    await shut();
+    open();
+    woodpeckerRepository();
+    verifying([37], 14, "h5", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "h5", 14);
+    await settle();
+    await after(19);
+    expect(told).toEqual([]);
+    await after(1);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.prompt).toContain("first-time allowance of 20 minutes");
+  });
+
+  it("does not use the allowance once three green pipelines are recorded", async () => {
+    allowanceMinutes = 20;
+    await shut();
+    open();
+    woodpeckerRepository();
+    past(1, "o1", 15, 2, 300);
+    past(2, "o2", 15, 2, 200);
+    past(3, "o3", 15, 4, 100);
+    verifying([38], 15, "h6", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "h6", 15);
+    await settle();
+    await after(5);
+    expect(told).toEqual([]);
+    await after(1);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.prompt).toContain("What is usual for novan-xu/super-agent-sandbox: 2 minutes");
+  });
+
+  it("tells once per pipeline: a restarted pipeline, which is a new one, is told again", async () => {
+    history(16);
+    verifying([39], 16, "h7", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "h7", 16);
+    await settle();
+    await after(30);
+    expect(told).toHaveLength(1);
+    running(5, "h7", 16);
+    await after(29);
+    expect(told).toHaveLength(1);
+    await after(1);
+    expect(told).toHaveLength(2);
+    expect(told[1]?.prompt).toContain("pipeline #5 is running");
+    expect(told[1]?.prompt).toContain("notice 1 for this pipeline");
+  });
+
+  it("does not tell again after a restart of the hub", async () => {
+    history(17);
+    verifying([40], 17, "h8", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "h8", 17);
+    await settle();
+    await after(30);
+    expect(told).toHaveLength(1);
+    await shut();
+    restart();
+    await settle();
+    await after(5);
+    expect(told).toHaveLength(1);
+    await after(25);
+    expect(told).toHaveLength(2);
+  });
+
+  it("tells nothing for a pipeline that finishes in the usual time, and records its length as a green run", async () => {
+    woodpeckerRepository();
+    const ticket = verifying([41], 18, "h9", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    const live = running(4, "h9", 18);
+    await settle();
+    await after(12);
+    expect(told).toEqual([]);
+    expect(database.connection.prepare("SELECT COUNT(*) AS n FROM pipeline_durations").get()).toEqual({ n: 0 });
+    live.status = "success";
+    for (const workflow of live.workflows) {
+      workflow.state = "success";
+    }
+    live.finished = ago(0);
+    await poll();
+    expect(current(ticket.id).state).toBe("merged");
+    expect(database.connection.prepare("SELECT repository, number, finished_at - created_at AS length FROM pipeline_durations").all()).toEqual([{ repository, number: 4, length: 12 * minute }]);
+    expect(verification.waitedFor(ticket.id)).toBeNull();
+  });
+
+  it("does not tell for a pipeline that is over, red or not green", async () => {
+    woodpeckerRepository();
+    verifying([42], 19, "h10", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    const failed = pipeline(4, "h10", 19, "failure", [
+      ["check-macos", "success"],
+      ["check-windows", "failure"],
+    ]);
+    failed.created = ago(0);
+    await settle();
+    told.length = 0;
+    await after(60 * 24);
+    expect(told).toEqual([]);
+  });
+
+  it("reports what the ticket has waited and what is usual, while it waits", async () => {
+    history(20);
+    const ticket = verifying([43], 20, "h11", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    running(4, "h11", 20);
+    await settle();
+    await after(7);
+    expect(verification.waitedFor(ticket.id)).toEqual({ waited: 7 * minute, usual: 10 * minute, samples: 3, threshold: 30 * minute });
   });
 });
