@@ -314,11 +314,12 @@ export function createWorks(options: WorksOptions): Works {
       repository: work.record.repository,
       branch: work.record.branch,
       issues: work.record.issues.map((issue) => issue.number),
+      merged: task.merged ?? [],
       environment: environmentOf(task),
       cwd: work.paths.worktree,
       read: readPullRequest,
     });
-    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, report: outcome.report } } : outcome;
+    return outcome.ok ? { ok: true, event: { kind: "finished", pullRequest: outcome.pullRequest, url: outcome.url, closes: [...outcome.closes], report: outcome.report } } : outcome;
   };
 
   const check = async (work: Work) => {
@@ -465,7 +466,11 @@ export function createWorks(options: WorksOptions): Works {
     emit(work, {
       kind: "phase",
       phase: "prepared",
-      detail: prepared.created ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}` : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
+      detail: prepared.created
+        ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}`
+        : prepared.switched
+          ? `Switched the worktree ${work.paths.worktree} to the new branch ${task.branch} from ${prepared.from}`
+          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
     });
     const session = task.session ?? work.record.session;
     try {

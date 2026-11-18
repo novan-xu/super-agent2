@@ -7,6 +7,8 @@ import {
   type GeneratedText,
   guidanceRefusal,
   type LoopFailure,
+  mergedIssueNumbers,
+  openIssueNumbers,
   type RunnerWorkEvent,
   StoredWorkEvent,
   type Ticket,
@@ -58,11 +60,19 @@ export type MessageOutcome = { readonly ok: true; readonly id: string } | { read
 
 export type WorkListener = (event: StoredWorkEvent) => void;
 
+export interface MergedPiece {
+  readonly pullRequest: number;
+  readonly mergeCommit: string | null;
+  readonly closes: readonly number[];
+  readonly base: string;
+}
+
 export interface WorkService extends TicketWork {
   begin(ticket: Ticket): void;
   stop(ticket: Ticket): void;
   reassign(ticket: Ticket): void;
   again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound): WorkOutcome;
+  onward(ticket: number, merged: MergedPiece): WorkOutcome;
   message(ticket: number, text: string, from: WorkSender): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
@@ -277,6 +287,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       branch: ticket.branch ?? branchFor(ticket.id, suffix()),
       title: ticket.title.en,
       issues: ticket.issues.map((issue) => ({ number: issue.number, title: issue.title.en, url: issue.url })),
+      merged: mergedIssueNumbers(ticket),
       engine: attempt.engine,
       model: attempt.model,
       effort: attempt.effort,
@@ -375,7 +386,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     removeEverywhere(ticket);
   };
 
-  const nextAttempt = (ticket: Ticket, note: string | null, previous: Attempt | undefined, back?: { readonly reason: GeneratedText | undefined; readonly round: GuidedRound | undefined }): void => {
+  const nextAttempt = (
+    ticket: Ticket,
+    note: string | null,
+    previous: Attempt | undefined,
+    back?: { readonly reason: GeneratedText | undefined; readonly round: GuidedRound | undefined; readonly branch?: string | undefined },
+  ): void => {
     if (ticket.machine === null || ticket.engine === null || ticket.model === null || ticket.effort === null) {
       throw new Error(`Ticket ${ticket.id} has no machine, engine, model and effort chosen`);
     }
@@ -405,6 +421,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           writes.move(ticket.id, "working", back.reason);
         } else if (current?.state !== "working") {
           throw new Error(`Ticket ${ticket.id} is ${current?.state ?? "gone"} and cannot go back to work`);
+        }
+        if (back.branch !== undefined) {
+          writes.nextPiece(ticket.id, back.branch);
         }
         if (back.round !== undefined) {
           writes.startRound(ticket.id, { failure: back.round.failure, guidance: back.round.guidance, attempt: number });
@@ -507,7 +526,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           }
           const ticket = writes.get(attempt.ticket_id);
           if (current && ticket !== undefined && ticket.kind !== "writing") {
-            writes.setPullRequest(ticket.id, event.pullRequest, event.report);
+            writes.setPullRequest(ticket.id, event.pullRequest, event.report, { url: event.url, closes: event.closes ?? [] });
             if (ticket.state === "working") {
               writes.move(ticket.id, "verifying");
             }
@@ -704,6 +723,45 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       try {
         nextAttempt(ticket, note, latest, { reason, round });
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+      const now = tickets.get(id);
+      return now === undefined ? { ok: false, reason: `There is no ticket ${id}` } : { ok: true, ticket: now };
+    },
+    onward: (id, merged) => {
+      const ticket = tickets.get(id);
+      if (ticket === undefined) {
+        return { ok: false, reason: `There is no ticket ${id}` };
+      }
+      if (ticket.state !== "verifying") {
+        return { ok: false, reason: `Ticket ${id} is ${ticket.state}` };
+      }
+      const latest = latestOf(id);
+      if (latest !== undefined && (latest.state === "queued" || isActive(latest.state))) {
+        return { ok: false, reason: `Ticket ${id} already has a worker` };
+      }
+      const open = new Set(openIssueNumbers(ticket));
+      const remaining = ticket.issues.filter((issue) => open.has(issue.number));
+      if (remaining.length === 0) {
+        return { ok: false, reason: `Every issue of ticket ${id} is closed by a merged pull request` };
+      }
+      const branch = branchFor(id, suffix());
+      const done = ticket.issues.filter((issue) => !open.has(issue.number));
+      const closes = ticket.issues.filter((issue) => merged.closes.includes(issue.number));
+      const note = [
+        `Pull request #${merged.pullRequest} is merged into ${merged.base}${merged.mergeCommit === null ? "" : ` as commit ${merged.mergeCommit}`}. ${closes.length === 0 ? "It closed no issue of the chain." : `It closed ${closes.map((issue) => `#${issue.number}`).join(", ")}.`}`,
+        `Closed so far: ${done.length === 0 ? "none" : done.map((issue) => `#${issue.number}`).join(", ")}. Still open, in working order:`,
+        ...remaining.map((issue) => `- #${issue.number} ${issue.title.en} (${issue.url})`),
+        `Your folder is now on a new branch, ${branch}, made from the updated ${merged.base}, which contains the merge. Continue with the open issues: open the next pull request from this branch and hand it in as before.`,
+      ].join("\n");
+      const numbers = remaining.map((issue) => `#${issue.number}`);
+      const reason = {
+        en: `Pull request #${merged.pullRequest} merged; the worker continues with ${numbers.join(", ")}`,
+        zh: text("ticket.reason.nextPiece", { pullRequest: merged.pullRequest, issues: numbers.join("、") }),
+      };
+      try {
+        nextAttempt(ticket, note, latest, { reason, round: undefined, branch });
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }

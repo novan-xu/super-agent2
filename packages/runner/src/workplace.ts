@@ -28,6 +28,7 @@ export const gitHubRemote: RemoteUrl = (repository) => `https://github.com/${rep
 export interface Prepared {
   readonly base: string;
   readonly created: boolean;
+  readonly switched: boolean;
   readonly from: string;
 }
 
@@ -59,8 +60,19 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
     }
     const base = await defaultBranch(git, paths.clone);
     if (existsSync(paths.worktree)) {
-      if ((await currentBranch(git, paths.worktree)) === branch) {
-        return { base, created: false, from: branch };
+      const current = await currentBranch(git, paths.worktree);
+      if (current === branch) {
+        return { base, created: false, switched: false, from: branch };
+      }
+      if (current !== undefined && current !== "HEAD") {
+        const from = (await exists(git, `refs/heads/${branch}`, paths.clone)) ? branch : (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) ? `origin/${branch}` : `origin/${base}`;
+        const switching = from === branch ? ["switch", "--discard-changes", branch] : ["switch", "--discard-changes", from === `origin/${branch}` ? "--track" : "--no-track", "-C", branch, from];
+        if ((await git.run(switching, paths.worktree)).code === 0) {
+          if (current.startsWith("sa2/ticket-") && !(await exists(git, `refs/remotes/origin/${current}`, paths.clone))) {
+            await git.run(["branch", "-D", current], paths.clone);
+          }
+          return { base, created: false, switched: true, from };
+        }
       }
       rmSync(paths.worktree, { recursive: true, force: true });
     }
@@ -68,14 +80,14 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
     mkdirSync(dirname(paths.worktree), { recursive: true });
     if (await exists(git, `refs/heads/${branch}`, paths.clone)) {
       await git.must(["worktree", "add", paths.worktree, branch], paths.clone);
-      return { base, created: true, from: branch };
+      return { base, created: true, switched: false, from: branch };
     }
     if (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) {
       await git.must(["worktree", "add", "--track", "-b", branch, paths.worktree, `origin/${branch}`], paths.clone);
-      return { base, created: true, from: `origin/${branch}` };
+      return { base, created: true, switched: false, from: `origin/${branch}` };
     }
     await git.must(["worktree", "add", "--no-track", "-b", branch, paths.worktree, `origin/${base}`], paths.clone);
-    return { base, created: true, from: `origin/${base}` };
+    return { base, created: true, switched: false, from: `origin/${base}` };
   });
 }
 

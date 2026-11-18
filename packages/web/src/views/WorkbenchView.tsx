@@ -11,7 +11,7 @@ import { followLink } from "../parts/Shell.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
-import { engineName, momentOf, PhaseStatus, problemLines, problemTone } from "./TicketParts.js";
+import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers } from "./TicketParts.js";
 
 export interface CardActions {
   arm(key: string): void;
@@ -82,7 +82,7 @@ function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Tick
         <span className="lrow-title">{chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
           <span className="chip">{text(`ticket.kind.${ticket.kind}`)}</span>
-          {ticket.issues.length === 0 ? null : <span className="mono">{ticket.issues.map((issue) => `#${issue.number}`).join(" ")}</span>}
+          {ticket.issues.length === 0 ? null : <ChainNumbers ticket={ticket} />}
           {where === null ? null : (
             <span className="chip chip--mono">
               <Icon name="machine" />
@@ -93,7 +93,7 @@ function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Tick
         {problem === null ? null : <span className={`lrow-note lrow-note--${problemTone(problem)}`}>{problemLines(problem, now).join("：")}</span>}
       </span>
       <span className="lrow-side">
-        {ticket.pullRequest === null ? null : <span className="mono">{`#${ticket.pullRequest}`}</span>}
+        {ticket.pullRequests.length === 0 ? null : <PullRequestNumbers ticket={ticket} />}
         <span className="num">{momentOf(ticket.updatedAt, now)}</span>
       </span>
     </a>

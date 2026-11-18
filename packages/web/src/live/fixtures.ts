@@ -71,6 +71,7 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
     ran: null,
     branch: null,
     pullRequest: null,
+    pullRequests: [],
     round: 0,
     freeRetry: false,
     stuck: null,

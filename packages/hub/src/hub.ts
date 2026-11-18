@@ -29,7 +29,7 @@ import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
 import type { Fetch } from "./github-api.js";
 import type { GeneratedText } from "@super-agent2/protocol";
-import { createVerification, type Ticker, type VerificationService } from "./verification.js";
+import { createVerification, type MergedPart, type Ticker, type VerificationService } from "./verification.js";
 import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
 import type { AccessServiceTokens } from "./cloudflare.js";
 import { createMachineAdmin, type MachineAdmin } from "./enrollment.js";
@@ -222,6 +222,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         : {
             sendBack: (ticket: number, note: string, reason: GeneratedText) => {
               const outcome = worker.again(ticket, note, reason);
+              return outcome.ok ? { ok: true as const } : { ok: false as const, reason: outcome.reason };
+            },
+            onward: (ticket: number, merged: MergedPart) => {
+              const outcome = worker.onward(ticket, merged);
               return outcome.ok ? { ok: true as const } : { ok: false as const, reason: outcome.reason };
             },
           }),

@@ -28,9 +28,9 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     `Chain: ${task.title}`,
     "",
     "Issues, in working order:",
-    ...task.issues.map((issue, index) => `${index + 1}. #${issue.number} ${issue.title} (${issue.url})`),
+    ...task.issues.map((issue, index) => `${index + 1}. #${issue.number} ${issue.title} (${issue.url})${(task.merged ?? []).includes(issue.number) ? ", already closed by a merged pull request" : ""}`),
     "",
-    `Hand back by writing the JSON file at: ${place.handback}`,
+    `Hand in each pull request by writing the JSON file at: ${place.handback}`,
   ].join("\n");
 }
 
@@ -46,7 +46,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
   return [
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
     "Check `git status` and `git log` in your working folder first, and look at what is already on the branch and in any open pull request from it.",
-    `Hand back by writing the JSON file at ${place.handback} when the pull request is open, as described at the start.`,
+    `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
     task.note === null ? "" : `\n${task.note}`,
   ]
     .join("\n")
@@ -54,7 +54,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`].join("\n");
+  return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`].join("\n");
 }
 
 export function messageText(from: WorkSender, text: string): string {

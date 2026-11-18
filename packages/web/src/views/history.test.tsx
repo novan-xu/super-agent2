@@ -78,7 +78,23 @@ describe("历史", () => {
   });
 
   it("shows the repository, the kind and the issues of a ticket for code, and the kind alone for writing", () => {
-    const html = render(shown([ended(2, 2000, { state: "delivered", kind: "writing", repository: null, issues: [], title: { en: "Notice", zh: "给邻居的通知" } }), ended(1, 1000, { kind: "fix", pullRequest: 12 })]));
+    const merged = {
+      number: 12,
+      url: "https://github.com/novan-xu/super-agent-sandbox/pull/12",
+      branch: "sa2/ticket-1-beef",
+      state: "merged" as const,
+      closes: [1],
+      mergeCommit: "abc1234",
+      deployment: false,
+      handedAt: 900,
+      mergedAt: 1000,
+    };
+    const html = render(
+      shown([
+        ended(2, 2000, { state: "delivered", kind: "writing", repository: null, issues: [], title: { en: "Notice", zh: "给邻居的通知" } }),
+        ended(1, 1000, { kind: "fix", pullRequest: 12, pullRequests: [merged] }),
+      ]),
+    );
     const [writing = "", code = ""] = html.split('<a class="lrow"').slice(1);
     expect(plain(writing)).toContain("写作");
     expect(writing).not.toContain("super-agent-sandbox");
@@ -86,6 +102,7 @@ describe("历史", () => {
     expect(plain(code)).toContain("novan-xu/super-agent-sandbox");
     expect(plain(code)).toContain("#1");
     expect(plain(code)).toContain("#12");
+    expect(code).toContain('class="chain-number is-merged"');
   });
 
   it("shows when each ended", () => {

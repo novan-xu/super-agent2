@@ -9,7 +9,13 @@ export interface HandBack {
   readonly repository: string;
   readonly branch: string;
   readonly pullRequest: number;
+  readonly closes: readonly number[];
   readonly behaviour: Behaviour;
+}
+
+export function pieceOf(issues: readonly number[], merged: readonly number[]): number[] {
+  const open = issues.filter((issue) => !merged.includes(issue));
+  return open.slice(0, Math.max(1, Math.ceil(open.length / 2)));
 }
 
 interface Running {
@@ -20,6 +26,8 @@ interface Running {
   readonly repository: string | null;
   readonly branch: string | null;
   readonly planned: Behaviour;
+  readonly closes: readonly number[];
+  readonly piece: number;
   seq: number;
   step: number;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -91,6 +99,7 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
   const running = new Map<number, Running>();
   const descriptions = new Map<number, string | null>();
   const branches = new Map<number, string>();
+  const pieces = new Map<number, { readonly branch: string; readonly count: number; readonly closes: readonly number[] }>();
 
   const machineOf = (name: string) => machines.find((machine) => machine.name === name);
 
@@ -173,14 +182,15 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
   const finish = (work: Running) => {
     tool(work, "test", "pnpm test", lines(8, "ok"), true, () =>
       stream(work, "done", words("测试全部通过。PR 已经开好，交回文件也写好了。"), () => {
-        const number = 100 + work.ticket;
+        const number = 100 + work.ticket * 10 + work.piece;
         if (work.repository !== null && work.branch !== null) {
-          handBack?.({ ticket: work.ticket, attempt: work.attempt, repository: work.repository, branch: work.branch, pullRequest: number, behaviour: work.planned });
+          handBack?.({ ticket: work.ticket, attempt: work.attempt, repository: work.repository, branch: work.branch, pullRequest: number, closes: work.closes, behaviour: work.planned });
         }
         emit(work, {
           kind: "finished",
           pullRequest: number,
           url: `https://github.com/${work.repository ?? "novan-xu/super-agent-sandbox"}/pull/${number}`,
+          closes: [...work.closes],
           report: { en: "Implemented the change and its tests.", zh: "改动和测试都写好了。" },
         });
         end(work);
@@ -232,13 +242,28 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
     }
     const planned = behaviours.get(ticket) ?? "finish";
     const behaviour: Behaviour = planned === "fail" && attempt > 1 ? "finish" : planned === "fails" ? "fail" : planned === "red-once" || planned === "red-always" ? "finish" : planned;
-    const work: Running = { ticket, attempt, machine, behaviour, planned, repository: descriptions.get(ticket) ?? null, branch: branches.get(ticket) ?? null, seq: 0, step: 0, timer: undefined, ended: false };
+    const piece = pieces.get(ticket);
+    const work: Running = {
+      ticket,
+      attempt,
+      machine,
+      behaviour,
+      planned,
+      repository: descriptions.get(ticket) ?? null,
+      branch: branches.get(ticket) ?? null,
+      closes: piece?.closes ?? [],
+      piece: piece?.count ?? 1,
+      seq: 0,
+      step: 0,
+      timer: undefined,
+      ended: false,
+    };
     running.set(ticket, work);
     emit(work, { kind: "phase", phase: "preparing", detail: `Preparing ticket ${ticket}` });
     later(work, 400, () => {
       emit(work, { kind: "phase", phase: resumed ? "resumed" : "started", detail: `Started with ${model} at ${effort}` });
       emit(work, { kind: "ran", model, effort });
-      const guided = note === null ? [] : words("收到了引导，先按它说的改，再从头检查一遍。");
+      const guided = note === null ? [] : note.startsWith("Pull request #") ? words("上一个 PR 合并了，从更新后的 main 接着做剩下的问题。") : words("收到了引导，先按它说的改，再从头检查一遍。");
       stream(work, "open", [...guided, ...opening], () => {
         if (work.behaviour === "long") {
           loop(work);
@@ -255,11 +280,22 @@ export function createScriptedRunners(hub: Hub, handBack?: (given: HandBack) => 
 
   const receive = (machine: ScriptedMachine, message: HubToRunner) => {
     switch (message.type) {
-      case "work.start":
+      case "work.start": {
+        const known = pieces.get(message.task.ticket);
+        const fresh = known === undefined || known.branch !== message.task.branch;
+        pieces.set(message.task.ticket, {
+          branch: message.task.branch,
+          count: fresh ? (known?.count ?? 0) + 1 : known.count,
+          closes: pieceOf(
+            message.task.issues.map((issue) => issue.number),
+            message.task.merged ?? [],
+          ),
+        });
         descriptions.set(message.task.ticket, message.task.repository);
         branches.set(message.task.ticket, message.task.branch);
         begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);
         return;
+      }
       case "work.write":
         descriptions.set(message.task.ticket, null);
         begin(machine.name, message.task.ticket, message.task.attempt, message.task.model, message.task.effort, message.task.session !== null, message.task.note);

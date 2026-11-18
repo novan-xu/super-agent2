@@ -23,6 +23,7 @@ export const VerificationRow = z.object({
   merge_commit: z.string().nullable(),
   merged_at: z.number().int().nullable(),
   closed_issues: z.string(),
+  closes: z.string().nullable().default(null),
   branch_done: z.number().int(),
   deployment: z.number().int().nullable(),
   reported_at: z.number().int().nullable(),
@@ -58,6 +59,10 @@ export function logsOf(row: VerificationRow): StepLog[] {
 
 export function closedIssuesOf(row: VerificationRow): number[] {
   return parsedList(row.closed_issues, z.number().int());
+}
+
+export function closesOf(row: VerificationRow): number[] | null {
+  return row.closes === null ? null : parsedList(row.closes, z.number().int());
 }
 
 export function verificationOf(raw: unknown): TicketVerification {

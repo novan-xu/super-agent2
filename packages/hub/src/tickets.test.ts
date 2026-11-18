@@ -63,6 +63,7 @@ describe("tickets", () => {
       effort: null,
       branch: null,
       pullRequest: null,
+      pullRequests: [],
       round: 0,
       freeRetry: false,
       stuck: null,

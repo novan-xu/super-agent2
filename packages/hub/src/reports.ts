@@ -1,4 +1,4 @@
-import type { CommandRecord, MachineChoice, StartChoice, Subscription, Subscriptions, Ticket, TicketMove, TicketWait } from "@super-agent2/protocol";
+import { type CommandRecord, deploymentFile, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 
 export const reportLimit = 40_000;
 
@@ -52,10 +52,40 @@ function waitText(wait: TicketWait): string {
   return wait.waived ? `${what} (waived)` : what;
 }
 
+function numbers(list: readonly number[]): string {
+  return list.map((number) => `#${number}`).join(", ");
+}
+
 export function ticketLine(ticket: Ticket): string {
   const where = ticket.repository === null ? "no repository" : ticket.repository;
-  const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
-  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind} in ${where}${issues === "" ? "" : ` (issues ${issues})`}: ${ticket.title.en}`;
+  const merged = new Set(mergedIssueNumbers(ticket));
+  const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : ""}`).join(", ");
+  const pulls = ticket.pullRequests.map((pull) => `#${pull.number} ${pull.state}`).join(", ");
+  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}: ${ticket.title.en}`;
+}
+
+export function chainProgress(ticket: Ticket): string[] {
+  if (ticket.repository === null) {
+    return [];
+  }
+  const merged = ticket.pullRequests.filter((pull) => pull.state === "merged");
+  const open = openPullRequest(ticket.pullRequests);
+  const remaining = openIssueNumbers(ticket);
+  const last = merged.at(-1);
+  const lines = [
+    merged.length === 0
+      ? "No pull request of this chain is merged."
+      : `Pull requests merged, in order: ${merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : numbers(pull.closes)}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`).join("; ")}. The issues they closed stay closed.`,
+    remaining.length === 0 ? "Every issue of the chain is closed." : `Still open: ${numbers(remaining)}${open === undefined ? "; no pull request is open for them" : `; open pull request: #${open.number} from ${open.branch}`}.`,
+  ];
+  if (last !== undefined && last.deployment !== null) {
+    lines.push(
+      last.deployment
+        ? `Deployment: the repository has a deployment (${deploymentFile}), so what is merged needs deploying; the last merge commit is ${last.mergeCommit ?? "unknown"}, and it contains every earlier one.`
+        : "Deployment: the repository has no deployment, so nothing needs deploying.",
+    );
+  }
+  return lines;
 }
 
 export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []): string {
@@ -66,9 +96,18 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     `Chinese summary: ${ticket.summary.zh}`,
   ];
   if (ticket.issues.length > 0) {
+    const merged = new Set(mergedIssueNumbers(ticket));
     lines.push("Issues in working order:");
     for (const issue of ticket.issues) {
-      lines.push(`  ${issue.repository}#${issue.number} ${issue.title.en} (${issue.url})`);
+      lines.push(`  ${issue.repository}#${issue.number} ${issue.title.en} (${issue.url})${merged.has(issue.number) ? ", closed by a merged pull request" : ""}`);
+    }
+  }
+  if (ticket.pullRequests.length > 0) {
+    lines.push("Pull requests, in the order handed in:");
+    for (const pull of ticket.pullRequests) {
+      lines.push(
+        `  #${pull.number} ${pull.state} from ${pull.branch} (${pull.url})${pull.state === "merged" ? `, closed ${pull.closes.length === 0 ? "no issue of the chain" : numbers(pull.closes)}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`}` : pull.closes.length === 0 ? "" : `, to close ${numbers(pull.closes)}`}`,
+      );
     }
   }
   lines.push(

@@ -114,6 +114,42 @@ export const TicketRun = z.object({
 });
 export type TicketRun = z.infer<typeof TicketRun>;
 
+export const ticketPullRequestStates = ["open", "merged", "closed"] as const;
+export const TicketPullRequestState = z.enum(ticketPullRequestStates);
+export type TicketPullRequestState = z.infer<typeof TicketPullRequestState>;
+
+export const TicketPullRequest = z.object({
+  number: IssueNumber,
+  url: z.string().min(1),
+  branch: z.string(),
+  state: TicketPullRequestState,
+  closes: z.array(IssueNumber),
+  mergeCommit: z.string().nullable(),
+  deployment: z.boolean().nullable(),
+  handedAt: z.number().int(),
+  mergedAt: z.number().int().nullable(),
+});
+export type TicketPullRequest = z.infer<typeof TicketPullRequest>;
+
+export interface ChainProgress {
+  readonly issues: readonly Pick<TicketIssue, "number">[];
+  readonly pullRequests: readonly Pick<TicketPullRequest, "state" | "closes">[];
+}
+
+export function mergedIssueNumbers(ticket: ChainProgress): number[] {
+  const closed = new Set(ticket.pullRequests.filter((pull) => pull.state === "merged").flatMap((pull) => pull.closes));
+  return ticket.issues.filter((issue) => closed.has(issue.number)).map((issue) => issue.number);
+}
+
+export function openIssueNumbers(ticket: ChainProgress): number[] {
+  const merged = new Set(mergedIssueNumbers(ticket));
+  return ticket.issues.filter((issue) => !merged.has(issue.number)).map((issue) => issue.number);
+}
+
+export function openPullRequest<T extends Pick<TicketPullRequest, "state">>(pullRequests: readonly T[]): T | undefined {
+  return pullRequests.filter((pull) => pull.state === "open").at(-1);
+}
+
 export const Ticket = z.object({
   id: TicketId,
   repository: RepositoryName.nullable(),
@@ -136,6 +172,7 @@ export const Ticket = z.object({
   ran: TicketRun.nullable(),
   branch: z.string().nullable(),
   pullRequest: IssueNumber.nullable(),
+  pullRequests: z.array(TicketPullRequest),
   report: GeneratedText.nullable(),
   work: WorkStatus.nullable(),
   verification: TicketVerification.nullable(),
