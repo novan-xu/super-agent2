@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import type { OpenOptions, ProgramHandle } from "./program.js";
 import { EventLog, fakeClaudeSource, fakeCodexSource, fakeDshSource, readLog, writeFake } from "./testing/programs.js";
 import { claudeAdapter, claudeEnvironment } from "./claude.js";
 import { classifyCodexError, codexAdapter } from "./codex.js";
-import { dshAdapter, dshPatch, dshTurnEnd } from "./dsh.js";
+import { dshAdapter, dshControlPath, dshControlPlugin, dshPatch, dshTurnEnd } from "./dsh.js";
 import type { ProgramSettings } from "./settings.js";
 
 let directory: string;
@@ -162,8 +162,68 @@ describe("dsh through its SDK profile", () => {
     expect(received.some((entry) => entry["method"] === "session/resume")).toBe(false);
   });
 
-  it("cannot take a message into a running turn, and interrupts by stopping the program and resuming", async () => {
+  it("takes a message into the running turn and interrupts it without stopping the program", async () => {
     const adapter = dshAdapter(settings(writeFake(directory, "dsh.mjs", fakeDshSource), "deepseek-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(options("kept"), log.listener));
+    handle.start("wait");
+    await log.until((events) => events.some((event) => event.type === "text"));
+    const program = handle.processId?.();
+    expect(await handle.steer("顺便")).toBe("steered");
+    await log.ended();
+    expect(log.events).toEqual([
+      { type: "text", block: "w", delta: "waiting" },
+      { type: "text", block: "s", delta: "也做了：顺便" },
+      { type: "turn.finished", outcome: "completed" },
+    ]);
+    expect(await handle.steer("太晚了")).toBe("queued");
+    handle.start("wait");
+    await log.until((events) => events.filter((event) => event.type === "text").length >= 3);
+    handle.interrupt();
+    await log.ended(2);
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "interrupted" });
+    handle.start("继续");
+    await log.ended(3);
+    expect(log.events.at(-2)).toEqual({ type: "text", block: "a2", delta: "回答：继续" });
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    expect(handle.processId?.()).toBe(program);
+    const received = readLog(logFile);
+    expect(received.filter((entry) => "args" in entry)).toHaveLength(1);
+    expect(received.filter((entry) => entry["method"] === "session/resume")).toHaveLength(1);
+    expect(received.filter((entry) => "steered" in entry)).toEqual([{ steered: "顺便", role: "user", source: "user" }]);
+    expect(received.filter((entry) => "cancelled" in entry)).toEqual([{ cancelled: "user" }]);
+  });
+
+  it("ends an interrupted turn when dsh goes idle before the turn begins", async () => {
+    const adapter = dshAdapter(settings(writeFake(directory, "dsh.mjs", fakeDshSource), "deepseek-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(options("kept"), log.listener));
+    handle.start("early");
+    await log.until((events) => events.some((event) => event.type === "text"));
+    handle.interrupt();
+    await log.ended();
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "interrupted" });
+    expect(readLog(logFile).filter((entry) => "cancelled" in entry)).toHaveLength(1);
+  });
+
+  it("does not send a prompt that was interrupted before dsh was ready", async () => {
+    const adapter = dshAdapter(settings(writeFake(directory, "dsh.mjs", fakeDshSource), "deepseek-flash", "high"));
+    const log = new EventLog();
+    const handle = track(adapter.open(options("kept"), log.listener));
+    handle.start("wait");
+    handle.interrupt();
+    await log.ended();
+    expect(log.events).toEqual([{ type: "turn.finished", outcome: "interrupted" }]);
+    handle.start("继续");
+    await log.ended(2);
+    expect(log.events.at(-1)).toEqual({ type: "turn.finished", outcome: "completed" });
+    const prompts = readLog(logFile).filter((entry) => entry["method"] === "session/prompt");
+    expect(prompts.map((entry) => (entry["params"] as { contentBlocks: { text: string }[] }).contentBlocks[0]?.text)).toEqual(["继续"]);
+  });
+
+  it("without its control plugin, queues a message and interrupts by stopping the program and resuming", async () => {
+    const base = settings(writeFake(directory, "dsh.mjs", fakeDshSource), "deepseek-flash", "high");
+    const adapter = dshAdapter({ ...base, environment: { ...base.environment, FAKE_NO_CONTROL: "1" } });
     const log = new EventLog();
     const handle = track(adapter.open(options("kept"), log.listener));
     handle.start("wait");
@@ -208,6 +268,19 @@ describe("dsh through its SDK profile", () => {
     expect(patch).toContain("process.env.SUPER_AGENT_HUB_TOKEN");
     expect(patch).toContain("process.env.SUPER_AGENT_CONVERSATION");
     expect(patch).toContain("id: session-log-deepseek");
+    expect(patch).not.toContain("super-agent2-control");
+  });
+
+  it("mounts its control plugin from the package with a channel of its own", () => {
+    const control = { plugin: "C:\\app\\dist\\dsh-control.js", path: "\\\\.\\pipe\\super-agent2-dsh-1" };
+    const patch = dshPatch("http://hub:8080/brain/mcp", control);
+    expect(patch).toContain('      name: "C:/app/dist/dsh-control.js"\n      config:\n        path: "\\\\\\\\.\\\\pipe\\\\super-agent2-dsh-1"');
+    expect(patch).toContain("id: super-agent-hub");
+    expect(dshPatch(null, control).startsWith("- insert:\n    - id: super-agent2-control\n")).toBe(true);
+    expect(existsSync(dshControlPlugin)).toBe(true);
+    expect(dshControlPath("win32")).toMatch(/^\\\\\.\\pipe\\super-agent2-dsh-[0-9a-f]{16}$/);
+    expect(dshControlPath("darwin", "/var/folders/ab/cd/T")).toMatch(/^[\\/]var[\\/]folders[\\/]ab[\\/]cd[\\/]T[\\/]super-agent2-dsh-[0-9a-f]{16}\.sock$/);
+    expect(dshControlPath("darwin", `/${"long/".repeat(20)}T`)).toMatch(/^\/tmp\/super-agent2-dsh-[0-9a-f]{16}\.sock$/);
   });
 });
 

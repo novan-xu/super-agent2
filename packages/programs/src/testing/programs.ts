@@ -70,13 +70,49 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 `;
 
 export const fakeDshSource = `
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 const log = process.env.FAKE_LOG;
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const record = (entry) => appendFileSync(log, JSON.stringify(entry) + "\\n");
-record({ args: process.argv.slice(2), env: { mode: process.env.DSH_PERMISSION_MODE, token: process.env.SUPER_AGENT_HUB_TOKEN ?? null, conversation: process.env.SUPER_AGENT_CONVERSATION ?? null } });
-const event = (sessionId, type, data) => send({ method: "session.event", params: { sessionId, event: { type, data } } });
+const args = process.argv.slice(2);
+record({ args, env: { mode: process.env.DSH_PERMISSION_MODE, token: process.env.SUPER_AGENT_HUB_TOKEN ?? null, conversation: process.env.SUPER_AGENT_CONVERSATION ?? null } });
+const listeners = [];
+const agents = new Map();
+const event = (sessionId, type, data) => {
+  send({ method: "session.event", params: { sessionId, event: { type, data } } });
+  for (const listener of listeners) listener({ id: sessionId }, { type, data });
+};
+const status = (sid, value) => {
+  agents.get(sid).status = value;
+  send({ method: "session.status", params: { sessionId: sid, status: value } });
+};
+const agentFor = (sid) => {
+  if (!agents.has(sid)) {
+    agents.set(sid, {
+      status: "idle",
+      steer: (message) => {
+        record({ steered: message.content[0].text, role: message.role, source: message.source.kind });
+        event(sid, "assistant/message", { message: { id: "s", content: [{ type: "text", text: "也做了：" + message.content[0].text }] } });
+        event(sid, "turn/end", { reason: { kind: "completed" } });
+        status(sid, "idle");
+      },
+      cancel: (cause) => {
+        record({ cancelled: cause.kind });
+        if (agents.get(sid).turn) event(sid, "turn/end", { reason: { kind: "aborted", reason: cause } });
+        status(sid, "idle");
+      },
+    });
+  }
+  return agents.get(sid);
+};
+const patch = readFileSync(args[args.indexOf("--patch") + 1], "utf8");
+const control = /id: super-agent2-control\\n +name: (".*")\\n +config:\\n +path: (".*")/.exec(patch);
+if (control && !process.env.FAKE_NO_CONTROL) {
+  const plugin = await import(pathToFileURL(JSON.parse(control[1])).href);
+  await plugin.apply({ agents: { get: (sid) => agents.get(sid) }, on: (name, listener) => { listeners.push(listener); return () => undefined; }, effect: (run) => run() }, { path: JSON.parse(control[2]) });
+}
 createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   record(message);
@@ -87,17 +123,25 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return send({ id, result: {} });
   }
   if (method === "session/prompt") {
-    send({ id, result: { messageId: "m" } });
     const text = params.contentBlocks[0].text;
     const sid = params.sessionId;
+    const agent = agentFor(sid);
+    agent.turn = text !== "early";
+    status(sid, "running");
+    send({ id, result: { messageId: "m" } });
+    if (text === "early") return event(sid, "assistant/message", { message: { id: "e", content: [{ type: "text", text: "preparing" }] } });
     event(sid, "turn/start", { turn: 1 });
     if (text === "wait") return event(sid, "assistant/message", { message: { id: "w", content: [{ type: "text", text: "waiting" }] } });
-    if (text === "quota") return event(sid, "turn/end", { reason: { kind: "error", error: { code: "ACCOUNT_QUOTA", message: "quota exhausted" } } });
+    if (text === "quota") {
+      event(sid, "turn/end", { reason: { kind: "error", error: { code: "ACCOUNT_QUOTA", message: "quota exhausted" } } });
+      return status(sid, "idle");
+    }
     event(sid, "assistant/message", { message: { id: "a1", content: [{ type: "reasoning", text: "" }, { type: "tool-call", id: "call-1", name: "bash" }] } });
     event(sid, "tool/call", { callId: "call-1", name: "bash", arguments: "{\\"command\\":\\"echo hi\\"}" });
     event(sid, "tool/result", { message: { toolCallId: "call-1", content: [{ type: "text", text: "hi\\n" }], isError: false } });
     event(sid, "assistant/message", { message: { id: "a2", content: [{ type: "text", text: "回答：" + text }] } });
-    return event(sid, "turn/end", { reason: { kind: "completed" } });
+    event(sid, "turn/end", { reason: { kind: "completed" } });
+    return status(sid, "idle");
   }
 });
 `;
