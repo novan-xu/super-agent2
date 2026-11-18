@@ -3,8 +3,8 @@
 Super-agent2 runs on the NAS as the Compose project `superagent2`: `superagent2-hub`, `superagent2-brain`, and
 `superagent2-tunnel`, which starts only with the Compose profile `tunnel`. Everything is driven by
 `/share/Container/superagent2/deploy.sh` with `/share/Container/superagent2/compose.yaml`, run on the NAS as `novanxu`
-by a person, or by a worker over its own sign-in to the NAS. The hub has no way into the NAS host: no target of
-`run_command` runs there, and the hub's container holds no key to sign in with.
+by a person, or by a worker over its own machine's sign-in to the NAS. The hub has no way into the NAS host: the brain's
+`run_command` runs only in the hub's container, and the container holds no key to sign in with.
 
 The same two files serve any instance: the folder the script lives in names it. `/share/Container/superagent2` is the
 live system; `/share/Container/superagent2-<name>` is another instance (a rehearsal) whose Compose project, containers,
@@ -43,13 +43,22 @@ It lists the containers, the running and previous commits and the latest release
 
 ## How Super-agent2 is deployed
 
-The hub does not deploy Super-agent2. The repository has no `.superagent2/deployment.json`, and `deploy_repository`
-refuses the hub's own repository. When a ticket of Super-agent2 merges, the brain is told that the new version is merged
-and waits to be deployed, and it tells the owner. The owner deploys it on the NAS, or files work for a worker to deploy
-it; the worker signs in to the NAS with the access of its own machine, not through the hub. Once it is deployed, the
-owner tells the brain, which records it with `report_deployment`, so tickets arranged after that deployment begin.
+Super-agent2 is deployed like any repository: by a worker, through a task ticket the brain arranges after the chain
+that changes it, started with that chain's 开始. Its recipe is `.superagent2/deployment.json`:
 
-On the NAS, with the full commit id:
+- `target` is `pc`, the owner's Windows PC, whose own SSH access reaches the NAS as `novan-nas-maintenance`. The hub
+  runs the ticket only on the runner of that name, and the runner refuses to deploy anywhere else. If the machine that
+  should deploy has another name, change `target` (through a code ticket) or name the runner `pc`.
+- `deploy` runs `deploy.sh release` of the checkout's commit on the NAS over that SSH alias; `health` runs
+  `deploy.sh health`; `rollback` runs `deploy.sh rollback`.
+
+While the release runs, the hub and the brain stop and start again under the ticket. The runner's link drops and comes
+back; the worker keeps running on the PC, its events are kept on disk and synced to the new hub, its hand-back is
+delivered there, and only once no worker runs does the runner move to the new hub's version. A runner never switches to a
+version the hub no longer announces, so if the release goes back, the runner stays where it is. A worker that finds the
+new version does not come up hands back failed, and the brain guides it like any failure.
+
+By hand, on the NAS, with the full commit id:
 
 ```sh
 bash /share/Container/superagent2/deploy.sh release <commit>
@@ -113,6 +122,20 @@ docker exec superagent2-hub sh -c 'ls /run/superagent2/ssh; env | grep -c NAS_SS
 
 It answers that there is no such folder, and `0`.
 
+## Updating the live system to the version with task tickets
+
+This version is released by hand once, as above, from the running version, which still deploys nothing itself:
+
+- Migration 24 turns writing tickets into task tickets, drops the tables of the hub's own deployments (the commands they
+  ran stay in the command history), and withdraws any deployment command still held for confirmation, with the reason
+  that deployments are now done by tickets.
+- After the release, every runner moves to the new version by itself once its workers are idle. A runner of the
+  previous version still holding a writing worker finishes it under the old version first.
+- For Super-agent2 to deploy itself, the PC's runner must be named `pc` (or `target` changed), and the account it runs
+  as must reach the NAS with `ssh novan-nas-maintenance` without a prompt.
+- `secrets/brain.env` and `secrets/hub.env` need no change. `NAS_SSH_*`, `HUB_CREDENTIAL_PATHS` and any deployment
+  settings an older hub was given are ignored.
+
 ## Runners
 
 A runner moves to the version its hub runs by itself. The hub's image carries its commit (`SUPERAGENT2_REVISION`, set
@@ -120,7 +143,7 @@ by the release's build), and the hub announces it in its welcome to every runner
 the hub's release from `GET /runner/release` (the hub streams GitHub's tarball of its own commit; the runner passes the
 front door as for its link), unpacks it into `~/.superagent2/versions/<commit>`, runs `pnpm install --frozen-lockfile`
 and builds the runner there, and checks that the new runner reports the version asked for. Meanwhile it keeps working.
-It switches only when no worker and no command runs on it: it writes `~/.superagent2/version.json` and exits with code
+It switches only when no worker runs on it, and only to the version the hub announces at that moment: it writes `~/.superagent2/version.json` and exits with code
 75, and its supervisor (Windows) or launch agent (macOS) starts `~/.superagent2/start.mjs`, which starts the version
 named there. The new runner reconnects, the hub resumes whatever it holds, and its first welcome confirms it; a version
 that stops three times before reaching the hub is replaced by the previous one again and never retried. An update that
