@@ -55,7 +55,7 @@ export function modelsVariable(program: ProgramId): string {
   return `RUNNER_MODELS_${program.toUpperCase()}`;
 }
 
-export const defaultSlots = 2;
+export const defaultSlots = 8;
 
 export function parseSettings(text: string): Record<string, string> {
   const values: Record<string, string> = {};
