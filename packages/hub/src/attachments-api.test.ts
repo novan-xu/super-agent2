@@ -117,6 +117,18 @@ describe("attachments for the owner", () => {
     expect(running.attachments.get(id)?.mediaType).toBe("application/octet-stream");
   });
 
+  it("serves byte ranges and rejects unsatisfiable ranges", async () => {
+    const running = await started();
+    const id = await uploaded(running, "audio.mp3", Buffer.from("0123456789"), "audio/mpeg");
+    const part = await owner(running, `/api/attachments/${id}`, { headers: { range: "bytes=2-5" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe("bytes 2-5/10");
+    expect(await part.text()).toBe("2345");
+    const invalid = await owner(running, `/api/attachments/${id}`, { headers: { range: "bytes=20-" } });
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get("content-range")).toBe("bytes */10");
+  });
+
   it("are served as downloads that never run as a page, images shown as images", async () => {
     const running = await started();
     const page = await uploaded(running, "page.html", new TextEncoder().encode("<script>alert(1)</script>"), "text/html");

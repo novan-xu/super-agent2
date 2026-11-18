@@ -23,7 +23,7 @@ export interface AttachmentStore {
   complete(id: string): boolean;
   choose(ids: readonly string[]): ChosenAttachments;
   write(id: string, offset: number, body: Readable): Promise<WriteOutcome>;
-  open(id: string): Readable | undefined;
+  open(id: string, range?: { start: number; end: number }): Readable | undefined;
   path(attachment: Attachment): string;
   relative(attachment: Attachment): string;
   read(id: string, offset: number, length: number): Promise<Buffer>;
@@ -149,9 +149,9 @@ export function createAttachmentStore(database: HubDatabase, clock: Clock, root:
         writing.delete(id);
       }
     },
-    open: (id) => {
+    open: (id, range) => {
       const attachment = get(id);
-      return attachment === undefined || !complete(id) ? undefined : createReadStream(path(attachment));
+      return attachment === undefined || !complete(id) ? undefined : createReadStream(path(attachment), range);
     },
     path,
     relative,

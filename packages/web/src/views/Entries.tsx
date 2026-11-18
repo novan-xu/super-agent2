@@ -1,6 +1,7 @@
+import { FileViewer } from "../parts/FileViewer.js";
 import { text } from "@super-agent2/catalog";
 import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, Turn } from "@super-agent2/protocol";
-import { memo, type ReactNode } from "react";
+import { memo, useCallback, useState, type ReactNode } from "react";
 import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
 import type { Day, StreamItem } from "../live/stream.js";
@@ -104,6 +105,9 @@ export interface DeliveryBodyProps {
 }
 
 export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files, topic, action }: DeliveryBodyProps) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const close = useCallback(() => setSelected(null), []);
+  const viewFiles = files.map(file => ({ ...file, mime: "", url: ticketFilePath(ticket, file.name) }));
   return (
     <div className="msg delivery">
       <div className="msg-who">
@@ -116,8 +120,8 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
       {body === null ? report === null ? null : <div className="msg-text msg-plain">{report}</div> : <div className="msg-text msg-plain delivery-text">{body}</div>}
       {files.length === 0 ? null : (
         <div className="msg-files">
-          {files.map((file) => (
-            <a key={file.name} className="chip" href={ticketFilePath(ticket, file.name)} download={file.name}>
+          {files.map((file, index) => (
+            <a onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(index); }} key={file.name} className="chip" href={ticketFilePath(ticket, file.name)} download={file.name}>
               <Icon name="clip" />
               {file.name}
               <span className="num">{sizeOf(file.size)}</span>
@@ -125,6 +129,7 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
           ))}
         </div>
       )}
+      {selected === null ? null : <FileViewer files={viewFiles} index={selected} close={close} />}
     </div>
   );
 });
