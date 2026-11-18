@@ -1,3 +1,4 @@
+import { FileViewer } from "./FileViewer.js";
 import { text } from "@super-agent2/catalog";
 import { type Attachment, isNativeImage } from "@super-agent2/protocol";
 import { type ClipboardEvent, type DragEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -225,25 +226,30 @@ export function PendingList({ attaching }: { readonly attaching: Attaching }) {
 }
 
 export function SentAttachments({ attachments }: { readonly attachments: readonly Attachment[] }) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const close = useCallback(() => setSelected(null), []);
   if (attachments.length === 0) {
     return null;
   }
   const images = attachments.filter((attachment) => isNativeImage(attachment.mediaType));
   const files = attachments.filter((attachment) => !isNativeImage(attachment.mediaType));
+  const ordered = [...images, ...files];
+  const viewFiles = ordered.map(a => ({ name: a.name, size: a.size, mime: a.mediaType, url: attachmentPath(a.id) }));
   return (
     <div className="msg-files msg-attachments">
       {images.map((attachment) => (
-        <a key={attachment.id} className="att-image" href={attachmentPath(attachment.id)} download={attachment.name} title={attachment.name}>
+        <a key={attachment.id} className="att-image" href={attachmentPath(attachment.id)} download={attachment.name} title={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
           <img src={attachmentPath(attachment.id)} alt={attachment.name} loading="lazy" />
         </a>
       ))}
       {files.map((attachment) => (
-        <a key={attachment.id} className="chip" href={attachmentPath(attachment.id)} download={attachment.name}>
+        <a key={attachment.id} className="chip" href={attachmentPath(attachment.id)} download={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
           <Icon name="clip" />
           <span className="od-truncate att-name">{attachment.name}</span>
           <span className="num">{sizeOf(attachment.size)}</span>
         </a>
       ))}
+      {selected === null ? null : <FileViewer files={viewFiles} index={selected} close={close} />}
     </div>
   );
 }

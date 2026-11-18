@@ -308,3 +308,20 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
   .allowance-sidebar { display: none; }
   .allowance-mobile { display: block; margin-bottom: var(--space-5); }
 }
+
+.fv { position: fixed; inset: 0; z-index: 1000; background: var(--bg, #fff); display: flex; flex-direction: column; }
+.fv-header { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid #8885; }
+.fv-header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-header button, .fv-prev, .fv-next { font-size: 1.8rem; cursor: pointer; }
+.fv-body { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: safe center; }
+.fv-image { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+.fv-image.actual { max-width: none; max-height: none; cursor: zoom-out; }
+.fv-body video { max-width: 100%; max-height: 100%; }
+.fv-fallback { display: flex; flex-direction: column; gap: 1rem; align-items: center; }
+.fv-prev, .fv-next { position: absolute; top: 50%; }
+.fv-prev { left: 1rem; } .fv-next { right: 1rem; }
+.fv-text, .fv-document, .fv-table, .fv-pdf-host { align-self: flex-start; margin: 2rem auto; max-width: 100%; }
+.fv-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fv-table { overflow: auto; } .fv-table td, .fv-table th { padding: .4rem; border: 1px solid #8885; }
+.fv-pdf-host { width: 100%; } .fv-pdf { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+.fv-page { width: 95%; background: white; } .fv-page canvas { width: 100%; height: auto; }

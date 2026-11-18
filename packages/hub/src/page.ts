@@ -58,6 +58,11 @@ export function pageFiles(directory: string): PageFiles {
       const body = await readOrNothing(join(directory, path === serviceWorkerPath ? "sw.js" : "theme.js"));
       return body === undefined ? undefined : { body, type: types["js"] ?? "text/javascript", immutable: false };
     }
+    const pdfAsset = /^\/pdfjs\/(cmaps|standard_fonts)\/([A-Za-z0-9._-]+)$/.exec(path);
+    if (pdfAsset !== null && pdfAsset[1] !== undefined && pdfAsset[2] !== undefined) {
+      const body = await readOrNothing(join(directory, "pdfjs", pdfAsset[1], pdfAsset[2]));
+      return body === undefined ? undefined : { body, type: "application/octet-stream", immutable: true };
+    }
     const folder = path.startsWith(pageAssetsPath) ? "assets" : path.startsWith(pageIconsPath) ? "icons" : undefined;
     if (folder === undefined) {
       return undefined;

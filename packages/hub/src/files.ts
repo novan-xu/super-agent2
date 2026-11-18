@@ -9,7 +9,7 @@ export interface StoredFile {
   readonly name: string;
   readonly size: number;
   readonly mediaType: string;
-  open(): Readable;
+  open(range?: { start: number; end: number }): Readable;
 }
 
 export interface TicketFiles {
@@ -91,7 +91,7 @@ export function createTicketFiles(database: HubDatabase, folder: string = ticket
       const value = FileRow.parse(row);
       const inline = value.data;
       if (inline !== null) {
-        return { name: value.name, size: inline.length, mediaType: value.media_type, open: () => Readable.from([Buffer.from(inline)]) };
+        return { name: value.name, size: inline.length, mediaType: value.media_type, open: (range) => Readable.from([Buffer.from(inline).subarray(range?.start ?? 0, range === undefined ? undefined : range.end + 1)]) };
       }
       if (value.attempt === null || value.part === null) {
         return undefined;
@@ -100,7 +100,7 @@ export function createTicketFiles(database: HubDatabase, folder: string = ticket
       if (!existsSync(path)) {
         return undefined;
       }
-      return { name: value.name, size: statSync(path).size, mediaType: value.media_type, open: () => createReadStream(path) };
+      return { name: value.name, size: statSync(path).size, mediaType: value.media_type, open: (range) => createReadStream(path, range) };
     },
   };
 }
