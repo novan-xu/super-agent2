@@ -256,3 +256,5 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .conv-main, .composer, .msg, .steer { grid-template-columns: minmax(0, 1fr); }
 .att-item, .msg-attachments .chip { max-width: 100%; }
 .att-item .att-name, .msg-attachments .att-name { overflow: hidden; text-overflow: ellipsis; }
+
+.brain-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-xs); }
