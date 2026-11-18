@@ -1,5 +1,5 @@
 import { findRootWords, type Invocation } from "./invocations.js";
-import { baseName, join, type Location, locate, parent } from "./paths.js";
+import { type Location, locate } from "./paths.js";
 import { unknownMark, type Word } from "./shell.js";
 
 export interface ApiRequest {
@@ -25,8 +25,6 @@ export interface Push {
 
 export type Effect =
   | { readonly kind: "delete"; readonly target: Location; readonly contents: boolean }
-  | { readonly kind: "write"; readonly target: Location }
-  | { readonly kind: "relocate"; readonly target: Location }
   | { readonly kind: "request"; readonly request: ApiRequest }
   | { readonly kind: "push"; readonly push: Push };
 
@@ -184,10 +182,6 @@ function remoteAware(text: string, cwd: Location | undefined): Location {
 
 const rsyncValues = ["-e", "--rsh", "-f", "--filter", "--exclude", "--include", "--files-from", "--exclude-from", "--include-from", "--chmod", "--chown", "--backup-dir", "--suffix", "--log-file", "--password-file", "--port", "--timeout", "--bwlimit", "--rsync-path", "-T", "--temp-dir", "--partial-dir", "--compare-dest", "--copy-dest", "--link-dest", "--max-size", "--min-size", "-B", "--block-size", "-M", "--remote-option"];
 
-function mayBeFolder(text: string, sources: number, explicit: boolean): boolean {
-  return explicit || sources > 1 || /[\\/]$/.test(text) || !baseName(text).includes(".") || baseName(text).startsWith(".");
-}
-
 function rsync(invocation: Invocation): Effect[] {
   const parsed = parseArgs(invocation.args, { values: rsyncValues });
   const operands = parsed.operands;
@@ -197,10 +191,7 @@ function rsync(invocation: Invocation): Effect[] {
   }
   const target = remoteAware(destination.text, invocation.cwd);
   const sources = operands.slice(0, -1);
-  const effects: Effect[] = [{ kind: "write", target }];
-  for (const source of sources) {
-    effects.push({ kind: "write", target: join(target, baseName(source.text)) });
-  }
+  const effects: Effect[] = [];
   if (parsed.flags.some((flag) => flag.startsWith("--delete") || flag === "--del")) {
     effects.push({ kind: "delete", target, contents: true });
   }
@@ -293,112 +284,10 @@ function git(invocation: Invocation): Effect[] {
   return [];
 }
 
-function destinationWrites(invocation: Invocation, relocate: boolean): Effect[] {
-  const parsed = parseArgs(invocation.args, {
-    values: ["-t", "--target-directory", "-m", "--mode", "-o", "--owner", "-g", "--group", "-destination", "-newname", ...pathOptions, ...commonPowershellValues],
-    caseless: true,
-  });
-  const explicit = lastOption(parsed, ["-destination", "-t", "--target-directory"]);
-  const named = option(parsed, pathOptions);
-  const operands = [...named, ...parsed.operands];
-  const destination = explicit ?? (operands.length >= 2 ? operands[operands.length - 1] : undefined);
-  const sources = explicit === undefined ? operands.slice(0, -1) : operands;
-  const effects: Effect[] = [];
-  if (destination !== undefined) {
-    const target = remoteAware(destination.text, invocation.cwd);
-    effects.push({ kind: "write", target });
-    if (mayBeFolder(destination.text, sources.length, explicit !== undefined)) {
-      for (const source of sources) {
-        effects.push({ kind: "write", target: join(target, baseName(source.text)) });
-      }
-    }
-  }
-  if (relocate) {
-    for (const source of sources) {
-      effects.push({ kind: "relocate", target: locate(source.text, invocation.cwd) });
-    }
-  }
-  return effects;
-}
-
-function rename(invocation: Invocation): Effect[] {
-  const parsed = parseArgs(invocation.args, { values: [...pathOptions, "-newname", ...commonPowershellValues], caseless: true });
-  const path = option(parsed, pathOptions)[0] ?? parsed.operands[0];
-  const name = lastOption(parsed, ["-newname"]) ?? parsed.operands[option(parsed, pathOptions).length > 0 ? 0 : 1];
-  if (path === undefined) {
-    return [];
-  }
-  const source = locate(path.text, invocation.cwd);
-  const effects: Effect[] = [{ kind: "relocate", target: source }];
-  if (name !== undefined) {
-    effects.push({ kind: "write", target: join(parent(source), name.text) });
-  }
-  return effects;
-}
-
-function operandWrites(invocation: Invocation, values: readonly string[], skip = 0): Effect[] {
-  const parsed = parseArgs(invocation.args, { values, caseless: true });
-  return parsed.operands.slice(skip).map((word) => ({ kind: "write", target: locate(word.text, invocation.cwd) }));
-}
-
-function inPlace(invocation: Invocation): Effect[] {
-  const perl = invocation.program !== "sed";
-  const parsed = parseArgs(invocation.args, { values: perl ? ["-e", "-E", "-I", "-M", "-m"] : ["-e", "--expression", "-f", "--file", "-l", "--line-length"] });
-  const editing = parsed.flags.some((flag) => flag.startsWith("--in-place") || /^-[A-Za-z]*i/.test(flag));
-  if (!editing) {
-    return [];
-  }
-  const scripted = option(parsed, perl ? ["-e", "-E"] : ["-e", "--expression", "-f", "--file"]).length > 0;
-  return parsed.operands.slice(scripted ? 0 : 1).map((word) => ({ kind: "write", target: locate(word.text, invocation.cwd) }));
-}
-
 function dd(invocation: Invocation): Effect[] {
-  const effects: Effect[] = [];
-  for (const word of invocation.args) {
-    if (word.text.startsWith("of=")) {
-      const target = locate(word.text.slice(3), invocation.cwd);
-      effects.push({ kind: "write", target });
-      if (/^\/dev\/(?!null$|zero$|stdout$|stderr$|tty$|fd\/)/.test(word.text.slice(3))) {
-        effects.push({ kind: "delete", target, contents: true });
-      }
-    }
-  }
-  return effects;
-}
-
-function powershellWrites(invocation: Invocation, fileOptions: readonly string[], extraValues: readonly string[]): Effect[] {
-  const parsed = parseArgs(invocation.args, { values: [...fileOptions, ...extraValues, ...commonPowershellValues], caseless: true });
-  const path = option(parsed, fileOptions)[0] ?? parsed.operands[0];
-  if (path === undefined) {
-    return [];
-  }
-  const name = lastOption(parsed, ["-name"]);
-  const base = locate(path.text, invocation.cwd);
-  return [{ kind: "write", target: name === undefined ? base : join(base, name.text) }];
-}
-
-const sshKeygenValues = ["-f", "-t", "-b", "-C", "-N", "-P", "-a", "-O", "-Z", "-I", "-n", "-V", "-z", "-s", "-D", "-E", "-m", "-w", "-Y", "-r", "-R", "-F", "-G", "-K", "-S", "-M", "-J", "-j", "-W"];
-
-function sshKeygen(invocation: Invocation): Effect[] {
-  const parsed = parseArgs(invocation.args, { values: sshKeygenValues, attached: true });
-  const reading = ["-l", "-y", "-B", "-L", "-Q", "-H", "-k", "-A"].some((name) => hasFlag(parsed, [name])) || ["-F", "-R", "-r", "-D", "-Y", "-G", "-K", "-s"].some((name) => parsed.options.has(name));
-  if (reading) {
-    return [];
-  }
-  const file = lastOption(parsed, ["-f"]);
-  const type = lastOption(parsed, ["-t"])?.text ?? "rsa";
-  return [{ kind: "write", target: locate(file?.text ?? `~/.ssh/id_${type}`, invocation.cwd) }];
-}
-
-function openssl(invocation: Invocation): Effect[] {
-  const effects: Effect[] = [];
-  invocation.args.forEach((word, index) => {
-    const value = invocation.args[index + 1];
-    if ((word.text === "-out" || word.text === "-keyout") && value !== undefined) {
-      effects.push({ kind: "write", target: locate(value.text, invocation.cwd) });
-    }
-  });
-  return effects;
+  return invocation.args
+    .filter((word) => word.text.startsWith("of=") && /^\/dev\/(?!null$|zero$|stdout$|stderr$|tty$|fd\/)/.test(word.text.slice(3)))
+    .map((word) => ({ kind: "delete", target: locate(word.text.slice(3), invocation.cwd), contents: true }));
 }
 
 function splitUrl(text: string, defaultHost: string): { host: string; path: string } {
@@ -519,50 +408,13 @@ function invokeRest(invocation: Invocation): Effect[] {
   return [request(method, url.text, "", new Map(), body.map((word) => word.text).join("&"), unknownBody)];
 }
 
-function redirectWrites(invocation: Invocation): Effect[] {
-  return invocation.redirects
-    .filter((redirect) => redirect.operator.includes(">") && redirect.target !== undefined)
-    .map((redirect) => ({ kind: "write", target: locate(redirect.target?.text ?? "", invocation.cwd) }));
-}
-
 type Interpreter = (invocation: Invocation) => Effect[];
 
 const interpreters: Readonly<Record<string, Interpreter>> = {
   find: findDeletions,
   rsync,
   git,
-  cp: (invocation) => destinationWrites(invocation, false),
-  install: (invocation) => destinationWrites(invocation, false),
-  ln: (invocation) => destinationWrites(invocation, false),
-  scp: (invocation) => destinationWrites(invocation, false),
-  copy: (invocation) => destinationWrites(invocation, false),
-  "copy-item": (invocation) => destinationWrites(invocation, false),
-  cpi: (invocation) => destinationWrites(invocation, false),
-  mv: (invocation) => destinationWrites(invocation, true),
-  move: (invocation) => destinationWrites(invocation, true),
-  "move-item": (invocation) => destinationWrites(invocation, true),
-  mi: (invocation) => destinationWrites(invocation, true),
-  "rename-item": rename,
-  ren: rename,
-  rni: rename,
-  tee: (invocation) => operandWrites(invocation, []),
-  "tee-object": (invocation) => powershellWrites(invocation, ["-filepath", "-literalpath", "-path"], ["-variable", "-encoding"]),
-  sed: inPlace,
-  perl: inPlace,
-  ruby: inPlace,
-  truncate: (invocation) => operandWrites(invocation, ["-s", "--size", "-r", "--reference"]),
   dd,
-  "set-content": (invocation) => powershellWrites(invocation, pathOptions, ["-value", "-encoding", "-delimiter"]),
-  sc: (invocation) => powershellWrites(invocation, pathOptions, ["-value", "-encoding", "-delimiter"]),
-  "add-content": (invocation) => powershellWrites(invocation, pathOptions, ["-value", "-encoding", "-delimiter"]),
-  ac: (invocation) => powershellWrites(invocation, pathOptions, ["-value", "-encoding", "-delimiter"]),
-  "clear-content": (invocation) => powershellWrites(invocation, pathOptions, []),
-  clc: (invocation) => powershellWrites(invocation, pathOptions, []),
-  "out-file": (invocation) => powershellWrites(invocation, ["-filepath", "-literalpath", "-path"], ["-encoding", "-width", "-inputobject"]),
-  "new-item": (invocation) => powershellWrites(invocation, pathOptions, ["-name", "-itemtype", "-type", "-value"]),
-  ni: (invocation) => powershellWrites(invocation, pathOptions, ["-name", "-itemtype", "-type", "-value"]),
-  "ssh-keygen": sshKeygen,
-  openssl,
   gh,
   curl,
   wget,
@@ -576,25 +428,18 @@ const interpreters: Readonly<Record<string, Interpreter>> = {
   iwr: invokeRest,
 };
 
-const dotnetCall = /\[(?:System\.)?IO\.(File|Directory|FileInfo|DirectoryInfo)\]::(Delete|WriteAll\w*|AppendAll\w*|Move|Copy|Replace|Create\w*)\s*\(\s*(?:(['"])([^'"]*)\3)?/gi;
+const dotnetDelete = /\[(?:System\.)?IO\.(?:File|Directory|FileInfo|DirectoryInfo)\]::Delete\s*\(\s*(?:(['"])([^'"]*)\1)?/gi;
 
 export function textEffects(text: string, cwd: Location | undefined): Effect[] {
-  const effects: Effect[] = [];
-  for (const match of text.matchAll(dotnetCall)) {
-    const method = (match[2] ?? "").toLowerCase();
-    const literal = match[4];
+  return [...text.matchAll(dotnetDelete)].map((match) => {
+    const literal = match[2];
     const target = literal === undefined || literal.includes("$") ? unknownLocation : locate(literal, cwd);
-    if (method === "delete") {
-      effects.push({ kind: "delete", target, contents: false });
-    } else {
-      effects.push({ kind: "write", target });
-    }
-  }
-  return effects;
+    return { kind: "delete", target, contents: false };
+  });
 }
 
 export function effectsOf(invocation: Invocation): Effect[] {
-  const effects = redirectWrites(invocation);
+  const effects: Effect[] = [];
   if (deletePrograms.has(invocation.program)) {
     effects.push(...deletions(invocation));
   } else if (invocation.program.startsWith("mkfs") || invocation.program === "wipefs") {

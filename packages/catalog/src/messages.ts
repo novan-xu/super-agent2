@@ -33,7 +33,6 @@ export const messages = {
   "hold.form.repositoryPublication": "把仓库设为公开",
   "hold.form.defaultBranchRewrite": "强制推送或改写默认分支的历史",
   "hold.form.dataDeletion": "删除数据库或数据卷",
-  "hold.form.credentialChange": "删除或替换凭据",
   "hold.form.fileDeletion": "删除项目文件夹以外的文件",
   "hold.reason": "等你确认：{description}（{evidence}）",
 

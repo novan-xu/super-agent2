@@ -44,7 +44,8 @@ Talking to the brain feels like a session of Codex or Claude Code left open, not
 
 - A conversation is one long-lived session. It keeps its context from one message to the next, for days.
 - The owner sees the brain work as it happens: what it reads, what it runs, what it writes.
-- The owner can send a message while the brain is working, and can interrupt it.
+- The owner can send a message while the brain is working, and can interrupt it. Codex and Claude Code take both
+  natively; `dsh` through a small plugin this repository ships and mounts at each start.
 - A session whose context grows long is compacted by its program, and goes on.
 - A restart of the brain, the hub or the NAS resumes the same session.
 - When another provider takes over, its session is given the conversation so far.
@@ -186,9 +187,10 @@ This is the complete list.
    - force-push to, or rewrite the history of, a default branch
    - delete a database or a data volume on the NAS
    - delete files outside project folders
-   - delete or replace a credential
 
    The list matches known forms. It cannot see inside a script, so that part rests on the LLM's own judgement.
+   Credentials are not on the list: changing or deleting one is not held. A credential file is a file like any other,
+   so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
    owner. A merge conflict is not a failure and is not counted.
 3. **Verification rules** before an automatic merge.
@@ -296,6 +298,11 @@ this repository, and `.gitignore` excludes the file types that hold them.
 
 Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. Workers use the
 logins of the command-line programs already present on each runner.
+
+The confirmation lock does not guard credentials. Changing or deleting one, a secret, a key, a token, a grant or a
+login, runs without confirmation; a credential file is deleted under the same rule as any file. The hub still refuses
+credential names as a command's environment variables and credential-looking text in a memory, and still injects the
+credentials into each command itself.
 
 ## Build order
 

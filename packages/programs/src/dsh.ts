@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener } from "./program.js";
+import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
 import { conversationVariable, type ProgramSettings, toolTokenVariable } from "./settings.js";
@@ -86,12 +89,45 @@ export function dshTurnEnd(data: unknown, now: number): ProgramEvent | undefined
   }
 }
 
-export function dshPatch(url: string | null): string {
+export interface DshControl {
+  readonly plugin: string;
+  readonly path: string;
+}
+
+export const dshControlPlugin: string = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./dsh-control.ts" : "./dsh-control.js", import.meta.url));
+
+const socketPathLimit = 100;
+
+export function dshControlPath(platform: NodeJS.Platform = process.platform, folder: string = tmpdir()): string {
+  const id = randomBytes(8).toString("hex");
+  if (platform === "win32") {
+    return `\\\\.\\pipe\\super-agent2-dsh-${id}`;
+  }
+  const path = join(folder, `super-agent2-dsh-${id}.sock`);
+  return Buffer.byteLength(path) <= socketPathLimit ? path : `/tmp/super-agent2-dsh-${id}.sock`;
+}
+
+function controlRows(control: DshControl | null): string[] {
+  if (control === null) {
+    return [];
+  }
+  return [
+    "    - id: super-agent2-control",
+    `      name: ${JSON.stringify(control.plugin.replaceAll("\\", "/"))}`,
+    "      config:",
+    `        path: ${JSON.stringify(control.path)}`,
+  ];
+}
+
+export function dshPatch(url: string | null, control: DshControl | null = null): string {
+  const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", ""];
+  const rows = controlRows(control);
   if (url === null) {
-    return ["- id: session-log-deepseek", "  config:", "    enabled: false", ""].join("\n");
+    return [...(rows.length === 0 ? [] : ["- insert:", ...rows]), ...quiet].join("\n");
   }
   return [
     "- insert:",
+    ...rows,
     "    - id: super-agent-hub",
     "      name: '@deepseek-ai/dsh-mcp-client'",
     "      config:",
@@ -102,10 +138,7 @@ export function dshPatch(url: string | null): string {
     "        headers:",
     `          Authorization: !!js '\`Bearer \${process.env.${toolTokenVariable}}\`'`,
     `          x-super-agent-conversation: !!js 'process.env.${conversationVariable}'`,
-    "- id: session-log-deepseek",
-    "  config:",
-    "    enabled: false",
-    "",
+    ...quiet,
   ].join("\n");
 }
 
@@ -131,9 +164,71 @@ interface Running {
   readonly ready: Promise<void>;
 }
 
+interface ControlChannel {
+  readonly path: string;
+  link(): Rpc | undefined;
+  close(): Promise<void>;
+}
+
+function openControl(path: string): ControlChannel {
+  let link: { readonly socket: Socket; readonly rpc: Rpc } | undefined;
+  const server: Server = createServer((socket) => {
+    socket.setEncoding("utf8");
+    socket.on("error", () => undefined);
+    const rpc = createRpc({
+      write: (message) => {
+        socket.write(`${JSON.stringify(message)}\n`);
+      },
+      jsonrpc: true,
+      onNotification: () => undefined,
+      onRequest: (method) => {
+        throw new Error(`The brain does not answer ${method}`);
+      },
+    });
+    const entry = { socket, rpc };
+    link?.socket.destroy();
+    link = entry;
+    createInterface({ input: socket, crlfDelay: Number.POSITIVE_INFINITY }).on("line", (line) => {
+      let message: unknown;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        return;
+      }
+      rpc.handle(message);
+    });
+    socket.on("close", () => {
+      rpc.failAll("The dsh control connection closed");
+      if (link === entry) {
+        link = undefined;
+      }
+    });
+  });
+  server.on("error", () => undefined);
+  server.listen(path);
+  return {
+    path,
+    link: () => link?.rpc,
+    close: () =>
+      new Promise((resolve) => {
+        link?.socket.destroy();
+        link = undefined;
+        server.close(() => {
+          if (process.platform !== "win32") {
+            rmSync(path, { force: true });
+          }
+          resolve();
+        });
+      }),
+  };
+}
+
+const SessionStatus = z.looseObject({ sessionId: z.string(), status: z.string() });
+
 function openDsh(settings: ProgramSettings, options: OpenOptions, listener: ProgramListener): ProgramHandle {
   const patch = join(tmpdir(), `super-agent2-dsh-${randomUUID()}.yml`);
-  writeFileSync(patch, dshPatch(options.tools?.url ?? null));
+  const control = openControl(dshControlPath());
+  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }));
   let session = options.session;
   let stored = options.session !== null;
   let current: Running | undefined;
@@ -141,6 +236,9 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
   let stopping = false;
   let closed = false;
   let reportedModel = false;
+  let interruptRequested = false;
+  let busy = false;
+  let delivered: Promise<boolean> | undefined;
 
   const fail = (reason: string, lostSession = false) => {
     if (closed) {
@@ -194,6 +292,20 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
     }
   };
 
+  const onStatus = (status: string) => {
+    if (!running) {
+      return;
+    }
+    if (status === "running") {
+      busy = true;
+      return;
+    }
+    if (status === "idle" && busy && interruptRequested) {
+      running = false;
+      listener({ type: "turn.finished", outcome: "interrupted" });
+    }
+  };
+
   const launch = (): Running => {
     let rpc: Rpc | undefined;
     const child = spawnLines(invocationOf(settings.program, ["--profile", "sdk", "--patch", patch]), {
@@ -210,6 +322,13 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       write: (message) => child.write(message),
       jsonrpc: true,
       onNotification: (method, params) => {
+        if (method === "session.status") {
+          const parsed = SessionStatus.safeParse(params);
+          if (parsed.success && parsed.data.sessionId === session) {
+            onStatus(parsed.data.status);
+          }
+          return;
+        }
         if (method !== "session.event") {
           return;
         }
@@ -280,28 +399,68 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
     start: (prompt) => {
       running = true;
       stopping = false;
+      interruptRequested = false;
+      busy = false;
       const entry = current ?? launch();
       current = entry;
-      entry.ready
-        .then(() => entry.rpc.request("session/prompt", { sessionId: session, contentBlocks: [{ type: "text", text: prompt }] }))
-        .then(() => {
-          stored = true;
-        })
-        .catch((error: unknown) => {
+      const delivery = entry.ready.then(async () => {
+        if (interruptRequested) {
+          return false;
+        }
+        await entry.rpc.request("session/prompt", { sessionId: session, contentBlocks: [{ type: "text", text: prompt }] });
+        stored = true;
+        return true;
+      });
+      delivered = delivery;
+      delivery.then(
+        (sent) => {
+          if (!sent && running) {
+            running = false;
+            listener({ type: "turn.finished", outcome: "interrupted" });
+          }
+        },
+        (error: unknown) => {
           if (stopping) {
             return;
           }
           const lost = typeof error === "object" && error !== null && "lostSession" in error && error.lostSession === true;
           fail(error instanceof Error ? error.message : String(error), lost);
-        });
+        },
+      );
     },
-    steer: () => Promise.resolve("queued"),
+    steer: async (text): Promise<SteerResult> => {
+      const link = control.link();
+      if (!running || interruptRequested || link === undefined || session === null) {
+        return "queued";
+      }
+      const result = await link.request("steer", { sessionId: session, text }).catch(() => undefined);
+      return result === "steered" ? "steered" : "queued";
+    },
     interrupt: () => {
-      if (!running || current === undefined) {
+      const entry = current;
+      if (!running || entry === undefined || interruptRequested) {
         return;
       }
-      stopping = true;
-      current.child.kill();
+      interruptRequested = true;
+      const kill = () => {
+        if (running && current === entry) {
+          stopping = true;
+          entry.child.kill();
+        }
+      };
+      void delivered?.then(
+        async (sent) => {
+          if (!sent) {
+            return;
+          }
+          const link = control.link();
+          const result = link === undefined || session === null ? undefined : await link.request("cancel", { sessionId: session }).catch(() => undefined);
+          if (result !== "cancelled" && result !== "idle") {
+            kill();
+          }
+        },
+        () => undefined,
+      );
     },
     close: async () => {
       closed = true;
@@ -312,6 +471,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         entry.child.kill();
         await entry.child.exited;
       }
+      await control.close();
       rmSync(patch, { force: true });
     },
     processId: () => current?.child.pid,

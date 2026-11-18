@@ -2557,6 +2557,70 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options:** Telling the brain at each return; a count on the ticket's own row; keeping `conflict` as a failure
   kind that is never counted.
 
+## 2026-11-17 — dsh takes a message into a running turn, and stops one without being killed
+
+- **Chosen:** A plugin of our own, `packages/programs/src/dsh-control.ts`, built with the package to
+  `dist/dsh-control.js`, adds steering and cancelling to dsh's `sdk` profile. The adapter mounts it through the `--patch`
+  file it already writes, by the plugin's absolute path, with a path for a local channel in the plugin's config: a named
+  pipe on Windows, a Unix socket in the temporary folder elsewhere. The adapter listens on that path before it starts dsh;
+  the plugin connects when dsh loads it, and the two speak JSON-RPC lines over it. `steer` calls the dsh agent's own
+  `steer`, which dsh feeds into the running turn at its next step; the plugin does it only while that session's turn is
+  open (between `turn/start` and `turn/end`) and its agent is running, and otherwise answers that it is idle, so the
+  adapter reports the message as queued and the brain or runner starts the next turn with it, as before. `cancel` calls
+  the agent's `cancel` as the user; dsh ends the turn as `aborted`, which the adapter reports as interrupted, and the
+  process and session stay for the next turn. The adapter sends the cancel only once the prompt has reached dsh; an
+  interrupt that comes earlier keeps the prompt from being sent. The program is killed, and the session resumed in a new
+  process, only when the cancel is not acknowledged: no plugin connection, an error, or a closed channel. If dsh goes
+  idle after a cancel without ending a turn, the adapter ends it as interrupted. A second interrupt of the same turn is
+  ignored. This overturns the part of "What the programs cannot do, and the nearest honest behaviour" about dsh (no
+  message into a running turn, no interrupt) and the choice in "How each program is driven" not to write a dsh control
+  plugin.
+- **Why:** The owner asked for both. The `sdk` profile stays, so failures keep their error codes for choosing a
+  provider. dsh loads plugins from a path in a patch row, so one file in this repository gives both features wherever
+  the adapter runs: in the brain's container and on every runner, with nothing for the owner to install, and the patch
+  that mounts it is written per launch, so the owner's own dsh profiles are never touched. A channel the adapter owns
+  needs no port and no discovery, and passing its path in the patch keeps it out of the environment that dsh's tools
+  see. Tracking the open turn in the plugin closes the race where a message arrives as a turn ends: dsh drains steering
+  given before `turn/end` inside that turn, and anything later becomes a turn of its own.
+- **Other options:** `dsh --profile acp`, whose `session/cancel` is native, plus a plugin only for steering: one prompt
+  at a time per session, and failures arrive as text only. A local HTTP port announced on standard error: a port to
+  allocate and protect. Interrupting a dsh turn and resending the message as a new turn.
+- **What a dsh update can break:** The plugin relies on interfaces dsh documents in its type files but does not promise:
+  plugins loaded from an absolute path in a `--patch` `insert` row with their `config`, the `agents` service
+  (`ctx.agents.get(sessionId)`), an agent's `status`, `steer(message)` and `cancel({ kind: "user" })`, and the
+  `session/event` hook with `turn/start` and `turn/end`. If a newer dsh fails to load the plugin, it logs the error and
+  runs without it, and the adapter falls back to queueing and killing. The brain's image pins dsh 0.2.1-rc.2; a runner
+  uses whichever dsh its machine has.
+
+## 2026-11-17 — Credentials are out of the confirmation lock
+
+- **Chosen:** The lock has five forms: `repository-deletion`, `repository-publication`, `default-branch-rewrite`,
+  `data-deletion` and `file-deletion`. `credential-change` is gone, with its command rules (`gh secret`, `gh auth
+  logout`, deleting SSH, GPG and deploy keys, `docker secret rm`, `kubectl delete secret`, `wrangler secret`,
+  `cloudflared tunnel delete`, `woodpecker-cli secret`, `gpg --delete-*`, `security delete-*`, `cmdkey /delete`), its API
+  rules (secrets, keys, tokens, grants, Cloudflare tokens, service tokens and tunnels), the effect rule over credential
+  files with its built-in list of credential paths, `HUB_CREDENTIAL_PATHS` (and `credentialPaths` in the hub's
+  configuration, `deploy/compose.yaml` and the harnesses) and the project `.env` exemption that only softened it. What
+  became dead went with them: the hub no longer reads what a command writes, copies or moves (redirects, `cp`, `mv`,
+  `tee`, `sed -i`, `ssh-keygen`, `openssl`, PowerShell's `Set-Content` and `Out-File` and the rest), only what it
+  deletes, pushes or sends to an API; the Cloudflare API is no longer read at all. This overturns the forms of "How the
+  confirmation lock reads a command" (six forms, and rules over what a command writes or moves), "Project folders and
+  credential paths" (`HUB_CREDENTIAL_PATHS`, the built-in credential list and everything it held), "Temporary folders and
+  a project's own `.env`" (the project `.env` exemption, and the credential file in a temporary folder that stayed held)
+  and "Project folders and credential paths in the deployment" (the value of `HUB_CREDENTIAL_PATHS`); those entries stay
+  as written, and what they say of project folders and temporary folders still holds. The consequences: writing,
+  appending to, overwriting or moving a credential file is not held anywhere. Deleting one is judged only by
+  `file-deletion`, like any other file, with no special case either way: held outside the project folders and the
+  temporary folders, free inside them, so a credential file in `/tmp` is now deleted without a hold. The other five
+  forms are unchanged. Not touched, because they are not this form: the refusal of credential names as a command's
+  environment variables, the refusal of credential-looking text in a memory, the way the hub injects credentials into
+  commands, and `packages/hub/src/credentials.ts`. The brain's guidance no longer lists credentials among what is held,
+  and `docs/design.md` says credentials are not on the list. A deployment that still sets `HUB_CREDENTIAL_PATHS` is not
+  refused: the hub ignores a variable it does not read.
+- **Why:** The owner's word: changing or deleting credentials is not within the confirmation lock's scope.
+- **Other options:** Keeping the lock's reading of writes and moves for a later form; holding a credential file's
+  deletion wherever it is; leaving `HUB_CREDENTIAL_PATHS` accepted and unused.
+
 ## 2026-11-17 — The memory is the owner's, in one Chinese text
 
 - **Chosen:** A memory has one text, in Chinese, which is what 记忆 shows and exactly what the brain is given. The English
