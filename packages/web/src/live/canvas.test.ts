@@ -41,3 +41,18 @@ describe("the workbench canvas", () => {
     expect(layoutChains([[nodes[0]!], [nodes[1]!], nodes], 3).map(({ line, column }) => [line, column])).toEqual([[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [2, 2], [2, 1]]);
   });
 });
+
+describe("live workbench updates", () => {
+  it("recomputes after work is inserted and started", () => {
+    const running = ticket(1, { state: "working" });
+    const inserted = ticket(2, { waits: after(1), waitsFor: [1] });
+    expect(canvasOf([running], undefined).running[0]?.length).toBe(1);
+    expect(canvasOf([running, inserted], undefined).running[0]?.map((node) => node.ticket.state)).toEqual(["working", "pending"]);
+    expect(canvasOf([running, { ...inserted, state: "waiting" }], undefined).running[0]?.map((node) => node.ticket.state)).toEqual(["working", "waiting"]);
+  });
+
+  it("does not put a pending card after an already satisfied predecessor", () => {
+    const pending = ticket(2, { waits: after(1), waitsFor: [1] });
+    expect(canvasOf([pending], undefined, new Set(), new Map([[2, []]])).ready[0]?.[0]?.missing).toEqual([]);
+  });
+});

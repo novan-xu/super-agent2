@@ -10,9 +10,12 @@ export interface CanvasNode {
 export type CanvasChain = readonly CanvasNode[];
 export type Canvas = Readonly<Record<CanvasSection, readonly CanvasChain[]>>;
 
-export function canvasOf(tickets: readonly Ticket[], repository: string | null | undefined, asking: ReadonlySet<number> = new Set()): Canvas {
+export function canvasOf(tickets: readonly Ticket[], repository: string | null | undefined, asking: ReadonlySet<number> = new Set(), unresolved?: ReadonlyMap<number, readonly number[]>): Canvas {
   const all = new Map(tickets.map((ticket) => [ticket.id, ticket]));
-  const predecessors = (ticket: Ticket) => ticket.waits.filter((wait) => !wait.waived).map((wait) => wait.ticket);
+  const predecessors = (ticket: Ticket) => {
+    const allowed = unresolved?.get(ticket.id);
+    return ticket.waits.filter((wait) => !wait.waived && (allowed === undefined || allowed.includes(wait.ticket))).map((wait) => wait.ticket);
+  };
   const belongs = (ticket: Ticket) => repository === undefined || (ticket.repository?.toLowerCase() ?? null) === (repository?.toLowerCase() ?? null);
   const selected = tickets.filter(belongs);
   const ids = new Set(selected.map((ticket) => ticket.id));

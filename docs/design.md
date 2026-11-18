@@ -572,6 +572,12 @@ Changed by this design:
   there. Topics can be renamed, merged or archived from the list or the topic view.
 - 工作台 shows repositories on the left, the selected repository's chains in the centre and its conversation on
   the right. The conversation panel uses the same stream, topic list and composer scoped to that repository.
+  全部 uses the combined code stream, and 日常 uses the daily stream. A selected ticket replaces the conversation
+  in the panel; a pending ticket opens its start controls in a dialog. On phones, tabs switch between canvas and panel.
+  The canvas groups connected tickets by their dependencies and recomputes a snake layout and arrows on resize.
+  The phase bar maps waiting to 等待, working to 执行, verifying to 验证, and merged to 合并. Started tickets
+  waiting for predecessors remain in their chain and show their queue; cross-repository predecessors are references
+  in a repository view and full cards in 全部. Daily tickets are listed in one column.
 - The owner can quote a message when replying, as in Teams. The composer shows the quoted message. Picking a
   destination under 移到… moves an owner message immediately. A possible match from the router can be used in one tap.
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
