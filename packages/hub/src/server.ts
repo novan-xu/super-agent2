@@ -1,4 +1,5 @@
 import { sendFile } from "./file-response.js";
+import { serveTransfer } from "./transfer.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
@@ -403,6 +404,7 @@ function refuseSocket(socket: Duplex, status: 403 | 404): void {
 
 export function createHubServer(options: HubServerOptions): HubServer {
   const sockets = new WebSocketServer({ noServer: true });
+  const ownerSockets = new Set<WebSocket>();
 
   const authenticate = async (request: IncomingMessage): Promise<Identity | undefined> => {
     try {
@@ -590,6 +592,12 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path === waitingPath && method === "GET" && options.waiting !== undefined) {
       sendJson(response, 200, { cards: options.waiting.cards() });
       return;
+    }
+    if (path.startsWith("/api/transfer") && options.database !== undefined) {
+      const handled = await serveTransfer({ request, response, path, method, database: options.database, sameOrigin: isSameOrigin(request), readBody: () => readBody(request), changed: () => {
+        for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
+      } });
+      if (handled) return;
     }
     if (path.startsWith(pushPath) && (await servePush(request, response, path, method))) {
       return;
@@ -1454,6 +1462,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
   };
 
   const serveSocket = (client: WebSocket, identity: Identity): void => {
+    ownerSockets.add(client);
+    client.once("close", () => ownerSockets.delete(client));
     const followed = new Set<string>();
     const watched = new Set<string>();
     const topicSnapshots = new Set<string>();

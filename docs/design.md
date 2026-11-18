@@ -490,6 +490,10 @@ composer on a computer. A message may be attachments alone.
   image only for the types every browser and program read as images.
 - Nothing is pruned.
 
+## Device transfer
+
+The transfer tab is a private store independent of topics and the brain. Entries retain their exact text and files until deleted. Files are uploaded in parts to the hub's private data volume, outside the brain's mounts, and are limited to 100 MiB each and 30 per entry. Incomplete uploads remain on disk; there is no automatic expiry. Entries are paged and changes refresh open pages over the owner WebSocket.
+
 ## Limits
 
 Nothing the owner, the brain or a worker sends has an upper limit of its own: not a message, a task, material, a
@@ -512,7 +516,7 @@ input keep priority over everything else. If the quote, current input and recent
 them while they fit; drop older turns only as needed to stay within the provider's hard input capacity. That capacity
 is the only hard limit. Omitted items remain available through the hub tools.
 
-### Worker storage
+## Worker storage
 
 Each machine has a projects folder and an artifacts folder in Settings → Machines. The hub saves the owner's paths
 and sends them before dispatching work on each new runner connection and again when the owner saves a change.

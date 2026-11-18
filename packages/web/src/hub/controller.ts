@@ -61,6 +61,10 @@ export class PageController {
         return detail?.id === ticket ? lastEventId(detail.log) : 0;
       },
       onMessage: (message) => {
+        if (message.type === "transfer.changed") {
+          if (typeof window !== "undefined") window.dispatchEvent(new Event("transfer.changed"));
+          return;
+        }
         if (message.type === "work") {
           this.queueWork(message.event);
           return;
@@ -83,6 +87,7 @@ export class PageController {
       },
       onStatus: (status) => this.store.dispatch({ type: "status", status }),
       onOpen: () => {
+        if (typeof window !== "undefined") window.dispatchEvent(new Event("transfer.changed"));
         void this.refresh();
       },
     });

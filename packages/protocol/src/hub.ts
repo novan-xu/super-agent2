@@ -63,6 +63,7 @@ export type Hello = z.infer<typeof Hello>;
 
 export const ServerMessage = z.discriminatedUnion("type", [
   Hello,
+  z.object({ type: z.literal("transfer.changed") }),
   CommandUpdate,
   CommandOutput,
   ConversationUpdate,
