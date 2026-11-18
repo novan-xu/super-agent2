@@ -32,6 +32,7 @@ import {
   settingsGroups,
   slotsOf,
   subscriptionOf,
+  workersOut,
   tableRows,
   type TableRow,
   withChoice,
@@ -515,6 +516,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
           {providerRows(settings.brain).map((row) => {
             const available = settings.brain.linked ? availableNow(row.state, now) : undefined;
             const subscription = subscriptionOf(settings.subscriptions, row.provider);
+            const workers = workersOut(settings.unavailable, row.provider);
             const state = available === undefined ? null : available ? text("connections.available") : row.state?.until === null || row.state === undefined ? text("connections.unavailable") : `${text("connections.unavailable")} · ${text("connections.until", { time: momentOf(row.state.until, now) })}`;
             const left =
               subscription === undefined
@@ -533,6 +535,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
                 </div>
                 <div className="srow-ctl srow-ctl--end srow-facts">
                   {state === null ? null : <span>{state}</span>}
+                  {workers === undefined ? null : <span className="chip chip--bad">{workers.until === null ? text("connections.workersUnavailable") : text("connections.workersUntil", { time: momentOf(workers.until, now) })}</span>}
                   {left === null ? null : <span className={subscription?.state === "exhausted" ? "chip chip--bad" : "chip"}>{left}</span>}
                 </div>
               </div>

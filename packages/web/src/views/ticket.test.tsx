@@ -43,7 +43,7 @@ const running = ticket(1, {
 });
 
 function detailOf(value: Ticket, events = [workEvent(1, { kind: "text", block: "a", delta: "Reading the issue" })]): DetailState {
-  return receiveDetailWork(receiveDetail(openDetail(value.id), { ticket: value, moves, attempts: value.work === null ? [] : [value.work], rounds: [] }), events);
+  return receiveDetailWork(receiveDetail(openDetail(value.id), { ticket: value, moves, attempts: value.work === null ? [] : [value.work], rounds: [], switches: [] }), events);
 }
 
 describe("a ticket's detail", () => {
@@ -183,6 +183,29 @@ describe("a ticket's detail", () => {
   it("shows the guided round when there is one, and none when there is not", () => {
     expect(render(detailOf(running))).not.toContain("引导");
     expect(render(detailOf({ ...running, round: 2 }))).toContain("第 2 轮");
+  });
+
+  it("shows in Chinese that the provider was switched, with the raw reason, and says it was the owner's choice", () => {
+    const base = detailOf({ ...running, work: workStatus({ attempt: 2, engine: "claude", model: "claude-opus-5-5", effort: "high" }) });
+    const entry = { ticket: 1, seq: 1, kind: "switched" as const, at: 12_000, from: "codex" as const, to: "claude" as const, machine: "pc", model: "claude-opus-5-5", effort: "high", reason: "You've hit your usage limit", until: null, owner: false, attempt: 2 };
+    const plain = render({ ...base, switches: [entry] });
+    expect(text(plain)).toContain("|换了供应商|");
+    expect(plain).toContain("Codex 暂不可用，改用 Claude Code（claude-opus-5-5 · high）");
+    expect(plain).toContain("You&#x27;ve hit your usage limit");
+    expect(render({ ...base, switches: [{ ...entry, owner: true }] })).toContain("你选的 Codex 暂不可用，改用 Claude Code（claude-opus-5-5 · high）");
+  });
+
+  it("shows that the ticket waits for a provider, with when it will try again, and when the same one is back", () => {
+    const waiting = detailOf({ ...running, work: workStatus({ state: "unavailable", reason: "limit" }) });
+    const entry = { ticket: 1, seq: 1, kind: "waiting" as const, at: 12_000, from: "claude" as const, to: null, machine: null, model: null, effort: null, reason: "limit", until: 40_000, owner: false, attempt: 1 };
+    const html = render({ ...waiting, switches: [entry] });
+    expect(text(html)).toContain("|等可用的供应商|");
+    expect(html).toContain("Claude Code 暂不可用，没有别的供应商可换");
+    expect(html).toContain("没有供应商可用，会自己再试");
+    expect(render({ ...waiting, switches: [{ ...entry, until: null }] })).toContain("Claude Code 暂不可用，没有别的供应商可换</div>");
+    const back = render({ ...waiting, switches: [{ ...entry, kind: "resumed" as const, to: "claude" as const }] });
+    expect(text(back)).toContain("|供应商恢复了|");
+    expect(back).toContain("Claude Code 又可用了，接着用它");
   });
 
   it("says when the hub has no such ticket", () => {

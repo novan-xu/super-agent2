@@ -158,6 +158,34 @@ export interface Saved {
   readonly detail: string;
 }
 
+export interface FolderState {
+  readonly commits: string;
+  readonly status: string;
+  readonly unread: readonly string[];
+}
+
+async function readState(git: Git, args: readonly string[], cwd: string): Promise<{ readonly text: string; readonly problem: string | null }> {
+  const result = await git.run(args, cwd);
+  return result.code === 0 ? { text: result.stdout.trim(), problem: null } : { text: "", problem: `git ${args.join(" ")} failed: ${`${result.stderr}${result.stdout}`.trim()}` };
+}
+
+export async function folderState(git: Git, worktree: string, base: string | null): Promise<FolderState> {
+  const unread: string[] = [];
+  let commits = "";
+  if (base !== null) {
+    const log = await readState(git, ["log", "--oneline", `origin/${base}..HEAD`], worktree);
+    commits = log.text;
+    if (log.problem !== null) {
+      unread.push(log.problem);
+    }
+  }
+  const status = await readState(git, ["status", "--short", "--untracked-files=all"], worktree);
+  if (status.problem !== null) {
+    unread.push(status.problem);
+  }
+  return { commits, status: status.text, unread };
+}
+
 export async function saveWork(git: Git, ticket: number, branch: string, paths: WorkPaths): Promise<Saved> {
   if (!existsSync(paths.worktree)) {
     return { saved: false, detail: "The worktree is gone, so there was nothing to save" };

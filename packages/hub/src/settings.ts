@@ -100,6 +100,7 @@ export function createSettings(options: SettingsOptions): Settings {
       brain: brainSettings(conversations?.linked() ?? false, order(), conversations?.providers()),
       table: options.defaults.table(),
       subscriptions: [subscriptions.codex, subscriptions.claude],
+      unavailable: options.defaults.unavailable(),
       devices: devices(),
     };
   };

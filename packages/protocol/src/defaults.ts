@@ -71,9 +71,21 @@ export type CodeEngineChoice = z.infer<typeof CodeEngineChoice>;
 
 export type AllowanceStates = Readonly<Record<AllowanceProgram, AllowanceState>>;
 
-export function defaultEngine(kind: TicketKind, brainEngine: ProgramId | null, allowance: AllowanceStates): ProgramId | null {
+export interface EngineContext {
+  readonly out: ReadonlySet<ProgramId>;
+  readonly order: readonly ProgramId[];
+}
+
+export const noEngineContext: EngineContext = { out: new Set(), order: ["claude", "codex", "dsh"] };
+
+function proseFallback(allowance: AllowanceStates, context: EngineContext): ProgramId {
+  const free = context.order.find((engine) => engine !== "antigravity" && !context.out.has(engine) && !((engine === "codex" || engine === "claude") && allowance[engine] === "exhausted"));
+  return free ?? "antigravity";
+}
+
+export function defaultEngine(kind: TicketKind, brainEngine: ProgramId | null, allowance: AllowanceStates, context: EngineContext = noEngineContext): ProgramId | null {
   if (kind === "writing") {
-    return "antigravity";
+    return context.out.has("antigravity") ? proseFallback(allowance, context) : "antigravity";
   }
   if (allowance.codex === "exhausted" && allowance.claude === "exhausted") {
     return "dsh";
@@ -166,9 +178,9 @@ export interface StartInput {
   readonly owner: OwnerChoice;
 }
 
-export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], allowance: AllowanceStates): StartChoice {
+export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], allowance: AllowanceStates, context: EngineContext = noEngineContext): StartChoice {
   const { owner } = input;
-  const engine = owner.engine ?? (input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance) : null);
+  const engine = owner.engine ?? (input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance, context) : null);
   const required = input.requiredMachine ?? null;
   const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines) : null);
   const fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);

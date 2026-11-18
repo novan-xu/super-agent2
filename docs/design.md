@@ -38,6 +38,38 @@ API directly.
 | Worker, code | Codex, Claude Code and `dsh`. |
 | Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
 
+The order the owner sets in 设置 (Claude, then GPT, then DeepSeek, unless the owner changed the first two) is the order
+for workers as well.
+
+### When a provider is unavailable
+
+The brain switches provider by itself when its program reports itself unavailable. A worker does the same, decided by
+the hub.
+
+- When a worker's program reports itself unavailable (a used-up subscription, a rate limit, a failed login, an
+  overloaded or failing service), the ticket continues on the next provider in the owner's order, on the same machine
+  when that machine has the program, with the model and effort the start-defaults table gives for that provider and the
+  ticket's difficulty. A code ticket whose machine lacks the program moves to another machine that fits the platform,
+  after the first has pushed the branch; a task ticket never moves. Where the machine lacks the next program, the next
+  provider after that is taken. This is not a failure: no guided round is counted, the brain is not asked to guide and
+  the ticket does not stop. A crash or an error is still a failure.
+- The new program cannot resume the other program's session. It gets the task again, a plain account that an earlier
+  worker on another program worked in the folder and stopped because its provider became unavailable, and the state it
+  finds: the branch, its commits, uncommitted changes, the pull requests handed in or merged, the issues closed, the
+  messages and attachments the earlier worker was given, and the end of its output. Messages it had not read are given
+  to the new worker.
+- The hub remembers the provider as unavailable until the time the program gave, or for a short hold when it gave none,
+  or until a later attempt on it succeeds or a newer allowance reading shows it available. Tickets started meanwhile
+  default to another provider. A mark is made only by a program really answering that it is unavailable, never by a
+  reading: an unreadable allowance mostly means nobody could ask, so it stays "not used up". A provider that is marked
+  is not tried again until its mark clears, which is what keeps two failing providers from handing a ticket back and
+  forth.
+- The owner's explicit choice of provider is switched away from too, and the ticket's timeline says so, with the
+  reason.
+- Claude Code and Codex both unavailable falls to `dsh`. When `dsh` is unavailable too, the ticket waits and tries
+  again by itself when the earliest time passes or a reading shows one back; the brain is told once that it waits.
+  Antigravity unavailable for prose falls to the code providers in the owner's order.
+
 ## The brain's session
 
 Talking to the brain feels like a session of Codex or Claude Code left open, not like sending requests to a service.
@@ -94,7 +126,8 @@ Two things follow:
    reports to the brain once, with the pull requests merged, the final merge commit and whether the change needs
    deploying.
 10. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
-   tries again. What is already merged stays merged.
+   tries again. What is already merged stays merged. A worker whose program becomes unavailable is not a failure: the
+   hub continues the ticket on another provider (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
 
 There are two kinds of ticket. Everything above is a code ticket. Everything else a worker does is a task ticket: a task
 in words, with material and attachments, and a repository and a commit when it needs one. The worker does it in a
@@ -138,7 +171,7 @@ The brain decides from four things.
 | Kind | Code tickets: `parameter` (a value, constant or copy change with no logic change), `fix`, `feature`, `refactor`, `maintenance` (dependencies and CI). Task tickets: `writing` (prose), `operation` (anything done on a machine) | Prose goes to Antigravity; everything else to a code engine |
 | Difficulty | Mechanical: a fixed procedure with a known result. Standard: bounded implementation or diagnosis. Complex: reasoning across modules, state or concurrency changes, or an open design decision. A chain takes the highest of its issues. | The model and effort, through the table below |
 | Platform | macOS, Windows, or any | The machine |
-| Subscription allowance | What is left on the GPT and Claude subscriptions | The engine. DeepSeek is chosen automatically only when both are used up. |
+| Subscription allowance | What is left on the GPT and Claude subscriptions, and which worker programs the hub has marked unavailable | The engine. DeepSeek is chosen automatically only when both are used up or marked. An unknown reading is not used up. |
 
 What the brain can do in the hub's container needs no ticket; anything on a work machine is a task ticket. A deployment's
 machine is the one its deployment file names, and the owner cannot choose another.
@@ -239,7 +272,7 @@ This is the complete list.
    Credentials are not on the list: changing or deleting one is not held. A credential file is a file like any other,
    so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
-   owner. A merge conflict is not a failure and is not counted. A merged pull request is progress: the count starts
+   owner. A merge conflict is not a failure and is not counted, and neither is a program's being unavailable. A merged pull request is progress: the count starts
    again for the next one.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.

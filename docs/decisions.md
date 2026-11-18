@@ -3299,3 +3299,167 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   worker, a real deployment, and the NAS.
 - **Why:** The brief asked to keep the harness able to show a chain followed by its deployment.
 - **Other options:** Starting the pair from the harness.
+
+## 2026-11-18 — A worker's program that is unavailable is not a failure
+
+- **Chosen:** When a worker's program reports itself unavailable (the adapters' `unavailable`: a used-up subscription, a
+  rate limit, a failed login, an overloaded or failing service), the runner ends the attempt with a new event,
+  `unavailable`, carrying the reason, the time the program gave (or none) and the ids of messages it held back and never
+  gave to the program. The hub keeps the attempt in a new state, `unavailable`, with the reason, and continues the ticket
+  by itself on the next provider. It is not a failure: nothing goes through the failure loop, no guided round is counted,
+  the brain is not asked to guide, the ticket stays working. A crash, an error, a refusal or an unknown model stay `program`
+  failures. A hub with no start defaults to route with (only the unit tests build one) still ends the attempt as a
+  `program` failure, as before. This overturns the part of "A worker that fails, and the place left for the failure
+  loop" and of "What a failure is, and what counts as a guided round" that put a program's running out of allowance
+  among the `program` failures; a `program` failure now means the program went wrong, or that no provider could take
+  over at all.
+- **Why:** The owner's reasoning is that an unavailable program is what the brain already switches away from, and the
+  system's first priority is unattended work with no blocking points. Counting it as a guided round called the brain, and
+  after three rounds the owner, for something nobody could fix by guidance.
+- **Other options:** Leaving it a `program` failure and having the brain switch providers by guidance; the runner choosing
+  the next program itself.
+
+## 2026-11-18 — The hub decides which provider takes over, and where
+
+- **Chosen:** The hub decides (`routeProvider` in `packages/protocol/src/providers.ts`, called by `WorkService`): it
+  holds the owner's order, the start-defaults table, what each online machine offers, the marks and the allowance
+  readings, and the runner holds none of them. The order is the owner's order of providers in 设置 (GPT and Claude as
+  the owner set them, Claude first until changed, DeepSeek last), mapped to Codex, Claude Code and `dsh`; for prose,
+  Antigravity comes first and the code providers follow in that order. The first provider in that order that is not
+  out is taken, with the model and effort the table gives for that provider and the ticket's difficulty, on the
+  ticket's own machine when it has the program offering that model and effort, and otherwise on another online machine
+  that fits the ticket's platform (most free slots first), but only for a code ticket, whose branch the old machine
+  first commits and pushes: the new attempt waits for the old machine's `stopped` event, as a move by the owner's
+  改派 already does. A task ticket never moves: its scratch folder, output and any change it made on its machine stay
+  there, and a deployment's machine is fixed by its file. When the machine lacks the next program, the next provider in
+  the order that it has is taken. A ticket whose machine is offline is not moved, since its unpushed work would be
+  left behind: it waits for the machine. Only when no provider in the order is offered anywhere with the table's model
+  and effort does the attempt fail, as a `program` failure whose reason says so, which goes to the brain as any
+  failure does and counts as a round; a provider that is offered but marked unavailable is a wait, never a failure.
+  When a worker stopped on a provider and that provider becomes available again before anything else is, the same
+  program continues in the same session (recorded as `resumed`).
+- **Why:** The hub already resolves the start defaults from the same inputs, so the switch is the same resolution made
+  again with a provider taken out. Moving only code tickets is what the existing move between machines can carry; a
+  task's work is not in Git.
+- **Other options:** The runner choosing, which has no table and sees one machine; moving task tickets and starting
+  them again from scratch; failing when the machine lacks the next program.
+
+## 2026-11-18 — What the new program is given
+
+- **Chosen:** The new program cannot resume the old session, so it starts a fresh one in the same folder with the task
+  again (a chain's issues, with the already closed ones marked, or the task and its material) and a note from the hub
+  that says plainly that an earlier worker on another program worked there and stopped because its provider became
+  unavailable, with the program's own reason. The note carries what the hub has: the branch, the pull requests handed
+  in or merged with the issues each closed, the issues closed and still open, every message of the owner or the brain
+  that the earlier workers were given (with the names of their attachments), how many messages it had not read, and the
+  end of the earlier worker's own output (the last 8000 characters, as the failure loop hands the brain), labelled as a
+  record and not instructions. The runner adds what only the machine knows, read when the program starts: the commits
+  on the branch that are not on the default branch and `git status --short`, or for a task the files in the output
+  folder and the checkout's status. A task ticket's output folder is kept when a program takes over (it is still cleared
+  for a plain new attempt). Messages the earlier worker had not read stay with the hub and are sent to the new attempt;
+  messages the runner held back for its program and never gave it (queued for `dsh`, or between turns) are named in the
+  `unavailable` event, taken back as not delivered and sent again. The files the owner attached to messages are sent
+  again in one message from the hub, so a worker on another machine has them too. A first attempt that never ran
+  (its provider was already marked at the start) gets no takeover note; a guided round's guidance that never reached a
+  worker is kept in the note.
+- **Why:** The brief asks for a plain account and the state it finds; the hub has the chain and the messages, the
+  machine has the folder. Passing the end of the output is the cheapest way to say what the worker was in the middle of.
+- **Other options:** No account of the earlier worker at all; its whole output; the earlier session's transcript.
+
+## 2026-11-18 — The hub's marks, and how they join the allowance readings
+
+- **Chosen:** The hub marks a provider unavailable (`provider_marks`, one row for each of `codex`, `claude`, `dsh` and
+  `antigravity`) when a worker's program reports it, from the time of the report. A mark lasts until the time the
+  program gave. With no time it is held for ten minutes, the interval of the allowance readings, and then the program is
+  tried again, so that a provider with no way to be read (`dsh`, Antigravity) and no reset time is never lost for good.
+  A mark clears earlier when a later attempt on that program succeeds (a worker of that program ends a turn, hands in or
+  delivers after the mark was made) or when a reading taken after it shows the subscription available. A mark is never
+  made by a reading, and an unknown reading is neither a mark nor used up. The readings still say what is left; the
+  marks say what a program really answered. For choosing an engine the two are folded: a subscription that is used up by
+  its reading or marked counts as used up in `defaultEngine`, so Claude and Codex both out, by either, is `dsh`; a mark
+  on `dsh` or Antigravity changes only the switch (and a prose ticket whose Antigravity is marked defaults to the first
+  free code provider in the owner's order). The marks appear in `GET /api/allowance`, in the brain's `read_allowance`
+  and in 设置's 连接, where each provider's row shows 工作者暂不可用 with the time it is tried again. This
+  extends "When a subscription counts as used up", whose rule that an unknown reading is not used up is unchanged.
+- **Why:** The owner asked whether two unreadable subscriptions are not simply unavailable. An unreadable allowance mostly
+  means no machine could ask, so it stays "not used up"; what proves a provider is unavailable is the program saying so
+  when it is called, and that is what the mark records. The brain's own marks (its container and its logins) are separate
+  and still shown by the brain's row, since workers use their machines' logins.
+- **Other options:** Treating an unknown reading as used up, which makes a PC that is off send the work to DeepSeek; no
+  early clearing; keeping the marks in memory; a mark with no time that holds until a reading says otherwise, which
+  leaves a provider no reading can speak for out for ever.
+
+## 2026-11-18 — The owner's explicit choice, and tickets started while a provider is marked
+
+- **Chosen:** A ticket whose chosen provider is marked unavailable when its attempt is about to start is switched away
+  from at once, even when the owner chose the provider on the card: the queued attempt ends as `unavailable` with the
+  mark's reason, never having run, and the ticket continues through the same routing. The ticket's choice becomes the
+  new provider, model and effort, recorded as the default's and not the owner's (the owner's own selection stays on
+  record as theirs), and the timeline says in Chinese that the owner's choice was switched away from, with the reason
+  as the program gave it. The start card still shows the owner's choice until the start; the card of a chain with no
+  owner's engine defaults to the next provider while a mark is active.
+- **Why:** The brief puts unattended work first, and an owner's choice that is unavailable would otherwise block the
+  ticket on the owner.
+- **Other options:** Holding the owner's choice and waiting for it; asking the owner.
+
+## 2026-11-18 — When every provider is unavailable the ticket waits
+
+- **Chosen:** When every provider that could run the ticket is unavailable (Claude Code, Codex and `dsh` all marked or
+  used up; for prose also Antigravity), the ticket stays working and waits: its latest attempt is the `unavailable`
+  one and there is no newer attempt. It is not a failure and no round is counted. The hub tries again by itself with each
+  dispatch: when a runner reports, when a mark or the table changes, and on a timer of thirty seconds (injectable, so
+  tests use no real time). It continues as soon as one provider is out of the way: at the earliest time any mark gave
+  (or the ten-minute hold), or when a reading shows one back. The brain is told once when the wait starts, in the
+  ticket's conversation, with every provider's reason and when the hub will try again, and is asked for nothing; it is not
+  told again while the wait goes on. The ticket's timeline shows the wait and, later, the switch (or the same provider
+  coming back), and 工作台 shows 等供应商.
+- **Why:** Waiting is the outcome that needs nobody; a failure would call the brain and, after three rounds, the owner.
+- **Other options:** Failing the ticket; telling the brain at every retry; a longer fixed back-off.
+
+## 2026-11-18 — A provider that is marked is not tried again, instead of a count
+
+- **Chosen:** There is no limit on how many times one ticket may switch. What keeps two providers that both fail in
+  turn from handing a ticket back and forth is a rule about state: a provider marked unavailable is not tried again
+  until its mark clears. The second provider's failure marks it, the first is still marked, so the ticket waits; it
+  goes on only when a mark ends.
+- **Why:** The house rule: no caps unless something would loop for ever, and a count would stop a ticket that is
+  switching because providers really come and go over days.
+- **Other options:** A cap on switches for each ticket.
+
+## 2026-11-18 — Handing the folder to another machine waits for the old one, also after an unavailable attempt
+
+- **Chosen:** When a ticket moves to another machine after an attempt that ended `unavailable`, the old machine is told
+  to commit, push and remove its worktree, and the new attempt waits for its `stopped` event, as it does after a move
+  by the owner while the attempt runs. A runner now also reports `stopped` for a worker that had already ended when it
+  is asked to save, which it did not before (so the hub would otherwise wait for ever). The wait applies when the
+  attempt started on that machine; an attempt that never ran there is not waited for.
+- **Why:** The new machine starts from the branch on GitHub; starting before the push would lose the earlier work.
+- **Other options:** Having the runner push before it reports `unavailable`, which would commit work that stays on the
+  same machine when it is not moved.
+
+## 2026-11-18 — The timeline, the phase and the owner's reply
+
+- **Chosen:** Each switch is a row of `ticket_switches` (kind `switched`, `waiting` or `resumed`; from and to provider,
+  machine, model and effort; the program's reason as it gave it; the time; whether the owner had chosen the
+  provider; the attempt that followed) and part of a ticket's detail. The timeline shows it between the attempts in
+  Chinese (换了供应商, 等可用的供应商, 供应商恢复了) with the reason in the raw text under it. A ticket waiting for a
+  provider shows 等供应商 and its reason, and the owner can still reply to it: the message waits for the next attempt.
+  An attempt's provider, model and effort stay on its row, as before. Migration 25 adds `provider_marks`,
+  `ticket_switches` and `ticket_attempts.takeover`.
+- **Why:** The brief asks for the switch and its reason to show; a row of its own survives when no attempt follows.
+- **Other options:** Deriving the switch from the attempts; a move in the ticket's state history.
+
+## 2026-11-18 — What was verified of the switch of provider
+
+- **Chosen:** Verified in tests with the fake programs the adapter and runner tests already have, and with no real
+  subscription touched: a Claude Code worker on a chain's second pull request whose program reports its limit continues
+  on Codex on the same machine with the takeover note and no round, no failure and no word to the brain; the move to
+  another machine waits for the old machine's push; a task ticket stays; both Claude and Codex out go to `dsh`; the
+  owner's order; an owner's choice switched away from; the wait, its single notice and its retry on the injected timer,
+  by a time, by a reading and by a success; the same program coming back in the same session; two flapping providers
+  not handed back and forth; prose falling from Antigravity to the code providers; messages and files carried over; the
+  runner's event, its held-back messages, its folder state and its save after an end; the page's timeline, phase and
+  连接. Not verified: a real limit of Claude Code, Codex or DeepSeek (none was hit, since the owner's subscriptions must
+  not be used up for a test), a move of a real worktree between two real machines through this path, and macOS.
+- **Why:** The brief asks to say what was and was not checked.
+- **Other options:** None.

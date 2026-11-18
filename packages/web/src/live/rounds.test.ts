@@ -49,6 +49,7 @@ describe("rounds in the timeline", () => {
       moves: [move(1, null, "pending", 1), move(2, "pending", "working", 5)],
       attempts: [workStatus({ attempt: 1, createdAt: 6, state: "failed" }), workStatus({ attempt: 2, createdAt: 30 })],
       rounds: [round],
+      switches: [],
     });
     const attempts = timeline(state).flatMap((entry) => (entry.kind === "attempt" ? [[entry.number, entry.round?.guidance.zh ?? null]] : []));
     expect(attempts).toEqual([
@@ -70,6 +71,7 @@ describe("rounds in the timeline", () => {
       moves: [move(1, null, "pending", 1), move(2, "pending", "working", 2)],
       attempts: [],
       rounds: [],
+      switches: [],
     });
     expect(needsMoves(state, ticket(1, { state: "working", round: 0 }))).toBe(false);
     expect(needsMoves(state, ticket(1, { state: "working", round: 1 }))).toBe(true);

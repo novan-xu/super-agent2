@@ -1,7 +1,7 @@
 import { type MachineChoice, type MachineStatus, startingEngineTable, type Ticket } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import { ticket } from "./fixtures.js";
-import { availableNow, movedEarlier, nameProblem, pairOptions, providerRows, withChoice, slotsOf, subscriptionOf, tableRows, ticketsRunningOn } from "./settings.js";
+import { availableNow, movedEarlier, nameProblem, pairOptions, providerRows, withChoice, slotsOf, subscriptionOf, tableRows, ticketsRunningOn, workersOut } from "./settings.js";
 
 const report = {
   hostname: "pc",
@@ -69,6 +69,17 @@ describe("the brain's providers", () => {
     expect(subscriptionOf([codex], "gpt")).toBe(codex);
     expect(subscriptionOf([codex], "claude")).toBeUndefined();
     expect(subscriptionOf([codex], "deepseek")).toBeUndefined();
+  });
+});
+
+describe("the providers the hub marked unavailable for workers", () => {
+  it("are found by the provider each program stands for", () => {
+    const claude = { program: "claude" as const, reason: "limit", since: 1, until: 9, given: true };
+    const dsh = { program: "dsh" as const, reason: "auth", since: 1, until: 9, given: false };
+    expect(workersOut([claude, dsh], "claude")).toBe(claude);
+    expect(workersOut([claude, dsh], "deepseek")).toBe(dsh);
+    expect(workersOut([claude, dsh], "gpt")).toBeUndefined();
+    expect(workersOut([], "claude")).toBeUndefined();
   });
 });
 

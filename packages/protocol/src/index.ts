@@ -13,6 +13,7 @@ export * from "./history.js";
 export * from "./memory.js";
 export * from "./hub.js";
 export * from "./page.js";
+export * from "./providers.js";
 export * from "./rounds.js";
 export * from "./runner.js";
 export * from "./settings.js";

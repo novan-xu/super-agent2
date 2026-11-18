@@ -838,7 +838,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return false;
       }
       const subscriptions = defaults.subscriptions();
-      sendJson(response, 200, { subscriptions: [subscriptions.codex, subscriptions.claude] });
+      sendJson(response, 200, { subscriptions: [subscriptions.codex, subscriptions.claude], unavailable: defaults.unavailable() });
       return true;
     }
     if (method === "GET") {

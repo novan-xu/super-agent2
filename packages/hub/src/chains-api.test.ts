@@ -10,6 +10,7 @@ import {
   ServerMessage,
   type StartCard,
   TicketList,
+  unknownAllowance,
   type WaitingCard,
   WaitingList,
 } from "@super-agent2/protocol";
@@ -673,6 +674,31 @@ describe("start defaults", () => {
     expect((await cardOf(running, 1)).choice.engine).toBe("codex");
     connect(running, "pc", machineReport("win32"));
     expect((await cardOf(running, 1)).choice.engine).toBe("codex");
+  });
+
+  it("shows a provider a worker found unavailable in the allowance, the brain's tool and 设置, and starts new chains on the next one, with an unknown reading never counting", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await stateOne(running, "windows", "claude", "standard");
+    connect(running, "pc", machineReport("win32", [unknownAllowance("codex", clock.now(), "no machine could ask"), unknownAllowance("claude", clock.now(), "no machine could ask")]));
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "claude" });
+    expect(running.defaults.unavailable()).toEqual([]);
+    running.defaults.markUnavailable("claude", "You've hit your limit", clock.now() + 3_600_000);
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "codex", model: "gpt-6.1-terra" });
+    const allowance = (await (await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } })).json()) as {
+      subscriptions: { program: string; state: string }[];
+      unavailable: { program: string; reason: string; until: number; given: boolean }[];
+    };
+    expect(allowance.subscriptions.map((entry) => entry.state)).toEqual(["unknown", "unknown"]);
+    expect(allowance.unavailable).toEqual([{ program: "claude", reason: "You've hit your limit", since: clock.now(), until: clock.now() + 3_600_000, given: true }]);
+    const told = await callTool(running, "read_allowance", {});
+    expect(told.text).toContain("Claude Code (Claude): You've hit your limit; until");
+    expect(told.text).toContain("An unknown reading is not used up.");
+    expect(running.settings.snapshot().unavailable).toEqual(allowance.unavailable);
+    clock.advance(3_600_000);
+    expect(running.settings.snapshot().unavailable).toEqual([]);
+    expect((await cardOf(running, 1)).choice.engine).toBe("claude");
+    expect((await callTool(running, "read_allowance", {})).text).toContain("No worker program is marked unavailable.");
   });
 
   it("keeps the table of models in the hub, read by the owner and changed only from the owner's page", async () => {

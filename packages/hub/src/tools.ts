@@ -320,7 +320,7 @@ function defaultsDefinitions() {
       name: "read_allowance",
       title: "Read what is left on the subscriptions",
       description:
-        "Read what is left on the GPT subscription (Codex) and the Claude subscription (Claude Code), as the runners last read it from the programs themselves, and the work machines online with their system, programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
+        "Read what is left on the GPT subscription (Codex) and the Claude subscription (Claude Code), as the runners last read it from the programs themselves, the worker programs the hub has marked unavailable because they reported it when really called, and the work machines online with their system, programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
@@ -1020,7 +1020,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.defaults === undefined) {
           return undefined;
         }
-        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines()) };
+        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines(), tools.defaults.unavailable()) };
       }
       case "choose_defaults": {
         if (tools.defaults === undefined || tools.chains === undefined) {

@@ -55,6 +55,7 @@ export interface HubOptions {
   readonly forgeFetch?: Fetch;
   readonly gitHubBase?: string;
   readonly verificationTicker?: Ticker;
+  readonly workTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
@@ -108,6 +109,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let taskTickets: TaskTickets;
   let memories: MemoryService;
   let settings: Settings;
+  let storedOrder: () => ReturnType<Settings["order"]> = () => undefined;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -118,6 +120,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     database,
     clock,
     statuses: () => runners.statuses(),
+    providerOrder: () => storedOrder(),
     ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
   let work: WorkService | undefined;
@@ -168,7 +171,6 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    let storedOrder: () => ReturnType<Settings["order"]> = () => undefined;
     conversations = createConversationService({ database, clock, commands, memory: memories, order: () => storedOrder() });
     const told = conversations;
     if (options.ticketWork === undefined) {
@@ -180,6 +182,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         credentials,
         files,
         attachments,
+        defaults,
+        ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
         tell: (conversation, notice, prompt) => {
           told.tell(conversation, notice, prompt);
         },

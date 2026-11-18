@@ -236,6 +236,7 @@ function task(ticket: number, overrides: Partial<WorkTask> = {}): WorkTask {
     effort: "low",
     session: null,
     note: null,
+    takeover: false,
     environment: { GH_TOKEN: token, GITHUB_TOKEN: token },
     ...overrides,
   };
@@ -251,9 +252,9 @@ function kinds(ticket: number, attempt = 1): string[] {
 
 function ended(ticket: number, attempt = 1): Promise<WorkEvent> {
   return sent
-    .until(() => events(ticket, attempt).some((message) => ["finished", "delivered", "failed", "stopped"].includes(message.event.kind)))
+    .until(() => events(ticket, attempt).some((message) => ["finished", "delivered", "failed", "stopped", "unavailable"].includes(message.event.kind)))
     .then(() => {
-      const last = events(ticket, attempt).find((message) => ["finished", "delivered", "failed", "stopped"].includes(message.event.kind));
+      const last = events(ticket, attempt).find((message) => ["finished", "delivered", "failed", "stopped", "unavailable"].includes(message.event.kind));
       if (last === undefined) {
         throw new Error("no ending");
       }
@@ -565,6 +566,7 @@ function writingTask(ticket: number, overrides: Partial<TaskAssignment> = {}): T
     effort: "high",
     session: null,
     note: null,
+    takeover: false,
     environment: {},
     ...overrides,
   };
@@ -708,12 +710,92 @@ describe("a task worker on the runner", () => {
     expect(ghCalls).toEqual([]);
   });
 
-  it("reports a program that fails as a failure with its reason", async () => {
+  it("reports a program that is unavailable as unavailable, with its reason and time, and not as a failure", async () => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(25) });
     const handle = await programs.prompted(1);
-    handle.emit({ type: "unavailable", reason: "resource exhausted", until: null });
-    expect(await ended(25)).toEqual({ kind: "failed", failure: "program", reason: "resource exhausted" });
+    handle.emit({ type: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000 });
+    expect(await ended(25)).toEqual({ kind: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000, unsent: [] });
+    expect(handle.closed).toBe(true);
+    expect(works.held()).toEqual([{ ticket: 25, attempt: 1, last: events(25).length, live: false, ended: true }]);
+  });
+
+  it("still reports a program that crashes or errors as a failure", async () => {
+    const works = start();
+    works.receive({ type: "work.task", task: writingTask(26) });
+    const handle = await programs.prompted(1);
+    handle.emit({ type: "failed", reason: "The program crashed", lostSession: false });
+    expect(await ended(26)).toEqual({ kind: "failed", failure: "program", reason: "The program crashed" });
+  });
+
+  it("names the messages it had held back but not yet given to the program, so the hub can give them to the next worker", async () => {
+    programs.steer = "queued";
+    const works = start();
+    works.receive({ type: "work.start", task: task(27) });
+    const handle = await programs.prompted(1);
+    works.receive({ type: "work.message", ticket: 27, attempt: 1, id: "m-held", from: "owner", text: "Also update the README" });
+    await sent.until(() => events(27).some((message) => message.event.kind === "message"));
+    handle.emit({ type: "unavailable", reason: "You've hit your limit", until: null });
+    expect(await ended(27)).toEqual({ kind: "unavailable", reason: "You've hit your limit", until: null, unsent: ["m-held"] });
+  });
+
+  it("starts the next program in the same folder with the earlier worker's commits and uncommitted changes listed", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(28) });
+    const first = await programs.prompted(1);
+    const paths = workPaths(home, repository, 28);
+    writeFileSync(join(paths.worktree, "done.txt"), "done");
+    await git(paths.worktree).must(["add", "done.txt"], paths.worktree);
+    await git(paths.worktree).must(["commit", "-m", "Add the done file"], paths.worktree);
+    writeFileSync(join(paths.worktree, "half.txt"), "half");
+    first.emit({ type: "unavailable", reason: "You've hit your limit", until: null });
+    expect(await ended(28)).toMatchObject({ kind: "unavailable" });
+    works.receive({ type: "work.start", task: task(28, { attempt: 2, engine: "claude", model: "claude-opus-5-5", effort: "high", takeover: true, note: "You are taking over this ticket from an earlier worker." }) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    const second = programs.last();
+    expect(second.engine).toBe("claude");
+    expect(second.options.session).toBeNull();
+    const prompt = second.prompts[0] ?? "";
+    expect(prompt).toContain("You are taking over this ticket from an earlier worker.");
+    expect(prompt).toContain("Commits on sa2/ticket-28-abcd that are not on main:");
+    expect(prompt).toContain("Add the done file");
+    expect(prompt).toContain("?? half.txt");
+    expect(readFileSync(join(paths.worktree, "half.txt"), "utf8")).toBe("half");
+    expect(events(28, 2).map((message) => message.seq)[0]).toBe(1);
+  });
+
+  it("keeps what a task worker produced when the next program takes over, and lists it", async () => {
+    const works = start();
+    works.receive({ type: "work.task", task: writingTask(29) });
+    const first = await programs.prompted(1);
+    const paths = taskPaths(home, 29);
+    mkdirSync(outputFolder(paths), { recursive: true });
+    writeFileSync(join(outputFolder(paths), "draft.txt"), "a draft");
+    first.emit({ type: "unavailable", reason: "RESOURCE_EXHAUSTED", until: null });
+    expect(await ended(29)).toMatchObject({ kind: "unavailable" });
+    works.receive({ type: "work.task", task: writingTask(29, { attempt: 2, engine: "codex", model: "gpt-6-luna", effort: "low", takeover: true, note: "You are taking over this task." }) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    const prompt = programs.last().prompts[0] ?? "";
+    expect(prompt).toContain("You are taking over this task.");
+    expect(prompt).toContain("draft.txt (7 bytes)");
+    expect(readFileSync(join(outputFolder(paths), "draft.txt"), "utf8")).toBe("a draft");
+  });
+
+  it("saves the work of an attempt that already ended when the hub moves it to another machine, and says so", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(30) });
+    const first = await programs.prompted(1);
+    const paths = workPaths(home, repository, 30);
+    writeFileSync(join(paths.worktree, "half.txt"), "half");
+    first.emit({ type: "unavailable", reason: "You've hit your limit", until: null });
+    expect(await ended(30)).toMatchObject({ kind: "unavailable" });
+    works.receive({ type: "work.stop", ticket: 30, save: true, remove: true });
+    await works.idle();
+    const stopped = events(30).find((message) => message.event.kind === "stopped")?.event;
+    expect(stopped).toMatchObject({ kind: "stopped", saved: true });
+    const seed = join(scratch, "seed");
+    await git(seed).must(["fetch", "origin", "sa2/ticket-30-abcd"], seed);
+    expect((await git(seed).must(["show", "FETCH_HEAD:half.txt"], seed)).trim()).toBe("half");
   });
 });
 

@@ -602,6 +602,34 @@ export const migrations: readonly Migration[] = [
       DROP TABLE deployments;
     `,
   },
+  {
+    version: 25,
+    sql: `
+      CREATE TABLE provider_marks (
+        program TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        since INTEGER NOT NULL,
+        until INTEGER
+      ) STRICT;
+      CREATE TABLE ticket_switches (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        from_engine TEXT NOT NULL,
+        to_engine TEXT,
+        machine TEXT,
+        model TEXT,
+        effort TEXT,
+        reason TEXT NOT NULL,
+        until INTEGER,
+        owner INTEGER NOT NULL,
+        attempt INTEGER,
+        PRIMARY KEY (ticket_id, seq)
+      ) STRICT;
+      ALTER TABLE ticket_attempts ADD COLUMN takeover INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 function sqlText(value: string): string {

@@ -61,6 +61,7 @@ describe("a round in the ticket's timeline", () => {
       moves: [],
       attempts: [workStatus({ attempt: 3, createdAt: 30, state: "failed" }), workStatus({ attempt: 4, createdAt: 40 })],
       rounds: [round, retry],
+      switches: [],
     });
     const html = text(
       renderToString(

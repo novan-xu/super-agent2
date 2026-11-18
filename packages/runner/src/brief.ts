@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type Attachment, attachmentLine, type TaskAssignment, type WorkSender, type WorkTask } from "@super-agent2/protocol";
 import { assignmentText, type TaskPlace } from "./task.js";
+import type { FolderState } from "./workplace.js";
 
 export const workerGuidanceFile = fileURLToPath(new URL("../guidance/WORKER.md", import.meta.url));
 
@@ -70,6 +71,30 @@ export function leftoverText(leftover: LeftoverPlace): string {
   return leftover.carried
     ? `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They were carried over: they are uncommitted changes on ${leftover.into} now, and a copy is kept on ${kept}. Check that they still belong in the next pull request.`
     : `[hub] Uncommitted changes were found in your folder when it moved to the new branch ${leftover.into}. They did not apply cleanly on the updated ${leftover.base}, so ${leftover.into} starts clean, and they are kept on ${kept}. Take what you need from there, for example with \`git cherry-pick --no-commit ${leftover.commit}\` or \`git checkout ${leftover.commit} -- <path>\`.`;
+}
+
+export function takeoverText(state: FolderState, branch: string, base: string): string {
+  const lines = [
+    `[hub] The state of your folder as you take over, read just now. Commits on ${branch} that are not on ${base}:`,
+    state.commits === "" ? "none" : state.commits,
+    "Uncommitted changes in the folder (git status --short):",
+    state.status === "" ? "none, the folder is clean" : state.status,
+    ...state.unread.map((problem) => `Could not read part of it: ${problem}`),
+    "Check them against the note above before you go on.",
+  ];
+  return lines.join("\n");
+}
+
+export function takeoverTaskText(output: readonly string[], checkout: FolderState | null, place: TaskPlace): string {
+  const lines = [
+    `[hub] What is in your folders as you take over, read just now. Files in your output folder ${place.output}:`,
+    output.length === 0 ? "none" : output.map((name) => `- ${name}`).join("\n"),
+  ];
+  if (checkout !== null && place.checkout !== null) {
+    lines.push(`Changes in the checkout ${place.checkout} (git status --short):`, checkout.status === "" ? "none, the checkout is clean" : checkout.status, ...checkout.unread.map((problem) => `Could not read part of it: ${problem}`));
+  }
+  lines.push("Check them against the note above before you go on.");
+  return lines.join("\n");
 }
 
 export interface AttachedFile {

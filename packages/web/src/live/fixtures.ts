@@ -212,6 +212,7 @@ export function settingsSnapshot(overrides: Partial<SettingsSnapshot> = {}): Set
     brain: { linked: true, order: ["gpt", "claude", "deepseek"], providers: [] },
     table: startingEngineTable,
     subscriptions: [],
+    unavailable: [],
     devices: [],
     ...overrides,
   };

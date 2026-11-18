@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
   type DeliveredFile,
@@ -128,6 +128,22 @@ export function prepareScratch(paths: WorkPaths, materials: readonly TaskMateria
       writeFileSync(file, material.text, "utf8");
     }
   }
+}
+
+export function listOutput(paths: WorkPaths): string[] {
+  const folder = outputFolder(paths);
+  if (!existsSync(folder)) {
+    return [];
+  }
+  const names = readdirSync(folder, { recursive: true, encoding: "utf8" });
+  return names.sort().flatMap((name) => {
+    try {
+      const stat = lstatSync(join(folder, name));
+      return stat.isFile() ? [`${name} (${stat.size} bytes)`] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export function clearOutput(paths: WorkPaths): void {
