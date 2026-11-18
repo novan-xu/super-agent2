@@ -4005,6 +4005,19 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options** Clip quotes at a fixed size, send summaries alone, or push every memory change into every
   running session.
 
+## 2026-11-18 — Turn-based seed history and soft share (#96)
+
+- **Chosen** Include the full topic history through 50 turns, then the full summary and the last 50 turns. Replace the
+  fixed seed total and per-part token budgets with a configurable soft line of about 15% of the running provider and
+  model's input capacity. Past that line, omit topic-board statuses first while keeping titles, then the oldest of the
+  50 turns while keeping the summary, then ticket lines beyond this topic's own, and confirmed memory last. Keep the
+  quoted message and current input ahead of seed material; the provider's input capacity remains the hard limit.
+- **Why** Turn counts describe useful history directly, and a capacity-relative soft line scales with the model while
+  preserving complete context by default. The chosen order retains recent topic context and the owner's confirmed text
+  as long as possible.
+- **Other options** Keep fixed token budgets by seed part, or trim older history before topic-board statuses and extra
+  ticket lines.
+
 ## 2026-11-18 — Ticket lock and stale reads (#84)
 
 - **Chosen** Add the owner's required lock to the closed code-constraint list. Require the current ticket version

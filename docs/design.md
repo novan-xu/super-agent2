@@ -134,15 +134,15 @@ history. The input and its attachments accompany the seed. The seed goes to new 
 
 1. **Quoted message.** Include it in full on any quoted turn, including one in a session that is already open. If it
    exceeds the program's available input, give its reference and the tool for reading it in parts.
-2. **This topic's history.** Include the whole history when it fits. Otherwise include the full summary and up to the
-   last 30 turns verbatim. The saved summary leaves room for recent turns within the history budget. Keep the newest
-   complete turns first when the history cap is reached.
+2. **This topic's history.** Include the whole history when it has at most 50 turns. Otherwise include the full summary
+   and the last 50 turns verbatim. Keep the summary and newest complete turns when the provider's hard input capacity
+   requires omissions; omit older turns first.
 3. **Confirmed memory.** Include the owner's confirmed text.
 4. **Open tickets.** Give one line per ticket, with this topic's tickets first.
 5. **Topic board.** Give titles and current statuses.
 
-Each part has a budget (see [Limits](#limits)). For each part with omissions, state how many items were left out and
-name the hub tool that reads them. The hub keeps the complete records.
+Confirmed memory, open tickets and the topic board are given in full by default, without per-part budgets. When anything
+is omitted, state how many items were left out and name the hub tool that reads them. The hub keeps the complete records.
 
 ### Topic board
 
@@ -481,11 +481,15 @@ asks for. Clipping of logs and output handed to an LLM, or listed on the page, i
 
 The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default, plus one resident router.
 
-The [session seed](#session-seed) targets about 25,000 tokens. Its starting budgets are 18,000 for topic history,
-3,000 for confirmed memory, 2,000 for open tickets and 1,000 for the topic board. The quote can use the remaining
-input budget and take the seed past its target when the provider can fit it. The provider's input capacity is the
-hard limit. The current input and quote take priority, followed by the seed parts in order. Omitted items stay
-available through the hub tools.
+The [session seed](#session-seed) has a configurable soft line, about 15% of the input capacity of the provider and
+model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
+open tickets and the topic board in full by default; there are no fixed token totals or per-part token shares. Once the
+soft line is passed, the hub starts leaving material out in this order: topic-board statuses (keeping titles), the
+oldest of the last 50 history turns (always keeping the summary), ticket lines beyond this topic's own, then confirmed
+memory. Each omission states its count and the hub tool that reads the omitted material. The quoted message and current
+input keep priority over everything else. If the quote, current input and recent turns alone exceed the soft line, keep
+them while they fit; drop older turns only as needed to stay within the provider's hard input capacity. That capacity
+is the only hard limit. Omitted items remain available through the hub tools.
 
 ## Decisions
 
