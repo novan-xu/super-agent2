@@ -28,6 +28,10 @@ export const VerificationRow = z.object({
   deployment: z.number().int().nullable(),
   reported_at: z.number().int().nullable(),
   checked_at: z.number().int().nullable(),
+  head_at: z.number().int().nullable(),
+  wait_since: z.number().int().nullable(),
+  notice_key: z.string().nullable(),
+  notice_count: z.number().int(),
 });
 export type VerificationRow = z.infer<typeof VerificationRow>;
 

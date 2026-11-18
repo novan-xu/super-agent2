@@ -202,6 +202,15 @@ an LLM.
 The worker's own test run is part of the work, not a verification stage. The brain can skip the rules when the owner
 wants that.
 
+Nothing in verification is decided from time, and a pipeline that never reports leaves the ticket verifying. The hub
+does not leave it unnoticed: it records how long each repository's pipelines took when they ended green (Woodpecker's
+own creation and finish times, so waiting for an agent counts) and takes the median of the 15 most recent as the usual.
+When a ticket's pipeline for its head, or the wait for one to appear, reaches three times the usual, the hub tells the
+brain with what Woodpecker says at that moment, and again at each doubling of the wait. A repository with fewer than
+three green runs uses a first-time allowance instead, `HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES`, 120 by default. The brain
+looks without interrupting and steps in only when the look finds a real problem. The notice changes no state: nothing
+fails, no round is counted, nothing is cancelled.
+
 ## Code constraints
 
 This is the complete list.

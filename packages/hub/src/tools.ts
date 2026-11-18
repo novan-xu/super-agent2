@@ -34,7 +34,7 @@ import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
-import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport } from "./reports.js";
+import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
@@ -1031,9 +1031,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const output = tools.work?.output(detail.ticket.id) ?? "";
         const writing = detail.ticket.kind === "writing" ? tools.tickets.writing(detail.ticket.id) : undefined;
         const logs = tools.verification?.logs(detail.ticket.id) ?? [];
+        const waited = tools.verification?.waitedFor(detail.ticket.id) ?? null;
         const stuck = detail.ticket.stuck;
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...(waited === null ? [] : [waitedLine(waited)]),
           ...roundLines(detail.rounds),
           ...(stuck === null
             ? []
