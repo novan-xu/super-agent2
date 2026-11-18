@@ -33,7 +33,6 @@ export const messages = {
   "hold.form.repositoryPublication": "把仓库设为公开",
   "hold.form.defaultBranchRewrite": "强制推送或改写默认分支的历史",
   "hold.form.dataDeletion": "删除数据库或数据卷",
-  "hold.form.credentialChange": "删除或替换凭据",
   "hold.form.fileDeletion": "删除项目文件夹以外的文件",
   "hold.reason": "等你确认：{description}（{evidence}）",
 
@@ -231,6 +230,7 @@ export const messages = {
   "notice.verificationFailed": "工单 {ticket} 没有通过验证，大脑会决定怎么处理",
   "notice.ticketMerged": "工单 {ticket} 已合并",
   "notice.ticketMergedDeploy": "工单 {ticket} 已合并，这次改动需要部署",
+  "notice.ticketMergedSelf": "工单 {ticket} 已合并，Super-agent2 的新版本等你部署",
   "notice.deployment.succeeded": "{repository} 已部署到 {commit}，健康检查通过",
   "notice.deployment.rolledBack": "{repository} 部署 {commit} 没有成功，已回滚到 {previous}，旧版本恢复正常",
   "notice.deployment.unrecovered": "{repository} 部署 {commit} 没有成功，回滚后服务仍不正常，大脑会决定怎么处理",

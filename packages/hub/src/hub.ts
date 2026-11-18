@@ -20,7 +20,7 @@ import { createHubServer, type HubServer } from "./server.js";
 import { createWaiting, type Waiting } from "./waiting.js";
 import { createMachineStore, type MachineStore } from "./machines.js";
 import { createRunners, type Runners } from "./runners.js";
-import { combinedTargets, type Environment, fixedTargets, localTarget, sshTarget, type Target } from "./targets.js";
+import { combinedTargets, type Environment, fixedTargets, localTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
 import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
@@ -60,12 +60,8 @@ export interface HubOptions {
   readonly report?: (line: string) => void;
 }
 
-export function defaultTargets(config: Config, environment: Environment): Target[] {
-  const targets = [localTarget({ environment })];
-  if (config.nas !== undefined) {
-    targets.push(sshTarget(config.nas, environment));
-  }
-  return targets;
+export function defaultTargets(environment: Environment): Target[] {
+  return [localTarget({ environment })];
 }
 
 export interface Hub {
@@ -149,7 +145,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const files = createTicketFiles(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
   const credentials = options.credentials ?? environmentCredentials(environment);
-  const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(config, environment)), runners);
+  const targets = combinedTargets(fixedTargets(options.targets ?? defaultTargets(environment)), runners);
   try {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
     const brainToken = brainTokenCheck(brainSecret);
@@ -162,7 +158,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
             clock,
             verify,
             ownerEmail: config.ownerEmail,
-            settings: lockSettings({ projectFolders: config.projectFolders, credentialPaths: config.credentialPaths }),
+            settings: lockSettings({ projectFolders: config.projectFolders }),
           })
         : undefined;
     commands = createCommandService({
@@ -221,6 +217,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
       report: (report) => loop?.failed(report),
       accountOf,
+      ...(config.sourceRepository === undefined ? {} : { ownRepository: config.sourceRepository }),
       ...(worker === undefined
         ? {}
         : {
@@ -258,6 +255,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
       deployed: (ticket) => arranger.deployed(ticket),
       accountOf,
+      ...(config.sourceRepository === undefined ? {} : { ownRepository: config.sourceRepository }),
     });
     const linkedConversations = conversations;
     settings = createSettings({

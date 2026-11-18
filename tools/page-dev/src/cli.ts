@@ -143,7 +143,6 @@ const hub = await startHub({
     port: 0,
     host: "127.0.0.1",
     projectFolders: [],
-    credentialPaths: [],
     brainTokenFile: join(hubDir, "brain.token"),
     pageDir: defaultPageDir,
     ...(vapid === undefined ? {} : { vapid }),

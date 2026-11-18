@@ -2592,6 +2592,65 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   runs without it, and the adapter falls back to queueing and killing. The brain's image pins dsh 0.2.1-rc.2; a runner
   uses whichever dsh its machine has.
 
+## 2026-11-17 — Credentials are out of the confirmation lock
+
+- **Chosen:** The lock has five forms: `repository-deletion`, `repository-publication`, `default-branch-rewrite`,
+  `data-deletion` and `file-deletion`. `credential-change` is gone, with its command rules (`gh secret`, `gh auth
+  logout`, deleting SSH, GPG and deploy keys, `docker secret rm`, `kubectl delete secret`, `wrangler secret`,
+  `cloudflared tunnel delete`, `woodpecker-cli secret`, `gpg --delete-*`, `security delete-*`, `cmdkey /delete`), its API
+  rules (secrets, keys, tokens, grants, Cloudflare tokens, service tokens and tunnels), the effect rule over credential
+  files with its built-in list of credential paths, `HUB_CREDENTIAL_PATHS` (and `credentialPaths` in the hub's
+  configuration, `deploy/compose.yaml` and the harnesses) and the project `.env` exemption that only softened it. What
+  became dead went with them: the hub no longer reads what a command writes, copies or moves (redirects, `cp`, `mv`,
+  `tee`, `sed -i`, `ssh-keygen`, `openssl`, PowerShell's `Set-Content` and `Out-File` and the rest), only what it
+  deletes, pushes or sends to an API; the Cloudflare API is no longer read at all. This overturns the forms of "How the
+  confirmation lock reads a command" (six forms, and rules over what a command writes or moves), "Project folders and
+  credential paths" (`HUB_CREDENTIAL_PATHS`, the built-in credential list and everything it held), "Temporary folders and
+  a project's own `.env`" (the project `.env` exemption, and the credential file in a temporary folder that stayed held)
+  and "Project folders and credential paths in the deployment" (the value of `HUB_CREDENTIAL_PATHS`); those entries stay
+  as written, and what they say of project folders and temporary folders still holds. The consequences: writing,
+  appending to, overwriting or moving a credential file is not held anywhere. Deleting one is judged only by
+  `file-deletion`, like any other file, with no special case either way: held outside the project folders and the
+  temporary folders, free inside them, so a credential file in `/tmp` is now deleted without a hold. The other five
+  forms are unchanged. Not touched, because they are not this form: the refusal of credential names as a command's
+  environment variables, the refusal of credential-looking text in a memory, the way the hub injects credentials into
+  commands, and `packages/hub/src/credentials.ts`. The brain's guidance no longer lists credentials among what is held,
+  and `docs/design.md` says credentials are not on the list. A deployment that still sets `HUB_CREDENTIAL_PATHS` is not
+  refused: the hub ignores a variable it does not read.
+- **Why:** The owner's word: changing or deleting credentials is not within the confirmation lock's scope.
+- **Other options:** Keeping the lock's reading of writes and moves for a later form; holding a credential file's
+  deletion wherever it is; leaving `HUB_CREDENTIAL_PATHS` accepted and unused.
+
+## 2026-11-17 — The brain's reach ends at the hub's container
+
+- **Chosen:** At the owner's review, the hub has no way into the NAS host. The `nas` target is gone, with
+  `NAS_SSH_DESTINATION`, `NAS_SSH_PORT` and `NAS_SSH_IDENTITY` (a hub given them ignores them), the SSH script target
+  behind it, the key's mount at `/run/superagent2/ssh`, the `host.docker.internal` host entry and `SUPERAGENT2_INSTANCE`
+  in `deploy/compose.yaml`, and the `authorize` step and the key generation of the `secrets` step in `deploy/deploy.sh`.
+  `deauthorize` stays, so an instance authorized earlier can be cleaned up, and now refuses a public key file that holds
+  no key instead of matching every line. The hub does not deploy Super-agent2: `.superagent2/deployment.json` is
+  removed from this repository, `deploy_repository` refuses the hub's own repository (`HUB_SOURCE_REPOSITORY`) before
+  it reads GitHub, whatever an older commit's file says, and a merge in it tells the brain that the new version waits
+  to be deployed on the NAS, with 工单 n 已合并，Super-agent2 的新版本等你部署 as the notice. The owner deploys it with
+  `deploy.sh release`, or files work for a worker, which signs in with its own machine's access; the brain then records
+  it with `report_deployment`. A deployment file of any repository that names `nas` is refused with the reason that the
+  hub cannot reach the NAS host. `nas` stays reserved as a machine name, so no runner can take it and turn such a file
+  into a deployment on that runner. The script's `begin`, `outcome` and `settle` steps and the background release they
+  started are removed, since only the hub called them; `release`, `rollback` and the other steps keep today's
+  behaviour, including installing the release's own `deploy.sh` and `compose.yaml`. The hub's reading of an outcome
+  line from a deployment's commands stays, as a general part of `deploy_repository` that its tool text describes.
+  Runner targets, for `run_command` and for deployment files, are unchanged. This overturns "How the hub reaches the
+  NAS host", the `nas` part of "Targets, shells and stopping", "Super-agent2's deployment file, and why its shape did
+  not change", and the hub-driven part of "Super-agent2 is deployed by a script that outlives the hub" (`begin`,
+  `outcome`, `settle` and `setsid`); the release itself, with its backup, health check and way back, stands.
+- **Why:** The owner's word: administrator rights inside this project's containers are intended, administrator rights
+  over the whole NAS are not. `novanxu` can drive Docker for every container on the NAS, so any sign-in as that user is
+  the whole NAS, and the brain has passwordless `sudo` in the hub's container, so whatever the container holds the brain
+  holds. Whether the brain deploys Super-agent2 matters little to the owner, since a worker can.
+- **Other options:** A key that `sshd` restricts to a forced command accepting only the release's verbs, kept for the
+  self-deployment; a NAS user without Docker rights, which could not release; keeping `nas` as a target name that is
+  listed and always refused.
+
 ## 2026-11-17 — Attachments are uploaded in parts the page sends, straight to disk
 
 - **Chosen:** The page creates an attachment with `POST /api/attachments` (name, size, media type) as soon as the owner
@@ -2620,9 +2679,7 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   separators, characters Windows refuses and control characters replaced by `_`, leading and trailing dots and spaces
   removed, a Windows device name prefixed with `_`, and anything past 180 bytes cut with the extension kept. The owner's
   own name is kept only in the database and shown on the page. The hub sends the brain the path relative to the folder,
-  and the brain refuses one that is absolute or climbs out of it. A worker's attachments use the same store. Because
-  `HUB_CREDENTIAL_PATHS` already covers `/var/lib/superagent2/link/**`, a command that deletes attachments is held for
-  the owner.
+  and the brain refuses one that is absolute or climbs out of it. A worker's attachments use the same store.
 - **Why:** That volume is the only place both containers see, and putting the store there costs no copy of a large file.
   A folder per id means two files of the same name never meet and the name the program sees is still the owner's.
 - **Other options:** Keeping attachments in `hub-data` and copying each one into the link volume when the brain needs it;

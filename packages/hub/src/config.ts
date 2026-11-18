@@ -5,7 +5,6 @@ import { z } from "zod";
 import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
 import { vapidProblem } from "./push.js";
-import type { SshDestination } from "./targets.js";
 
 function list(text: string | undefined): string[] {
   return (text ?? "")
@@ -41,17 +40,6 @@ const Environment = z.object({
     .pipe(z.number().int().max(65535, { error: "must be between 0 and 65535" }))
     .default(8080),
   HUB_HOST: z.string().min(1, { error: "must not be empty" }).default("0.0.0.0"),
-  NAS_SSH_DESTINATION: z
-    .string()
-    .regex(/^[^\s-][^\s]*$/, { error: "must be an SSH destination such as user@host, without spaces or a leading dash" })
-    .optional(),
-  NAS_SSH_PORT: z
-    .string()
-    .regex(/^\d+$/, { error: "must be a port number" })
-    .transform(Number)
-    .pipe(z.number().int().min(1, { error: "must be between 1 and 65535" }).max(65535, { error: "must be between 1 and 65535" }))
-    .optional(),
-  NAS_SSH_IDENTITY: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PROJECT_FOLDERS: z
     .string()
     .optional()
@@ -59,7 +47,6 @@ const Environment = z.object({
     .refine((folders) => folders.every(isAbsolutePath), {
       error: "must be absolute folders separated by commas, such as /srv/projects,~/work",
     }),
-  HUB_CREDENTIAL_PATHS: z.string().optional().transform(list),
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
@@ -77,9 +64,7 @@ export interface Config {
   readonly dataDir: string;
   readonly port: number;
   readonly host: string;
-  readonly nas?: SshDestination;
   readonly projectFolders: readonly string[];
-  readonly credentialPaths: readonly string[];
   readonly brainTokenFile: string;
   readonly pageDir?: string;
   readonly attachmentsDir?: string;
@@ -136,22 +121,12 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       port: value.HUB_PORT,
       host: value.HUB_HOST,
       projectFolders: value.HUB_PROJECT_FOLDERS,
-      credentialPaths: value.HUB_CREDENTIAL_PATHS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
       attachmentsDir: value.HUB_ATTACHMENTS_DIR ?? join(value.HUB_DATA_DIR, "attachments"),
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),
-      ...(value.NAS_SSH_DESTINATION === undefined
-        ? {}
-        : {
-            nas: {
-              destination: value.NAS_SSH_DESTINATION,
-              ...(value.NAS_SSH_PORT === undefined ? {} : { port: value.NAS_SSH_PORT }),
-              ...(value.NAS_SSH_IDENTITY === undefined ? {} : { identityFile: value.NAS_SSH_IDENTITY }),
-            },
-          }),
     },
   };
 }
