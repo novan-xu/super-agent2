@@ -133,7 +133,7 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         return withDetail(next, state.detail === null ? null : receiveTicketChange(state.detail, message.ticket));
       }
       if (message.type === "memories") {
-        return { ...state, memory: receiveMemories(message.memories) };
+        return { ...state, memory: receiveMemories(message) };
       }
       if (message.type === "brain") {
         return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };

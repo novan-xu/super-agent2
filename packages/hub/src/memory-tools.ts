@@ -1,37 +1,35 @@
-import { GeneratedText, type Memory, MemoryId, memoryChineseLength, memoryEnglishLength, memoryLimit, textForBrain } from "@super-agent2/protocol";
+import { describeMemoryState, MemoryId } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { MemoryService } from "./memories.js";
+import type { MemoryService, Refusal } from "./memories.js";
 
-const RememberArguments = z.object({ id: MemoryId.optional(), text: GeneratedText });
+const RememberArguments = z.object({ text: z.string(), replaces: z.array(MemoryId).optional(), ownerAsked: z.boolean().optional() });
 
 const RecallArguments = z.object({});
 
-const ForgetArguments = z.object({ id: MemoryId });
+const ForgetArguments = z.object({ id: MemoryId, ownerAsked: z.boolean().optional() });
+
+const ownerAskedDescription =
+  "True only when the owner asked in this conversation for this; it lets you suggest again what the owner declined, deleted or kept before. Leave out otherwise.";
 
 export function memoryDefinitions() {
   return [
     {
       name: "remember",
-      title: "Remember something across conversations",
+      title: "Suggest a memory",
       description: [
-        "Keep one lasting fact about the owner for every later conversation, whichever model answers: a preference the owner stated or corrected, a standing fact about the owner's projects or machines that no repository records, how the owner likes things reported.",
-        "Not the state of current work, not what this conversation already holds, not what a repository or its issues say, and never a credential: a text that looks like a token, key or password is refused.",
-        `One short sentence: at most ${memoryEnglishLength} characters in English, and the same in Simplified Chinese (at most ${memoryChineseLength} characters), which the owner reads and can edit or delete.`,
-        `Give id to rewrite an existing memory instead of adding one. At most ${memoryLimit} memories are kept; when full, adding is refused until you forget one or merge two.`,
+        "Suggest one lasting fact about the owner for every later conversation, whichever model answers: a preference the owner stated or corrected, a standing fact about the owner's projects or machines that no repository records, how the owner likes things reported.",
+        "It does not change the memory. The suggestion waits in 记忆 until the owner confirms or declines it; only the owner changes the memory.",
+        "Write it in Simplified Chinese, which is exactly what the owner reads and what every later conversation is given; names and technical terms may stay as they are. Make it stand alone: name the project or machine it is about.",
+        "When it updates, corrects or covers memories you already have, name them in replaces: confirming it then replaces them. Prefer that to suggesting a near-copy beside them.",
+        "Refused: a text that is the same as a memory, as a suggestion still waiting, or as one the owner declined or deleted; and anything that looks like a credential.",
+        "Every answer includes your memory as it is now, the suggestions waiting, and what the owner set aside.",
       ].join(" "),
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "integer", minimum: 1, description: "The memory to rewrite; leave out to add a new one" },
-          text: {
-            type: "object",
-            properties: {
-              en: { type: "string", description: "The memory in English, one short sentence" },
-              zh: { type: "string", description: "The same memory in Simplified Chinese, for the owner" },
-            },
-            required: ["en", "zh"],
-            additionalProperties: false,
-          },
+          text: { type: "string", description: "The memory, in Simplified Chinese" },
+          replaces: { type: "array", items: { type: "integer", minimum: 1 }, description: "The memories this one replaces once the owner confirms it" },
+          ownerAsked: { type: "boolean", description: ownerAskedDescription },
         },
         required: ["text"],
         additionalProperties: false,
@@ -40,16 +38,21 @@ export function memoryDefinitions() {
     {
       name: "recall",
       title: "Read your memory",
-      description: "List every memory with its id, who last wrote it (you or the owner) and when. Your memory is also given to you at the start of each conversation and whenever it changes.",
+      description:
+        "List your memory with ids, the suggestions waiting for the owner, and what the owner declined or deleted. It is also given to you at the start of each conversation and whenever it changes.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
       name: "forget",
-      title: "Forget a memory",
-      description: "Delete a memory that no longer holds or that another memory now covers. It cannot be undone.",
+      title: "Suggest forgetting a memory",
+      description:
+        "Suggest removing a memory that no longer holds. The memory stays until the owner confirms in 记忆. To change what a memory says, suggest the new text with remember and replaces instead.",
       inputSchema: {
         type: "object",
-        properties: { id: { type: "integer", minimum: 1, description: "The memory to forget" } },
+        properties: {
+          id: { type: "integer", minimum: 1, description: "The memory to forget" },
+          ownerAsked: { type: "boolean", description: ownerAskedDescription },
+        },
         required: ["id"],
         additionalProperties: false,
       },
@@ -57,17 +60,41 @@ export function memoryDefinitions() {
   ];
 }
 
-function line(memory: Memory): string {
-  const who = memory.by === "owner" ? (memory.stale ? "the owner, in Chinese; its English is out of date" : "the owner") : "you";
-  return `#${memory.id} ${textForBrain(memory)} (last written by ${who}, ${new Date(memory.changedAt).toISOString()})`;
+function day(at: number): string {
+  return new Date(at).toISOString().slice(0, 10);
 }
 
-export function recallText(memories: readonly Memory[]): string {
-  if (memories.length === 0) {
-    return `Your memory is empty (0 of ${memoryLimit}).`;
+export const credentialRefusal =
+  "Refused: this looks like a credential (a token, a key, a password or a secret value). A memory never holds a credential; the hub keeps them. Suggest where a credential is used, never its value.";
+
+export function refusalText(refusal: Refusal): string {
+  const again = "Do not suggest it again unless the owner asks for it; when the owner does, call again with ownerAsked true.";
+  switch (refusal.kind) {
+    case "empty":
+      return "Refused: the text is empty.";
+    case "chinese":
+      return "Refused: a memory is written in Simplified Chinese, the language the owner reads it in. Names and technical terms may stay as they are.";
+    case "credential":
+      return credentialRefusal;
+    case "unknown":
+      return `Refused: there is no memory #${refusal.memory}. Use the ids in your memory below.`;
+    case "memory":
+      return `Refused: memory #${refusal.memory.id} already says this: ${JSON.stringify(refusal.memory.text)}. There is nothing to suggest.`;
+    case "pending":
+      return refusal.suggestion.kind === "forget"
+        ? `Refused: suggestion ${refusal.suggestion.id} already suggests forgetting #${refusal.suggestion.memory ?? 0}, and waits for the owner.`
+        : `Refused: suggestion ${refusal.suggestion.id}, still waiting for the owner, already says this: ${JSON.stringify(refusal.suggestion.text)}.`;
+    case "declined":
+      return `Refused: the owner declined this on ${day(refusal.at)}: ${JSON.stringify(refusal.text)}. ${again}`;
+    case "deleted":
+      return `Refused: the owner deleted this memory (#${refusal.memory}) on ${day(refusal.at)}: ${JSON.stringify(refusal.text)}. ${again}`;
+    case "kept":
+      return `Refused: the owner kept #${refusal.memory.id} on ${day(refusal.at)} when you suggested forgetting it. ${again}`;
   }
-  const ordered = [...memories].sort((a, b) => a.id - b.id);
-  return [`Your memory (${memories.length} of ${memoryLimit}):`, ...ordered.map(line)].join("\n");
+}
+
+export function recallText(memories: MemoryService): string {
+  return describeMemoryState(memories.state()).join("\n");
 }
 
 export interface MemoryToolResult {
@@ -77,31 +104,42 @@ export interface MemoryToolResult {
 
 export function memoryCall(memories: MemoryService, name: string, raw: unknown, conversation: string | undefined): MemoryToolResult | undefined {
   const invalid = (error: z.ZodError): MemoryToolResult => ({ text: `The arguments are not valid: ${error.message}`, isError: true });
+  const withState = (text: string, isError = false): MemoryToolResult => ({ text: `${text}\n\n${recallText(memories)}`, ...(isError ? { isError } : {}) });
   switch (name) {
     case "remember": {
       const parsed = RememberArguments.safeParse(raw);
       if (!parsed.success) {
         return invalid(parsed.error);
       }
-      const outcome = memories.remember({ ...(parsed.data.id === undefined ? {} : { id: parsed.data.id }), text: parsed.data.text, conversation: conversation ?? null });
+      const outcome = memories.remember({
+        text: parsed.data.text,
+        ...(parsed.data.replaces === undefined ? {} : { replaces: parsed.data.replaces }),
+        ...(parsed.data.ownerAsked === undefined ? {} : { ownerAsked: parsed.data.ownerAsked }),
+        conversation: conversation ?? null,
+      });
       if (!outcome.ok) {
-        return { text: outcome.reason, isError: true };
+        return withState(refusalText(outcome.refusal), true);
       }
-      return {
-        text: `${outcome.added ? "Remembered" : "Rewrote"} #${outcome.memory.id} (${outcome.count} of ${memoryLimit}). The owner sees it in 记忆 and can edit or delete it. Tell the owner in a few words what you remembered.`,
-      };
+      return withState(
+        `Suggested (suggestion ${outcome.suggestion.id}). It waits in 记忆 for the owner to confirm or decline; nothing is remembered until the owner confirms. Tell the owner in a few words what you suggested.`,
+      );
     }
     case "recall": {
       const parsed = RecallArguments.safeParse(raw);
-      return parsed.success ? { text: recallText(memories.list()) } : invalid(parsed.error);
+      return parsed.success ? { text: recallText(memories) } : invalid(parsed.error);
     }
     case "forget": {
       const parsed = ForgetArguments.safeParse(raw);
       if (!parsed.success) {
         return invalid(parsed.error);
       }
-      const outcome = memories.forget(parsed.data.id, conversation ?? null);
-      return outcome.ok ? { text: `Forgot #${outcome.memory.id} (${outcome.count} of ${memoryLimit} kept).` } : { text: outcome.reason, isError: true };
+      const outcome = memories.forget({ id: parsed.data.id, ...(parsed.data.ownerAsked === undefined ? {} : { ownerAsked: parsed.data.ownerAsked }), conversation: conversation ?? null });
+      if (!outcome.ok) {
+        return withState(refusalText(outcome.refusal), true);
+      }
+      return withState(
+        `Suggested forgetting #${parsed.data.id} (suggestion ${outcome.suggestion.id}). The memory stays until the owner confirms in 记忆. Tell the owner in a few words what you suggested.`,
+      );
     }
     default:
       return undefined;

@@ -35,7 +35,7 @@ export const Health = z.object({
 export type Health = z.infer<typeof Health>;
 
 export const Refusal = z.object({
-  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "credential", "duplicate", "cloudflare", "release"]),
+  error: z.enum(["forbidden", "not_found", "unsupported_media_type", "bad_request", "conflict", "unsupported", "incomplete", "unavailable", "cloudflare", "release"]),
 });
 
 export type Refusal = z.infer<typeof Refusal>;

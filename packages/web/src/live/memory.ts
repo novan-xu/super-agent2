@@ -1,37 +1,36 @@
-import { type Memory, memoryChineseLength, memoryTextProblem, normalisedMemoryText } from "@super-agent2/protocol";
+import { isBlank, type Memory, type MemoryList, type MemorySuggestion } from "@super-agent2/protocol";
 
 export interface MemoryState {
   readonly loaded: boolean;
   readonly memories: readonly Memory[];
+  readonly suggestions: readonly MemorySuggestion[];
 }
 
-export const initialMemory: MemoryState = { loaded: false, memories: [] };
+export const initialMemory: MemoryState = { loaded: false, memories: [], suggestions: [] };
 
 export function newestFirst(a: Memory, b: Memory): number {
   return b.changedAt - a.changedAt || b.revision - a.revision || b.id - a.id;
 }
 
-export function receiveMemories(memories: readonly Memory[]): MemoryState {
-  return { loaded: true, memories: [...memories].sort(newestFirst) };
+function newestSuggestionFirst(a: MemorySuggestion, b: MemorySuggestion): number {
+  return b.createdAt - a.createdAt || b.id - a.id;
 }
 
-export type EditProblem = "empty" | "long" | "chinese" | "unchanged" | "duplicate";
-
-export function editProblem(memories: readonly Memory[], id: number, draft: string): EditProblem | null {
-  const problem = memoryTextProblem(draft, "zh");
-  if (problem !== null) {
-    return problem;
-  }
-  const text = normalisedMemoryText(draft);
-  const current = memories.find((memory) => memory.id === id);
-  if (current !== undefined && current.text.zh === text) {
-    return "unchanged";
-  }
-  return memories.some((memory) => memory.id !== id && memory.text.zh === text) ? "duplicate" : null;
+export function receiveMemories(list: MemoryList): MemoryState {
+  return { loaded: true, memories: [...list.memories].sort(newestFirst), suggestions: [...list.suggestions].sort(newestSuggestionFirst) };
 }
 
-export function shownProblem(problem: EditProblem | null): Exclude<EditProblem, "unchanged" | "empty"> | null {
-  return problem === "long" || problem === "chinese" || problem === "duplicate" ? problem : null;
+export function canSave(draft: string, original: string): boolean {
+  return !isBlank(draft) && draft !== original;
 }
 
-export const editLength = memoryChineseLength;
+export interface SuggestionView {
+  readonly suggestion: MemorySuggestion;
+  readonly struck: readonly string[];
+}
+
+export function suggestionView(suggestion: MemorySuggestion, memories: readonly Memory[]): SuggestionView {
+  const named = suggestion.kind === "forget" ? (suggestion.memory === null ? [] : [suggestion.memory]) : suggestion.replaces;
+  const struck = named.flatMap((id) => memories.filter((memory) => memory.id === id).map((memory) => memory.text));
+  return { suggestion, struck: suggestion.kind === "forget" && struck.length === 0 ? [suggestion.text] : struck };
+}
