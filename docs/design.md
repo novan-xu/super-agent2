@@ -235,6 +235,29 @@ No test fails because something took longer than expected.
 - Logic that depends on time is tested with a clock the test controls.
 - A test waits for an event, never for a duration.
 
+## Attachments
+
+The owner can attach any file to a message, in the conversation with the brain and in a ticket's messages to its
+worker: from the photo library, the camera or Files on the phone, by pasting an image, or by dropping files on the
+composer on a computer. A message may be attachments alone.
+
+- The page uploads each file as soon as it is chosen, in parts of 8 MiB, each one request; the hub writes each part
+  straight to disk and never holds the file in memory or in SQLite. A part that fails is sent again from where the hub
+  stopped, so a long video from a phone needs no new start and the message waits in the composer until its files are
+  in.
+- The hub keeps every attachment in a folder of its own named by a random id, under a name made safe for any file
+  system from the one the owner's device gave. On the NAS that store is the `superagent2-brain-link` volume, which the
+  brain's container reads at the same place, so the brain is told only the file's path inside it.
+- The brain's program is told each file's type, size, attachment id and path under the owner's message, and is given
+  the images as images where its program takes them (Claude Code, Codex and dsh). It reads other files with its own
+  tools. It hands a file on to a worker by its attachment id, as material of a writing ticket or with a message.
+- A file sent to a worker travels to its machine over the runner's link, in parts the runner asks for, and lands in the
+  ticket's folder outside the worktree, so it is never committed by accident. A message for a worker whose machine is
+  away is kept by the hub and given again whenever the machine comes back, until the worker has it.
+- A download is always a download: served as an attachment, with `nosniff` and a sandbox, and an image is shown as an
+  image only for the types every browser and program read as images.
+- Nothing is pruned.
+
 ## Limits
 
 Nothing the owner, the brain or a worker sends has an upper limit of its own: not a message, a task, material, a
@@ -242,7 +265,8 @@ reason, a command, a list, or the number and size of a writing worker's files. W
 body or live message is at most 64 MiB, and a request past it is refused with a plain statement that this is the
 system's physical limit. A writing worker's text result too long for one message reaches the owner whole, as a file.
 Delivered files go from the runner to the hub in parts the hub asks for, and are kept as files beside the hub's
-database. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
+database. The owner's attachments go to the hub in parts the page sends, and from the hub to a runner in parts the runner
+asks for. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
 
 ## Decisions
 

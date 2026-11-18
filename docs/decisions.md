@@ -2904,3 +2904,110 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   the work over when it applies cleanly lets the worker continue as if nothing had happened.
 - **Other options:** A named stash; always carrying over and leaving conflict markers; refusing to switch until the
   worker cleans up, which would block the chain.
+
+## 2026-11-17 — Attachments are uploaded in parts the page sends, straight to disk
+
+- **Chosen:** The page creates an attachment with `POST /api/attachments` (name, size, media type) as soon as the owner
+  picks, pastes or drops a file, then sends it in parts of 8 MiB with `PUT /api/attachments/<id>/upload?offset=<n>`
+  (`application/octet-stream`); the hub streams each part to the end of the file on disk and answers how much it has.
+  A part at the wrong offset is refused with what the hub has, `GET /api/attachments/<id>/upload` says the same, and a
+  part that would pass the declared size is refused and cut back. A part that fails leaves the chip red; tapping it, or
+  pressing 发送, sends the rest from where the hub stopped. The message carries only the attachment ids, and the hub
+  refuses a message whose attachments are not complete. Uploads need the owner's session and the page's own origin,
+  like every other change. There is no cap on count or size; the only physical bound is the 64 MiB request guard,
+  which a part never reaches. An attachment's row (id, name, size, type) is in a new table (migration 22), its bytes
+  only on disk.
+- **Why:** Cloudflare refuses a request past its own body limit, and a phone on a mobile network drops connections; parts
+  the page can resume are the only way a video of a few hundred megabytes arrives. Uploading before 发送 makes sending
+  instant for small files and lets the composer show progress.
+- **Other options:** One multipart request per message (no resume, and the whole message fails with one file);
+  uploading at 发送 only; a resumable-upload protocol such as tus, which needs a library on both sides for the same
+  result.
+
+## 2026-11-17 — Attachments live on the brain-link volume, in a folder per attachment
+
+- **Chosen:** The hub keeps attachments under `HUB_ATTACHMENTS_DIR` (default `<HUB_DATA_DIR>/attachments`); the compose
+  file sets it to `/var/lib/superagent2/link/attachments` on the `superagent2-brain-link` volume, which the brain's
+  container mounts read-only at the same place and knows as `BRAIN_ATTACHMENTS_DIR` (default that path). Each file is
+  `<id>/<stored name>`: the id is 32 random hexadecimal characters; the stored name is the owner's name with path
+  separators, characters Windows refuses and control characters replaced by `_`, leading and trailing dots and spaces
+  removed, a Windows device name prefixed with `_`, and anything past 180 bytes cut with the extension kept. The owner's
+  own name is kept only in the database and shown on the page. The hub sends the brain the path relative to the folder,
+  and the brain refuses one that is absolute or climbs out of it. A worker's attachments use the same store.
+- **Why:** That volume is the only place both containers see, and putting the store there costs no copy of a large file.
+  A folder per id means two files of the same name never meet and the name the program sees is still the owner's.
+- **Other options:** Keeping attachments in `hub-data` and copying each one into the link volume when the brain needs it;
+  a new volume shared by both containers (one more volume to create on the NAS for the same effect); serving the file
+  to the brain over HTTP, which its programs cannot read as a path.
+
+## 2026-11-17 — Each program gets an attachment in the best way it has, and always its path
+
+- **Chosen:** The message to the program, from the brain or a runner, ends with a `[hub]` list of every attached file:
+  its name, type, size, attachment id (for the brain) and absolute path. PNG, JPEG, GIF and WebP files are also given as
+  images: to Claude Code as base64 image blocks in the stream-json user message, to Codex as `localImage` input items
+  by path, to dsh as `SdkEncodedImageBlock`s in `session/prompt`. This holds for the first message of a turn and for a
+  message taken into a running turn: Claude Code and Codex take the same items in a steer, and dsh's steer goes through
+  our control plugin, which saves the images in dsh's own attachment store (`ctx.get("attachments").saveImages`) and
+  adds the references to the steered message. Any other type (HEIC, PDF, a spreadsheet) is never sent as an image; the
+  program reads it at its path with its own tools. A size bound is applied only where a program has one: dsh refuses a
+  source image over 20 MiB and refuses the whole message when one image is refused, so larger images are left to the
+  path, and if dsh still refuses a prompt with images, it is sent again with the text alone; the plugin does the same
+  for a steer. Claude Code accepted a 15.7 MB, 3000 by 2200 PNG and Codex the same file, both resizing it themselves;
+  images over 20 MiB go to Claude Code by path only. Antigravity gets the path.
+- **Why:** Checked against each program's own interface and in live runs: a solid-colour image and a text file with a
+  random code word, as the first message and as a message into a running turn. Claude Code and Codex answered the colour
+  from the image itself and read the code word at its path. dsh 0.2.1-rc.2 with `deepseek-flash` on the DeepSeek
+  account accepted the image block, but that route is text only: dsh put a placeholder in its place, its `read_image`
+  tool gave the model only "image/png, 96x64 px", and the model found the colour by reading pixel values with
+  PowerShell. The path is what makes that possible, and what lets any program open a file it cannot see.
+- **Other options:** Paths only, which loses Claude's and GPT's sight of the image; images only, which loses every other
+  file; converting HEIC to JPEG on the hub, which needs an image library and is unnecessary because Safari already
+  converts a photo picked from the library to JPEG.
+
+## 2026-11-17 — A file for a worker lands outside its worktree, and a message waits for an absent machine
+
+- **Chosen:** `work.message` carries the attachments (id, name, size, type). The runner asks the hub for each in parts of
+  8 MiB (`work.attachment`, answered by `work.attachment.part`), appends them to
+  `<runner home>/work/t<ticket>/attachments/<id>/<stored name>`, beside the ticket's worktree and never inside it,
+  resumes from what it already has, and gives the message to the program only when every file is there. The hub
+  answers only for a file given to that ticket (by a message or as material) and only to the machine of that attempt.
+  Messages to a worker are now kept by the hub in a new table until the runner's `message` event for them arrives. One
+  sent while the machine is away, or while the ticket is between two attempts (verifying a piece of a chain, waiting for
+  a guided round, or with its next attempt queued), is accepted and given to the ticket's current attempt whenever one
+  starts and at every `hello`; a message is refused only when the ticket is neither working nor verifying. The runner remembers the ids it has handled (from its event log too), so a message given twice is taken once,
+  and delivers a ticket's messages one at a time in order. If the link drops while a file is on its way, the runner
+  forgets the message and takes it again from where the file stopped when the hub gives it again. Files already fetched stay in the ticket's folder
+  when it moves to the next branch of a chain. The brain's `message_worker` tool takes attachment ids, and says when the
+  message is kept rather than delivered. A message that is still waiting when the ticket ends is not delivered.
+- **Why:** The worktree is committed by the worker; a file inside it would be committed by accident. Keeping the
+  message on the hub is the only way a message to a machine that is asleep or rebooting is not lost, which was the case
+  for text messages too (they were refused); with attachments the owner would otherwise have to upload again.
+- **Other options:** The runner downloading over HTTP (a second credential path through the front door); the hub
+  pushing parts unasked (no back-pressure); keeping the old refusal when the machine is away.
+
+## 2026-11-17 — The brain hands an attachment to a writing worker by its id
+
+- **Chosen:** A piece of `material` in `open_writing_ticket` may name an `attachment` id instead of `text`. The hub checks
+  that the attachment exists and is complete, stores it with the material (name, size, type), and allows that ticket's
+  machine to fetch it. The runner fetches it before the worker starts and copies it into the scratch folder's `input/`
+  under the material's name; the brief lists it as `input/<name>`. `read_ticket` names the attached file. The brain's
+  guidance says to pass an attached file this way and never as a summary.
+- **Why:** The brain is the only way material reaches a writing worker, and a photo of a letter or a PDF contract cannot
+  pass as text. Reusing the worker's fetch keeps one path for files to runners.
+- **Other options:** The brain copying the file to the machine with `run_command`, which works for a file it can read but
+  needs it to know where the worker's folder will be; giving the worker the hub's URL, which needs a credential.
+
+## 2026-11-17 — Attachments are shown, downloaded and kept
+
+- **Chosen:** In the composer each file is a chip with a small picture for an image, a thin progress line while it
+  uploads, and a cross to remove it; there are no words beside them. A sent message shows images as pictures up to 240
+  pixels and other files as chips with name and size; each is a link to `GET /api/attachments/<id>` with the `download`
+  attribute. The hub serves it as an attachment with `nosniff` and `sandbox`, with the declared type only for PNG, JPEG,
+  GIF and WebP and `application/octet-stream` for anything else, and lets the browser cache it, since an attachment never
+  changes. The attach button is a plain file input with no `accept` filter, which on an iPhone offers the photo library,
+  the camera and Files. A pasted image without a name is named by the time it was attached. Attachments are never
+  deleted, and nothing caps them.
+- **Why:** The owner's interface rule and the prototype, which already drew attachment chips in the composer and under a
+  message. A file input without a filter is the one way Safari offers all three sources at once.
+- **Other options:** A retention rule (for example removing attachments that no message refers to after a month), which
+  is proposed in the pull request for the owner to decide; showing every image type inline, which would let an SVG run.

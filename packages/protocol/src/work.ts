@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Attachment, AttachmentId } from "./attachments.js";
 import { GitHubAccount } from "./commands.js";
 import { GeneratedText } from "./generated.js";
 
@@ -46,7 +47,14 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("tool.started"), call: z.string(), name: z.string(), input: z.string() }),
   z.object({ kind: z.literal("tool.output"), call: z.string(), delta: z.string() }),
   z.object({ kind: z.literal("tool.finished"), call: z.string(), output: z.string().nullable(), ok: z.boolean() }),
-  z.object({ kind: z.literal("message"), id: z.string().min(1), from: WorkSender, text: z.string(), delivery: z.enum(["steered", "queued"]) }),
+  z.object({
+    kind: z.literal("message"),
+    id: z.string().min(1),
+    from: WorkSender,
+    text: z.string(),
+    attachments: z.array(Attachment).optional(),
+    delivery: z.enum(["steered", "queued"]),
+  }),
   z.object({ kind: z.literal("finished"), pullRequest: z.number().int().positive(), url: z.string().min(1), closes: z.array(z.number().int().positive()).optional(), report: GeneratedText }),
   z.object({ kind: z.literal("delivered"), text: z.string().nullable(), files: z.array(DeliveredFile), report: GeneratedText }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
@@ -113,6 +121,7 @@ export const WritingMaterial = z.object({
   name: MaterialName,
   source: z.string().trim().min(1),
   text: z.string().nullable(),
+  attachment: Attachment.nullable().optional(),
 });
 export type WritingMaterial = z.infer<typeof WritingMaterial>;
 
@@ -196,9 +205,31 @@ export const MessageWork = z.object({
   attempt: Attempt,
   id: z.string().min(1),
   from: WorkSender,
-  text: z.string().min(1),
+  text: z.string(),
+  attachments: z.array(Attachment).optional(),
 });
 export type MessageWork = z.infer<typeof MessageWork>;
+
+export const FetchAttachment = z.object({
+  type: z.literal("work.attachment"),
+  ticket: Ticket,
+  attempt: Attempt,
+  attachment: AttachmentId,
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+});
+export type FetchAttachment = z.infer<typeof FetchAttachment>;
+
+export const AttachmentPart = z.object({
+  type: z.literal("work.attachment.part"),
+  ticket: Ticket,
+  attempt: Attempt,
+  attachment: AttachmentId,
+  offset: z.number().int().nonnegative(),
+  data: z.string().nullable(),
+  problem: z.string().nullable(),
+});
+export type AttachmentPart = z.infer<typeof AttachmentPart>;
 
 export const StopWork = z.object({
   type: z.literal("work.stop"),
@@ -237,9 +268,12 @@ export const UnwatchTicket = z.object({
 });
 export type UnwatchTicket = z.infer<typeof UnwatchTicket>;
 
-export const WorkerMessage = z.object({
-  text: z.string().trim().min(1),
-});
+export const WorkerMessage = z
+  .strictObject({
+    text: z.string().trim(),
+    attachments: z.array(AttachmentId).default([]),
+  })
+  .refine((message) => message.text !== "" || message.attachments.length > 0, { message: "needs text or an attachment" });
 export type WorkerMessage = z.infer<typeof WorkerMessage>;
 
 export const WorkEventList = z.object({

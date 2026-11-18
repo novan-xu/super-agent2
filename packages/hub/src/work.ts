@@ -3,6 +3,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
   activeWorkStates,
+  type Attachment,
+  attachmentPartBytes,
+  type FetchAttachment,
   type FilePart,
   filePartBytes,
   finishedTicketStates,
@@ -33,6 +36,8 @@ import { createTicketFiles, type TicketFiles } from "./files.js";
 import type { FailureReport } from "./failure-loop.js";
 import { clip, tail } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
+import type { AttachmentStore } from "./attachments.js";
+import { createWorkerMessages } from "./worker-messages.js";
 import type { TicketService, TicketWork } from "./tickets.js";
 
 export type WorkRunners = Pick<Runners, "bindWork" | "sendWork" | "report" | "subscribe">;
@@ -49,6 +54,7 @@ export interface WorkServiceOptions {
   readonly deliver?: (conversation: string | null, delivery: Delivery) => void;
   readonly branchSuffix?: () => string;
   readonly report?: (report: FailureReport) => void;
+  readonly attachments?: AttachmentStore;
 }
 
 export interface GuidedRound {
@@ -58,7 +64,7 @@ export interface GuidedRound {
 
 export type WorkOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly reason: string };
 
-export type MessageOutcome = { readonly ok: true; readonly id: string } | { readonly ok: false; readonly reason: string };
+export type MessageOutcome = { readonly ok: true; readonly id: string; readonly delivered: boolean } | { readonly ok: false; readonly reason: string };
 
 type DeliveredEvent = Extract<WorkEvent, { readonly kind: "delivered" }>;
 
@@ -84,7 +90,7 @@ export interface WorkService extends TicketWork {
   reassign(ticket: Ticket): void;
   again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound): WorkOutcome;
   onward(ticket: number, merged: MergedPiece): WorkOutcome;
-  message(ticket: number, text: string, from: WorkSender): MessageOutcome;
+  message(ticket: number, text: string, from: WorkSender, attachments?: readonly Attachment[]): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
   subscribe(listener: WorkListener): () => void;
@@ -148,6 +154,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const files = options.files ?? createTicketFiles(options.database);
   const removalsSent = new Set<string>();
   const fetching = new Map<number, Fetching>();
+  const messages = createWorkerMessages(options.database, clock);
   let closed = false;
 
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? AND attempt = ?");
@@ -343,6 +350,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
   };
 
+  const sendWaiting = (machine: string, ticket: number, attempt: number) => {
+    for (const waiting of messages.waiting(ticket)) {
+      send(machine, { ...waiting, attempt });
+    }
+  };
+
   const dispatch = () => {
     if (closed) {
       return;
@@ -372,6 +385,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       if (send(attempt.machine, message)) {
         touch(ticket.id, () => updateStarted.run(clock.now(), ticket.id, attempt.attempt));
+        sendWaiting(attempt.machine, ticket.id, attempt.attempt);
       }
     }
   };
@@ -593,6 +607,23 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     fetchNext(message.ticket);
   };
 
+  const serveAttachment = async (machine: string, asked: FetchAttachment) => {
+    const reply = (data: string | null, problem: string | null) =>
+      send(machine, { type: "work.attachment.part", ticket: asked.ticket, attempt: asked.attempt, attachment: asked.attachment, offset: asked.offset, data, problem });
+    const store = options.attachments;
+    const attempt = attemptOf(asked.ticket, asked.attempt);
+    if (store === undefined || attempt === undefined || attempt.machine !== machine || !store.granted(asked.ticket, asked.attachment) || !store.complete(asked.attachment)) {
+      reply(null, `The attachment ${asked.attachment} was not given to ticket ${asked.ticket} on ${machine}`);
+      return;
+    }
+    try {
+      const data = await store.read(asked.attachment, asked.offset, Math.min(asked.length, attachmentPartBytes));
+      reply(data.toString("base64"), null);
+    } catch (error) {
+      reply(null, error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const apply = (machine: string, message: RunnerWorkEvent) => {
     const attempt = attemptOf(message.ticket, message.attempt);
     if (attempt === undefined || attempt.machine !== machine) {
@@ -616,6 +647,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     tickets.change((writes) => {
       id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
       updateSeq.run(message.seq, attempt.ticket_id, attempt.attempt);
+      if (event.kind === "message") {
+        messages.delivered(attempt.ticket_id, event.id);
+      }
       const live = attempt.state === "preparing" || attempt.state === "running";
       switch (event.kind) {
         case "phase":
@@ -775,6 +809,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         tickets.change((writes) => writes.touched(row.ticket_id));
       }
     }
+    for (const value of selectActiveOn.all(machine)) {
+      const row = Attempt.parse(value);
+      if (latestOf(row.ticket_id)?.attempt === row.attempt) {
+        sendWaiting(machine, row.ticket_id, row.attempt);
+      }
+    }
     dispatch();
   };
 
@@ -800,6 +840,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     part: (machine, message) => {
       if (!closed) {
         receivePart(machine, message);
+      }
+    },
+    attachment: (machine, message) => {
+      if (!closed) {
+        void serveAttachment(machine, message);
       }
     },
     closed: (machine) => {
@@ -907,16 +952,18 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const now = tickets.get(id);
       return now === undefined ? { ok: false, reason: `There is no ticket ${id}` } : { ok: true, ticket: now };
     },
-    message: (id, body, from) => {
+    message: (id, body, from, attachments = []) => {
       const latest = latestOf(id);
-      if (latest === undefined || !isActive(latest.state)) {
+      const state = tickets.get(id)?.state;
+      const active = latest !== undefined && isActive(latest.state);
+      const between = state === "working" || state === "verifying";
+      if (latest === undefined || (!active && !between)) {
         return { ok: false, reason: `Ticket ${id} has no running worker` };
       }
-      const messageId = randomUUID();
-      if (!send(latest.machine, { type: "work.message", ticket: id, attempt: latest.attempt, id: messageId, from, text: body })) {
-        return { ok: false, reason: `The machine ${latest.machine} is not connected, so the worker cannot be reached now` };
-      }
-      return { ok: true, id: messageId };
+      const message: WorkMessageToRunner = { type: "work.message", ticket: id, attempt: latest.attempt, id: randomUUID(), from, text: body, ...(attachments.length === 0 ? {} : { attachments: [...attachments] }) };
+      options.attachments?.grant(id, attachments);
+      messages.add(message);
+      return { ok: true, id: message.id, delivered: active && send(latest.machine, message) };
     },
     events: (ticket, after = 0, limit = defaultEventLimit) =>
       selectEvents.all(ticket, after, limit).flatMap((row) => {

@@ -1,4 +1,6 @@
 import {
+  AttachmentUpload,
+  attachmentsPath,
   type ChainStartItem,
   type ChoiceChange,
   CommandResponse,
@@ -84,7 +86,7 @@ export const hubApi = {
   conversations: () => call("/api/conversations", ConversationList),
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
   create: () => call("/api/conversations", ConversationResponse, {}),
-  send: (id: string, text: string) => call(`${conversationPath(id)}/messages`, EntryResponse, { text }),
+  send: (id: string, text: string, attachments: readonly string[] = []) => call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments }),
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
@@ -92,7 +94,10 @@ export const hubApi = {
   history: (page: HistoryRequest) => call(historyPath(page), TicketHistory),
   ticket: (id: number) => call(`/api/tickets/${id}`, TicketDetail),
   work: (id: number, after: number) => call(`/api/tickets/${id}/work?after=${after}`, WorkEventList),
-  messageWorker: (id: number, text: string) => call(`/api/tickets/${id}/messages`, WorkerMessageResponse, { text }),
+  messageWorker: (id: number, text: string, attachments: readonly string[] = []) => call(`/api/tickets/${id}/messages`, WorkerMessageResponse, { text, attachments }),
+  createAttachment: (name: string, size: number, mediaType: string) => call(attachmentsPath, AttachmentUpload, { name, size, mediaType }),
+  uploadState: (id: string) => call(`${attachmentPath(id)}/upload`, AttachmentUpload),
+  uploadPart: (id: string, offset: number, part: Blob) => uploadPart(id, offset, part),
   stopTicket: (id: number) => call(`/api/tickets/${id}/stop`, TicketResponse, {}),
   answerStuck: (id: number, request: StuckAnswerRequest) => call(`/api/tickets/${id}/answer`, TicketResponse, request),
   machines: () => call("/api/machines", MachineList),
@@ -115,6 +120,35 @@ export const hubApi = {
 };
 
 export type HubApi = typeof hubApi;
+
+export function attachmentPath(id: string): string {
+  return `${attachmentsPath}/${encodeURIComponent(id)}`;
+}
+
+async function uploadPart(id: string, offset: number, part: Blob): Promise<Answer<AttachmentUpload>> {
+  let response: Response;
+  try {
+    response = await fetch(`${attachmentPath(id)}/upload?offset=${offset}`, {
+      method: "PUT",
+      headers: { accept: "application/json", "content-type": "application/octet-stream" },
+      body: part,
+    });
+  } catch {
+    return { ok: false, error: "network" };
+  }
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return { ok: false, error: "network" };
+  }
+  const parsed = AttachmentUpload.safeParse(value);
+  if (response.ok && parsed.success) {
+    return { ok: true, value: parsed.data };
+  }
+  const refusal = Refusal.safeParse(value);
+  return { ok: false, error: refusal.success ? refusal.data.error : "network" };
+}
 
 export function ticketFilePath(ticket: number, name: string): string {
   return `/api/tickets/${ticket}/files/${encodeURIComponent(name)}`;

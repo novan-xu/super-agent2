@@ -245,8 +245,8 @@ export class PageController {
     return "saved";
   }
 
-  async messageTicket(ticket: number, text: string): Promise<boolean> {
-    const sent = await this.options.api.messageWorker(ticket, text);
+  async messageTicket(ticket: number, text: string, attachments: readonly string[] = []): Promise<boolean> {
+    const sent = await this.options.api.messageWorker(ticket, text, attachments);
     if (!sent.ok) {
       this.options.onFailure(sent.error);
       return false;
@@ -346,7 +346,7 @@ export class PageController {
     }
   }
 
-  async send(text: string, onCreated: (conversation: string) => void): Promise<boolean> {
+  async send(text: string, onCreated: (conversation: string) => void, attachments: readonly string[] = []): Promise<boolean> {
     let conversation = this.opened;
     if (conversation === null) {
       const created = await this.options.api.create();
@@ -359,7 +359,7 @@ export class PageController {
       onCreated(conversation);
       this.open(conversation);
     }
-    const sent = await this.options.api.send(conversation, text);
+    const sent = await this.options.api.send(conversation, text, attachments);
     if (!sent.ok) {
       this.options.onFailure(sent.error);
       return false;

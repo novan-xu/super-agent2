@@ -8,6 +8,7 @@ import {
   protocolVersion,
   runnerCloseCodes,
   type RunnerToHub,
+  type FetchAttachment,
   type FilePart,
   type RunnerWorkEvent,
   type WorkHeld,
@@ -26,12 +27,13 @@ export interface RunnerLink {
   closed(): void;
 }
 
-export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" }>;
+export type WorkMessageToRunner = Extract<HubToRunner, { readonly type: "work.start" | "work.write" | "work.sync" | "work.message" | "work.stop" | "work.file" | "work.attachment.part" }>;
 
 export interface WorkLink {
   hello(machine: string, works: readonly WorkHeld[]): void;
   event(machine: string, message: RunnerWorkEvent): void;
   part(machine: string, message: FilePart): void;
+  attachment?(machine: string, message: FetchAttachment): void;
   closed(machine: string): void;
 }
 
@@ -228,6 +230,10 @@ export function createRunners(options: RunnersOptions): Runners {
           }
           if (message.type === "work.file.part") {
             tellWork((bound) => bound.part(machine.name, message));
+            return;
+          }
+          if (message.type === "work.attachment") {
+            tellWork((bound) => bound.attachment?.(machine.name, message));
             return;
           }
           const pending = link.pending.get(message.id);

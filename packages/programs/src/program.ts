@@ -27,9 +27,15 @@ export interface OpenOptions {
 
 export type SteerResult = "steered" | "queued";
 
+export interface PromptImage {
+  readonly path: string;
+  readonly mediaType: string;
+  readonly size: number;
+}
+
 export interface ProgramHandle {
-  start(prompt: string): void;
-  steer(text: string): Promise<SteerResult>;
+  start(prompt: string, images?: readonly PromptImage[]): void;
+  steer(text: string, images?: readonly PromptImage[]): Promise<SteerResult>;
   interrupt(): void;
   close(): Promise<void>;
   processId?(): number | undefined;

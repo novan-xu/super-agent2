@@ -7,7 +7,7 @@ import { PageController } from "./controller.js";
 import type { SocketEvents } from "./socket.js";
 
 const conversation: Conversation = { id: "c9", title: "", state: "idle", provider: null, createdAt: 1, updatedAt: 1 };
-const entry: OwnerEntry = { id: "o1", conversation: "c9", seq: 1, at: 2, kind: "owner", text: "你好", taken: false };
+const entry: OwnerEntry = { id: "o1", conversation: "c9", seq: 1, at: 2, kind: "owner", text: "你好", attachments: [], taken: false };
 
 function record(id: string): CommandRecord {
   const { command } = holdCard(id) as { command: CommandRecord };
@@ -53,6 +53,9 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
     setTable: (table) => answer("setTable", { table }),
+    createAttachment: (name, size, mediaType) => answer(`createAttachment ${name}`, { attachment: { id: "0".repeat(32), name, size, mediaType }, received: 0 }),
+    uploadState: (id) => answer(`uploadState ${id}`, { attachment: { id, name: "a", size: 0, mediaType: "text/plain" }, received: 0 }),
+    uploadPart: (id, offset, part) => answer(`uploadPart ${id} ${offset}`, { attachment: { id, name: "a", size: part.size, mediaType: "text/plain" }, received: offset + part.size }),
     ...overrides,
   };
 }

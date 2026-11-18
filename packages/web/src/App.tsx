@@ -180,7 +180,7 @@ export function App() {
   const conversationHref = useCallback((conversation: string) => pagePath({ view: "conversations", conversation }), []);
   const openConversation = useCallback((conversation: string) => navigate({ view: "conversations", conversation }), [navigate]);
   const send = useCallback(
-    (message: string) => controller.send(message, (conversation) => navigate({ view: "conversations", conversation }, true)),
+    (message: string, attachments: readonly string[] = []) => controller.send(message, (conversation) => navigate({ view: "conversations", conversation }, true), attachments),
     [controller, navigate],
   );
   const stop = useCallback(() => void controller.interrupt(), [controller]);
@@ -222,7 +222,7 @@ export function App() {
     () => ({
       stop: (ticket) => controller.stopTicket(ticket),
       reassign: (ticket, change) => controller.reassignTicket(ticket, change),
-      message: (ticket, message) => controller.messageTicket(ticket, message),
+      message: (ticket, message, attachments) => controller.messageTicket(ticket, message, attachments),
       machines: () => controller.machines(),
     }),
     [controller],

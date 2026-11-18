@@ -226,6 +226,7 @@ describe("the runner's link", () => {
       held: () => [{ ticket: 4, attempt: 2, last: 17, live: true, ended: false }],
       busy: () => 1,
       receive: (message: unknown) => void received.push(message),
+      disconnected: () => undefined,
       idle: () => Promise.resolve(),
       close: () => Promise.resolve(),
     };

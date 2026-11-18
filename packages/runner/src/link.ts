@@ -253,6 +253,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
           socket = undefined;
         }
         welcomed = false;
+        options.works?.()?.disconnected();
         const stopped = stopAll();
         emit({ type: "closed", code, reason, stopped });
         if (code === runnerCloseCodes.revoked) {

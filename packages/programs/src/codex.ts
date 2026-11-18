@@ -1,6 +1,6 @@
-import { conversationHeader } from "@super-agent2/protocol";
+import { conversationHeader, isNativeImage } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, SteerResult } from "./program.js";
+import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
 import { type ProgramSettings, toolTokenVariable } from "./settings.js";
@@ -112,6 +112,10 @@ function toolOf(item: Item): { readonly name: string; readonly input: string } |
     default:
       return undefined;
   }
+}
+
+export function codexInput(text: string, images: readonly PromptImage[]): Record<string, unknown>[] {
+  return [{ type: "text", text, text_elements: [] }, ...images.filter((image) => isNativeImage(image.mediaType)).map((image) => ({ type: "localImage", path: image.path }))];
 }
 
 export function codexAdapter(settings: ProgramSettings): ProgramAdapter {
@@ -318,16 +322,14 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   })();
   ready.catch(() => undefined);
 
-  const input = (text: string) => [{ type: "text", text, text_elements: [] }];
-
   return {
-    start: (prompt) => {
+    start: (prompt, images = []) => {
       running = true;
       interruptRequested = false;
       const starting = ready
         .then(async (thread) => {
           const result = TurnResult.parse(
-            await client.request("turn/start", { threadId: thread, input: input(prompt), effort: settings.effort, model: settings.model }),
+            await client.request("turn/start", { threadId: thread, input: codexInput(prompt, images), effort: settings.effort, model: settings.model }),
           );
           if (!finishedTurns.has(result.turn.id)) {
             activeTurn = result.turn.id;
@@ -344,13 +346,13 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
         });
       turnStarting = starting;
     },
-    steer: async (text): Promise<SteerResult> => {
+    steer: async (text, images = []): Promise<SteerResult> => {
       const turn = activeTurn ?? (await turnStarting);
       if (!running || turn === undefined || threadId === undefined) {
         return "queued";
       }
       try {
-        await client.request("turn/steer", { threadId, expectedTurnId: turn, input: input(text) });
+        await client.request("turn/steer", { threadId, expectedTurnId: turn, input: codexInput(text, images) });
         return "steered";
       } catch {
         return "queued";
