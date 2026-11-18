@@ -18,6 +18,7 @@ import { useRoute } from "./parts/route.js";
 import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
+import { TransferView } from "./views/TransferView.js";
 import { ConversationTabs } from "./views/ConversationTabs.js";
 import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
@@ -330,12 +331,7 @@ export function App() {
           now={now}
         />
       ) : inTransfer ? (
-        <div className="conv conv--solo">
-          <div className="conv-main">
-            <div className="conv-bar">{conversationTabs}</div>
-            <p className="transfer-placeholder">{text("conversation.transferPending")}</p>
-          </div>
-        </div>
+        <TransferView navigation={conversationTabs} />
       ) : route.view === "workbench" ? (
         <WorkbenchView
           waiting={page.waiting}

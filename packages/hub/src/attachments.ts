@@ -21,6 +21,7 @@ export interface AttachmentStore {
   get(id: string): Attachment | undefined;
   received(id: string): number;
   complete(id: string): boolean;
+  writing(id: string): boolean;
   choose(ids: readonly string[]): ChosenAttachments;
   write(id: string, offset: number, body: Readable): Promise<WriteOutcome>;
   open(id: string, range?: { start: number; end: number }): Readable | undefined;
@@ -39,10 +40,10 @@ export function attachmentsFolder(dataDir: string): string {
   return join(dataDir, "attachments");
 }
 
-export function createAttachmentStore(database: HubDatabase, clock: Clock, root: string = attachmentsFolder(database.dataDir)): AttachmentStore {
+export function createAttachmentStore(database: HubDatabase, clock: Clock, root: string = attachmentsFolder(database.dataDir), area: "attachments" | "transfer_files" = "attachments"): AttachmentStore {
   const { connection } = database;
-  const insert = connection.prepare("INSERT INTO attachments (id, name, size, media_type, created_at) VALUES (?, ?, ?, ?, ?)");
-  const select = connection.prepare("SELECT id, name, size, media_type FROM attachments WHERE id = ?");
+  const insert = connection.prepare(`INSERT INTO ${area} (id, name, size, media_type, created_at) VALUES (?, ?, ?, ?, ?)`);
+  const select = connection.prepare(`SELECT id, name, size, media_type FROM ${area} WHERE id = ?`);
   const insertGrant = connection.prepare("INSERT INTO ticket_attachments (ticket_id, attachment_id) VALUES (?, ?) ON CONFLICT DO NOTHING");
   const selectGrant = connection.prepare("SELECT 1 AS granted FROM ticket_attachments WHERE ticket_id = ? AND attachment_id = ?");
   const writing = new Set<string>();
@@ -91,6 +92,7 @@ export function createAttachmentStore(database: HubDatabase, clock: Clock, root:
     get,
     received,
     complete,
+    writing: (id) => writing.has(id),
     choose: (ids) => {
       const chosen: Attachment[] = [];
       for (const id of new Set(ids)) {
