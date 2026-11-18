@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, type Ticket, TicketDetail, TicketResponse, type WorkEvent } from "@super-agent2/protocol";
+import { type HubToRunner, type MachineReport, protocolVersion, type Ticket, TicketDetail, TicketResponse, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
@@ -130,20 +131,6 @@ async function post(running: Hub, path: string, body: unknown, headers: Record<s
   });
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${readFileSync(join(dataDir, "brain.token"), "utf8").trim()}`,
-      "content-type": "application/json",
-      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
-  return reply.result === undefined ? { isError: true, text: reply.error?.message ?? "" } : { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 const NoticeRow = z.object({ body: z.string(), prompt: z.string().nullable() });
 
 function notices(running: Hub, conversation: string): { readonly text: string; readonly prompt: string }[] {
@@ -206,7 +193,7 @@ async function failThreeRounds(started: Started, issue: number): Promise<Ticket>
     event(runner, ticket.id, attempt, { kind: "tool.finished", call: "t", output: null, ok: false });
     event(runner, ticket.id, attempt, { kind: "failed", failure: "no-pull-request", reason: "You have not handed back a pull request" });
     if (attempt < 4) {
-      const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(attempt) }, conversation);
+      const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(attempt) }, conversation);
       expect(guided.isError, guided.text).toBe(false);
       expect(guided.text).toContain(`guided round ${attempt} of 3`);
     }
@@ -234,7 +221,7 @@ describe("the failure loop, unattended", () => {
     expect(told?.prompt).toContain("Your guidance starts round 1");
     expect(told?.prompt).toContain("guide_ticket");
 
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(1) }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(1) }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, branch, work: { attempt: 2 } });
     const [, second] = starts(sent, ticket.id);
@@ -281,9 +268,9 @@ describe("the failure loop, unattended", () => {
     expect(starts(sent, ticket.id)).toHaveLength(3);
     expect(JSON.stringify(starts(sent, ticket.id).at(-1))).toContain("Files changed both by the pull request and on main since it branched: src/greet.ts");
     expect(notices(running, conversation).filter((entry) => entry.prompt.includes("failed"))).toEqual([]);
-    const refused = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Merge main and keep both greetings.", zh: "合并 main，两句问候都留下。" } }, conversation);
+    const refused = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Merge main and keep both greetings.", zh: "合并 main，两句问候都留下。" } }, conversation);
     expect(refused.isError).toBe(true);
-    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id }, conversation);
     expect(read.text).toContain("went back to its worker for a conflict 2 times");
     expect(current(running, ticket.id).round).toBe(0);
   });
@@ -295,13 +282,13 @@ describe("the failure loop, unattended", () => {
     runner.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
     expect(current(running, ticket.id)).toMatchObject({ work: { state: "failed", failure: "lost" } });
     expect(notices(running, conversation).at(-1)?.prompt).toContain("not counted as a guided round");
-    const retried = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Start again from the branch.", zh: "从分支上重新开始。" } }, conversation);
+    const retried = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Start again from the branch.", zh: "从分支上重新开始。" } }, conversation);
     expect(retried.text).toContain("a retry not counted as a guided round");
     expect(current(running, ticket.id)).toMatchObject({ round: 0, freeRetry: true, work: { attempt: 2 } });
     event(runner, ticket.id, 2, { kind: "phase", phase: "started", detail: "Started" });
     runner.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
     expect(notices(running, conversation).at(-1)?.prompt).toContain("Your guidance starts round 1");
-    await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Start again from the branch.", zh: "从分支上重新开始。" } }, conversation);
+    await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Start again from the branch.", zh: "从分支上重新开始。" } }, conversation);
     expect(current(running, ticket.id)).toMatchObject({ round: 1, freeRetry: false, work: { attempt: 3 } });
     expect(running.tickets.rounds(ticket.id).map((round) => [round.round, round.attempt, round.failure.kind])).toEqual([
       [null, 2, "lost"],
@@ -330,7 +317,7 @@ describe("the retry cap", () => {
     }
     expect(payloadOf(card)).toEqual({ title: "等你", body: `工单 ${ticket.id} 引导 3 轮还没通过，等你决定`, url: `/workbench?card=${encodeURIComponent(card.key)}`, tag: card.key });
 
-    const described = await callTool(running, "describe_stuck", { ticket: ticket.id, where: { en: "The worker cannot find greet.ts; the issue names a file that does not exist.", zh: "工作者找不到 greet.ts，问题里写的文件并不存在。" } });
+    const described = await callBrainTool(running, "describe_stuck", { ticket: ticket.id, where: { en: "The worker cannot find greet.ts; the issue names a file that does not exist.", zh: "工作者找不到 greet.ts，问题里写的文件并不存在。" } });
     expect(described.isError, described.text).toBe(false);
     expect(running.waiting.cards().find((entry) => entry.kind === "stuck")).toMatchObject({ ticket: { stuck: { where: { zh: "工作者找不到 greet.ts，问题里写的文件并不存在。" } } } });
     const detail = TicketDetail.parse(await (await fetch(`${base(running)}/api/tickets/${ticket.id}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } })).json());
@@ -347,7 +334,7 @@ describe("the retry cap", () => {
     const ticket = await failThreeRounds(started, 8);
     const attempts = starts(sent, ticket.id).length;
     const refused = async (name: string, args: Record<string, unknown>) => {
-      const answer = await callTool(running, name, args, conversation);
+      const answer = await callBrainTool(running, name, args, conversation);
       expect(answer.isError, `${name}: ${answer.text}`).toBe(true);
       return answer.text;
     };
@@ -372,7 +359,7 @@ describe("the retry cap", () => {
     running.tickets.change((writes) => writes.touched(ticket.id));
     const failure = { kind: "program" as const, detail: "boom" };
     running.database.connection.prepare("UPDATE ticket_attempts SET state = 'failed', failure = 'program', reason = 'boom' WHERE ticket_id = ?").run(ticket.id);
-    const answer = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(4) }, conversation);
+    const answer = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(4) }, conversation);
     expect(answer.isError).toBe(true);
     expect(answer.text).toContain("the cap");
     expect(running.work?.again(ticket.id, "Again", undefined, { guidance: guidance(4), failure })).toMatchObject({ ok: false });
@@ -404,7 +391,7 @@ describe("the retry cap", () => {
     expect(told?.prompt).toContain("The owner's words to you: 试试把文件名改成 greeting.ts");
     expect(told?.prompt).toContain("guide_ticket");
     expect(starts(sent, ticket.id)).toHaveLength(4);
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Rename the file to greeting.ts as the owner says.", zh: "按你说的把文件改名为 greeting.ts。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Rename the file to greeting.ts as the owner says.", zh: "按你说的把文件改名为 greeting.ts。" } }, conversation);
     expect(guided.text).toContain("guided round 1 of 3");
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 5 } });
     expect(running.tickets.moves(ticket.id).map((move) => [move.from, move.to])).toContainEqual(["stuck", "working"]);

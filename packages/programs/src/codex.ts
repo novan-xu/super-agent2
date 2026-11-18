@@ -1,4 +1,4 @@
-import { conversationHeader, isNativeImage } from "@super-agent2/protocol";
+import { conversationHeader, isNativeImage, turnHeader } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
@@ -147,7 +147,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
           "mcp_servers.hub": {
             url: tools.url,
             bearer_token_env_var: toolTokenVariable,
-            http_headers: { [conversationHeader]: tools.conversation },
+            http_headers: { [conversationHeader]: tools.conversation, [turnHeader]: tools.turn },
             tool_timeout_sec: 86_400,
             startup_timeout_sec: 60,
           },

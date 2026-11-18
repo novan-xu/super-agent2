@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, ServerMessage, TicketDetail, TicketHistory, TicketList } from "@super-agent2/protocol";
+import { brainToolsPath, ServerMessage, TicketDetail, TicketHistory, TicketList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -49,26 +50,6 @@ async function start(): Promise<Hub> {
 
 function base(running: Hub): string {
   return `http://127.0.0.1:${running.address.port}`;
-}
-
-interface ToolAnswer {
-  readonly isError: boolean;
-  readonly text: string;
-}
-
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<ToolAnswer> {
-  const token = readFileSync(join(dataDir, "brain.token"), "utf8").trim();
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result: { isError: boolean; content: { text: string }[] } };
-  return { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
 }
 
 async function owner(running: Hub, path: string): Promise<Response> {
@@ -153,7 +134,7 @@ describe("the brain's ticket tools", () => {
     const page = await pageSocket(running);
     expect(page.find((message) => message.type === "tickets")).toEqual({ type: "tickets", tickets: [], reviews: [] });
 
-    const filed = await callTool(running, "file_issue", fileArguments, conversation.id);
+    const filed = await callBrainTool(running, "file_issue", fileArguments, conversation.id);
     expect(filed.isError).toBe(false);
     expect(filed.text).toContain(`Filed ${sandbox}#1`);
     expect(filed.text).toContain("opened ticket 1");
@@ -164,37 +145,37 @@ describe("the brain's ticket tools", () => {
     const update = page.find((message) => message.type === "ticket");
     expect(update?.type === "ticket" && update.ticket).toMatchObject({ state: "pending", title: { zh: "启动时打印问候" }, conversation: conversation.id });
 
-    const listed = await callTool(running, "list_tickets", {});
+    const listed = await callBrainTool(running, "list_tickets", {});
     expect(listed.text).toBe(`Ticket 1 [pending] feature in ${sandbox} (issues #1): Print a greeting on start`);
 
-    const read = await callTool(running, "read_ticket", { ticket: 1 });
+    const read = await callBrainTool(running, "read_ticket", { ticket: 1 });
     expect(read.text).toContain("Chinese title: 启动时打印问候");
     expect(read.text).toContain(`${sandbox}#1 Print a greeting on start (https://github.com/${sandbox}/issues/1)`);
     expect(read.text).toContain("filed -> pending");
 
-    const stopped = await callTool(running, "stop_ticket", { ticket: 1, reason: { en: "Only a test", zh: "只是测试" } });
+    const stopped = await callBrainTool(running, "stop_ticket", { ticket: 1, reason: { en: "Only a test", zh: "只是测试" } });
     expect(stopped.isError).toBe(false);
     await until(socket, () => page.some((message) => message.type === "ticket" && message.ticket.state === "stopped"));
-    expect((await callTool(running, "stop_ticket", { ticket: 1, reason: { en: "Again", zh: "再一次" } })).text).toContain("is stopped and cannot be stopped");
-    expect((await callTool(running, "list_tickets", {})).text).toBe("There are no tickets.");
-    expect((await callTool(running, "list_tickets", { all: true })).text).toContain("Ticket 1 [stopped]");
-    expect((await callTool(running, "read_ticket", { ticket: 1 })).text).toContain("Stopped because: Only a test");
+    expect((await callBrainTool(running, "stop_ticket", { ticket: 1, reason: { en: "Again", zh: "再一次" } })).text).toContain("is stopped and cannot be stopped");
+    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("There are no tickets.");
+    expect((await callBrainTool(running, "list_tickets", { all: true })).text).toContain("Ticket 1 [stopped]");
+    expect((await callBrainTool(running, "read_ticket", { ticket: 1 })).text).toContain("Stopped because: Only a test");
   });
 
   it("refuses arguments without a Chinese copy, and an unknown ticket", async () => {
     const running = await start();
-    const bad = await callTool(running, "file_issue", { ...fileArguments, title: { en: "Print a greeting", zh: "Print a greeting" } });
+    const bad = await callBrainTool(running, "file_issue", { ...fileArguments, title: { en: "Print a greeting", zh: "Print a greeting" } });
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain("The arguments are not valid");
     expect(github.jobs).toEqual([]);
-    expect((await callTool(running, "read_ticket", { ticket: 5 })).text).toBe("There is no ticket 5.");
-    expect((await callTool(running, "stop_ticket", { ticket: 5, reason: { en: "x", zh: "停" } })).isError).toBe(true);
+    expect((await callBrainTool(running, "read_ticket", { ticket: 5 })).text).toBe("There is no ticket 5.");
+    expect((await callBrainTool(running, "stop_ticket", { ticket: 5, reason: { en: "x", zh: "停" } })).isError).toBe(true);
   });
 
   it("opens a ticket for an issue filed some other way", async () => {
     const running = await start();
     github.repositories.set(sandbox, [{ number: 1, title: "Fix the typo", body: "It says teh.", state: "open", pullRequest: false }]);
-    const opened = await callTool(running, "open_ticket", {
+    const opened = await callBrainTool(running, "open_ticket", {
       repository: sandbox,
       issue: 1,
       title_zh: "修正错字",
@@ -222,7 +203,7 @@ describe("the brain's tool for task tickets", () => {
   it("opens a pending ticket with no repository and no issue, keeping the task and the material, and shows them on read", async () => {
     const running = await start();
     const conversation = running.conversations.create();
-    const opened = await callTool(running, "open_task_ticket", writingArguments, conversation.id);
+    const opened = await callBrainTool(running, "open_task_ticket", writingArguments, conversation.id);
     expect(opened.isError).toBe(false);
     expect(opened.text).toContain("Opened task ticket 1");
     expect(github.jobs).toEqual([]);
@@ -231,11 +212,11 @@ describe("the brain's tool for task tickets", () => {
       { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
       { name: "terms", source: "https://example.com/terms", text: null },
     ]);
-    const read = await callTool(running, "read_ticket", { ticket: 1 });
+    const read = await callBrainTool(running, "read_ticket", { ticket: 1 });
     expect(read.text).toContain("Task: Translate the notice into English.");
     expect(read.text).toContain("Material notice.txt, from pasted by the owner in the conversation (6 characters given)");
     expect(read.text).toContain("Material terms, from https://example.com/terms (by its source only)");
-    expect((await callTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing task in no repository: Translate a notice");
+    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing task in no repository: Translate a notice");
   });
 
   it("refuses a missing Chinese copy, an unsafe material name and repeated names, opening nothing", async () => {
@@ -247,7 +228,7 @@ describe("the brain's tool for task tickets", () => {
       { ...writingArguments, task: "  " },
     ];
     for (const args of refused) {
-      expect((await callTool(running, "open_task_ticket", args)).isError).toBe(true);
+      expect((await callBrainTool(running, "open_task_ticket", args)).isError).toBe(true);
     }
     expect(running.tickets.list({})).toEqual([]);
   });
@@ -255,7 +236,7 @@ describe("the brain's tool for task tickets", () => {
   it("takes any amount of material and a task of any length", async () => {
     const running = await start();
     const material = Array.from({ length: 25 }, (_, index) => ({ name: `piece-${index}.txt`, source: `pasted part ${index} ${"of a long source ".repeat(60)}`, text: "字".repeat(30_000) }));
-    const opened = await callTool(running, "open_task_ticket", { ...writingArguments, task: "Translate everything. ".repeat(2_000), material });
+    const opened = await callBrainTool(running, "open_task_ticket", { ...writingArguments, task: "Translate everything. ".repeat(2_000), material });
     expect(opened.isError, opened.text).toBe(false);
     expect(running.tickets.task(1)?.materials).toHaveLength(25);
   });
@@ -264,8 +245,8 @@ describe("the brain's tool for task tickets", () => {
 describe("tickets for the page", () => {
   it("lists the open tickets, or all, and reads one with its history", async () => {
     const running = await start();
-    await callTool(running, "file_issue", fileArguments);
-    await callTool(running, "file_issue", { ...fileArguments, body: "Another piece of work." });
+    await callBrainTool(running, "file_issue", fileArguments);
+    await callBrainTool(running, "file_issue", { ...fileArguments, body: "Another piece of work." });
     running.tickets.stop(1, { en: "Not needed", zh: "不需要了" });
     const open = TicketList.parse(await (await owner(running, "/api/tickets")).json());
     expect(open.tickets.map((ticket) => ticket.id)).toEqual([2]);
@@ -312,7 +293,7 @@ describe("tickets for the page", () => {
 
   it("tells the page which tickets ended and when, so that it can place them in the history", async () => {
     const running = await start();
-    await callTool(running, "file_issue", fileArguments);
+    await callBrainTool(running, "file_issue", fileArguments);
     const page = await pageSocket(running);
     const socket = sockets[0]!;
     running.tickets.move(1, "working");
@@ -326,7 +307,7 @@ describe("tickets for the page", () => {
 
   it("keeps a ticket and its state across a restart of the hub", async () => {
     const first = await start();
-    await callTool(first, "file_issue", fileArguments);
+    await callBrainTool(first, "file_issue", fileArguments);
     first.tickets.move(1, "working");
     await first.close();
     hub = undefined;
@@ -334,7 +315,7 @@ describe("tickets for the page", () => {
     const page = await pageSocket(second);
     const snapshot = page.find((message) => message.type === "tickets");
     expect(snapshot?.type === "tickets" && snapshot.tickets.map((ticket) => [ticket.id, ticket.state, ticket.title.zh])).toEqual([[1, "working", "启动时打印问候"]]);
-    expect((await callTool(second, "file_issue", fileArguments)).text).toContain("already has ticket 1");
+    expect((await callBrainTool(second, "file_issue", fileArguments)).text).toContain("already has ticket 1");
     expect(github.created).toBe(1);
   });
 });

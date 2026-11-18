@@ -19,6 +19,7 @@ import type { AccessVerifier } from "./access.js";
 import type { Tell } from "./chains.js";
 import { chainProgress, decisionReport, loopFailureWords as failureWords, repairReport, tail } from "./reports.js";
 import { TicketError, type TicketService } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
 import type { VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
 
@@ -42,8 +43,8 @@ export interface OwnerStuckAnswer {
 
 export interface FailureLoop {
   failed(report: FailureReport): void;
-  guide(ticket: number, guidance: GeneratedText): LoopOutcome;
-  describe(ticket: number, where: GeneratedText): LoopOutcome;
+  guide(ticket: number, guidance: GeneratedText, turn?: TicketTurn): LoopOutcome;
+  describe(ticket: number, where: GeneratedText, turn?: TicketTurn): LoopOutcome;
   answer(given: OwnerStuckAnswer): Promise<StuckAnswerOutcome>;
   ownerStopped(ticket: Ticket): void;
   cards(): StuckCard[];
@@ -169,7 +170,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     );
   };
 
-  const guide = (id: number, guidance: GeneratedText): LoopOutcome => {
+  const guide = (id: number, guidance: GeneratedText, turn?: TicketTurn): LoopOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
       return { ok: false, reason: `There is no ticket ${id}.` };
@@ -187,16 +188,16 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const reason = next.counted
       ? { en: `Back to its worker for guided round ${next.round}`, zh: text("timeline.round", { round: next.round }) }
       : { en: "Back to its worker for a retry not counted as a round", zh: text("timeline.retry") };
-    const outcome = work.again(id, workerNote(ticket, failure, guidance, next.counted, next.round), reason, { guidance, failure });
+    const outcome = work.again(id, workerNote(ticket, failure, guidance, next.counted, next.round), reason, { guidance, failure }, turn);
     if (!outcome.ok) {
       return outcome;
     }
     return { ok: true, ticket: outcome.ticket, round: tickets.rounds(id).at(-1) };
   };
 
-  const describe = (id: number, where: GeneratedText): LoopOutcome => {
+  const describe = (id: number, where: GeneratedText, turn?: TicketTurn): LoopOutcome => {
     try {
-      const ticket = tickets.change((writes) => writes.describeStuck(id, where));
+      const ticket = tickets.change((writes) => writes.describeStuck(id, where), turn);
       return { ok: true, ticket };
     } catch (error) {
       if (error instanceof TicketError) {

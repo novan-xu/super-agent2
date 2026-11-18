@@ -1,8 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { brainToolsPath, type HubToBrain, type HubToRunner, type MachineReport, protocolVersion, storedName, type Ticket } from "@super-agent2/protocol";
+import { type HubToBrain, type HubToRunner, type MachineReport, protocolVersion, storedName, type Ticket } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import type { Hub } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -241,28 +242,14 @@ describe("attachments for a ticket's worker", () => {
     const running = await started();
     const conversation = running.conversations.create();
     const id = await uploaded(running, "合同.pdf", new Uint8Array([37, 80, 68, 70]), "application/pdf");
-    const token = readFileSync(join(dataDir, "brain.token"), "utf8").trim();
-    const response = await fetch(`${base(running)}${brainToolsPath}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-super-agent-conversation": conversation.id },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: "open_task_ticket",
-          arguments: {
-            title: { en: "Summarise the contract", zh: "总结合同" },
-            summary: { en: "A summary", zh: "一份总结" },
-            task: "Summarise input/contract.pdf in Chinese.",
-            kind: "writing",
-            material: [{ name: "contract.pdf", source: "attached by the owner in the conversation", attachment: id }],
-          },
-        },
-      }),
-    });
-    const reply = (await response.json()) as { result: { isError: boolean; content: { text: string }[] } };
-    expect(reply.result.isError).toBe(false);
+    const reply = await callBrainTool(running, "open_task_ticket", {
+      title: { en: "Summarise the contract", zh: "总结合同" },
+      summary: { en: "A summary", zh: "一份总结" },
+      task: "Summarise input/contract.pdf in Chinese.",
+      kind: "writing",
+      material: [{ name: "contract.pdf", source: "attached by the owner in the conversation", attachment: id }],
+    }, conversation.id);
+    expect(reply.isError).toBe(false);
     expect(running.tickets.task(1)?.materials).toEqual([{ name: "contract.pdf", source: "attached by the owner in the conversation", text: null, attachment: running.attachments.get(id) }]);
     expect(running.attachments.granted(1, id)).toBe(true);
     expect(existsSync(running.attachments.root)).toBe(true);

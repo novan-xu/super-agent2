@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { brainToolsPath, conversationHeader, type HubToRunner, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
+import { type HubToRunner, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
@@ -123,20 +124,6 @@ function base(running: Hub): string {
   return `http://127.0.0.1:${running.address.port}`;
 }
 
-async function callTool(running: Hub, name: string, args: Record<string, unknown>, conversation?: string): Promise<{ readonly isError: boolean; readonly text: string }> {
-  const response = await fetch(`${base(running)}${brainToolsPath}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${readFileSync(join(dataDir, "brain.token"), "utf8").trim()}`,
-      "content-type": "application/json",
-      ...(conversation === undefined ? {} : { [conversationHeader]: conversation }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const reply = (await response.json()) as { result?: { isError: boolean; content: { text: string }[] }; error?: { message: string } };
-  return reply.result === undefined ? { isError: true, text: reply.error?.message ?? "" } : { isError: reply.result.isError, text: reply.result.content.map((part) => part.text).join("") };
-}
-
 const NoticeRow = z.object({ body: z.string(), prompt: z.string().nullable() });
 
 function notices(running: Hub, conversation: string): { readonly text: string; readonly prompt: string }[] {
@@ -205,7 +192,7 @@ describe("a chain handed in as several pull requests", () => {
     handIn(runner, ticket.id, 1, 21, [7, 8]);
     await settled(running);
     expect(current(running, ticket.id)).toMatchObject({ state: "verifying", pullRequest: 21, verification: { state: "failed" } });
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing step test.", zh: "修好失败的步骤测试。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing step test.", zh: "修好失败的步骤测试。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
 
@@ -258,7 +245,7 @@ describe("a chain handed in as several pull requests", () => {
     expect(told.at(-1)?.prompt).toContain("Pull requests merged in novan-xu/super-agent-sandbox, in order: #21 (closed #7, #8, commit merge-of-bbb222); #22 (closed #9, commit merge-of-ccc333).");
     expect(told.at(-1)?.prompt).toContain("That is the final merge commit");
 
-    const read = await callTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id }, conversation);
     expect(read.text).toContain("#7 merged, #8 merged, #9 merged; pull requests #21 merged, #22 merged");
     expect(read.text).toContain(`#22 merged from ${second}`);
   });
@@ -340,7 +327,7 @@ describe("a message for a chain's worker between two pieces", () => {
     const id = kept.ok ? kept.id : "";
     expect(sent.filter((message) => message.type === "work.message")).toEqual([]);
 
-    const guided = await callTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing test.", zh: "修好失败的测试。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing test.", zh: "修好失败的测试。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     const after = sent.findIndex((message) => message.type === "work.start" && message.task.attempt === 2);
     expect(after).toBeGreaterThanOrEqual(0);

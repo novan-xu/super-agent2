@@ -219,7 +219,7 @@ describe("Antigravity opened for a worker", () => {
 
   it("refuses the hub's tools", () => {
     const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));
-    expect(() => adapter.open({ session: null, tools: { url: "http://hub/brain/mcp", token: "t", conversation: "c" }, workspace: directory }, () => undefined)).toThrow(/not given/);
+    expect(() => adapter.open({ session: null, tools: { url: "http://hub/brain/mcp", token: "t", conversation: "c", turn: "t" }, workspace: directory }, () => undefined)).toThrow(/not given/);
   });
 
   it("classifies failures by their text", () => {

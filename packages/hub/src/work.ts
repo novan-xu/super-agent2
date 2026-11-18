@@ -47,6 +47,7 @@ import type { AttachmentStore } from "./attachments.js";
 import { mergedCommitFor, short } from "./task-tickets.js";
 import { createWorkerMessages } from "./worker-messages.js";
 import { switchOf, type TicketService, type TicketWork } from "./tickets.js";
+import type { TicketTurn } from "./ticket-versions.js";
 import { intervalTicker, type Ticker } from "./verification.js";
 
 export type WorkRunners = Pick<Runners, "bindWork" | "sendWork" | "report" | "subscribe">;
@@ -103,9 +104,9 @@ export interface WorkService extends TicketWork {
   begin(ticket: Ticket): void;
   stop(ticket: Ticket): void;
   reassign(ticket: Ticket): void;
-  again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound): WorkOutcome;
+  again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound, turn?: TicketTurn): WorkOutcome;
   onward(ticket: number, merged: MergedPiece): WorkOutcome;
-  message(ticket: number, text: string, from: WorkSender, attachments?: readonly Attachment[]): MessageOutcome;
+  message(ticket: number, text: string, from: WorkSender, attachments?: readonly Attachment[], turn?: TicketTurn): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
   subscribe(listener: WorkListener): () => void;
@@ -569,6 +570,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     previous: Attempt | undefined,
     back?: { readonly reason: GeneratedText | undefined; readonly round: GuidedRound | undefined; readonly branch?: string | undefined },
     passing: Passing = { takeover: false },
+    turn?: TicketTurn,
   ): void => {
     if (ticket.machine === null || ticket.engine === null || ticket.model === null || ticket.effort === null) {
       throw new Error(`Ticket ${ticket.id} has no machine, engine, model and effort chosen`);
@@ -583,14 +585,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const machine = ticket.machine;
     const sameMachine = previous?.machine === machine;
     const resume = previous !== undefined && sameMachine && previous.engine === engine.data ? (previous.session ?? previous.resume_session) : null;
-    let handover = 0;
-    if (previous !== undefined && !sameMachine) {
-      const holding = isActive(previous.state) || (previous.state === "unavailable" && CountRow.parse(countStartedOn.get(ticket.id, previous.machine)).count > 0);
-      if (send(previous.machine, { type: "work.stop", ticket: ticket.id, save: true, remove: true })) {
-        removalsSent.add(`${previous.machine}:${ticket.id}`);
-        handover = holding ? 1 : 0;
-      }
-    }
+    const moving = previous !== undefined && !sameMachine;
+    const handover = moving && (isActive(previous.state) || (previous.state === "unavailable" && CountRow.parse(countStartedOn.get(ticket.id, previous.machine)).count > 0));
     const number = (previous?.attempt ?? 0) + 1;
     tickets.change((writes) => {
       if (back !== undefined) {
@@ -613,10 +609,17 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (ticket.branch === null && ticket.form === "code") {
         writes.setBranch(ticket.id, branchFor(ticket.id, suffix()));
       }
-      insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover, passing.takeover ? 1 : 0, clock.now());
+      insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover ? 1 : 0, passing.takeover ? 1 : 0, clock.now());
       passing.record?.(number);
       writes.touched(ticket.id);
-    });
+    }, turn);
+    if (moving) {
+      if (send(previous.machine, { type: "work.stop", ticket: ticket.id, save: true, remove: true })) {
+        removalsSent.add(`${previous.machine}:${ticket.id}`);
+      } else if (handover) {
+        updateHandover.run(ticket.id);
+      }
+    }
     forget(ticket.id);
     dispatch();
   };
@@ -1487,7 +1490,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         : `The owner moved this ticket here from ${latest.machine}, now with ${ticket.engine ?? "?"} ${ticket.model ?? "?"} at ${ticket.effort ?? "?"}. The earlier work was pushed to the branch where it could be; continue from there.`;
       nextAttempt(ticket, note, latest);
     },
-    again: (id, note, reason, round) => {
+    again: (id, note, reason, round, turn) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
         return { ok: false, reason: `There is no ticket ${id}` };
@@ -1506,7 +1509,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         }
       }
       try {
-        nextAttempt(ticket, note, latest, { reason, round });
+        nextAttempt(ticket, note, latest, { reason, round }, undefined, turn);
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
@@ -1552,7 +1555,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const now = tickets.get(id);
       return now === undefined ? { ok: false, reason: `There is no ticket ${id}` } : { ok: true, ticket: now };
     },
-    message: (id, body, from, attachments = []) => {
+    message: (id, body, from, attachments = [], turn) => {
       const latest = latestOf(id);
       const state = tickets.get(id)?.state;
       const active = latest !== undefined && isActive(latest.state);
@@ -1561,8 +1564,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return { ok: false, reason: `Ticket ${id} has no running worker` };
       }
       const message: WorkMessageToRunner = { type: "work.message", ticket: id, attempt: latest.attempt, id: randomUUID(), from, text: body, ...(attachments.length === 0 ? {} : { attachments: [...attachments] }) };
-      options.attachments?.grant(id, attachments);
-      messages.add(message);
+      tickets.change(() => {
+        options.attachments?.grant(id, attachments);
+        messages.add(message);
+      }, turn);
       return { ok: true, id: message.id, delivered: active && send(latest.machine, message) };
     },
     events: (ticket, after = 0, limit = defaultEventLimit) =>

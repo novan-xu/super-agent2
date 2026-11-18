@@ -51,6 +51,7 @@ interface Attempt {
 
 interface Live {
   readonly provider: Provider;
+  readonly turn: string;
   readonly handle: ProgramHandle;
   session: string | null;
   attempt: Attempt | undefined;
@@ -170,7 +171,9 @@ export function createBrain(options: BrainOptions): Brain {
     if (state.live === live) {
       state.live = undefined;
     }
-    track(live.handle.close());
+    const closed = live.handle.close();
+    track(closed);
+    return closed;
   };
 
   const trimOpen = () => {
@@ -300,13 +303,13 @@ export function createBrain(options: BrainOptions): Brain {
     }
   };
 
-  const openLive = (state: State, provider: Provider, session: string | null): Live => {
+  const openLive = (state: State, turn: TurnRun, provider: Provider, session: string | null): Live => {
     const adapter = adapterOf(provider);
     let live: Live | undefined;
     const handle = adapter.open(
       {
         session,
-        tools: { url: options.tools.url, token: options.tools.token, conversation: state.id },
+        tools: { url: options.tools.url, token: options.tools.token, conversation: state.id, turn: turn.id },
         workspace: options.workspace,
       },
       (event) => {
@@ -315,7 +318,7 @@ export function createBrain(options: BrainOptions): Brain {
         }
       },
     );
-    live = { provider, handle, session, attempt: undefined, closed: false };
+    live = { provider, turn: turn.id, handle, session, attempt: undefined, closed: false };
     return live;
   };
 
@@ -369,13 +372,20 @@ export function createBrain(options: BrainOptions): Brain {
       return;
     }
     let live = state.live;
-    if (live !== undefined && (live.provider !== provider || freshSession)) {
-      dropLive(state, live);
-      live = undefined;
-    }
     try {
+      if (live !== undefined && (live.turn !== turn.id || live.provider !== provider || freshSession)) {
+        await dropLive(state, live)?.catch(() => undefined);
+        if (state.turn !== turn || turn.current !== attempt || closing) {
+          return;
+        }
+        if (turn.interrupting) {
+          finishTurn(state, turn, "interrupted", null);
+          return;
+        }
+        live = undefined;
+      }
       if (live === undefined) {
-        live = openLive(state, provider, freshSession ? null : prepared.session);
+        live = openLive(state, turn, provider, freshSession ? null : prepared.session);
         state.live = live;
         trimOpen();
       }
