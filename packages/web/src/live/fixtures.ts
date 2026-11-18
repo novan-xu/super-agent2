@@ -205,7 +205,6 @@ export function stuckCard(id: number, overrides: Partial<NonNullable<Ticket["stu
 export function settingsSnapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
   return {
     machines: [],
-    enrollments: [],
     canAdd: { cloudflare: true, release: true },
     repositories: [],
     accounts: [

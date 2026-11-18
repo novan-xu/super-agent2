@@ -51,13 +51,12 @@ import {
   positionOfCursor,
   protocolVersion,
   releaseVersionHeader,
+  runnerInstallPath,
   runnerLinkPath,
   runnerReleasePath,
   RunnerToHub,
   runnerTokenHeader,
   StuckAnswerRequest,
-  enrollPath,
-  installCodeHeader,
   MachineAddRequest,
   type MachineAdded,
   type MachineRevoked,
@@ -92,7 +91,7 @@ import type { WorkService } from "./work.js";
 import { text } from "@super-agent2/catalog";
 import type { ToolServer } from "./tools.js";
 import type { Waiting } from "./waiting.js";
-import type { MachineAdmin } from "./enrollment.js";
+import type { MachineAdmin } from "./machine-admin.js";
 import type { RepositoryAccounts } from "./repositories.js";
 import type { Settings } from "./settings.js";
 
@@ -166,6 +165,7 @@ export interface HubServerOptions {
   readonly database: HubDatabase;
   readonly commands: CommandService;
   readonly verify: AccessVerifier;
+  readonly verifyRunner?: AccessVerifier;
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
   readonly conversations?: ConversationService;
@@ -405,7 +405,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return undefined;
     }
     try {
-      const result = await options.verify(headerValue(request));
+      const result = await (options.verifyRunner ?? options.verify)(headerValue(request));
       return result.ok ? runners.admit(result.identity, runnerToken(request)) : undefined;
     } catch {
       return undefined;
@@ -500,8 +500,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 404, { error: "not_found" });
       return;
     }
-    if (path === enrollPath) {
-      await serveEnroll(request, response, method);
+    if (path === runnerInstallPath && method === "GET") {
+      await serveInstall(request, response);
       return;
     }
     if (path === runnerReleasePath && method === "GET") {
@@ -604,17 +604,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
     sendJson(response, 404, { error: "not_found" });
   };
 
-  const serveEnroll = async (request: IncomingMessage, response: ServerResponse, method: string): Promise<void> => {
+  const serveInstall = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     request.resume();
-    const admin = options.admin;
-    if (method !== "POST" || admin === undefined) {
-      sendJson(response, 404, { error: "not_found" });
+    const machine = await runnerMachine(request);
+    if (machine === undefined) {
+      sendJson(response, 403, { error: "forbidden" });
       return;
     }
-    const header = request.headers[installCodeHeader];
-    const outcome = typeof header === "string" ? await admin.redeem(header.trim()) : { ok: false as const, error: "refused" as const };
+    const outcome = options.admin?.install(machine) ?? { ok: false as const, error: "not_found" as const };
     if (!outcome.ok) {
-      sendJson(response, outcome.error === "refused" ? 403 : 503, { error: outcome.error === "refused" ? "forbidden" : "unavailable" });
+      sendJson(response, outcome.error === "not_found" ? 404 : 503, { error: outcome.error });
       return;
     }
     response.writeHead(200, {
@@ -658,13 +657,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 400, { error: "bad_request" });
       return;
     }
-    const outcome = admin.add({ ...given, hub: new URL(String(request.headers.origin)).origin });
+    const outcome = await admin.add({ ...given, hub: new URL(String(request.headers.origin)).origin });
     if (!outcome.ok) {
+      if (outcome.error === "cloudflare_refused") {
+        sendJson(response, 502, { error: outcome.error, reason: outcome.reason });
+        return;
+      }
       const status = outcome.error === "conflict" ? 409 : outcome.error === "bad_request" ? 400 : 503;
       sendJson(response, status, { error: outcome.error });
       return;
     }
-    sendJson(response, 201, { name: outcome.name, system: outcome.system, command: outcome.command, expiresAt: outcome.expiresAt });
+    sendJson(response, 201, { name: outcome.name, system: outcome.system, command: outcome.command });
   };
 
   const serveSettingChange = async (request: IncomingMessage, response: ServerResponse, path: string): Promise<void> => {

@@ -4,6 +4,7 @@ export interface ServiceToken {
   readonly id: string;
   readonly clientId: string;
   readonly clientSecret: string;
+  readonly expiresAt: number | null;
 }
 
 export interface AccessServiceTokens {
@@ -20,14 +21,30 @@ export interface CloudflareSettings {
 
 export const cloudflareApiBase = "https://api.cloudflare.com/client/v4";
 
+export const serviceTokenDuration = "forever";
+
+export const serviceTokenTag = { key: "superagent2", value: "runner" } as const;
+
+const earliestExpiry = Date.UTC(2000, 0, 1);
+
 const Created = z.object({
   success: z.literal(true),
   result: z.object({
     id: z.string().min(1),
     client_id: z.string().min(1),
     client_secret: z.string().min(1),
+    duration: z.string().nullish(),
+    expires_at: z.string().nullish(),
   }),
 });
+
+export function expiryOf(duration: string | null | undefined, expiresAt: string | null | undefined): number | null {
+  if (duration === serviceTokenDuration || expiresAt === null || expiresAt === undefined) {
+    return null;
+  }
+  const time = Date.parse(expiresAt);
+  return Number.isFinite(time) && time > earliestExpiry ? time : null;
+}
 
 const Failure = z.object({
   errors: z.array(z.object({ code: z.number().optional(), message: z.string() })).optional(),
@@ -73,7 +90,7 @@ export function cloudflareServiceTokens(settings: CloudflareSettings): AccessSer
       const response = await call(`${base}/accounts/${encodeURIComponent(settings.accountId)}/access/service_tokens`, {
         method: "POST",
         headers: { authorization: `Bearer ${settings.apiToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, duration: serviceTokenDuration, tags: { [serviceTokenTag.key]: serviceTokenTag.value } }),
       });
       let body: unknown;
       try {
@@ -83,7 +100,8 @@ export function cloudflareServiceTokens(settings: CloudflareSettings): AccessSer
       }
       const created = Created.safeParse(body);
       if (response.ok && created.success) {
-        return { id: created.data.result.id, clientId: created.data.result.client_id, clientSecret: created.data.result.client_secret };
+        const result = created.data.result;
+        return { id: result.id, clientId: result.client_id, clientSecret: result.client_secret, expiresAt: expiryOf(result.duration, result.expires_at) };
       }
       const failure = Failure.safeParse(body);
       const messages = failure.success ? (failure.data.errors ?? []).map((error) => error.message) : [];

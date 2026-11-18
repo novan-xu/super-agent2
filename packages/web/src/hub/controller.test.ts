@@ -49,7 +49,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     deleteMemory: (id) => answer(`deleteMemory ${id}`, { memories: [], suggestions: [] }),
     decideSuggestion: (id, decision) => answer(`decideSuggestion ${id} ${decision}`, { memories: [], suggestions: [] }),
     settings: () => answer("settings", settingsSnapshot()),
-    addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run", expiresAt: 5 }),
+    addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run" }),
     revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
     setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
@@ -566,7 +566,7 @@ describe("PageController and the history", () => {
     expect(page.store.getState().settings?.brain.order).toEqual(["gpt", "claude", "deepseek"]);
     expect(await page.setOrder(["claude", "gpt"])).toBe(true);
     expect(page.store.getState().settings?.brain.order).toEqual(["claude", "gpt", "deepseek"]);
-    expect(await page.addMachine("studio", "macos")).toEqual({ name: "studio", system: "macos", command: "run", expiresAt: 5 });
+    expect(await page.addMachine("studio", "macos")).toEqual({ name: "studio", system: "macos", command: "run" });
     expect(hub.calls).toContain("addMachine studio macos");
   });
 
@@ -585,5 +585,12 @@ describe("PageController and the history", () => {
     const page = controller(api({ addMachine: () => Promise.resolve({ ok: false, error: "cloudflare" }) }), failures);
     expect(await page.addMachine("studio", "windows")).toBeUndefined();
     expect(failures).toEqual(["cloudflare"]);
+  });
+
+  it("hands Cloudflare's reason to the form instead of a passing notice when it refuses the token", async () => {
+    const failures: Failure[] = [];
+    const page = controller(api({ addMachine: () => Promise.resolve({ ok: false, error: "cloudflare_refused", reason: "Cloudflare refused to create the service token (HTTP 403)" }) }), failures);
+    expect(await page.addMachine("studio", "windows")).toEqual({ refused: "Cloudflare refused to create the service token (HTTP 403)" });
+    expect(failures).toEqual([]);
   });
 });

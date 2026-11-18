@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { MachineName, MachineReport } from "@super-agent2/protocol";
+import { MachineName, MachineReport, MachineSystem } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
@@ -9,6 +9,10 @@ export interface Machine {
   readonly tokenHash: string;
   readonly accessClientId: string;
   readonly accessTokenId: string | null;
+  readonly accessExpiresAt: number | null;
+  readonly accessWarnedAt: number | null;
+  readonly system: MachineSystem | null;
+  readonly hub: string | null;
   readonly createdAt: number;
   readonly revokedAt: number | null;
   readonly lastSeenAt: number | null;
@@ -24,6 +28,9 @@ export interface MachineToAdd {
   readonly name: string;
   readonly accessClientId: string;
   readonly accessTokenId?: string;
+  readonly accessExpiresAt?: number | null;
+  readonly system?: MachineSystem;
+  readonly hub?: string;
 }
 
 export interface MachineStore {
@@ -34,6 +41,7 @@ export interface MachineStore {
   list(): Machine[];
   byToken(token: string): Machine | undefined;
   seen(name: string, report?: MachineReport): void;
+  warned(name: string): void;
   changed(): boolean;
 }
 
@@ -44,6 +52,10 @@ const MachineRow = z.object({
   token_hash: z.string(),
   access_client_id: z.string(),
   access_token_id: z.string().nullable(),
+  access_expires_at: z.number().int().nullable(),
+  access_warned_at: z.number().int().nullable(),
+  system: MachineSystem.nullable(),
+  hub: z.string().nullable(),
   created_at: z.number().int(),
   revoked_at: z.number().int().nullable(),
   last_seen_at: z.number().int().nullable(),
@@ -71,6 +83,10 @@ function toMachine(row: unknown): Machine {
     tokenHash: value.token_hash,
     accessClientId: value.access_client_id,
     accessTokenId: value.access_token_id,
+    accessExpiresAt: value.access_expires_at,
+    accessWarnedAt: value.access_warned_at,
+    system: value.system,
+    hub: value.hub,
     createdAt: value.created_at,
     revokedAt: value.revoked_at,
     lastSeenAt: value.last_seen_at,
@@ -90,11 +106,12 @@ export function createMachineStore(database: HubDatabase, clock: Clock): Machine
   const selectAll = connection.prepare("SELECT * FROM machines ORDER BY name");
   const selectByHash = connection.prepare("SELECT * FROM machines WHERE token_hash = ? AND revoked_at IS NULL");
   const insert = connection.prepare(
-    "INSERT INTO machines (name, token_hash, access_client_id, access_token_id, created_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO machines (token_hash, access_client_id, access_token_id, access_expires_at, system, hub, created_at, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const replace = connection.prepare(
-    "UPDATE machines SET token_hash = ?, access_client_id = ?, access_token_id = ?, created_at = ?, revoked_at = NULL, last_seen_at = NULL, report = NULL WHERE name = ?",
+    "UPDATE machines SET token_hash = ?, access_client_id = ?, access_token_id = ?, access_expires_at = ?, system = ?, hub = ?, created_at = ?, access_warned_at = NULL, revoked_at = NULL, last_seen_at = NULL, report = NULL WHERE name = ?",
   );
+  const markWarned = connection.prepare("UPDATE machines SET access_warned_at = ? WHERE name = ?");
   const markRevoked = connection.prepare("UPDATE machines SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL");
   const markSeen = connection.prepare("UPDATE machines SET last_seen_at = ? WHERE name = ?");
   const markReport = connection.prepare("UPDATE machines SET last_seen_at = ?, report = ? WHERE name = ?");
@@ -123,10 +140,11 @@ export function createMachineStore(database: HubDatabase, clock: Clock): Machine
       const token = randomBytes(32).toString("base64url");
       const hash = runnerTokenHash(token);
       const now = clock.now();
+      const values = [hash, request.accessClientId, request.accessTokenId ?? null, request.accessExpiresAt ?? null, request.system ?? null, request.hub ?? null, now, name.data];
       if (existing === undefined) {
-        insert.run(name.data, hash, request.accessClientId, request.accessTokenId ?? null, now);
+        insert.run(...values);
       } else {
-        replace.run(hash, request.accessClientId, request.accessTokenId ?? null, now, name.data);
+        replace.run(...values);
       }
       const machine = get(name.data);
       if (machine === undefined) {
@@ -157,6 +175,9 @@ export function createMachineStore(database: HubDatabase, clock: Clock): Machine
       } else {
         markReport.run(clock.now(), JSON.stringify(report), name);
       }
+    },
+    warned: (name) => {
+      markWarned.run(clock.now(), name);
     },
     changed: () => {
       const current = version();

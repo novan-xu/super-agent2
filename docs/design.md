@@ -24,8 +24,16 @@ a computer.
 | Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (and a checkout when a repository is named) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
-The front door is unchanged: Cloudflare Access with the owner's Google account. The new system takes over the existing
-host name at its first deployment, and the first Super-agent is stopped then.
+The front door is Cloudflare Access on the existing host name, with two applications and no Bypass rule anywhere. The
+host's own application admits only the owner, signed in with Google. A second application for the path `runner` admits
+only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the
+owner's pages and the owner's sign-in never reaches the runners' paths. The hub verifies each application's own
+assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for
+the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes,
+which the brain reaches on the NAS's internal network with its own token. A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes
+its service token and runner token at once and shows, once, a one-line install command that carries them to the
+machine. The new system took over the existing host name at its first deployment, and the first Super-agent was stopped
+then.
 
 ## LLM providers
 
@@ -339,6 +347,9 @@ This is the complete list.
 6. **No reach into the NAS host or the work machines.** The brain's commands run only in the hub's container. The hub
    has no target on the NAS host, mounts nothing of it but its own folders, and holds no key to sign in to it; a runner
    runs no command the hub sends, only the workers of tickets the owner started.
+7. **Nothing without the front door.** No route of the hub is open to the internet: every request through the host name
+   carries a signed Access assertion for the application that covers its path, and the hub refuses any request without
+   one. There is no Bypass rule; adding a machine needs none, because its credentials travel in the install line.
 
 ## Tests
 
@@ -457,16 +468,19 @@ this repository, and `.gitignore` excludes the file types that hold them.
 | --- | --- | --- |
 | `GITHUB_TOKEN_NOVAN_XU`, `GITHUB_TOKEN_NUOFAN_ISLAND` | NAS, `secrets/github.env` | Every GitHub operation |
 | `ACCESS_TEAM`, `ACCESS_AUD`, `OWNER_EMAIL` | NAS, `secrets/hub.env` | Checking the front door's sign-in |
-| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN` | NAS, `secrets/hub.env` | Access service tokens for runners |
+| `ACCESS_RUNNER_AUD` | NAS, `secrets/hub.env` | Checking the runner application's assertion on `/runner/` |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN` | NAS, `secrets/hub.env` | Creating and deleting runners' Access service tokens (Access: Service Tokens, Edit, nothing else) |
 | Cloudflare API token, `TUNNEL_TOKEN` | NAS, `secrets/cloudflare.env`, `secrets/tunnel.env` | The host name and its tunnel |
 | `WOODPECKER_SERVER`, `WOODPECKER_TOKEN` | NAS, hub environment | Reading CI results and logs |
 | The ChatGPT login for Codex | NAS, volume `superagent-codex-home` | The brain on GPT |
 | `BRAIN_CLAUDE_OAUTH_TOKEN` | NAS, `secrets/brain.env` | The brain on Claude |
 | The DeepSeek account login for `dsh` | On the runners; made once in the brain container | The brain on DeepSeek |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | NAS, `secrets/hub.env` | Push notifications |
-| `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET` | Each runner, `~/.superagent2/runner.env` | A runner passing the front door |
+| `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET`, `RUNNER_TOKEN` | Each runner, `~/.superagent2/runner.env`, readable only by its user | A runner passing the front door and proving which machine it is |
 
-Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. The hub holds no
+Credentials internal to the system (the brain-to-hub token, each runner's token) are generated fresh. A machine's
+service token and runner token are made when 添加机器 is pressed and shown once, in the install line; the hub keeps only
+the service token's ids and the SHA-256 of the runner token, and service tokens it makes do not expire. The hub holds no
 credential for the NAS host itself. Workers use the
 logins of the command-line programs already present on each runner.
 

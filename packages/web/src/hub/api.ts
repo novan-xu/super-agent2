@@ -35,7 +35,7 @@ import type { z } from "zod";
 
 export type Failure = Refusal["error"] | "network";
 
-export type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: Failure };
+export type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: Failure; readonly reason?: string };
 
 async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST"): Promise<Answer<T>> {
   let response: Response;
@@ -57,7 +57,10 @@ async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, metho
   }
   if (!response.ok) {
     const refusal = Refusal.safeParse(value);
-    return { ok: false, error: refusal.success ? refusal.data.error : "network" };
+    if (!refusal.success) {
+      return { ok: false, error: "network" };
+    }
+    return refusal.data.reason === undefined ? { ok: false, error: refusal.data.error } : { ok: false, error: refusal.data.error, reason: refusal.data.reason };
   }
   const parsed = schema.safeParse(value);
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false, error: "network" };

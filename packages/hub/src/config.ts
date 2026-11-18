@@ -31,6 +31,7 @@ const Environment = z.object({
   ACCESS_AUD: z
     .string(present("must be text"))
     .regex(/^[0-9a-f]{64}$/, present("must be the application's audience tag, 64 lower-case hexadecimal characters")),
+  ACCESS_RUNNER_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the runner application's audience tag, 64 lower-case hexadecimal characters" })),
   OWNER_EMAIL: z.email(present("must be an email address")),
   HUB_DATA_DIR: z.string(present("must be text")).min(1, { error: "must not be empty" }),
   HUB_PORT: z
@@ -67,6 +68,7 @@ const Environment = z.object({
 export interface Config {
   readonly accessTeam: string;
   readonly accessAudience: string;
+  readonly accessRunnerAudience?: string;
   readonly ownerEmail: string;
   readonly dataDir: string;
   readonly port: number;
@@ -115,6 +117,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     return { ok: false, problems };
   }
   const value = parsed.data;
+  if (value.ACCESS_RUNNER_AUD !== undefined && value.ACCESS_RUNNER_AUD === value.ACCESS_AUD) {
+    return { ok: false, problems: ["ACCESS_RUNNER_AUD must be the audience tag of the separate application for the path runner, not ACCESS_AUD"] };
+  }
   const vapid = vapidSettings(value);
   if (vapid.problems.length > 0) {
     return { ok: false, problems: vapid.problems };
@@ -124,6 +129,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     config: {
       accessTeam: value.ACCESS_TEAM,
       accessAudience: value.ACCESS_AUD,
+      ...(value.ACCESS_RUNNER_AUD === undefined ? {} : { accessRunnerAudience: value.ACCESS_RUNNER_AUD }),
       ownerEmail: value.OWNER_EMAIL.toLowerCase(),
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,

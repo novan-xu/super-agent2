@@ -5,7 +5,7 @@ import { GitHubAccount } from "./commands.js";
 import { Provider } from "./conversations.js";
 import { EngineTable, type MachineChoice, offers } from "./defaults.js";
 import { ProviderUnavailable } from "./providers.js";
-import { MachineName, MachineStatus, type ProgramId } from "./runner.js";
+import { MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
 import { type Difficulty, difficulties, RepositoryName } from "./tickets.js";
 
 export const tableEngines = ["codex", "claude", "dsh", "antigravity"] as const;
@@ -52,15 +52,6 @@ export const settingsSections = ["machines", "repositories", "models", "appearan
 export const SettingsSection = z.enum(settingsSections);
 export type SettingsSection = z.infer<typeof SettingsSection>;
 
-export const machineSystems = ["windows", "macos"] as const;
-export const MachineSystem = z.enum(machineSystems);
-export type MachineSystem = z.infer<typeof MachineSystem>;
-
-export const enrollPath = "/runner/enroll";
-export const installCodeHeader = "x-install-code";
-export const installCodeLifetime = 10 * 60 * 1000;
-export const installCodePattern = /^[A-Za-z0-9_-]{43}$/;
-
 export const MachineAddRequest = z.object({ name: MachineName, system: MachineSystem });
 export type MachineAddRequest = z.infer<typeof MachineAddRequest>;
 
@@ -68,7 +59,6 @@ export const MachineAdded = z.object({
   name: MachineName,
   system: MachineSystem,
   command: z.string().min(1),
-  expiresAt: z.number().int(),
 });
 export type MachineAdded = z.infer<typeof MachineAdded>;
 
@@ -77,9 +67,6 @@ export type AccessTokenOutcome = z.infer<typeof AccessTokenOutcome>;
 
 export const MachineRevoked = z.object({ name: MachineName, accessToken: AccessTokenOutcome });
 export type MachineRevoked = z.infer<typeof MachineRevoked>;
-
-export const Enrollment = z.object({ name: MachineName, system: MachineSystem, expiresAt: z.number().int() });
-export type Enrollment = z.infer<typeof Enrollment>;
 
 export const RepositoryAccount = z.object({ repository: RepositoryName, account: GitHubAccount, chosen: z.boolean() });
 export type RepositoryAccount = z.infer<typeof RepositoryAccount>;
@@ -146,7 +133,6 @@ export function pushServiceOf(endpoint: string): PushServiceName {
 
 export const SettingsSnapshot = z.object({
   machines: z.array(MachineStatus),
-  enrollments: z.array(Enrollment),
   canAdd: z.object({ cloudflare: z.boolean(), release: z.boolean() }),
   repositories: z.array(RepositoryAccount),
   accounts: z.array(AccountState),

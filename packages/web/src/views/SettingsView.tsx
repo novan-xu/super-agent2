@@ -1,12 +1,12 @@
 import { text } from "@super-agent2/catalog";
 import {
-  type Enrollment,
   gitHubAccounts,
   type GitHubAccount,
   machineChoices,
   type MachineAdded,
   type MachineRevoked,
   type MachineStatus,
+  machineAccessWarning,
   machineSystems,
   type MachineSystem,
   type PageRoute,
@@ -44,7 +44,7 @@ import { followLink } from "../parts/Shell.js";
 import { momentOf } from "./TicketParts.js";
 
 export interface SettingsActions {
-  readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | undefined>;
+  readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | { readonly refused: string } | undefined>;
   readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
   readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
@@ -77,7 +77,8 @@ function routeOf(section: SettingsSection | null): PageRoute {
 function MachineCard({ machine, running, revoke, now }: { readonly machine: MachineStatus; readonly running: number; readonly revoke: () => Promise<void>; readonly now: number }) {
   const [step, setStep] = useState<"idle" | "armed" | "sending">("idle");
   const slots = slotsOf(machine);
-  const system = machine.report === null ? null : machine.report.platform === "darwin" ? "macos" : machine.report.platform === "win32" ? "windows" : null;
+  const system = machine.report === null ? (machine.system ?? null) : machine.report.platform === "darwin" ? "macos" : machine.report.platform === "win32" ? "windows" : null;
+  const expiry = machine.accessExpiresAt;
   const programs = (machine.report?.programs ?? []).filter((program) => program.installed);
   const confirm = () => {
     setStep("sending");
@@ -93,6 +94,9 @@ function MachineCard({ machine, running, revoke, now }: { readonly machine: Mach
       <p className="card-sub">
         {machine.online ? text("machine.online") : machine.lastSeenAt === null ? text("machine.never") : text("machine.seen", { time: momentOf(machine.lastSeenAt, now) })}
       </p>
+      {expiry === undefined ? null : (
+        <p className={expiry - now <= machineAccessWarning ? "field-err" : "card-sub"}>{expiry <= now ? text("machine.tokenExpired") : text("machine.tokenUntil", { time: momentOf(expiry, now) })}</p>
+      )}
       {slots.total === 0 ? null : (
         <div className="slots">
           <div className="slot-bar" aria-hidden="true">
@@ -144,29 +148,23 @@ function MachineCard({ machine, running, revoke, now }: { readonly machine: Mach
   );
 }
 
-function PendingCard({ enrollment }: { readonly enrollment: Enrollment }) {
-  return (
-    <article className="mcard">
-      <div className="mcard-head">
-        <span className="dot dot--mute" />
-        <span className="mcard-name od-fill od-truncate">{enrollment.name}</span>
-        <span className="chip">{text(`machine.system.${enrollment.system}`)}</span>
-      </div>
-      <p className="card-sub">{text("machine.pending")}</p>
-    </article>
-  );
-}
-
-function AddMachine({ machines, add, now }: { readonly machines: readonly MachineStatus[]; readonly add: SettingsActions["addMachine"]; readonly now: number }) {
+function AddMachine({ machines, add }: { readonly machines: readonly MachineStatus[]; readonly add: SettingsActions["addMachine"] }) {
   const [name, setName] = useState("");
   const [system, setSystem] = useState<MachineSystem>("windows");
   const [tried, setTried] = useState(false);
   const [sending, setSending] = useState(false);
   const [added, setAdded] = useState<MachineAdded | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const trimmed = name.trim();
   const problem = nameProblem(trimmed, machines);
   const shown = tried && trimmed !== "" ? problem : null;
+  const arrived = added !== null && machines.some((machine) => machine.name === added.name && machine.lastSeenAt !== null);
+  useEffect(() => {
+    if (arrived) {
+      setAdded(null);
+    }
+  }, [arrived]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setTried(true);
@@ -174,8 +172,14 @@ function AddMachine({ machines, add, now }: { readonly machines: readonly Machin
       return;
     }
     setSending(true);
+    setAdded(null);
+    setRefused(null);
     void add(trimmed, system).then((answer) => {
       setSending(false);
+      if (answer !== undefined && "refused" in answer) {
+        setRefused(answer.refused);
+        return;
+      }
       if (answer !== undefined) {
         setAdded(answer);
         setCopied(false);
@@ -237,6 +241,11 @@ function AddMachine({ machines, add, now }: { readonly machines: readonly Machin
             {text(`machine.problem.${shown}`)}
           </p>
         )}
+        {refused === null ? null : (
+          <p className="field-err" role="alert">
+            {text("machine.cloudflareRefused", { reason: refused })}
+          </p>
+        )}
         <div className="card-actions">
           <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="submit" disabled={sending || trimmed === ""} aria-busy={sending}>
             {text("machine.make")}
@@ -250,7 +259,7 @@ function AddMachine({ machines, add, now }: { readonly machines: readonly Machin
                 <Icon name={copied ? "check" : "copy"} />
               </button>
             </div>
-            <p className="card-sub">{text("machine.runOnce", { time: momentOf(added.expiresAt, now) })}</p>
+            <p className="card-sub">{text("machine.runOnce")}</p>
           </>
         )}
       </form>
@@ -260,7 +269,6 @@ function AddMachine({ machines, add, now }: { readonly machines: readonly Machin
 
 function MachinesSection({ settings, tickets, actions, now }: { readonly settings: SettingsSnapshot; readonly tickets: readonly Ticket[]; readonly actions: SettingsActions; readonly now: number }) {
   const [note, setNote] = useState<string | null>(null);
-  const pending = settings.enrollments.filter((enrollment) => !settings.machines.some((machine) => machine.name === enrollment.name));
   const revoke = async (name: string) => {
     const answer = await actions.revokeMachine(name);
     if (answer === undefined) {
@@ -275,7 +283,7 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
           {note}
         </p>
       )}
-      {settings.machines.length === 0 && pending.length === 0 ? (
+      {settings.machines.length === 0 ? (
         <div className="empty">
           <Icon name="machine" />
           <strong>{text("machine.empty")}</strong>
@@ -285,12 +293,9 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
           {settings.machines.map((machine) => (
             <MachineCard key={machine.name} machine={machine} running={ticketsRunningOn(tickets, machine.name)} revoke={() => revoke(machine.name)} now={now} />
           ))}
-          {pending.map((enrollment) => (
-            <PendingCard key={`pending-${enrollment.name}`} enrollment={enrollment} />
-          ))}
         </div>
       )}
-      <AddMachine machines={settings.machines} add={actions.addMachine} now={now} />
+      <AddMachine machines={settings.machines} add={actions.addMachine} />
     </>
   );
 }
