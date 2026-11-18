@@ -229,11 +229,16 @@ export function App() {
   );
   const memoryActions = useMemo<MemoryActions>(
     () => ({
-      edit: (id, words, revision) => controller.editMemory(id, words, revision),
-      remove: (id, revision) => controller.deleteMemory(id, revision),
+      add: (words) => controller.addMemory(words),
+      edit: (id, words) => controller.editMemory(id, words),
+      remove: (id) => controller.deleteMemory(id),
+      decide: (id, decision) => controller.decideSuggestion(id, decision),
     }),
     [controller],
   );
+  const [addingMemory, setAddingMemory] = useState(false);
+  const openAdding = useCallback(() => setAddingMemory(true), []);
+  const closeAdding = useCallback(() => setAddingMemory(false), []);
   const settingsActions = useMemo<SettingsActions>(
     () => ({
       addMachine: (name, system) => controller.addMachine(name, system),
@@ -269,12 +274,18 @@ export function App() {
       subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
       toast={toast}
       waiting={page.waiting.cards.length}
+      suggestions={page.memory.suggestions.length}
       actions={
         inConversation ? (
           <a className="btn btn-sm" href={pagePath(newConversation)} onClick={(event) => followLink(event, () => navigate(newConversation))}>
             <Icon name="plus" />
             {text("conversation.new")}
           </a>
+        ) : route.view === "memory" ? (
+          <button className="btn btn-sm" type="button" onClick={openAdding}>
+            <Icon name="plus" />
+            {text("memory.new")}
+          </button>
         ) : null
       }
     >
@@ -317,7 +328,7 @@ export function App() {
           now={now}
         />
       ) : route.view === "memory" ? (
-        <MemoryView memory={page.memory} actions={memoryActions} now={now} />
+        <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} now={now} />
       ) : route.view === "settings" ? (

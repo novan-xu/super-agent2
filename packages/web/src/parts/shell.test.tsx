@@ -63,6 +63,15 @@ describe("Shell", () => {
     expect(html).toContain('aria-label="工作台 3"');
   });
 
+  it("shows how many suggestions wait on 记忆, beside the count of 工作台", () => {
+    const html = render({ waiting: 2, suggestions: 4 });
+    expect(html).toContain('<span class="count count--hot">4</span>');
+    expect(html).toContain('<span class="tab-badge">4</span>');
+    expect(html).toContain('aria-label="记忆 4"');
+    expect(html).toContain('aria-label="工作台 2"');
+    expect(html.match(/count count--hot/g)).toHaveLength(2);
+  });
+
   it("shows no count when nothing waits", () => {
     const html = render({ waiting: 0 });
     expect(html).not.toContain("count--hot");

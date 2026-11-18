@@ -369,10 +369,11 @@ if (only.has("held")) {
 if (only.has("remembered")) {
   const word = () => `${["KIWI", "LYCHEE", "QUINCE", "DAMSON", "YUZU"][randomInt(5)]}-${randomInt(100, 1000)}`;
   const before = word();
-  const stored = hub.memories.remember({ text: { en: `The code word for the memory check is ${before}.`, zh: `记忆检查的暗号是 ${before}。` }, conversation: null });
+  const stored = hub.memories.add(`记忆检查的暗号是 ${before}。`);
   if (!stored.ok) {
-    throw new Error(stored.reason);
+    throw new Error(stored.error);
   }
+  const id = Math.max(...stored.list.memories.map((memory) => memory.id));
   const conversation = hub.conversations.create().id;
   const first = await ask(conversation, "记忆检查的暗号是什么？只回答暗号本身。", 1);
   const firstTools = entriesOf(conversation).filter((entry) => entry.kind === "tool").length;
@@ -381,24 +382,25 @@ if (only.has("remembered")) {
   while (after === before) {
     after = word();
   }
-  const edited = hub.memories.edit(stored.memory.id, `记忆检查的暗号是 ${after}。`, stored.memory.revision);
+  const edited = hub.memories.edit(id, `记忆检查的暗号是 ${after}。`);
   if (!edited.ok) {
     throw new Error(edited.error);
   }
   const second = await ask(conversation, "现在记忆检查的暗号是什么？只回答暗号本身。", 2);
   note("the same session learns of the owner's edit", second.includes(after) && !second.includes(before), `code word now ${after}; reply: ${second.slice(0, 200)}`);
-  const memory = hub.memories.list().find((candidate) => candidate.id === stored.memory.id);
-  process.stdout.write(`\n<memory after the turn> ${JSON.stringify(memory)}\n`);
-  if (memory !== undefined) {
-    hub.memories.remove(memory.id, memory.revision);
-  }
+  const unchanged = hub.memories.list().find((candidate) => candidate.id === id)?.text === `记忆检查的暗号是 ${after}。`;
+  note("the brain changed nothing itself", unchanged, `memory after the turn: ${JSON.stringify(hub.memories.list().find((candidate) => candidate.id === id))}; suggestions: ${JSON.stringify(hub.memories.suggestions())}`);
+  hub.memories.remove(id);
 }
 
 if (only.has("preference")) {
   const conversation = hub.conversations.create().id;
   const told = await ask(conversation, "以后不管在哪段对话里，你回答我的最后一行都单独写「—— 完」。记住这一点。", 1);
-  const remembered = hub.memories.list();
-  note("a preference stated in Chinese is remembered", remembered.length > 0, `memories: ${JSON.stringify(remembered.map((memory) => memory.text))}; reply: ${told.slice(0, 200)}`);
+  const suggestions = hub.memories.suggestions();
+  note("a preference stated in Chinese is suggested, not stored", suggestions.length > 0 && hub.memories.list().length === 0, `suggestions: ${JSON.stringify(suggestions.map((suggestion) => suggestion.text))}; reply: ${told.slice(0, 200)}`);
+  for (const suggestion of suggestions) {
+    hub.memories.confirm(suggestion.id);
+  }
   await stopBrain();
   startBrain();
   const later = hub.conversations.create().id;
@@ -406,7 +408,7 @@ if (only.has("preference")) {
   const lines = reply.trim().split("\n");
   note("it is applied in a new conversation after a restart", (lines.at(-1) ?? "").includes("完"), `reply: ${reply.slice(-200)}`);
   for (const memory of hub.memories.list()) {
-    hub.memories.remove(memory.id, memory.revision);
+    hub.memories.remove(memory.id);
   }
 }
 

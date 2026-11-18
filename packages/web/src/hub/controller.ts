@@ -7,6 +7,7 @@ import {
   machineChoices,
   type MachineRevoked,
   type MachineSystem,
+  type MemoryList,
   type Provider,
   type StoredWorkEvent,
   type StuckAnswer,
@@ -18,7 +19,7 @@ import { canLoadMore, needsCatchUp } from "../live/history.js";
 import { createPageStore, type PageStore } from "../live/page.js";
 import { lastEventId } from "../live/work.js";
 import { canAnswer, canStart, cardOf, type Verdict } from "../live/waiting.js";
-import type { Failure, HubApi } from "./api.js";
+import type { Answer, Failure, HubApi } from "./api.js";
 import { HubSocket, type HubSocketOptions } from "./socket.js";
 
 export interface ControllerOptions {
@@ -159,8 +160,8 @@ export class PageController {
     }
   }
 
-  async editMemory(id: number, text: string, revision: number): Promise<boolean> {
-    const answer = await this.options.api.editMemory(id, text, revision);
+  private async memoryCall(run: () => Promise<Answer<MemoryList>>): Promise<boolean> {
+    const answer = await run();
     if (!answer.ok) {
       this.options.onFailure(answer.error);
       return false;
@@ -168,13 +169,20 @@ export class PageController {
     return true;
   }
 
-  async deleteMemory(id: number, revision: number): Promise<boolean> {
-    const answer = await this.options.api.deleteMemory(id, revision);
-    if (!answer.ok) {
-      this.options.onFailure(answer.error);
-      return false;
-    }
-    return true;
+  addMemory(text: string): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.addMemory(text));
+  }
+
+  editMemory(id: number, text: string): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.editMemory(id, text));
+  }
+
+  deleteMemory(id: number): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.deleteMemory(id));
+  }
+
+  decideSuggestion(id: number, decision: "confirm" | "decline"): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.decideSuggestion(id, decision));
   }
 
   async loadSettings(): Promise<void> {

@@ -146,6 +146,25 @@ The brain's own starting values:
 
 A model and effort the chosen machine's program does not offer is refused, never replaced by a neighbour.
 
+## Memory
+
+The memory carries what the owner wants kept from one conversation to the next. It belongs to the owner.
+
+- Each memory is one text, in Chinese, stored exactly as the owner wrote or confirmed it. The page shows it as it is,
+  line breaks included, and the brain is given exactly that text.
+- The owner adds, edits and deletes memories in 记忆, with no limit and no refusal: whatever the owner saves is what is
+  stored. Only a blank box is not saved.
+- The brain only suggests. Its `remember` creates a suggestion, which may name the memories it replaces; its `forget`
+  suggests removing one. Suggestions wait in 记忆's 待确认 until the owner presses 确认 or 不要, and the navigation shows
+  how many wait. Nothing else waits on them, so they are not notices.
+- The hub refuses a suggestion whose text is the same as a memory, as a suggestion still waiting, as one the owner
+  declined, or as a memory the owner deleted. "The same" ignores white space, punctuation of either width, letter case
+  and invisible characters. Two wordings of one meaning are left to the brain's judgement.
+- The hub also refuses a suggestion without Chinese or one that looks like a credential. The brain's suggestions have no
+  count or length limit.
+- The brain is given the memory, the suggestions waiting and what the owner declined or deleted, at the start of each
+  conversation, again whenever any of it changes, and in the answer of every memory tool.
+
 ## Deployment
 
 A ticket never deploys. When merged work needs deploying, the brain deploys it through the hub. After a deployment the
@@ -250,6 +269,7 @@ are.
 - Text an LLM generates for the owner to see is kept twice: the English original, which goes to GitHub and to other
   LLMs, and a Chinese copy written at the same time by whoever generated it. That covers a ticket's title and summary,
   a worker's report, the brain's guidance, the reason a ticket stopped, and notices. The page shows the Chinese copy.
+- The memory is the one exception: it is the owner's own text, kept once, in Chinese, and given to the brain as it is.
 - The brain converses with the owner in Chinese.
 - Raw material is shown as it is: command output, logs, code and diffs.
 
@@ -257,7 +277,8 @@ are.
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and
 is sent as a push notification from the web page. There is no Lark channel. The notification for a held operation names
-where it runs and the command, cut visibly when it is too long for a push message, and never its environment.
+where it runs and the command, cut visibly when it is too long for a push message, and never its environment. The
+brain's memory suggestions wait in 记忆, not in 等你, and send no notification.
 
 ## Interface
 

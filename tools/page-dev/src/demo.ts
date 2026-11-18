@@ -103,11 +103,20 @@ function loopPlan(hub: string, turn: number): Step[] | undefined {
 }
 
 function plan(message: string, turn: number): Step[] {
-  const remembered = /^记住[:：]?\s*(.+)$/su.exec(message)?.[1]?.trim();
-  if (remembered !== undefined && remembered !== "") {
+  const remembered = /^记住[:：]?\s*(.+?)(?:\s*替换\s*#(\d+))?$/su.exec(message);
+  const words = remembered?.[1]?.trim();
+  if (remembered !== null && words !== undefined && words !== "") {
+    const replaces = remembered[2] === undefined ? [] : [Number(remembered[2])];
     return [
-      { kind: "hub", call: `remember-${turn}`, name: "remember", args: { text: { en: `Demo brain: the owner asked to remember "${remembered}".`, zh: remembered } } },
-      { kind: "text", block: `remembered-${turn}`, text: `记住了：${remembered}` },
+      { kind: "hub", call: `remember-${turn}`, name: "remember", args: { text: words, replaces } },
+      { kind: "text", block: `remembered-${turn}`, text: `我建议记住：${words}。它在记忆的待确认里等你确认。` },
+    ];
+  }
+  const forgotten = /^忘掉\s*#?(\d+)$/u.exec(message.trim())?.[1];
+  if (forgotten !== undefined) {
+    return [
+      { kind: "hub", call: `forget-${turn}`, name: "forget", args: { id: Number(forgotten) } },
+      { kind: "text", block: `forgotten-${turn}`, text: `我建议忘掉 #${forgotten}。它在记忆的待确认里等你确认。` },
     ];
   }
   if (message.includes("长")) {
