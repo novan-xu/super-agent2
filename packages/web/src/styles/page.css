@@ -376,3 +376,11 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .transfer-files { display: flex; flex-wrap: wrap; gap: .75rem; }
 .transfer-compose { padding: 1rem; }
 .transfer-compose textarea { display: block; width: 100%; min-height: 5rem; resize: vertical; }
+.question-card { display: grid; gap: 16px; padding: 16px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); }
+.question-card fieldset { display: grid; gap: 8px; min-width: 0; border: 0; padding: 0; margin: 0; }
+.question-card legend { font-weight: 700; margin-bottom: 8px; }
+.question-options { display: grid; gap: 6px; }
+.question-option { display: flex; gap: 8px; padding: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.question-option small { display: block; color: var(--muted); }
+.question-card .field { width: 100%; }
+.question-card > button { justify-self: start; }

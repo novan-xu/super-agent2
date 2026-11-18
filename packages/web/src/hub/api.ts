@@ -19,6 +19,7 @@ import {
   StreamEntry,
   streamPath,
   type TopicScope,
+  type QuestionAnswer,
   TicketDetail,
   TicketHistory,
   TicketList,
@@ -94,6 +95,7 @@ export const hubApi = {
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
   send: (id: string, text: string, attachments: readonly string[] = [], quotedMessage?: string) =>
     call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments, quotedMessage }),
+  answerQuestions: (conversation: string, id: string, answers: readonly QuestionAnswer[]) => call(`${conversationPath(conversation)}/questions`, EntryResponse, { id, answers }),
   sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope) =>
     call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope }),
   renameTopic: (source: string, title: string) => call(`${conversationPath(source)}/rename`, ConversationResponse, { title }),

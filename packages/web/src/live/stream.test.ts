@@ -138,3 +138,11 @@ it("keeps the history cursor when resuming and removes live statuses for turns t
   expect(resumed).toMatchObject({ before: 20, turns: [] });
   expect(resumed.entries).toEqual(page.entries);
 });
+
+it("replays an unanswered card after reconnect so its answer is not missed", () => {
+  const question: ConversationEntry = { id: "q1", conversation: id, seq: 1, at: now, kind: "question", turn: "t1", questions: [{ id: "q", prompt: "选择", required: true, multiple: false, options: [{ id: "a", label: "甲" }, { id: "b", label: "乙" }] }], answer: null };
+  const page = receiveStream(initialTopicStream, { type: "stream.page", entries: [{ position: 5, entry: question, topic: { id, title: "", repository: null } }], turns: [], before: null });
+  expect(resumeStream(page)).toBe(4);
+  const answered = receiveStream(page, { type: "stream.entry", position: 5, entry: { ...question, answer: { kind: "message", text: "自选" } }, topic: { id, title: "", repository: null } });
+  expect(resumeStream(answered)).toBe(5);
+});

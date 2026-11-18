@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Attachment, AttachmentId } from "./attachments.js";
+import { Questions, QuestionAnswers } from "./questions.js";
 import { GeneratedText } from "./generated.js";
 import { RepositoryName } from "./repositories.js";
 
@@ -117,7 +118,10 @@ export const ToolEntry = z.object({
 });
 export type ToolEntry = z.infer<typeof ToolEntry>;
 
-export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, DeliveryEntry, TextEntry, ToolEntry]);
+export const QuestionEntry = z.object({ ...entryBase, kind: z.literal("question"), turn: z.string(), questions: Questions, answer: z.union([z.object({ kind: z.literal("card"), answers: QuestionAnswers }), z.object({ kind: z.literal("message"), text: z.string() })]).nullable() });
+export type QuestionEntry = z.infer<typeof QuestionEntry>;
+
+export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, DeliveryEntry, TextEntry, ToolEntry, QuestionEntry]);
 export type ConversationEntry = z.infer<typeof ConversationEntry>;
 
 export const BrainStatus = z.object({

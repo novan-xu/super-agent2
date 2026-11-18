@@ -23,6 +23,9 @@ import {
   type HubToBrain,
   type MemoryBrief,
   type OwnerEntry,
+  type Question,
+  type QuestionAnswer,
+  QuestionAnswers,
   Provider,
   protocolVersion,
   quoteChunkLimit,
@@ -73,6 +76,8 @@ export interface ConversationService {
   stream(before?: number, limit?: number, repository?: string | null | TopicScope): StreamPage;
   streamAfter(after: number, scope?: TopicScope): StreamPage;
   send(id: string, message: string, attachments?: readonly Attachment[], quotedMessage?: string): OwnerEntry | undefined;
+  askOwner(conversation: string, turn: string, questions: readonly Question[]): string | undefined;
+  answerQuestions(conversation: string, id: string, answers: readonly QuestionAnswer[]): OwnerEntry | undefined;
   readonly topics: TopicContext;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
@@ -195,6 +200,7 @@ const Body = z.looseObject({
   output: z.string().optional(),
   state: z.string().optional(),
   possibleMatch: z.string().optional(),
+  questionResponse: z.object({ card: z.string(), answers: QuestionAnswers }).optional(),
 });
 
 const PendingInput = z.object({ id: z.string(), created_at: z.number().int(), body: z.string() });
@@ -257,6 +263,8 @@ function toEntry(row: EntryRow): ConversationEntry {
         ...(row.quote_id === null ? {} : { quotedMessage: row.quote_id }),
         ...(body.possibleMatch === undefined ? {} : { possibleMatch: body.possibleMatch }),
       });
+    case "question":
+      return ConversationEntry.parse({ ...base, kind: "question", turn: row.turn_id, questions: body.questions, answer: body.answer ?? null });
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id });
     case "delivery":
@@ -308,6 +316,8 @@ function historyItem(raw: unknown): HistoryItem {
   switch (entry.kind) {
     case "owner":
       return { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
+    case "question":
+      return { kind: "notice", text: JSON.stringify({ questions: entry.questions, answer: entry.answer }) };
     case "notice":
       return { kind: "notice", text: entry.text };
     case "delivery":
@@ -488,6 +498,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     let item: Exclude<HistoryItem, { kind: "tool" }>;
     switch (entry.kind) {
       case "tool":
+      case "question":
         return undefined;
       case "owner":
         item = { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
@@ -612,6 +623,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     const input: BrainInput = {
       id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
       source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached),
+      ...(body?.questionResponse === undefined ? {} : { questionResponse: body.questionResponse }),
     };
     if (row.quote_id !== null) {
       const quoted = quoteOf(row.quote_id);
@@ -982,11 +994,22 @@ export function createConversationService(options: ConversationServiceOptions): 
     return item;
   };
 
+  const pendingQuestions = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND kind = 'question' AND json_extract(body, '$.answer') IS NULL ORDER BY seq DESC LIMIT 1");
+  const answerByMessage = (conversation: string, message: string) => {
+    for (const raw of pendingQuestions.all(conversation)) {
+      const row = EntryRow.parse(raw);
+      const body = JSON.parse(row.body) as Record<string, unknown>;
+      updateBody.run(JSON.stringify({ ...body, answer: { kind: "message", text: message } }), row.id);
+      emitEntry(row.id);
+    }
+  };
+
   const writeOwner = (
     conversation: Conversation, message: string, attachments: readonly Attachment[],
-    { quotedMessage, possibleMatch, id, at }: { quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number } = {},
+    { quotedMessage, possibleMatch, id, at, markQuestions = true }: { quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
   ): string => {
     writeConversation(conversation.id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
+    if (markQuestions) answerByMessage(conversation.id, message);
     return writeEntry({
       ...(id === undefined ? {} : { id }), ...(at === undefined ? {} : { at }),
       ...(quotedMessage === undefined ? {} : { quote: quotedMessage }),
@@ -1082,6 +1105,41 @@ export function createConversationService(options: ConversationServiceOptions): 
         : selectScopedAfter.all(after, scope.kind, scope.kind === "repository" ? scope.repository : null);
       const entries = rows.map(toStreamEntry);
       return { entries, turns: streamTurns(entries, scope), before: null };
+    },
+    askOwner: (conversation, turn, questions) => {
+      if (!known(conversation, turn)) return undefined;
+      return addEntry({ conversation, turn, kind: "question", body: { questions, answer: null } });
+    },
+    answerQuestions: (conversation, id, answers) => {
+      const row = selectEntry.get(id);
+      const topic = get(conversation);
+      if (row === undefined || topic === undefined) return undefined;
+      const parsed = toEntry(EntryRow.parse(row));
+      if (parsed.kind !== "question" || parsed.conversation !== topic.id || parsed.answer !== null) return undefined;
+      const byId = new Map(answers.map((answer) => [answer.question, answer]));
+      if (byId.size !== answers.length || answers.some((answer) => !parsed.questions.some((question) => question.id === answer.question))) return undefined;
+      const normalized: QuestionAnswer[] = [];
+      for (const question of parsed.questions) {
+        const answer = byId.get(question.id) ?? { question: question.id, options: [], text: "" };
+        const selected = answer.text.trim() ? [] : answer.options;
+        if (new Set(selected).size !== selected.length || (!question.multiple && selected.length > 1) || selected.some((id) => !question.options.some((option) => option.id === id)) || (question.required && !answer.text.trim() && selected.length === 0)) return undefined;
+        normalized.push({ question: question.id, options: selected, text: answer.text.trim() });
+      }
+      const message = normalized.map((answer, index) => `${index + 1}. ${answer.text || answer.options.map((id) => parsed.questions[index]!.options.find((option) => option.id === id)!.label).join("、")}`).join("；");
+      let owner: string;
+      connection.exec("BEGIN IMMEDIATE");
+      try {
+        updateBody.run(JSON.stringify({ questions: parsed.questions, answer: { kind: "card", answers: normalized } }), id);
+        owner = writeOwner(topic, message, [], { markQuestions: false });
+        connection.prepare("UPDATE conversation_entries SET prompt = ?, body = json_set(body, '$.questionResponse', json(?)) WHERE id = ?").run(`${message}\n[hub] Structured question answers: ${JSON.stringify({ card: id, answers: normalized })}`, JSON.stringify({ card: id, answers: normalized }), owner);
+        connection.exec("COMMIT");
+      } catch (error) {
+        connection.exec("ROLLBACK");
+        throw error;
+      }
+      emitEntry(id);
+      const item = publishOwner(owner);
+      return item.entry.kind === "owner" ? item.entry : undefined;
     },
     send: (topic, message, attachments = [], quotedMessage) => {
       const item = sendDirect(topic, message, attachments, quotedMessage);
