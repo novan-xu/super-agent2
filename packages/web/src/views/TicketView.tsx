@@ -10,7 +10,7 @@ import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { Decisions } from "./Decisions.js";
-import { clockOf, DeliveryBody, TextBody, ToolFold } from "./Entries.js";
+import { clockOf, DeliveryBody, LiveStatus, TextBody } from "./Entries.js";
 import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones, RepairChip } from "./TicketParts.js";
 
 const nearBottom = 48;
@@ -41,12 +41,10 @@ function githubRepository(repository: string): string {
   return `https://github.com/${repository}`;
 }
 
-const WorkItem = memo(function WorkItem({ item, live, last, ticket }: { readonly item: LogItem; readonly live: boolean; readonly last: boolean; readonly ticket: Ticket }) {
+const WorkItem = memo(function WorkItem({ item, live, last, ticket }: { readonly item: Exclude<LogItem, { readonly kind: "tool" }>; readonly live: boolean; readonly last: boolean; readonly ticket: Ticket }) {
   switch (item.kind) {
     case "text":
       return <TextBody text={item.text} live={live && last} />;
-    case "tool":
-      return <ToolFold name={item.name} input={item.input} output={item.output} state={item.state} stopped={item.state === "running" && !live} />;
     case "message":
       return (
         <div className={item.from === "owner" ? "work-msg work-msg--me" : "work-msg"}>
@@ -100,10 +98,10 @@ const WorkItem = memo(function WorkItem({ item, live, last, ticket }: { readonly
 
 function AttemptEntry({ entry, ticket, now }: { readonly entry: Extract<TimelineEntry, { readonly kind: "attempt" }>; readonly ticket: Ticket; readonly now: number }) {
   const live = isWorkLive(entry);
-  const items = entry.log?.items ?? [];
+  const logItems = entry.log?.items ?? [];
+  const items = logItems.filter((item) => item.kind !== "tool");
+  const tool = logItems.findLast((item): item is Extract<LogItem, { readonly kind: "tool" }> => item.kind === "tool" && item.state === "running") ?? null;
   const status = entry.status;
-  const lastItem = items.at(-1);
-  const quiet = lastItem === undefined || lastItem.kind !== "text";
   const failed = status?.state === "failed";
   return (
     <li className={`tl tl--worker${live ? " tl--live" : ""}${failed ? " tl--bad" : ""}`}>
@@ -136,13 +134,7 @@ function AttemptEntry({ entry, ticket, now }: { readonly entry: Extract<Timeline
           {items.map((item, index) => (
             <WorkItem key={item.key} item={item} live={live} last={index === items.length - 1} ticket={ticket} />
           ))}
-          {live && quiet ? (
-            <span className="typing" role="img" aria-label={text("ticket.working")}>
-              <i />
-              <i />
-              <i />
-            </span>
-          ) : null}
+          {live ? <LiveStatus tool={tool} idle={text("ticket.working")} /> : null}
         </div>
       </div>
     </li>

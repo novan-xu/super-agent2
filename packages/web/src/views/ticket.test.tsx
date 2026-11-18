@@ -1,3 +1,4 @@
+import { text as catalogText } from "@super-agent2/catalog";
 import type { Ticket, TicketMove } from "@super-agent2/protocol";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -120,6 +121,37 @@ describe("a ticket's detail", () => {
     expect(text(html)).toContain("|停止|");
     expect(html).toContain('aria-label="发给工作者的消息"');
     expect(html).toContain("dot--live");
+  });
+
+  it("hides tool logs and updates one live status while preserving visible work", () => {
+    const events = [
+      workEvent(1, { kind: "text", block: "a", delta: "Thinking here" }),
+      workEvent(2, { kind: "tool.started", call: "first", name: "shell", input: "first command" }),
+      workEvent(3, { kind: "tool.finished", call: "first", ok: true, output: "secret output" }),
+      workEvent(4, { kind: "message", id: "m1", from: "owner", text: "Keep going", delivery: "steered" }),
+      workEvent(5, { kind: "tool.started", call: "second", name: "search", input: "second query" }),
+    ];
+    const live = render(detailOf(running, events));
+    expect(live).toContain("Thinking here");
+    expect(live).toContain("Keep going");
+    expect(live).not.toContain("first command");
+    expect(live).not.toContain("secret output");
+    expect(live).not.toContain('<details class="tool"');
+    expect(live.match(/class="brain-status"/g)).toHaveLength(1);
+    expect(live).toContain(catalogText("brain.callingWithSummary", { tool: "search", summary: "second query" }));
+
+    const idle = render(detailOf(running, [...events, workEvent(6, { kind: "tool.finished", call: "second", ok: true, output: "other output" })]));
+    expect(idle).toContain(catalogText("ticket.working"));
+    expect(idle).not.toContain("second query");
+    expect(idle).not.toContain("other output");
+
+    const ended = render(detailOf(running, [...events, workEvent(6, { kind: "stopped", saved: true, detail: "" })]));
+    expect(ended).not.toContain('class="brain-status"');
+    expect(ended).not.toContain("second query");
+    expect(ended).toContain(catalogText("timeline.workSaved"));
+
+    const trailingTool = render(detailOf(running, [events[0]!, events[1]!]));
+    expect(trailingTool).toContain('class="msg-text cursor"');
   });
 
   it("offers no reply box and no motion when the worker cannot be reached, and says since when", () => {

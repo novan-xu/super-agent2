@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, ToolEntry, Turn } from "@super-agent2/protocol";
+import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, Turn } from "@super-agent2/protocol";
 import { memo } from "react";
 import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
@@ -72,36 +72,15 @@ const BrainText = memo(function BrainText({
   );
 });
 
-const toolDots = { running: "dot dot--ok dot--live", done: "dot dot--ok", failed: "dot dot--bad" } as const;
-
-export interface ToolFoldProps {
-  readonly name: string;
-  readonly input: string;
-  readonly output: string;
-  readonly state: ToolEntry["state"];
-  readonly stopped: boolean;
+export function LiveStatus({ tool, idle }: { readonly tool: { readonly name: string; readonly input: string } | null; readonly idle: string }) {
+  const summary = tool === null ? "" : toolSummary(tool.input);
+  const status = tool === null
+    ? idle
+    : summary === ""
+      ? text("brain.calling", { tool: toolName(tool.name) })
+      : text("brain.callingWithSummary", { tool: toolName(tool.name), summary });
+  return <div className="brain-status" aria-live="polite">{status}</div>;
 }
-
-export const ToolFold = memo(function ToolFold({ name, input, output, state, stopped }: ToolFoldProps) {
-  return (
-    <details className="tool">
-      <summary className="tool-head">
-        <span
-          className={stopped ? "dot dot--mute" : toolDots[state]}
-          role="img"
-          aria-label={stopped ? text("turn.state.interrupted") : text(`tool.state.${state}`)}
-        />
-        <span className="tool-name">{toolName(name)}</span>
-        <code className="tool-sum od-truncate">{toolSummary(input)}</code>
-        <Icon name="chev" />
-      </summary>
-      <div className="tool-body">
-        <pre className="tool-in">{input}</pre>
-        {output === "" ? null : <pre className="tool-out">{output}</pre>}
-      </div>
-    </details>
-  );
-});
 
 export interface DeliveryBodyProps {
   readonly ticket: number;
@@ -163,15 +142,8 @@ export function StreamEntry({ item, thisYear }: { readonly item: StreamItem; rea
   switch (item.kind) {
     case "day":
       return <div className="day">{dayLabel(item.day, thisYear)}</div>;
-    case "status": {
-      const summary = item.tool === null ? "" : toolSummary(item.tool.input);
-      const status = item.tool === null
-        ? text("brain.thinking")
-        : summary === ""
-          ? text("brain.calling", { tool: toolName(item.tool.name) })
-          : text("brain.callingWithSummary", { tool: toolName(item.tool.name), summary });
-      return <div className="brain-status" aria-live="polite">{status}</div>;
-    }
+    case "status":
+      return <LiveStatus tool={item.tool} idle={text("brain.thinking")} />;
     case "ended":
       return <Ended turn={item.turn} />;
     case "entry": {
