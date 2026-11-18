@@ -810,6 +810,14 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 34,
+    sql: `
+      CREATE TABLE transfer_files (id TEXT PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL, media_type TEXT NOT NULL, created_at INTEGER NOT NULL) STRICT;
+      CREATE TABLE transfer_entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, device TEXT NOT NULL, created_at INTEGER NOT NULL) STRICT;
+      CREATE TABLE transfer_entry_files (entry INTEGER NOT NULL REFERENCES transfer_entries(seq) ON DELETE CASCADE, file TEXT NOT NULL UNIQUE REFERENCES transfer_files(id), PRIMARY KEY(entry, file)) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
