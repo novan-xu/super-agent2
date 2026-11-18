@@ -101,6 +101,36 @@ describe("a runner moving to the hub's version", () => {
     expect(readFileSync(join(versionFolder(join(home, "versions"), next), readyFile), "utf8").trim()).toBe(next);
   });
 
+  it("does not switch to a version the hub no longer runs, as when a release of the hub went back, and switches once it runs it again", async () => {
+    const update = updater();
+    busy = 1;
+    update.announced(next);
+    await update.settled();
+    expect(lines.at(-1)).toBe("Version 2222222 is ready; the runner switches to it once its 1 running piece(s) of work end");
+    update.announced(running);
+    expect(lines.at(-1)).toBe("The hub runs 1111111 again, the version of this runner, so it does not switch to 2222222");
+    busy = 0;
+    update.changed();
+    expect(restarts).toBe(0);
+    expect(readState(entryFiles(home))?.current).toBe(oldMain);
+    calls.length = 0;
+    update.announced(next);
+    await update.settled();
+    expect(calls).toEqual([]);
+    expect(restarts).toBe(1);
+    expect(readState(entryFiles(home))?.currentVersion).toBe(next);
+  });
+
+  it("does not switch to a version it was still preparing when the hub went back", async () => {
+    const update = updater();
+    update.announced(next);
+    update.announced(running);
+    await update.settled();
+    expect(calls).toEqual(["download 2", "extract", "install", "check"]);
+    update.changed();
+    expect(restarts).toBe(0);
+  });
+
   it("leaves its own version, an unknown one and an unsupervised runner alone", async () => {
     updater().announced(running);
     updater().announced(undefined);

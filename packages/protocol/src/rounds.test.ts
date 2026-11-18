@@ -120,15 +120,15 @@ describe("what each state offers", () => {
   });
 
   it("lets a ticket stop for the owner from working or verifying, and leave only back to where it was or to stopped", () => {
-    expect(canMoveTicket("feature", "working", "stuck")).toBe(true);
-    expect(canMoveTicket("feature", "verifying", "stuck")).toBe(true);
-    expect(canMoveTicket("feature", "stuck", "working")).toBe(true);
-    expect(canMoveTicket("feature", "stuck", "verifying")).toBe(true);
-    expect(canMoveTicket("feature", "stuck", "stopped")).toBe(true);
-    expect(canMoveTicket("feature", "stuck", "merged")).toBe(false);
-    expect(canMoveTicket("writing", "stuck", "verifying")).toBe(false);
-    expect(canMoveTicket("feature", "pending", "stuck")).toBe(false);
-    expect(canMoveTicket("feature", "stopped", "stuck")).toBe(false);
+    expect(canMoveTicket("code", "working", "stuck")).toBe(true);
+    expect(canMoveTicket("code", "verifying", "stuck")).toBe(true);
+    expect(canMoveTicket("code", "stuck", "working")).toBe(true);
+    expect(canMoveTicket("code", "stuck", "verifying")).toBe(true);
+    expect(canMoveTicket("code", "stuck", "stopped")).toBe(true);
+    expect(canMoveTicket("code", "stuck", "merged")).toBe(false);
+    expect(canMoveTicket("task", "stuck", "verifying")).toBe(false);
+    expect(canMoveTicket("code", "pending", "stuck")).toBe(false);
+    expect(canMoveTicket("code", "stopped", "stuck")).toBe(false);
   });
 
   it("takes an answer with the time of the stop, the answer and optional words", () => {

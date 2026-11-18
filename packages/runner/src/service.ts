@@ -5,7 +5,6 @@ import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
 import { machineReport } from "./machine.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
-import { runShell } from "./shell.js";
 import { createUpdater, systemSteps, type Updater, type UpdateSteps } from "./update.js";
 import { createWorks, type Works, type WorksOptions } from "./works.js";
 
@@ -45,13 +44,9 @@ function describe(event: LinkEvent): string {
     case "refused":
       return `The hub refused the connection (HTTP ${event.status})`;
     case "closed":
-      return `The connection closed (${event.code}${event.reason === "" ? "" : ` ${event.reason}`}); stopped ${event.stopped} running command(s)`;
-    case "started":
-      return `Command ${event.id} started${event.pid === undefined ? "" : ` as process ${event.pid}`}`;
-    case "ended":
-      return `Command ${event.id} ended with ${event.exitCode ?? event.signal ?? "no code"}`;
-    case "failed":
-      return `Command ${event.id} could not run: ${event.reason}`;
+      return `The connection closed (${event.code}${event.reason === "" ? "" : ` ${event.reason}`}); work goes on, and is synced again when the hub is back`;
+    case "ignored":
+      return `The hub sent a message of a kind this runner does not know (${event.kind}); it is ignored until the runner moves to the hub's version`;
     case "retrying":
       return `Connecting again in ${Math.round(event.delay / 1000)} s`;
   }
@@ -88,6 +83,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     send: (message) => bound?.send(message),
     ledger,
     log,
+    machine: config.name,
     changed: () => {
       bound?.update();
       updater?.changed();
@@ -99,8 +95,6 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     config,
     report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, works.busy()), ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => works,
-    execute: (job, sink) => runShell(job, sink, { environment: options.environment }),
-    ledger,
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
     onEvent: (event) => {
@@ -108,8 +102,6 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
       if (event.type === "connected") {
         updater?.confirmed();
         updater?.announced(event.version);
-      } else if (event.type === "ended" || event.type === "failed") {
-        updater?.changed();
       }
     },
   });
@@ -130,7 +122,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
           environment: options.environment,
           nodePath: process.execPath,
         }),
-      busy: () => works.busy() + link.running().length,
+      busy: () => works.busy(),
       restart: options.restart ?? (() => undefined),
       log,
       now,

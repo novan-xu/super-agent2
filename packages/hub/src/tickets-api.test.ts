@@ -126,7 +126,7 @@ describe("the brain's ticket tools", () => {
       "stop_command",
       "file_issue",
       "open_ticket",
-      "open_writing_ticket",
+      "open_task_ticket",
       "list_tickets",
       "read_ticket",
       "message_worker",
@@ -139,8 +139,6 @@ describe("the brain's ticket tools", () => {
       "merge_ticket",
       "guide_ticket",
       "describe_stuck",
-      "deploy_repository",
-      "read_deployment",
       "remember",
       "recall",
       "forget",
@@ -207,11 +205,12 @@ describe("the brain's ticket tools", () => {
   });
 });
 
-describe("the brain's tool for writing work", () => {
+describe("the brain's tool for task tickets", () => {
   const writingArguments = {
     title: { en: "Translate a notice", zh: "翻译一则通知" },
     summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
     task: "Translate the notice into English.",
+    kind: "writing",
     material: [
       { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
       { name: "terms", source: "https://example.com/terms" },
@@ -221,12 +220,12 @@ describe("the brain's tool for writing work", () => {
   it("opens a pending ticket with no repository and no issue, keeping the task and the material, and shows them on read", async () => {
     const running = await start();
     const conversation = running.conversations.create();
-    const opened = await callTool(running, "open_writing_ticket", writingArguments, conversation.id);
+    const opened = await callTool(running, "open_task_ticket", writingArguments, conversation.id);
     expect(opened.isError).toBe(false);
-    expect(opened.text).toContain("Opened writing ticket 1");
+    expect(opened.text).toContain("Opened task ticket 1");
     expect(github.jobs).toEqual([]);
-    expect(running.tickets.get(1)).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id, title: { zh: "翻译一则通知" } });
-    expect(running.tickets.writing(1)?.materials).toEqual([
+    expect(running.tickets.get(1)).toMatchObject({ form: "task", kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id, title: { zh: "翻译一则通知" } });
+    expect(running.tickets.task(1)?.materials).toEqual([
       { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
       { name: "terms", source: "https://example.com/terms", text: null },
     ]);
@@ -234,7 +233,7 @@ describe("the brain's tool for writing work", () => {
     expect(read.text).toContain("Task: Translate the notice into English.");
     expect(read.text).toContain("Material notice.txt, from pasted by the owner in the conversation (6 characters given)");
     expect(read.text).toContain("Material terms, from https://example.com/terms (by its source only)");
-    expect((await callTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing in no repository: Translate a notice");
+    expect((await callTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing task in no repository: Translate a notice");
   });
 
   it("refuses a missing Chinese copy, an unsafe material name and repeated names, opening nothing", async () => {
@@ -246,7 +245,7 @@ describe("the brain's tool for writing work", () => {
       { ...writingArguments, task: "  " },
     ];
     for (const args of refused) {
-      expect((await callTool(running, "open_writing_ticket", args)).isError).toBe(true);
+      expect((await callTool(running, "open_task_ticket", args)).isError).toBe(true);
     }
     expect(running.tickets.list({})).toEqual([]);
   });
@@ -254,9 +253,9 @@ describe("the brain's tool for writing work", () => {
   it("takes any amount of material and a task of any length", async () => {
     const running = await start();
     const material = Array.from({ length: 25 }, (_, index) => ({ name: `piece-${index}.txt`, source: `pasted part ${index} ${"of a long source ".repeat(60)}`, text: "字".repeat(30_000) }));
-    const opened = await callTool(running, "open_writing_ticket", { ...writingArguments, task: "Translate everything. ".repeat(2_000), material });
+    const opened = await callTool(running, "open_task_ticket", { ...writingArguments, task: "Translate everything. ".repeat(2_000), material });
     expect(opened.isError, opened.text).toBe(false);
-    expect(running.tickets.writing(1)?.materials).toHaveLength(25);
+    expect(running.tickets.task(1)?.materials).toHaveLength(25);
   });
 });
 

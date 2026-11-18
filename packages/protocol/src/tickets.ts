@@ -6,9 +6,24 @@ import { TicketRound, TicketStuck } from "./rounds.js";
 import { TicketVerification } from "./verification.js";
 import { WorkStatus } from "./work.js";
 
-export const ticketKinds = ["writing", "parameter", "fix", "feature", "refactor", "maintenance"] as const;
+export const ticketForms = ["code", "task"] as const;
+export const TicketForm = z.enum(ticketForms);
+export type TicketForm = z.infer<typeof TicketForm>;
+
+export const ticketKinds = ["writing", "operation", "parameter", "fix", "feature", "refactor", "maintenance"] as const;
 export const TicketKind = z.enum(ticketKinds);
 export type TicketKind = z.infer<typeof TicketKind>;
+
+export const taskKinds = ["writing", "operation"] as const satisfies readonly TicketKind[];
+export const codeKinds = ["parameter", "fix", "feature", "refactor", "maintenance"] as const satisfies readonly TicketKind[];
+
+export function kindsOf(form: TicketForm): readonly TicketKind[] {
+  return form === "task" ? taskKinds : codeKinds;
+}
+
+export function fitsForm(form: TicketForm, kind: TicketKind): boolean {
+  return kindsOf(form).includes(kind);
+}
 
 export const ticketStates = ["pending", "waiting", "working", "verifying", "stuck", "merged", "delivered", "stopped"] as const;
 export const TicketState = z.enum(ticketStates);
@@ -33,10 +48,16 @@ export const ticketMoves: Readonly<Record<TicketState, readonly TicketState[]>> 
   stopped: [],
 };
 
-export const statesOutsideKind: Readonly<Record<"writing" | "code", readonly TicketState[]>> = {
-  writing: ["verifying", "merged"],
+export const statesOutsideForm: Readonly<Record<TicketForm, readonly TicketState[]>> = {
+  task: ["verifying", "merged"],
   code: ["delivered"],
 };
+
+export const doneTicketStates: readonly TicketState[] = ["merged", "delivered"];
+
+export function isDoneTicket(state: TicketState): boolean {
+  return doneTicketStates.includes(state);
+}
 
 export const openTicketStates: readonly TicketState[] = ticketStates.filter((state) => ticketMoves[state].length > 0);
 
@@ -46,9 +67,8 @@ export function isOpenTicket(state: TicketState): boolean {
   return openTicketStates.includes(state);
 }
 
-export function canMoveTicket(kind: TicketKind, from: TicketState, to: TicketState): boolean {
-  const outside = statesOutsideKind[kind === "writing" ? "writing" : "code"];
-  return ticketMoves[from].includes(to) && !outside.includes(to);
+export function canMoveTicket(form: TicketForm, from: TicketState, to: TicketState): boolean {
+  return ticketMoves[from].includes(to) && !statesOutsideForm[form].includes(to);
 }
 
 export const RepositoryName = z
@@ -150,8 +170,21 @@ export function openPullRequest<T extends Pick<TicketPullRequest, "state">>(pull
   return pullRequests.filter((pull) => pull.state === "open").at(-1);
 }
 
+export const CommitName = z.string().regex(/^[0-9a-f]{7,40}$/i);
+
+export const mergedCommit = "merged";
+
+export const CommitRef = z
+  .string()
+  .trim()
+  .min(1)
+  .max(250)
+  .regex(/^[A-Za-z0-9._/-]+$/)
+  .refine((ref) => !ref.startsWith("-") && !ref.includes(".."), { message: "is not a commit or a branch" });
+
 export const Ticket = z.object({
   id: TicketId,
+  form: TicketForm.default("code"),
   repository: RepositoryName.nullable(),
   issues: z.array(TicketIssue),
   title: GeneratedText,
@@ -160,6 +193,10 @@ export const Ticket = z.object({
   difficulty: Difficulty.nullable(),
   difficultyReason: GeneratedText.nullable(),
   platform: Platform.nullable(),
+  requiredMachine: z.string().nullable().default(null),
+  commitRef: z.string().nullable().default(null),
+  commit: z.string().nullable().default(null),
+  deploys: z.boolean().default(false),
   brainEngine: ProgramId.nullable(),
   ownerChoice: OwnerChoice,
   state: TicketState,

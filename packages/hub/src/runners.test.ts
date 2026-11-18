@@ -14,7 +14,6 @@ import {
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { interruptedReason } from "./commands.js";
 import type { Hub } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
 import { assertion, keySet, personClaims, serviceClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -110,92 +109,38 @@ class FakeRunner {
     });
   }
 
-  run(): Promise<Extract<HubToRunner, { type: "run" }>> {
-    return this.until(() => this.sent.find((message): message is Extract<HubToRunner, { type: "run" }> => message.type === "run"));
-  }
 }
 
-describe("a runner as a target", () => {
-  it("runs a command by the machine's name, streams its output and records its end", async () => {
+describe("a runner's link", () => {
+  it("welcomes the machine and reports it online", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     const runner = new FakeRunner().connect(running, "pc");
     expect(runner.sent[0]).toEqual({ type: "welcome", protocol: protocolVersion, name: "pc" });
-    const record = running.commands.start({ target: "pc", command: "echo hi", cwd: "C:\\work" });
-    const run = await runner.run();
-    expect(run).toMatchObject({ command: "echo hi", cwd: "C:\\work" });
-    expect(run.environment["GH_TOKEN"]).toBe(testTokens["novan-xu"]);
-    await waitForState(running.commands, record.id, "running");
-    const bytes = Buffer.from("héllo\n", "utf8");
-    runner.link?.receive({ type: "output", id: run.id, stream: "stdout", data: bytes.subarray(0, 2).toString("base64") });
-    runner.link?.receive({ type: "output", id: run.id, stream: "stdout", data: bytes.subarray(2).toString("base64") });
-    runner.link?.receive({ type: "ended", id: run.id, exitCode: 3, signal: null });
-    const ended = await running.commands.finished(record.id);
-    expect(ended).toMatchObject({ state: "exited", exitCode: 3 });
-    expect(running.commands.output(record.id).map((chunk) => chunk.data).join("")).toBe("héllo\n");
     expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true, report })]);
   });
 
-  it("sends a stop and records the command as stopped", async () => {
-    const running = await start();
+  it("is no target for a command: a command named after a machine fails, and nothing reaches the runner", async () => {
+    const running = await start(true);
     running.machines.add({ name: "pc", accessClientId: clientId });
     const runner = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "sleep" });
-    const run = await runner.run();
-    await waitForState(running.commands, record.id, "running");
-    running.commands.stop(record.id);
-    await runner.until(() => runner.sent.find((message) => message.type === "stop" && message.id === run.id));
-    runner.link?.receive({ type: "ended", id: run.id, exitCode: 1, signal: null });
-    expect(await running.commands.finished(record.id)).toMatchObject({ state: "stopped" });
+    const record = running.commands.start({ target: "pc", command: "echo hi" });
+    expect(await running.commands.finished(record.id)).toMatchObject({ state: "failed", reason: text("command.reason.noTarget", { target: "pc" }) });
+    const held = running.commands.start({ target: "pc", command: "gh repo delete novan-xu/old-experiments --yes" });
+    await waitForState(running.commands, held.id, "held");
+    running.commands.stop(held.id);
+    await running.commands.finished(held.id);
+    expect(runner.sent.map((message) => message.type)).toEqual(["welcome"]);
   });
 
-  it("records a command the runner could not start as failed", async () => {
-    const running = await start();
-    running.machines.add({ name: "pc", accessClientId: clientId });
-    const runner = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "x", cwd: "Z:\\missing" });
-    const run = await runner.run();
-    runner.link?.receive({ type: "failed", id: run.id, reason: "The folder Z:\\missing does not exist on this machine" });
-    expect(await running.commands.finished(record.id)).toMatchObject({ state: "failed", reason: "The folder Z:\\missing does not exist on this machine" });
-  });
-
-  it("fails a command for a machine that is offline, and one for an unknown or revoked name", async () => {
-    const running = await start();
-    running.machines.add({ name: "pc", accessClientId: clientId });
-    const offline = running.commands.start({ target: "pc", command: "x" });
-    expect(await running.commands.finished(offline.id)).toMatchObject({ state: "failed", reason: text("command.reason.offline", { target: "pc" }) });
-    running.runners.revoke("pc");
-    const revoked = running.commands.start({ target: "pc", command: "x" });
-    expect(await running.commands.finished(revoked.id)).toMatchObject({ state: "failed", reason: text("command.reason.noTarget", { target: "pc" }) });
-  });
-
-  it("records a running command as interrupted when the connection drops", async () => {
-    const running = await start();
-    running.machines.add({ name: "pc", accessClientId: clientId });
-    const runner = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "sleep" });
-    await runner.run();
-    await waitForState(running.commands, record.id, "running");
-    runner.link?.closed();
-    expect(await running.commands.finished(record.id)).toMatchObject({
-      state: "interrupted",
-      reason: text("command.reason.machineLost", { target: "pc" }),
-    });
-    expect(running.runners.statuses()[0]?.online).toBe(false);
-  });
-
-  it("closes a revoked runner's connection and interrupts its command, also when another process revokes it", async () => {
+  it("closes a revoked runner's connection, also when another process revokes it", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     running.machines.add({ name: "mac", accessClientId: clientId });
     const pc = new FakeRunner().connect(running, "pc");
     const mac = new FakeRunner().connect(running, "mac");
-    const record = running.commands.start({ target: "pc", command: "sleep" });
-    await pc.run();
-    await waitForState(running.commands, record.id, "running");
     running.runners.revoke("pc");
     expect(pc.closedWith).toEqual({ code: runnerCloseCodes.revoked, reason: "revoked" });
-    expect(await running.commands.finished(record.id)).toMatchObject({ state: "interrupted" });
     expect(mac.closedWith).toBeUndefined();
     const { openDatabase } = await import("./database.js");
     const { createMachineStore } = await import("./machines.js");
@@ -207,55 +152,26 @@ describe("a runner as a target", () => {
     }
     await mac.until(() => mac.closedWith);
     expect(mac.closedWith).toEqual({ code: runnerCloseCodes.revoked, reason: "revoked" });
+    expect(running.runners.statuses()).toEqual([]);
   });
 
   it("replaces an older connection of the same machine", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     const first = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "sleep" });
-    await first.run();
-    await waitForState(running.commands, record.id, "running");
     const second = new FakeRunner().connect(running, "pc");
     expect(first.closedWith?.code).toBe(runnerCloseCodes.replaced);
-    expect(await running.commands.finished(record.id)).toMatchObject({ state: "interrupted" });
-    const next = running.commands.start({ target: "pc", command: "echo" });
-    const run = await second.run();
-    second.link?.receive({ type: "ended", id: run.id, exitCode: 0, signal: null });
-    expect(await running.commands.finished(next.id)).toMatchObject({ state: "exited" });
+    expect(second.closedWith).toBeUndefined();
+    expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true })]);
   });
 
-  it("records a runner's command as interrupted by the hub when the hub closes", async () => {
+  it("closes the runner's connection as the hub closing when the hub closes", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     const runner = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "sleep" });
-    await runner.run();
-    await waitForState(running.commands, record.id, "running");
     await running.close();
     hub = undefined;
     expect(runner.closedWith?.code).toBe(runnerCloseCodes.closing);
-    const { openDatabase } = await import("./database.js");
-    const database = openDatabase({ dataDir, clock });
-    try {
-      const row = database.connection.prepare("SELECT state, reason FROM commands WHERE id = ?").get(record.id);
-      expect(row).toEqual({ state: "interrupted", reason: interruptedReason });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("holds a command on the lock's list for a runner as for any other target", async () => {
-    const running = await start(true);
-    running.machines.add({ name: "pc", accessClientId: clientId });
-    const runner = new FakeRunner().connect(running, "pc");
-    const record = running.commands.start({ target: "pc", command: "gh repo delete novan-xu/old-experiments --yes" });
-    const held = await waitForState(running.commands, record.id, "held");
-    expect(held.reason).toContain("gh repo delete");
-    expect(runner.sent.filter((message) => message.type === "run")).toEqual([]);
-    running.commands.stop(record.id);
-    await running.commands.finished(record.id);
-    expect(runner.sent.filter((message) => message.type === "run")).toEqual([]);
   });
 });
 
@@ -349,7 +265,7 @@ describe("the runner's path at the front door", () => {
     const welcome = new Promise<unknown>((resolve) => admitted.socket?.once("message", (data) => resolve(JSON.parse(String(data)))));
     admitted.socket?.send(JSON.stringify({ type: "hello", protocol: protocolVersion, machine: { ...report, version: "b".repeat(40) } }));
     expect(await welcome).toEqual({ type: "welcome", protocol: protocolVersion, name: "pc", version });
-    expect(running.runners.describe()).toBe(`"pc" is a work machine (Windows, online, runner at bbbbbbb, not yet the hub's version)`);
+    expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true, report: expect.objectContaining({ version: "b".repeat(40) }) })]);
     admitted.socket?.close();
   });
 

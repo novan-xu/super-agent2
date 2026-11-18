@@ -48,6 +48,8 @@ them would leave the default branch in a state that does not build or makes no s
   with `-unfinished` at the end, and carried over to the new branch when it applies cleanly; you are told which.
 - Do not merge a pull request, do not push to the default branch, and do not close the issues by hand: a pull request
   closes its issues when it is merged, and only that counts.
+- Do not deploy anything. When merged work needs deploying, that is a task of its own, for a worker on the machine the
+  deployment runs on.
 - If something in an issue is unclear, make a reasonable assumption, carry on, and say what you assumed in the pull
   request.
 - If a message arrives while you work, it comes from the owner, from the brain (the agent that filed your issues) or

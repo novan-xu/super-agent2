@@ -284,7 +284,7 @@ export function fakeForge(): FakeForge {
     const commitMatch = /^commits\/(.+)$/.exec(rest);
     if (commitMatch !== null) {
       const ref = commitMatch[1] ?? "";
-      const sha = repository.trees.has(ref) ? ref : ref === "main" ? repository.mainline.at(-1) : undefined;
+      const sha = repository.trees.has(ref) ? ref : ref === "main" || ref === "HEAD" ? repository.mainline.at(-1) : undefined;
       return sha === undefined ? json(422, { message: `No commit found for SHA: ${ref}` }) : json(200, { sha });
     }
     const issueMatch = /^issues\/(\d+)$/.exec(rest);

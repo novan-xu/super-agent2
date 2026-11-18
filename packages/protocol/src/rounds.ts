@@ -5,7 +5,7 @@ import type { WorkStatus } from "./work.js";
 
 export const roundCap = 3;
 
-export const loopFailureKinds = ["workflow", "no-pull-request", "program", "lost", "prepare"] as const;
+export const loopFailureKinds = ["workflow", "no-pull-request", "program", "lost", "prepare", "task-failed"] as const;
 export const LoopFailureKind = z.enum(loopFailureKinds);
 export type LoopFailureKind = z.infer<typeof LoopFailureKind>;
 

@@ -14,8 +14,10 @@ import {
   type LoopFailure,
   mergedIssueNumbers,
   openIssueNumbers,
+  mergedCommit,
   type RunnerWorkEvent,
   StoredWorkEvent,
+  type TaskAssignment,
   type Ticket,
   WorkEngine,
   WorkEvent,
@@ -37,6 +39,7 @@ import type { FailureReport } from "./failure-loop.js";
 import { clip, tail } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { AttachmentStore } from "./attachments.js";
+import { mergedCommitFor, short } from "./task-tickets.js";
 import { createWorkerMessages } from "./worker-messages.js";
 import type { TicketService, TicketWork } from "./tickets.js";
 
@@ -138,11 +141,19 @@ export function branchFor(ticket: number, suffix: string): string {
   return `sa2/ticket-${ticket}-${suffix}`;
 }
 
+function taskWords(ticket: Ticket): string {
+  if (ticket.repository === null) {
+    return "It is a task ticket, worked on in a scratch folder.";
+  }
+  return `It is a task ticket on ${ticket.repository}${ticket.commit === null ? "" : ` at ${ticket.commit}`}${ticket.deploys ? ", which deploys it" : ""}.`;
+}
+
 const failureWords: Readonly<Record<WorkFailure, string>> = {
   prepare: "could not prepare its worktree",
   program: "failed",
   "no-pull-request": "ended without a pull request",
   lost: "was lost",
+  "task-failed": "handed back that its task failed",
 };
 
 export function createWorkService(options: WorkServiceOptions): WorkService {
@@ -262,7 +273,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         failure: { kind: failure, detail: reason },
         evidence: [
           `The worker of ticket ${ticket.id} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${failureWords[failure]}: ${reason}`,
-          ticket.kind === "writing" ? "It is a writing ticket, with no branch." : `Branch: ${ticket.branch ?? "(none)"}; pull request: ${ticket.pullRequest === null ? "none yet" : `#${ticket.pullRequest}`}.`,
+          ticket.form === "task" ? taskWords(ticket) : `Branch: ${ticket.branch ?? "(none)"}; pull request: ${ticket.pullRequest === null ? "none yet" : `#${ticket.pullRequest}`}.`,
+          ...(ticket.report === null || failure !== "task-failed" ? [] : [`The worker's report: ${ticket.report.en}`]),
           "The worker's output ends with:",
           outputOf(ticket.id, attempt.attempt, 8_000) || "(no output)",
         ].join("\n"),
@@ -274,7 +286,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       text("notice.workerFailed", { ticket: ticket.id }),
       [
         `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${failureWords[failure]}: ${reason}`,
-        `The ticket stays working with this failure recorded${ticket.kind === "writing" ? "" : `, on branch ${ticket.branch ?? "(none)"}`}, and nothing is running for it now.`,
+        `The ticket stays working with this failure recorded${ticket.form === "task" ? "" : `, on branch ${ticket.branch ?? "(none)"}`}, and nothing is running for it now.`,
         "Its output ends with:",
         outputOf(ticket.id, attempt.attempt, 6_000) || "(no output)",
         "Tell the owner what happened and what you think should be done. The owner can reassign it to start it again; stop it with stop_ticket if it cannot be done.",
@@ -316,27 +328,52 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     };
   };
 
-  const startOf = (ticket: Ticket, attempt: Attempt): WorkMessageToRunner | string => {
-    if (ticket.kind === "writing") {
-      const writing = tickets.writing(ticket.id);
-      if (writing === undefined) {
-        return `Ticket ${ticket.id} has no writing task`;
+  const assignmentOf = (ticket: Ticket, attempt: Attempt): TaskAssignment | string => {
+    const task = tickets.task(ticket.id);
+    if (task === undefined) {
+      return `Ticket ${ticket.id} has no task`;
+    }
+    let checkout: TaskAssignment["checkout"] = null;
+    let environment: Record<string, string> = {};
+    if (ticket.repository !== null) {
+      const account = (options.accountOf ?? accountFor)(ticket.repository);
+      const credentials = options.credentials(account);
+      if (!credentials.ok) {
+        return credentials.reason;
       }
-      return {
-        type: "work.write",
-        task: {
-          ticket: ticket.id,
-          attempt: attempt.attempt,
-          title: ticket.title.en,
-          task: writing.task,
-          materials: [...writing.materials],
-          engine: attempt.engine,
-          model: attempt.model,
-          effort: attempt.effort,
-          session: attempt.session ?? attempt.resume_session,
-          note: attempt.note,
-        },
+      const token = credentials.credentials["GH_TOKEN"];
+      if (token === undefined) {
+        return `There is no GitHub token for ${ticket.repository}`;
+      }
+      environment = { GH_TOKEN: token, GITHUB_TOKEN: token };
+      checkout = {
+        repository: ticket.repository,
+        account,
+        commit: task.commit,
+        ref: task.commit !== null || task.commitRef === mergedCommit ? null : task.commitRef,
       };
+    }
+    return {
+      ticket: ticket.id,
+      attempt: attempt.attempt,
+      title: ticket.title.en,
+      task: task.task,
+      materials: [...task.materials],
+      checkout,
+      deploys: task.deploys,
+      engine: attempt.engine,
+      model: attempt.model,
+      effort: attempt.effort,
+      session: attempt.session ?? attempt.resume_session,
+      note: attempt.note,
+      environment,
+    };
+  };
+
+  const startOf = (ticket: Ticket, attempt: Attempt): WorkMessageToRunner | string => {
+    if (ticket.form === "task") {
+      const task = assignmentOf(ticket, attempt);
+      return typeof task === "string" ? task : { type: "work.task", task };
     }
     const task = taskOf(ticket, attempt);
     return typeof task === "string" ? task : { type: "work.start", task };
@@ -434,8 +471,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (!engine.success) {
       throw new Error(`${ticket.engine} is not an engine for work`);
     }
-    if (ticket.kind !== "writing" && engine.data === "antigravity") {
-      throw new Error("Antigravity is for writing work; code work needs Codex, Claude Code or dsh");
+    if (ticket.form === "code" && engine.data === "antigravity") {
+      throw new Error("Antigravity never runs a code ticket; it needs Codex, Claude Code or dsh");
     }
     const machine = ticket.machine;
     const sameMachine = previous?.machine === machine;
@@ -467,7 +504,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (previous !== undefined && (previous.state === "queued" || isActive(previous.state))) {
         end(ticket.id, previous.attempt, "replaced", null, null);
       }
-      if (ticket.branch === null && ticket.kind !== "writing") {
+      if (ticket.branch === null && ticket.form === "code") {
         writes.setBranch(ticket.id, branchFor(ticket.id, suffix()));
       }
       insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover, clock.now());
@@ -477,10 +514,22 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     dispatch();
   };
 
+  const settleCommit = (ticket: Ticket): Ticket => {
+    if (ticket.form !== "task" || ticket.commitRef !== mergedCommit || ticket.commit !== null) {
+      return ticket;
+    }
+    const commit = mergedCommitFor(ticket, tickets.get);
+    if (commit === null) {
+      return ticket;
+    }
+    tickets.change((writes) => writes.setCommit(ticket.id, commit));
+    return tickets.get(ticket.id) ?? ticket;
+  };
+
   const begin = (ticket: Ticket) => {
-    if (ticket.kind === "writing") {
-      if (tickets.writing(ticket.id) === undefined) {
-        throw new Error(`Ticket ${ticket.id} has no writing task`);
+    if (ticket.form === "task") {
+      if (tickets.task(ticket.id) === undefined) {
+        throw new Error(`Ticket ${ticket.id} has no task`);
       }
     } else if (ticket.repository === null || ticket.issues.length === 0) {
       throw new Error(`Ticket ${ticket.id} has no repository or no issues`);
@@ -493,7 +542,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (current.state !== "working") {
       return;
     }
-    nextAttempt(current, null, undefined);
+    nextAttempt(settleCommit(current), null, undefined);
   };
 
   const handIn = (ticket: Ticket, event: Extract<WorkEvent, { readonly kind: "delivered" }>) => {
@@ -501,17 +550,26 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     const files = event.files.map((file) => ({ name: file.name, size: file.size }));
+    const commit = ticket.commit ?? event.commit ?? null;
     options.deliver(ticket.conversation, {
       ticket: ticket.id,
       title: ticket.title,
       text: event.text,
+      report: event.report,
       files,
       prompt: [
-        `[hub] The result of writing ticket ${ticket.id} (${ticket.title.en}) was delivered to the owner in this conversation. The owner sees the text as written${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. The ticket is delivered; nothing was verified.`,
-        `The worker's note: ${event.report.en}`,
+        `[hub] Task ticket ${ticket.id} (${ticket.title.en}) is done. Its result was delivered to the owner in this conversation: the worker's report${event.text === null ? "" : ", the text as written"}${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. Nothing was verified.`,
+        ...(ticket.deploys && ticket.repository !== null
+          ? [
+              `It deployed ${ticket.repository}${commit === null ? "" : ` at ${commit}`}. The hub marks the merged tickets of ${ticket.repository} that ${commit === null ? "it" : short(commit)} contains as deployed, so what was arranged after this deployment begins by itself.`,
+            ]
+          : ticket.repository === null
+            ? []
+            : [`It worked on ${ticket.repository}${commit === null ? "" : ` at ${commit}`}.`]),
+        `The worker's report: ${event.report.en}`,
         files.length === 0 ? "Files: none." : `Files: ${files.map((file) => `${file.name} (${file.size} bytes)`).join(", ")}.`,
-        event.text === null ? "There is no text, only files." : `The delivered text:\n${clip(event.text, 20_000)}`,
-        "Tell the owner in Chinese, in a line or two, that it is delivered, and mention anything the worker flagged. If the owner wants changes, open a new writing ticket with this text as its material.",
+        event.text === null ? "There is no text beyond the report." : `The delivered text:\n${clip(event.text, 20_000)}`,
+        "Tell the owner in Chinese, in a line or two, that it is done, and mention anything the worker flagged. If the owner wants changes, open a new task ticket with this result as its material.",
       ].join("\n"),
     });
   };
@@ -525,7 +583,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         end(id, pending.attempt, "finished", null, null);
       }
       const ticket = writes.get(id);
-      if (ticket !== undefined && ticket.kind === "writing" && ticket.state === "working") {
+      if (ticket !== undefined && ticket.form === "task" && ticket.state === "working") {
         files.keep(id, pending.attempt, pending.event.files);
         writes.setReport(id, pending.event.report);
         delivered = writes.move(id, "delivered");
@@ -556,7 +614,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     const ticket = tickets.get(id);
-    if (latestOf(id)?.attempt !== pending.attempt || ticket === undefined || ticket.kind !== "writing" || ticket.state !== "working") {
+    if (latestOf(id)?.attempt !== pending.attempt || ticket === undefined || ticket.form !== "task" || ticket.state !== "working") {
       forget(id);
       return;
     }
@@ -672,7 +730,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             end(attempt.ticket_id, attempt.attempt, "finished", null, null);
           }
           const ticket = writes.get(attempt.ticket_id);
-          if (current && ticket !== undefined && ticket.kind !== "writing") {
+          if (current && ticket !== undefined && ticket.form === "code") {
             writes.setPullRequest(ticket.id, event.pullRequest, event.report, { url: event.url, closes: event.closes ?? [] });
             if (ticket.state === "working") {
               writes.move(ticket.id, "verifying");
@@ -683,7 +741,23 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         }
         case "delivered": {
           const ticket = writes.get(attempt.ticket_id);
-          const accepted = current && ticket !== undefined && ticket.kind === "writing" && ticket.state === "working";
+          const accepted = current && ticket !== undefined && ticket.form === "task" && ticket.state === "working";
+          if (accepted && event.commit !== undefined && ticket.commit === null) {
+            writes.setCommit(ticket.id, event.commit);
+          }
+          if (event.outcome === "failed") {
+            if (accepted) {
+              writes.setReport(ticket.id, event.report);
+            }
+            if (live) {
+              end(attempt.ticket_id, attempt.attempt, "failed", "task-failed", event.report.en);
+              if (current) {
+                told = { failure: "task-failed", reason: event.report.en };
+              }
+            }
+            writes.touched(attempt.ticket_id);
+            return;
+          }
           if (accepted && event.files.length > 0) {
             fetchFiles = true;
             writes.touched(attempt.ticket_id);
@@ -726,7 +800,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (delivered !== undefined && event.kind === "delivered") {
       handIn(delivered, event);
     }
-    if (fetchFiles && event.kind === "delivered") {
+    if (fetchFiles && event.kind === "delivered" && event.outcome !== "failed") {
       fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
     }
     if (told !== undefined) {
@@ -799,7 +873,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     for (const value of selectActiveOn.all(machine)) {
       const row = Attempt.parse(value);
       const last = selectRecent.all(row.ticket_id, row.attempt, 1).map(storedOf)[0]?.event;
-      if (last?.kind === "delivered" && last.files.length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
+      if (last?.kind === "delivered" && last.outcome !== "failed" && last.files.length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
         fetchFrom(row.ticket_id, row.attempt, machine, last);
       }
     }

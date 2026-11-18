@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readDeploymentFile } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 function repositoryPath(path: string): string {
@@ -14,8 +15,17 @@ function repositoryFile(path: string): string {
 }
 
 describe("Super-agent2's own repository", () => {
-  it("declares no deployment through the hub", () => {
-    expect(existsSync(repositoryPath(".superagent2/deployment.json"))).toBe(false);
+  it("declares its deployment as a recipe for a worker on a machine that signs in to the NAS, releasing the commit of its checkout", () => {
+    expect(existsSync(repositoryPath(".superagent2/deployment.json"))).toBe(true);
+    const reading = readDeploymentFile(repositoryFile(".superagent2/deployment.json"));
+    if (!reading.ok) {
+      throw new Error(reading.reason);
+    }
+    expect(reading.file.target).toBe("pc");
+    expect(reading.file.deploy).toContain("ssh novan-nas-maintenance");
+    expect(reading.file.deploy).toContain("deploy.sh release $(git rev-parse HEAD)");
+    expect(reading.file.health.command).toContain("deploy.sh health");
+    expect(reading.file.rollback).toContain("deploy.sh rollback");
   });
 });
 

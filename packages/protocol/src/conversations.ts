@@ -70,6 +70,7 @@ export const DeliveryEntry = z.object({
   ticket: z.number().int().positive(),
   title: GeneratedText,
   text: z.string().nullable(),
+  report: GeneratedText.nullable().default(null),
   files: z.array(DeliveryFile),
 });
 export type DeliveryEntry = z.infer<typeof DeliveryEntry>;

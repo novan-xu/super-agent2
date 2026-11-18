@@ -66,6 +66,7 @@ export const failureWords: Readonly<Record<LoopFailureKind, string>> = {
   program: "the worker's program failed (it exited, refused, or ran out of allowance)",
   lost: "the worker was lost: its machine came back without it",
   prepare: "the worker's folder could not be prepared",
+  "task-failed": "the worker handed back that its task failed",
 };
 
 export const refusalWords: Readonly<Record<GuidanceRefusal, string>> = {
@@ -91,8 +92,8 @@ export function workerNote(ticket: Ticket, failure: LoopFailure, guidance: Gener
     ? `Guided round ${round} of ${roundCap}.`
     : "A retry after a failure of the machine, not counted as a guided round.";
   const back =
-    ticket.kind === "writing"
-      ? "Start again from what is in this folder, and hand back as before."
+    ticket.form === "task"
+      ? "Start again from what is in your folders, and hand back as before."
       : `Continue on the same branch ${ticket.branch ?? ""}, from what is already there; push your changes and hand back${ticket.pullRequest === null ? "" : ` the same pull request #${ticket.pullRequest}`} as before.`;
   return [head, `The last attempt failed: ${failureWords[failure.kind]}.`, failure.detail === "" ? "" : `What the hub recorded: ${failure.detail}`, "The brain's guidance:", guidance.en, back]
     .filter((line) => line !== "")
@@ -282,7 +283,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       [
         `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done.`,
         ...chainProgress(ticket),
-        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, deploy it once with deploy_repository at the last merge commit, unless the owner said otherwise; Super-agent2 itself is deployed on the NAS, not through the hub.",
+        "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, and no task ticket that deploys it is arranged, open one at the last merge commit with open_task_ticket, unless the owner said otherwise; the owner starts it.",
       ].join("\n"),
     );
   };

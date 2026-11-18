@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { readDeploymentFile } from "./deployments.js";
 import { ServerMessage } from "./hub.js";
+import { TaskHandback } from "./work.js";
 import {
   canMoveTicket,
+  codeKinds,
   finishedTicketStates,
+  fitsForm,
   isOpenTicket,
   openTicketStates,
   RepositoryName,
+  taskKinds,
   Ticket,
+  ticketForms,
   ticketKinds,
   ticketMoves,
   ticketStates,
@@ -14,6 +20,7 @@ import {
 
 const ticket = {
   id: 1,
+  form: "code",
   repository: "novan-xu/super-agent-sandbox",
   issues: [
     {
@@ -30,6 +37,10 @@ const ticket = {
   difficulty: null,
   difficultyReason: null,
   platform: null,
+  requiredMachine: null,
+  commitRef: null,
+  commit: null,
+  deploys: false,
   brainEngine: null,
   ownerChoice: { machine: null, engine: null, model: null, effort: null },
   state: "pending",
@@ -78,39 +89,39 @@ describe("ticket states", () => {
   });
 
   it("lets every open ticket stop, and nothing move out of a finished state", () => {
-    for (const kind of ticketKinds) {
+    for (const form of ticketForms) {
       for (const state of openTicketStates) {
-        expect(canMoveTicket(kind, state, "stopped")).toBe(true);
+        expect(canMoveTicket(form, state, "stopped")).toBe(true);
       }
       for (const state of finishedTicketStates) {
         for (const next of ticketStates) {
-          expect(canMoveTicket(kind, state, next)).toBe(false);
+          expect(canMoveTicket(form, state, next)).toBe(false);
         }
       }
     }
   });
 
   it("follows the flow from pending through work to its end", () => {
-    expect(canMoveTicket("fix", "pending", "working")).toBe(true);
-    expect(canMoveTicket("fix", "pending", "waiting")).toBe(true);
-    expect(canMoveTicket("fix", "waiting", "working")).toBe(true);
-    expect(canMoveTicket("fix", "working", "verifying")).toBe(true);
-    expect(canMoveTicket("fix", "verifying", "working")).toBe(true);
-    expect(canMoveTicket("fix", "verifying", "merged")).toBe(true);
-    expect(canMoveTicket("writing", "working", "delivered")).toBe(true);
+    expect(canMoveTicket("code", "pending", "working")).toBe(true);
+    expect(canMoveTicket("code", "pending", "waiting")).toBe(true);
+    expect(canMoveTicket("code", "waiting", "working")).toBe(true);
+    expect(canMoveTicket("code", "working", "verifying")).toBe(true);
+    expect(canMoveTicket("code", "verifying", "working")).toBe(true);
+    expect(canMoveTicket("code", "verifying", "merged")).toBe(true);
+    expect(canMoveTicket("task", "working", "delivered")).toBe(true);
   });
 
   it("refuses moves the table does not list", () => {
-    expect(canMoveTicket("fix", "pending", "merged")).toBe(false);
-    expect(canMoveTicket("fix", "pending", "verifying")).toBe(false);
-    expect(canMoveTicket("fix", "working", "pending")).toBe(false);
-    expect(canMoveTicket("fix", "pending", "pending")).toBe(false);
+    expect(canMoveTicket("code", "pending", "merged")).toBe(false);
+    expect(canMoveTicket("code", "pending", "verifying")).toBe(false);
+    expect(canMoveTicket("code", "working", "pending")).toBe(false);
+    expect(canMoveTicket("code", "pending", "pending")).toBe(false);
   });
 
-  it("keeps a writing ticket out of verification and merging, and code out of delivery", () => {
-    expect(canMoveTicket("writing", "working", "verifying")).toBe(false);
-    expect(canMoveTicket("writing", "verifying", "merged")).toBe(false);
-    expect(canMoveTicket("feature", "working", "delivered")).toBe(false);
+  it("keeps a task ticket out of verification and merging, and code out of delivery", () => {
+    expect(canMoveTicket("task", "working", "verifying")).toBe(false);
+    expect(canMoveTicket("task", "verifying", "merged")).toBe(false);
+    expect(canMoveTicket("code", "working", "delivered")).toBe(false);
   });
 });
 
@@ -125,8 +136,14 @@ describe("ticket messages", () => {
     expect(Ticket.safeParse({ ...ticket, title: { en: "Add a greeting", zh: "Add a greeting" } }).success).toBe(false);
   });
 
-  it("allows a writing ticket with no repository", () => {
-    expect(Ticket.safeParse({ ...ticket, kind: "writing", repository: null, issues: [] }).success).toBe(true);
+  it("allows a task ticket with no repository, and one that deploys a repository at a commit", () => {
+    expect(Ticket.safeParse({ ...ticket, form: "task", kind: "writing", repository: null, issues: [] }).success).toBe(true);
+    expect(Ticket.safeParse({ ...ticket, form: "task", kind: "operation", issues: [], requiredMachine: "pc", commitRef: "merged", commit: "a".repeat(40), deploys: true }).success).toBe(true);
+  });
+
+  it("reads a ticket from a hub that did not know forms as code", () => {
+    const { form: _form, requiredMachine: _machine, commitRef: _ref, commit: _commit, deploys: _deploys, ...older } = ticket;
+    expect(Ticket.parse(older)).toMatchObject({ form: "code", requiredMachine: null, commitRef: null, commit: null, deploys: false });
   });
 
   it("knows a repository name from other text", () => {
@@ -135,5 +152,43 @@ describe("ticket messages", () => {
     for (const bad of ["novan-xu", "novan-xu/", "/x", "a/b/c", "a b/c", "a/b c", "a/..", "a/.", "a/b&c", 'a/b"c', "a/b%c"]) {
       expect(RepositoryName.safeParse(bad).success).toBe(false);
     }
+  });
+});
+
+describe("the kinds of each form of ticket", () => {
+  it("gives a task ticket prose or an operation, and a code ticket the kinds of repository work", () => {
+    expect(taskKinds).toEqual(["writing", "operation"]);
+    expect([...taskKinds, ...codeKinds].sort()).toEqual([...ticketKinds].sort());
+    expect(fitsForm("task", "operation")).toBe(true);
+    expect(fitsForm("task", "fix")).toBe(false);
+    expect(fitsForm("code", "writing")).toBe(false);
+    expect(fitsForm("code", "maintenance")).toBe(true);
+  });
+});
+
+describe("a task worker's hand-back", () => {
+  it("is done unless it says it failed, and still reads a writer's summary as its report", () => {
+    expect(TaskHandback.parse({ report: { en: "Done", zh: "完成了" } })).toMatchObject({ outcome: "done", files: [] });
+    expect(TaskHandback.parse({ outcome: "failed", report: { en: "The service did not come up", zh: "服务没有起来" } }).outcome).toBe("failed");
+    expect(TaskHandback.parse({ text: "result.md", summary: { en: "Translated", zh: "翻译好了" } }).report).toEqual({ en: "Translated", zh: "翻译好了" });
+    expect(TaskHandback.safeParse({ outcome: "maybe", report: { en: "x", zh: "好" } }).success).toBe(false);
+  });
+});
+
+describe("a deployment file", () => {
+  const file = { target: "pc", deploy: "./deploy.sh", health: { command: "curl -fsS http://127.0.0.1:8080/health" }, rollback: "./rollback.sh" };
+
+  it("names the work machine its worker runs on", () => {
+    expect(readDeploymentFile(JSON.stringify(file))).toMatchObject({ ok: true, file: { target: "pc", health: { everySeconds: 5, withinSeconds: 120 } } });
+  });
+
+  it("is refused when it names the hub's container or the NAS host, or a key it does not know", () => {
+    for (const target of ["hub", "nas"]) {
+      const reading = readDeploymentFile(JSON.stringify({ ...file, target }));
+      expect(reading.ok).toBe(false);
+      expect(reading.ok ? "" : reading.reason).toContain("names no work machine");
+    }
+    expect(readDeploymentFile(JSON.stringify({ ...file, token: "x" })).ok).toBe(false);
+    expect(readDeploymentFile("{").ok).toBe(false);
   });
 });

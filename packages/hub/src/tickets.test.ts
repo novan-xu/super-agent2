@@ -94,7 +94,7 @@ describe("tickets", () => {
     const tickets = createTicketService({ database: open(), clock });
     expect(() => tickets.open(request(1, { repository: null }))).toThrow(/repository/);
     expect(() => tickets.open(request(1, { issues: [] }))).toThrow(/at least one issue/);
-    expect(() => tickets.open(request(1, { kind: "writing" }))).toThrow(/writing/);
+    expect(() => tickets.open(request(1, { kind: "writing" }))).toThrow(/A task ticket has no issues/);
     expect(() => tickets.open(request(1, { waitsFor: [99] }))).toThrow(/no ticket 99/);
     expect(() => tickets.open(request(1, { title: { en: "x", zh: "x" } }))).toThrow();
     const twice = request(1);
@@ -113,18 +113,21 @@ describe("tickets", () => {
     expect(tickets.move(ticket.id, "delivered").ok).toBe(true);
   });
 
-  it("keeps a writing ticket's task and material, and refuses them on a ticket for code", () => {
+  it("keeps a task ticket's task and material, and refuses them on a ticket for code", () => {
     const database = open();
     const tickets = createTicketService({ database, clock });
-    const writing = { task: "Translate the notice.", materials: [{ name: "notice.txt", source: "pasted", text: "你好" }, { name: "terms", source: "https://example.com", text: null }] };
-    const ticket = tickets.open(request(1, { kind: "writing", repository: null, issues: [], writing }));
-    expect(tickets.writing(ticket.id)).toEqual(writing);
-    expect(tickets.writing(99)).toBeUndefined();
-    expect(() => tickets.open(request(2, { writing }))).toThrow(/Only a writing ticket/);
-    expect(() => tickets.open(request(3, { kind: "writing", repository: null, issues: [], writing: { task: " ", materials: [] } }))).toThrow(/needs its task/);
-    expect(() => tickets.open(request(4, { kind: "writing", repository: null, issues: [], writing: { task: "x", materials: [{ name: "../x", source: "s", text: null }] } }))).toThrow();
+    const task = { task: "Translate the notice.", materials: [{ name: "notice.txt", source: "pasted", text: "你好" }, { name: "terms", source: "https://example.com", text: null }] };
+    const stored = { ...task, commitRef: null, commit: null, deploys: false };
+    const ticket = tickets.open(request(1, { kind: "writing", repository: null, issues: [], task }));
+    expect(ticket.form).toBe("task");
+    expect(tickets.task(ticket.id)).toEqual(stored);
+    expect(tickets.task(99)).toBeUndefined();
+    expect(() => tickets.open(request(2, { form: "code", task }))).toThrow(/Only a task ticket has a task/);
+    expect(() => tickets.open(request(5, { kind: "fix", repository: null, issues: [], task }))).toThrow(/cannot be of kind fix/);
+    expect(() => tickets.open(request(3, { kind: "writing", repository: null, issues: [], task: { task: " ", materials: [] } }))).toThrow(/needs its task/);
+    expect(() => tickets.open(request(4, { kind: "writing", repository: null, issues: [], task: { task: "x", materials: [{ name: "../x", source: "s", text: null }] } }))).toThrow();
     const reopened = createTicketService({ database, clock });
-    expect(reopened.writing(ticket.id)).toEqual(writing);
+    expect(reopened.task(ticket.id)).toEqual(stored);
     reopened.change((writes) => writes.setReport(ticket.id, { en: "Done", zh: "完成" }));
     expect(reopened.get(ticket.id)?.report).toEqual({ en: "Done", zh: "完成" });
   });
@@ -317,7 +320,7 @@ describe("the history", () => {
         clock.advance(10);
         return ticket.id;
       });
-      const writing = tickets.open(request(9, { kind: "writing", repository: null, issues: [], title: { en: "Neighbour notice", zh: "给邻居的通知" }, writing: { task: "Write a short notice about the garden gate being repainted.", materials: [] } }));
+      const writing = tickets.open(request(9, { kind: "writing", repository: null, issues: [], title: { en: "Neighbour notice", zh: "给邻居的通知" }, task: { task: "Write a short notice about the garden gate being repainted.", materials: [] } }));
       end(tickets, writing.id, "delivered");
       const stillOpen = tickets.open(issued(4, { en: "Parse times", zh: "解析时间" }, { en: "Hours and minutes", zh: "小时和分钟" }));
       tickets.move(stillOpen.id, "working");

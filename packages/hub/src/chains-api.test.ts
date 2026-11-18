@@ -601,10 +601,11 @@ describe("start defaults", () => {
       ],
     };
     connect(running, "mac", agy);
-    const opened = await callTool(running, "open_writing_ticket", {
+    const opened = await callTool(running, "open_task_ticket", {
       title: { en: "Translate a notice", zh: "翻译一则通知" },
       summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
       task: "Translate the notice into English.",
+      kind: "writing",
       material: [{ name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" }],
     });
     expect(opened.isError, opened.text).toBe(false);

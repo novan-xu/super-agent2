@@ -73,6 +73,7 @@ export interface Delivery {
   readonly ticket: number;
   readonly title: GeneratedText;
   readonly text: string | null;
+  readonly report?: GeneratedText | undefined;
   readonly files: readonly DeliveryFile[];
   readonly prompt: string;
 }
@@ -135,6 +136,7 @@ const Body = z.looseObject({
   text: z.string().nullable().optional(),
   ticket: z.number().optional(),
   title: z.unknown().optional(),
+  report: z.unknown().optional(),
   files: z.unknown().optional(),
   attachments: z.unknown().optional(),
   name: z.string().optional(),
@@ -191,6 +193,7 @@ function toEntry(row: EntryRow): ConversationEntry {
         ticket: body.ticket,
         title: body.title,
         text: body.text ?? null,
+        report: body.report ?? null,
         files: body.files,
       });
     case "text":
@@ -219,7 +222,8 @@ function titleOf(message: string, attachments: readonly Attachment[] = []): stri
 
 function deliveryHistory(entry: DeliveryEntry): string {
   const files = entry.files.length === 0 ? "" : ` Files: ${entry.files.map((file) => file.name).join(", ")}.`;
-  return `[hub] The result of writing ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${files}${entry.text === null ? "" : `\n${entry.text}`}`;
+  const report = entry.report === null ? "" : ` The worker's report: ${entry.report.en}`;
+  return `[hub] The result of task ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
 function heldPrompt(command: CommandRecord, output: string): string {
@@ -697,7 +701,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       conversation: target.id,
       kind: "delivery",
       turn: null,
-      body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, files: delivery.files },
+      body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, report: delivery.report ?? null, files: delivery.files },
       prompt: delivery.prompt,
     });
     const stored = selectEntry.get(id);

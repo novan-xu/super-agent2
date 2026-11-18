@@ -14,7 +14,7 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
-import { type CredentialSource, isCredentialVariable } from "./credentials.js";
+import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { type Execution, type ExecutionEnd, fixedTargets, isTargetDirectory, type Target, type TargetDirectory } from "./targets.js";
 
@@ -62,7 +62,6 @@ const CommandRow = z.object({
   command: z.string(),
   account: GitHubAccount,
   cwd: z.string().nullable(),
-  environment: z.string().nullable().optional(),
   state: z.string(),
   exit_code: z.number().int().nullable(),
   signal: z.string().nullable(),
@@ -87,7 +86,6 @@ function toRecord(row: unknown): CommandRecord {
     command: value.command,
     account: value.account,
     cwd: value.cwd,
-    environment: value.environment === null || value.environment === undefined ? {} : JSON.parse(value.environment),
     state: value.state,
     exitCode: value.exit_code,
     signal: value.signal,
@@ -129,7 +127,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     .run(interruptedReason, clock.now(), ...interruptedStates);
 
   const insertCommand = connection.prepare(
-    `INSERT INTO commands (id, target, command, account, cwd, environment, state, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    `INSERT INTO commands (id, target, command, account, cwd, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
   );
   const selectCommand = connection.prepare("SELECT * FROM commands WHERE id = ?");
   const selectCommands = connection.prepare("SELECT * FROM commands ORDER BY rowid DESC LIMIT ?");
@@ -224,7 +222,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     let end: ExecutionEnd;
     try {
       const execution = target.run(
-        { command: initial.command, cwd: initial.cwd ?? undefined, credentials: { ...initial.environment, ...credentials.credentials } },
+        { command: initial.command, cwd: initial.cwd ?? undefined, credentials: credentials.credentials },
         (stream, data) => record(entry, stream, entry.decoders[stream].write(data)),
       );
       entry.execution = execution;
@@ -298,12 +296,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         throw new Error("The command service is closed");
       }
       const parsed = CommandRequest.parse(request);
-      const reserved = Object.keys(parsed.environment ?? {}).filter((name) => isCredentialVariable(name));
-      if (reserved.length > 0) {
-        throw new Error(`A command's environment cannot set ${reserved.join(", ")}: credentials are given by the hub alone`);
-      }
       const id = randomUUID();
-      insertCommand.run(id, parsed.target, parsed.command, parsed.account, parsed.cwd ?? null, parsed.environment === undefined ? null : JSON.stringify(parsed.environment), clock.now());
+      insertCommand.run(id, parsed.target, parsed.command, parsed.account, parsed.cwd ?? null, clock.now());
       const initial = get(id);
       if (initial === undefined) {
         throw new Error(`Command ${id} was not stored`);

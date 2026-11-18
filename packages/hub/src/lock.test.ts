@@ -208,24 +208,7 @@ describe("the confirmation lock", () => {
     expect(first.studio.jobs).toEqual([]);
   });
 
-  it("ties a hold to the command's environment, in any order of its names, and releases only that", async () => {
-    const { running, lock, studio } = create();
-    const environment = { SUPERAGENT2_PREVIOUS_COMMIT: "1111111", SUPERAGENT2_COMMIT: "2222222" };
-    const { id } = running.start({ target: "studio", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment });
-    const held = await waitForState(running, id, "held");
-    expect(held.environment).toEqual(environment);
-    const reordered = { ...held, environment: { SUPERAGENT2_COMMIT: "2222222", SUPERAGENT2_PREVIOUS_COMMIT: "1111111" } };
-    expect(fingerprintOf(reordered)).toBe(fingerprintOf(held));
-    expect(fingerprintOf({ ...held, environment: { ...environment, SUPERAGENT2_PREVIOUS_COMMIT: "3333333" } })).not.toBe(fingerprintOf(held));
-    expect(fingerprintOf({ ...held, environment: {} })).not.toBe(fingerprintOf(held));
-    expect(lock.get(id)?.fingerprint).toBe(fingerprintOf(held));
-    expect(await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf({ ...held, environment: {} }) })).toEqual({ ok: false, error: "conflict" });
-    expect(await lock.release(id, { assertion: await owner(), fingerprint: fingerprintOf(held) })).toMatchObject({ ok: true });
-    await finished(running, id);
-    expect(studio.jobs[0]?.credentials).toMatchObject(environment);
-  });
-
-  it("keeps the fingerprint of a command without environment as it was before commands had one, so holds stored then stay releasable", async () => {
+  it("keeps the fingerprint of a command as it was when commands had an environment, so holds stored then stay releasable", async () => {
     const first = create();
     const request = { target: "studio", command: "rm -rf /volume1/docker/old-app", account: "novan-xu", cwd: "/volume1" } as const;
     const { id } = first.running.start(request);
@@ -234,23 +217,10 @@ describe("the confirmation lock", () => {
     expect(fingerprintOf(held)).toBe(before);
     await first.running.close();
     service = undefined;
-    database.connection.prepare("UPDATE commands SET environment = NULL WHERE id = ?").run(id);
     database.connection.prepare("UPDATE holds SET fingerprint = ? WHERE command_id = ?").run(before, id);
     const second = create();
     expect(await second.lock.release(id, { assertion: await owner(), fingerprint: before })).toMatchObject({ ok: true });
     expect(await finished(second.running, id)).toMatchObject({ state: "exited" });
-  });
-
-  it("drops a held command whose environment changed while the hub was down", async () => {
-    const first = create();
-    const { id } = first.running.start({ target: "studio", command: "rm -rf /volume1/docker/releases/$SUPERAGENT2_COMMIT", environment: { SUPERAGENT2_COMMIT: "2222222" } });
-    await waitForState(first.running, id, "held");
-    await first.running.close();
-    service = undefined;
-    database.connection.prepare("UPDATE commands SET environment = ? WHERE id = ?").run(JSON.stringify({ SUPERAGENT2_COMMIT: ".." }), id);
-    const second = create();
-    expect(await finished(second.running, id)).toMatchObject({ state: "dropped", reason: changedReason });
-    expect(second.studio.jobs).toEqual([]);
   });
 
   it("drops a held command whose stored text changed while the hub was down", async () => {

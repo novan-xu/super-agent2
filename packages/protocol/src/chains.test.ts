@@ -28,11 +28,12 @@ function node(id: number, state: TicketState = "pending", after: readonly (numbe
 }
 
 describe("a wait", () => {
-  it("is met by a merged ticket, and by nothing short of merged", () => {
-    for (const state of ["pending", "waiting", "working", "verifying", "delivered", "stopped"] as const) {
+  it("is met by a merged code ticket or a done task ticket, and by nothing short of that", () => {
+    for (const state of ["pending", "waiting", "working", "verifying", "stuck", "stopped"] as const) {
       expect(waitMet({ ticket: 1, deployment: false, waived: false }, node(1, state))).toBe(false);
     }
     expect(waitMet({ ticket: 1, deployment: false, waived: false }, node(1, "merged"))).toBe(true);
+    expect(waitMet({ ticket: 1, deployment: false, waived: false }, node(1, "delivered"))).toBe(true);
   });
 
   it("for a deployment is met only once the merged ticket is reported deployed", () => {

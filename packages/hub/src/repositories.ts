@@ -31,7 +31,7 @@ export function repositoryAccountList(names: readonly string[], chosen: Readonly
 export function createRepositoryAccounts(database: HubDatabase, clock: Clock, source?: string): RepositoryAccounts {
   const { connection } = database;
   const selectNames = connection.prepare(
-    "SELECT repository FROM tickets WHERE repository IS NOT NULL UNION SELECT repository FROM deployments",
+    "SELECT DISTINCT repository FROM tickets WHERE repository IS NOT NULL",
   );
   const selectChosen = connection.prepare("SELECT repository, account FROM repository_accounts");
   const selectOne = connection.prepare("SELECT repository, account FROM repository_accounts WHERE repository = ?");

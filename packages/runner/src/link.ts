@@ -11,8 +11,6 @@ import {
 } from "@super-agent2/protocol";
 import WebSocket from "ws";
 import type { RunnerConfig } from "./config.js";
-import type { Ledger } from "./ledger.js";
-import type { ShellJob, ShellRun, ShellSink } from "./shell.js";
 import type { Works } from "./works.js";
 
 export interface LinkSocket {
@@ -31,24 +29,18 @@ export interface LinkSocketEvents {
 
 export type Connect = (url: string, headers: Readonly<Record<string, string>>, events: LinkSocketEvents) => LinkSocket;
 
-export type ExecuteCommand = (job: ShellJob, sink: ShellSink) => ShellRun;
-
 export type LinkEvent =
   | { readonly type: "connecting"; readonly url: string }
   | { readonly type: "connected"; readonly name: string; readonly version?: string }
   | { readonly type: "refused"; readonly status: number }
-  | { readonly type: "closed"; readonly code: number; readonly reason: string; readonly stopped: number }
-  | { readonly type: "started"; readonly id: string; readonly pid: number | undefined }
-  | { readonly type: "ended"; readonly id: string; readonly exitCode: number | null; readonly signal: string | null }
-  | { readonly type: "failed"; readonly id: string; readonly reason: string }
+  | { readonly type: "closed"; readonly code: number; readonly reason: string }
+  | { readonly type: "ignored"; readonly kind: string }
   | { readonly type: "retrying"; readonly delay: number };
 
 export interface RunnerLinkOptions {
   readonly config: RunnerConfig;
   readonly report: () => MachineReport;
-  readonly execute: ExecuteCommand;
   readonly connect?: Connect;
-  readonly ledger?: Ledger;
   readonly retryDelay?: (attempt: number) => number;
   readonly silenceMilliseconds?: number;
   readonly onEvent?: (event: LinkEvent) => void;
@@ -58,7 +50,6 @@ export interface RunnerLinkOptions {
 export interface RunnerLink {
   start(): void;
   update(): void;
-  running(): string[];
   connected(): boolean;
   send(message: RunnerToHub): void;
   close(): Promise<void>;
@@ -111,8 +102,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
   const retryDelay = options.retryDelay ?? defaultRetryDelay;
   const silence = options.silenceMilliseconds ?? 60000;
   const emit = (event: LinkEvent) => options.onEvent?.(event);
-  const runs = new Map<string, ShellRun>();
-  const ended = new Map<string, Promise<void>>();
+  const ignored = new Set<string>();
   let socket: LinkSocket | undefined;
   let welcomed = false;
   let attempt = 0;
@@ -125,65 +115,12 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
     socket?.send(JSON.stringify(message));
   };
 
-  const stopping = new Set<string>();
-
-  const stopOne = (id: string): boolean => {
-    const execution = runs.get(id);
-    if (execution === undefined || stopping.has(id)) {
-      return false;
+  const unknownKind = (value: unknown): string | undefined => {
+    if (typeof value !== "object" || value === null) {
+      return undefined;
     }
-    stopping.add(id);
-    execution.stop().catch(() => undefined);
-    return true;
-  };
-
-  const stopAll = (): number => [...runs.keys()].filter(stopOne).length;
-
-  const run = (current: LinkSocket, id: string, job: ShellJob) => {
-    const sendHere = (message: RunnerToHub) => {
-      if (socket === current) {
-        current.send(JSON.stringify(message));
-      }
-    };
-    let execution: ShellRun;
-    try {
-      execution = options.execute(job, (stream, data) => sendHere({ type: "output", id, stream, data: data.toString("base64") }));
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      emit({ type: "failed", id, reason });
-      sendHere({ type: "failed", id, reason });
-      return;
-    }
-    runs.set(id, execution);
-    if (execution.pid !== undefined) {
-      options.ledger?.add(execution.pid);
-    }
-    emit({ type: "started", id, pid: execution.pid });
-    if (socket !== current) {
-      stopOne(id);
-    }
-    const forget = () => {
-      runs.delete(id);
-      stopping.delete(id);
-      ended.delete(id);
-      if (execution.pid !== undefined) {
-        options.ledger?.remove(execution.pid);
-      }
-    };
-    const finished = execution.ended.then(
-      (end) => {
-        forget();
-        emit({ type: "ended", id, exitCode: end.exitCode, signal: end.signal });
-        sendHere({ type: "ended", id, exitCode: end.exitCode, signal: end.signal });
-      },
-      (error: unknown) => {
-        forget();
-        const reason = error instanceof Error ? error.message : String(error);
-        emit({ type: "failed", id, reason });
-        sendHere({ type: "failed", id, reason });
-      },
-    );
-    ended.set(id, finished);
+    const type: unknown = Reflect.get(value, "type");
+    return typeof type === "string" && !HubToRunner.options.some((option) => option.shape.type.value === type) ? type : undefined;
   };
 
   const schedule = () => {
@@ -217,25 +154,31 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         if (current === undefined || socket !== current) {
           return;
         }
-        let message: HubToRunner;
+        let raw: unknown;
         try {
-          message = HubToRunner.parse(JSON.parse(text));
+          raw = JSON.parse(text);
         } catch {
           current.terminate();
           return;
         }
+        const parsed = HubToRunner.safeParse(raw);
+        if (!parsed.success) {
+          const kind = unknownKind(raw);
+          if (kind === undefined) {
+            current.terminate();
+            return;
+          }
+          if (!ignored.has(kind)) {
+            ignored.add(kind);
+            emit({ type: "ignored", kind });
+          }
+          return;
+        }
+        const message = parsed.data;
         if (message.type === "welcome") {
           welcomed = true;
           attempt = 0;
           emit({ type: "connected", name: message.name, ...(message.version === undefined ? {} : { version: message.version }) });
-          return;
-        }
-        if (message.type === "run") {
-          run(current, message.id, { command: message.command, cwd: message.cwd, environment: message.environment });
-          return;
-        }
-        if (message.type === "stop") {
-          stopOne(message.id);
           return;
         }
         options.works?.()?.receive(message);
@@ -254,8 +197,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         }
         welcomed = false;
         options.works?.()?.disconnected();
-        const stopped = stopAll();
-        emit({ type: "closed", code, reason, stopped });
+        emit({ type: "closed", code, reason });
         if (code === runnerCloseCodes.revoked) {
           attempt = Math.max(attempt, 5);
         }
@@ -290,7 +232,6 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         send({ type: "report", machine: options.report() });
       }
     },
-    running: () => [...runs.keys()],
     connected: () => welcomed,
     send,
     close: async () => {
@@ -301,8 +242,6 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
       if (watchdog !== undefined) {
         clearInterval(watchdog);
       }
-      stopAll();
-      await Promise.all([...ended.values()]);
       socket?.close();
       socket = undefined;
     },

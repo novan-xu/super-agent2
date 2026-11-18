@@ -2,14 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, PromptImage, SteerResult, WorkerAdapter } from "@super-agent2/programs";
-import { type Attachment, type RunnerToHub, type RunnerWorkEvent, storedName, type WorkEngine, type WorkEvent, type WorkTask, type WritingTask } from "@super-agent2/protocol";
+import { type Attachment, type RunnerToHub, type RunnerWorkEvent, storedName, type TaskAssignment, type WorkEngine, type WorkEvent, type WorkTask } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createGit, type ProcessRunner, runProcess } from "./git.js";
 import type { PullRequestState } from "./handback.js";
 import { tokenVariable } from "./identity.js";
 import { workPaths } from "./workplace.js";
 import { createWorks, type Works, type WorksOptions } from "./works.js";
-import { writingPaths } from "./writing.js";
+import { outputFolder, taskPaths } from "./task.js";
 
 class Recorder<T> {
   readonly items: T[] = [];
@@ -548,7 +548,7 @@ describe("a worker on the runner", () => {
   });
 });
 
-function writingTask(ticket: number, overrides: Partial<WritingTask> = {}): WritingTask {
+function writingTask(ticket: number, overrides: Partial<TaskAssignment> = {}): TaskAssignment {
   return {
     ticket,
     attempt: 1,
@@ -558,32 +558,35 @@ function writingTask(ticket: number, overrides: Partial<WritingTask> = {}): Writ
       { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
       { name: "glossary", source: "https://example.com/glossary", text: null },
     ],
+    checkout: null,
+    deploys: false,
     engine: "antigravity",
     model: "gemini-3.8-flash",
     effort: "high",
     session: null,
     note: null,
+    environment: {},
     ...overrides,
   };
 }
 
-function writeOutput(ticket: number, files: Readonly<Record<string, string | Buffer>>, handback: unknown): void {
-  const paths = writingPaths(home, ticket);
-  mkdirSync(join(paths.worktree, "output"), { recursive: true });
+function writeOutput(ticket: number, files: Readonly<Record<string, string | Buffer>>, handback: unknown, checkout: string | null = null): void {
+  const paths = taskPaths(home, ticket, checkout);
+  mkdirSync(outputFolder(paths), { recursive: true });
   for (const [name, content] of Object.entries(files)) {
-    writeFileSync(join(paths.worktree, "output", name), content);
+    writeFileSync(join(outputFolder(paths), name), content);
   }
   writeFileSync(paths.handback, typeof handback === "string" ? handback : JSON.stringify(handback));
 }
 
 const summary = { en: "Translated the notice", zh: "翻译了通知" };
 
-describe("a writing worker on the runner", () => {
+describe("a task worker on the runner", () => {
   it("makes a scratch folder with the material, briefs the program without any repository, and delivers the text and files", async () => {
     const works = start();
-    works.receive({ type: "work.write", task: writingTask(20) });
+    works.receive({ type: "work.task", task: writingTask(20) });
     const handle = await programs.prompted(1);
-    const paths = writingPaths(home, 20);
+    const paths = taskPaths(home, 20);
     expect(handle.engine).toBe("antigravity");
     expect(handle.options).toEqual({ session: null, tools: null, workspace: paths.worktree });
     expect(handle.settings).toMatchObject({ program: "/programs/agy", model: "gemini-3.8-flash", effort: "high", processTree: true });
@@ -596,7 +599,7 @@ describe("a writing worker on the runner", () => {
     expect(existsSync(join(paths.worktree, "input", "glossary"))).toBe(false);
     expect(existsSync(join(paths.worktree, "output"))).toBe(true);
     const prompt = handle.prompts[0] ?? "";
-    expect(prompt).toContain("# Guidance for a writing worker");
+    expect(prompt).toContain("# Guidance for a task worker");
     expect(prompt).toContain("Translate the notice in input/notice.txt into English.");
     expect(prompt).toContain("- input/notice.txt, from pasted by the owner in the conversation");
     expect(prompt).toContain("- Not a file: get it yourself from https://example.com/glossary (named glossary)");
@@ -610,6 +613,7 @@ describe("a writing worker on the runner", () => {
     const last = await ended(20);
     expect(last).toEqual({
       kind: "delivered",
+      outcome: "done",
       text: "Hello, world.\n",
       files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf" }],
       report: summary,
@@ -623,7 +627,7 @@ describe("a writing worker on the runner", () => {
 
   it("delivers only files when there is no text, and tells the worker what is wrong with a hand-back until it is right", async () => {
     const works = start();
-    works.receive({ type: "work.write", task: writingTask(21) });
+    works.receive({ type: "work.task", task: writingTask(21) });
     let handle = await programs.prompted(1);
     handle.emit({ type: "turn.finished", outcome: "completed" });
     handle = await programs.prompted(2, handle);
@@ -634,14 +638,14 @@ describe("a writing worker on the runner", () => {
     expect(handle.prompts[2]).toContain("is not valid JSON");
     writeOutput(21, { "table.xlsx": "cells" }, { files: ["table.xlsx"], summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
-    expect(await ended(21)).toEqual({ kind: "delivered", text: null, files: [{ name: "table.xlsx", size: 5, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }], report: summary });
+    expect(await ended(21)).toEqual({ kind: "delivered", outcome: "done", text: null, files: [{ name: "table.xlsx", size: 5, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }], report: summary });
   });
 
   it("refuses a hand-back that names a missing file or a path outside the output folder", async () => {
     const works = start();
-    works.receive({ type: "work.write", task: writingTask(22) });
+    works.receive({ type: "work.task", task: writingTask(22) });
     const handle = await programs.prompted(1);
-    const paths = writingPaths(home, 22);
+    const paths = taskPaths(home, 22);
     writeOutput(22, {}, { files: ["missing.docx"], summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
     await programs.prompted(2, handle);
@@ -655,7 +659,7 @@ describe("a writing worker on the runner", () => {
 
   it("refuses an empty text, and delivers files of any size and number, sending each part the hub asks for", async () => {
     const works = start();
-    works.receive({ type: "work.write", task: writingTask(23) });
+    works.receive({ type: "work.task", task: writingTask(23) });
     const handle = await programs.prompted(1);
     const big = Buffer.alloc(9 * 1024 * 1024, 3);
     big[big.length - 1] = 9;
@@ -683,14 +687,14 @@ describe("a writing worker on the runner", () => {
 
   it("stops and removes the scratch folder without touching Git, and lists the work after a restart", async () => {
     const first = start();
-    first.receive({ type: "work.write", task: writingTask(24) });
+    first.receive({ type: "work.task", task: writingTask(24) });
     const before = await programs.prompted(1);
     before.emit({ type: "session", session: "agy-conversation-24" });
     await first.close();
     opened.splice(opened.indexOf(first), 1);
     const again = start();
     expect(again.held()).toEqual([{ ticket: 24, attempt: 1, last: 5, live: false, ended: false }]);
-    again.receive({ type: "work.write", task: writingTask(24) });
+    again.receive({ type: "work.task", task: writingTask(24) });
     await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
     const resumed = programs.last();
     expect(resumed.options.session).toBe("agy-conversation-24");
@@ -699,17 +703,87 @@ describe("a writing worker on the runner", () => {
     again.receive({ type: "work.stop", ticket: 24, save: true, remove: true });
     await again.idle();
     expect(resumed.closed).toBe(true);
-    expect(existsSync(writingPaths(home, 24).folder)).toBe(false);
+    expect(existsSync(taskPaths(home, 24).folder)).toBe(false);
     expect(kinds(24).slice(-2)).toEqual(["stopped", "phase:removed"]);
     expect(ghCalls).toEqual([]);
   });
 
   it("reports a program that fails as a failure with its reason", async () => {
     const works = start();
-    works.receive({ type: "work.write", task: writingTask(25) });
+    works.receive({ type: "work.task", task: writingTask(25) });
     const handle = await programs.prompted(1);
     handle.emit({ type: "unavailable", reason: "resource exhausted", until: null });
     expect(await ended(25)).toEqual({ kind: "failed", failure: "program", reason: "resource exhausted" });
+  });
+});
+
+describe("a task worker with a repository", () => {
+  const recipe = (target: string) => JSON.stringify({ target, deploy: "node deploy.mjs", health: { command: "node health.mjs" }, rollback: "node rollback.mjs" });
+
+  async function commitDeploymentFile(target: string): Promise<string> {
+    const seed = join(scratch, "seed");
+    const repo = git(seed);
+    mkdirSync(join(seed, ".superagent2"), { recursive: true });
+    writeFileSync(join(seed, ".superagent2", "deployment.json"), recipe(target));
+    await repo.must(["add", "-A"], seed);
+    await repo.must(["commit", "-m", "Declare the deployment"], seed);
+    await repo.must(["push", "origin", "main"], seed);
+    return (await repo.must(["rev-parse", "HEAD"], seed)).trim();
+  }
+
+  it("checks the repository out at its commit beside the scratch folder, works in the checkout as the account, and hands back the commit", async () => {
+    const seed = join(scratch, "seed");
+    const commit = (await git(seed).must(["rev-parse", "HEAD"], seed)).trim();
+    const works = start({ machine: "pc" });
+    works.receive({
+      type: "work.task",
+      task: writingTask(40, { engine: "codex", model: "gpt-6-luna", effort: "low", checkout: { repository, account: "novan-xu", commit, ref: null }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }),
+    });
+    const handle = await programs.prompted(1);
+    const paths = taskPaths(home, 40, repository);
+    expect(handle.options.workspace).toBe(paths.worktree);
+    expect(readFileSync(join(paths.worktree, "README.md"), "utf8").trim()).toBe("sandbox");
+    expect((await git(paths.worktree).must(["rev-parse", "HEAD"], paths.worktree)).trim()).toBe(commit);
+    expect(readFileSync(join(paths.folder, "scratch", "input", "notice.txt"), "utf8")).toBe("你好，世界。");
+    expect(handle.settings.environment[tokenVariable]).toBe(token);
+    expect(carried(handle.settings.environment)).toEqual([]);
+    const prompt = handle.prompts[0] ?? "";
+    expect(prompt).toContain("# Guidance for a task worker");
+    expect(prompt).toContain("This machine: pc");
+    expect(prompt).toContain(`Checkout of ${repository}: ${paths.worktree}, at commit ${commit}`);
+    expect(prompt).not.toContain("Deployment recipe");
+    writeOutput(40, {}, { outcome: "done", report: { en: "Ran it", zh: "跑完了" } }, repository);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(40)).toEqual({ kind: "delivered", outcome: "done", commit, text: null, files: [], report: { en: "Ran it", zh: "跑完了" } });
+    works.receive({ type: "work.stop", ticket: 40, save: false, remove: true });
+    await works.idle();
+    expect(existsSync(paths.worktree)).toBe(false);
+    expect(existsSync(paths.folder)).toBe(false);
+  });
+
+  it("hands back a failed outcome with its report", async () => {
+    const works = start({ machine: "pc" });
+    works.receive({ type: "work.task", task: writingTask(41, { checkout: { repository, account: "novan-xu", commit: null, ref: "main" }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }) });
+    const handle = await programs.prompted(1);
+    writeOutput(41, { "deploy.log": "it did not come up" }, { outcome: "failed", report: { en: "It did not come up; rolled back.", zh: "没起来，已回滚。" }, files: ["deploy.log"] }, repository);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(41)).toMatchObject({ kind: "delivered", outcome: "failed", report: { zh: "没起来，已回滚。" }, files: [{ name: "deploy.log" }] });
+  });
+
+  it("deploys only on the machine its deployment file names, and refuses another before any program starts", async () => {
+    await commitDeploymentFile("mini");
+    const elsewhere = start({ machine: "pc" });
+    elsewhere.receive({ type: "work.task", task: writingTask(42, { deploys: true, checkout: { repository, account: "novan-xu", commit: null, ref: "main" }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }) });
+    const refused = await ended(42);
+    expect(refused).toMatchObject({ kind: "failed", failure: "prepare" });
+    expect(refused.kind === "failed" ? refused.reason : "").toContain("names the machine mini, and this machine is pc");
+    expect(programs.handles).toHaveLength(0);
+    const commit = await commitDeploymentFile("pc");
+    const here = start({ machine: "pc" });
+    here.receive({ type: "work.task", task: writingTask(43, { deploys: true, checkout: { repository, account: "novan-xu", commit: null, ref: "main" }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }) });
+    const handle = await programs.prompted(1);
+    expect(handle.prompts[0]).toContain(`at commit ${commit}`);
+    expect(handle.prompts[0]).toContain(`Deployment recipe: ${join(taskPaths(home, 43, repository).worktree, ".superagent2", "deployment.json")}`);
   });
 });
 
@@ -808,15 +882,15 @@ describe("attachments on the runner", () => {
     expect(readFileSync(file, "utf8")).toBe("PNG!!");
   });
 
-  it("puts a writing ticket's attached material in the input folder under its name", async () => {
+  it("puts a task ticket's attached material in the input folder under its name", async () => {
     const works = start();
     void serveAttachments(works, files, 8);
     works.receive({
-      type: "work.write",
+      type: "work.task",
       task: writingTask(33, { materials: [{ name: "contract.txt", source: "attached by the owner", text: null, attachment: note }] }),
     });
     const handle = await programs.prompted(1);
-    expect(readFileSync(join(writingPaths(home, 33).worktree, "input", "contract.txt"), "utf8")).toBe("code word");
+    expect(readFileSync(join(taskPaths(home, 33).worktree, "input", "contract.txt"), "utf8")).toBe("code word");
     expect(handle.prompts[0]).toContain("input/contract.txt");
   });
 });

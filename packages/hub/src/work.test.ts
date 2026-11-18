@@ -360,7 +360,7 @@ function writing(engine: "antigravity" | "codex" = "antigravity", machine = "pc"
     summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
     kind: "writing",
     conversation: "c-1",
-    writing: {
+    task: {
       task: "Translate input/notice.txt into English.",
       materials: [
         { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
@@ -382,15 +382,15 @@ const deliveredEvent: WorkEvent = {
   report: { en: "Translated the notice", zh: "翻译了通知" },
 };
 
-describe("work for a writing ticket", () => {
+describe("work for a task ticket", () => {
   it("starts the worker with the task and material, with no repository, branch or token", () => {
     runners.connect("pc", 2);
     const ticket = writing();
     work.begin(ticket);
     expect(runners.of("work.start")).toEqual([]);
-    expect(runners.of("work.write")).toEqual([
+    expect(runners.of("work.task")).toEqual([
       {
-        type: "work.write",
+        type: "work.task",
         task: {
           ticket: ticket.id,
           attempt: 1,
@@ -400,17 +400,20 @@ describe("work for a writing ticket", () => {
             { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
             { name: "glossary", source: "https://example.com/glossary", text: null },
           ],
+          checkout: null,
+          deploys: false,
           engine: "antigravity",
           model: "gemini-3.8-flash",
           effort: "high",
           session: null,
           note: null,
+          environment: {},
         },
       },
     ]);
     expect(current(ticket.id)).toMatchObject({ branch: null, repository: null, pullRequest: null, work: { attempt: 1, state: "preparing", engine: "antigravity" } });
     work.begin(current(ticket.id));
-    expect(runners.of("work.write")).toHaveLength(1);
+    expect(runners.of("work.task")).toHaveLength(1);
   });
 
   it("fetches the files from the runner, then delivers the text and files into the conversation, and becomes delivered with no pull request", async () => {
@@ -440,7 +443,7 @@ describe("work for a writing ticket", () => {
       files: [{ name: "notes.pdf", size: 4 }],
     });
     expect(delivered[0]?.delivery.prompt).toContain("Hello, world.");
-    expect(delivered[0]?.delivery.prompt).toContain("nothing was verified");
+    expect(delivered[0]?.delivery.prompt).toContain("Nothing was verified");
     expect(files.list(ticket.id)).toEqual([{ name: "notes.pdf", size: 4 }]);
     expect(files.get(ticket.id, "notes.pdf")).toMatchObject({ mediaType: "application/pdf", size: 4 });
     expect(await read(files.get(ticket.id, "notes.pdf"))).toEqual(Buffer.from([1, 2, 3, 4]));
@@ -529,21 +532,21 @@ describe("work for a writing ticket", () => {
     emit("pc", ticket.id, 1, 1, { kind: "session", session: "agy-conversation" });
     runners.drop("pc");
     runners.connect("pc", 2, [{ ticket: ticket.id, attempt: 1, last: 1, live: false, ended: false }]);
-    expect(runners.of("work.write")).toHaveLength(2);
-    expect(runners.of("work.write")[1]?.task).toMatchObject({ attempt: 1, session: "agy-conversation" });
+    expect(runners.of("work.task")).toHaveLength(2);
+    expect(runners.of("work.task")[1]?.task).toMatchObject({ attempt: 1, session: "agy-conversation" });
     tickets.change((writes) => writes.choose(ticket.id, { machine: "pc", engine: "codex", model: "gpt-6-luna", effort: "low", by: byDefault }));
     work.reassign(current(ticket.id));
-    expect(runners.of("work.write")[2]?.task).toMatchObject({ attempt: 2, engine: "codex", session: null });
+    expect(runners.of("work.task")[2]?.task).toMatchObject({ attempt: 2, engine: "codex", session: null });
   });
 
   it("refuses to run code work on Antigravity", () => {
     const ticket = working([21], "pc", "dsh");
     tickets.change((writes) => writes.choose(ticket.id, { machine: "pc", engine: "antigravity", model: "gemini-3.8-flash", effort: "high", by: byDefault }));
-    expect(() => work.begin(current(ticket.id))).toThrow(/Antigravity is for writing work/);
+    expect(() => work.begin(current(ticket.id))).toThrow(/Antigravity never runs a code ticket/);
     expect(runners.sent).toEqual([]);
   });
 
-  it("ignores a delivery for a ticket that is not writing", () => {
+  it("ignores a delivery for a code ticket", () => {
     runners.connect("pc", 2);
     const ticket = working();
     work.begin(ticket);

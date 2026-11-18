@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TicketId, type TicketState, type TicketWait } from "./tickets.js";
+import { isDoneTicket, TicketId, type TicketState, type TicketWait } from "./tickets.js";
 
 export interface ChainNode {
   readonly id: number;
@@ -18,7 +18,7 @@ export function waitMet(wait: TicketWait, before: ChainNode | undefined): boolea
   if (wait.waived) {
     return true;
   }
-  if (before === undefined || before.state !== "merged") {
+  if (before === undefined || !isDoneTicket(before.state)) {
     return false;
   }
   return !wait.deployment || before.deployedAt !== null;
