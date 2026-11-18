@@ -26,6 +26,9 @@ import {
   streamPageSize,
   streamPath,
   topicInScope,
+  TopicRename,
+  TopicMerge,
+  TopicMove,
   type TopicScope,
   type CommandList,
   type CommandResponse,
@@ -165,7 +168,7 @@ export const ownerStopReason = { en: "The owner stopped it", zh: text("ticket.re
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
-const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt)?$/;
+const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/interrupt|\/rename|\/archive|\/merge|\/move)?$/;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -1142,6 +1145,33 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       return true;
     }
+    if (id !== undefined && method === "POST" && (action === "/rename" || action === "/archive" || action === "/merge" || action === "/move")) {
+      if (!isJson(request)) {
+        request.resume();
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return true;
+      }
+      const body = await readBody(request);
+      const rename = action === "/rename" ? parseJson(body, TopicRename) : undefined;
+      const merge = action === "/merge" ? parseJson(body, TopicMerge) : undefined;
+      const move = action === "/move" ? parseJson(body, TopicMove) : undefined;
+      const result = rename !== undefined ? conversations.rename(id, rename.title)
+        : merge !== undefined ? conversations.merge(id, merge.destination)
+        : move !== undefined ? conversations.move(move.message, move.destination, id)
+        : action === "/archive" ? conversations.archive(id) : undefined;
+      if (result === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+      } else if (!result.ok) {
+        sendJson(response, result.error === "not_found" ? 404 : 409, { error: result.error });
+      } else {
+        const topic = conversations.get(move?.destination ?? result.value);
+        if (topic === undefined) {
+          return false;
+        }
+        sendJson(response, 200, { conversation: topic });
+      }
+      return true;
+    }
     if (id !== undefined && action === "/interrupt" && method === "POST") {
       request.resume();
       if (!isJson(request)) {
@@ -1416,6 +1446,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const serveSocket = (client: WebSocket, identity: Identity): void => {
     const followed = new Set<string>();
     const watched = new Set<string>();
+    const topicSnapshots = new Set<string>();
     const watchedTickets = new Set<number>();
     let watchingStream: { scope?: TopicScope | undefined; subscription?: number | undefined } | undefined;
     const streamTag = () => ({ subscription: watchingStream?.subscription });
@@ -1431,7 +1462,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
     });
     const unsubscribeConversations =
       options.conversations?.subscribe((event) => {
-        if (event.type === "entry") {
+        if (event.type === "topic.history") {
+          send(event);
+          for (const requested of topicSnapshots) {
+            if (event.topics.includes(requested)) {
+              const detail = options.conversations?.detail(requested);
+              if (detail !== undefined) {
+                send({ type: "topic.detail", requested, ...detail });
+              }
+            }
+          }
+        } else if (event.type === "entry") {
           if (watched.has(event.topic.id)) {
             send({ type: "entry", entry: event.entry });
           }
@@ -1483,16 +1524,20 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       if (message.type === "unwatch") {
         watched.delete(message.conversation);
+        topicSnapshots.delete(message.conversation);
         return;
       }
       if (message.type === "watch.stream") {
         const conversations = options.conversations;
         if (conversations !== undefined) {
           watchingStream = { scope: message.scope, subscription: message.subscription };
-          if (message.after === undefined) {
-            send({ type: "stream.page", ...conversations.stream(undefined, undefined, message.scope), ...streamTag() });
+          const revision = conversations.historyRevision();
+          const reset = message.revision !== undefined && message.revision !== revision;
+          if (message.after === undefined || reset) {
+            send({ type: "stream.page", ...conversations.stream(undefined, undefined, message.scope), ...streamTag(),
+              ...(message.scope === undefined ? {} : { revision }), ...(reset ? { reset: true } : {}) });
           } else if (message.scope !== undefined) {
-            send({ type: "stream.page", ...conversations.streamAfter(message.after, message.scope), resumed: true, ...streamTag() });
+            send({ type: "stream.page", ...conversations.streamAfter(message.after, message.scope), resumed: true, revision, ...streamTag() });
           } else {
             const { entries, turns } = conversations.streamAfter(message.after);
             for (const turn of turns) {
@@ -1528,6 +1573,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       if (message.type === "watch") {
         watched.add(message.conversation);
+        if (message.snapshot) {
+          topicSnapshots.add(message.conversation);
+          const detail = options.conversations?.detail(message.conversation);
+          if (detail !== undefined) {
+            send({ type: "topic.detail", requested: message.conversation, ...detail });
+          }
+          return;
+        }
         for (const entry of options.conversations?.entries(message.conversation, message.after) ?? []) {
           send({ type: "entry", entry });
         }

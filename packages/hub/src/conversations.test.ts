@@ -35,9 +35,9 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function start(): Promise<Hub> {
+async function start(topicArchiveMilliseconds?: number): Promise<Hub> {
   hub = await startTestHub({
-    config: testConfig(dataDir),
+    config: { ...testConfig(dataDir), ...(topicArchiveMilliseconds === undefined ? {} : { topicArchiveMilliseconds }) },
     keySource: staticKeySource(keySet(key)),
     clock,
     targets: [fakeTarget("hub")],
@@ -151,7 +151,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -695,5 +695,141 @@ describe("topic context", () => {
     expect(secondPart.nextOffset).toBeNull();
     expect((await call("read_seed_material", { section: "tickets" })).text).toContain(`#${ticket.id} `);
     expect((await call("read_seed_material", { section: "memory" })).text).toContain("你希望记录每次发布的时间。");
+  });
+});
+
+describe("topic corrections and archive policy", () => {
+  function connect(running: Hub) {
+    const messages: HubToBrain[] = [];
+    const link = running.conversations.attach({ send: (message) => messages.push(message), close: () => undefined });
+    link.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    return { link, messages };
+  }
+
+  async function topicRequest(running: Hub, id: string, action = "", body?: object) {
+    return fetch(`${base(running)}/api/conversations/${id}${action}`, {
+      headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json", origin: base(running) },
+      ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+    });
+  }
+
+  it("archives idle topics with open tickets, saves a missing summary and wakes on each form of direct activity", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const idle = service.create().id;
+    const ticket = openTicket(running, idle);
+    const owner = service.send(idle, "A searchable request")!;
+    const inProgress = service.create().id;
+    const inProgressInput = service.send(inProgress, "Still working")!;
+    const pending = service.create().id;
+    service.send(pending, "Waiting in the queue");
+    const system = service.tell(null, "A system notice", "System prompt");
+    const systemInput = service.entries(system)[0]!;
+    for (const [topic, turn, input] of [[idle, "idle-turn", owner.id], [inProgress, "working-turn", inProgressInput.id], [system, "system-turn", systemInput.id]] as const) {
+      link.receive({ type: "turn.started", conversation: topic, turn, provider: "gpt", model: "model", inputs: [input] });
+      if (topic !== inProgress) {
+        link.receive({ type: "text", conversation: topic, turn, block: "answer", delta: "Saved reply" });
+        link.receive({ type: "turn.finished", conversation: topic, turn, outcome: "completed", reason: null });
+      }
+    }
+    const db = running.database.connection;
+    db.prepare("UPDATE turns SET topic_summary = NULL WHERE id = ?").run("idle-turn");
+    clock.advance(86_399_999);
+    service.archiveIdle();
+    expect(service.get(idle)?.topicState).toBe("active");
+    clock.advance(1);
+    service.archiveIdle();
+    expect(service.get(idle)?.topicState).toBe("archived");
+    expect(service.get(pending)?.topicState).toBe("active");
+    expect(service.get(inProgress)?.topicState).toBe("active");
+    expect(service.get(system)).toMatchObject({ system: true, topicState: "active" });
+    expect(service.list()).toContainEqual(expect.objectContaining({ id: idle, topicState: "archived" }));
+    expect(running.tickets.get(ticket.id)?.conversation).toBe(idle);
+    expect(service.topics.search("searchable", idle, Number.MAX_SAFE_INTEGER, 5).messages[0]?.id).toBe(owner.id);
+    expect(db.prepare("SELECT topic_summary FROM turns WHERE id = ?").get("idle-turn")?.["topic_summary"]).toContain("Saved reply");
+
+    const routed = service.sendToStream(undefined, "Something new", []);
+    const route = messages.at(-1);
+    expect(route?.type).toBe("route");
+    if (route?.type !== "route") {
+      throw new Error("Expected a route request");
+    }
+    expect(route.topics.map(({ id }) => id)).not.toContain(idle);
+    link.receive({ type: "routed", request: route.request, choice: null });
+    await routed;
+
+    expect((await topicRequest(running, idle, "/rename", { title: "  New title  " })).status).toBe(200);
+    expect(service.get(idle)).toMatchObject({ title: "New title", topicState: "archived" });
+    service.send(idle, "A direct message");
+    expect(service.get(idle)?.topicState).toBe("active");
+    expect((await topicRequest(running, idle, "/archive", {})).status).toBe(200);
+    expect(service.get(idle)?.topicState).toBe("archived");
+    const quoted = await service.sendToStream(undefined, "Follow-up", [], { quotedMessage: owner.id });
+    expect(quoted?.topic.id).toBe(idle);
+    expect(service.get(idle)?.topicState).toBe("active");
+    service.archive(idle);
+    expect(service.tell(ticket.id, "Ticket notice", "Notice prompt")).toBe(idle);
+    expect(service.get(idle)?.topicState).toBe("active");
+  });
+
+  it("sweeps automatically at a configured archive age", async () => {
+    const running = await start(25);
+    const topic = running.conversations.create().id;
+    clock.advance(25);
+    await expect.poll(() => running.conversations.get(topic)?.topicState, { interval: 10 }).toBe("archived");
+  });
+
+  it("replays a queued withdrawal after restart and refreshes old history for scoped stream clients", async () => {
+    const first = await start();
+    const { messages: before } = connect(first);
+    const source = first.conversations.create().id;
+    const destination = openTicket(first, undefined, "owner/project").conversation!;
+    const entry = first.conversations.send(source, "Move to code")!;
+    const position = first.conversations.stream().entries[0]?.position;
+    expect(first.conversations.move(entry.id, destination)).toEqual({ ok: true, value: entry.id });
+    first.conversations.send(destination, "Later message");
+    expect(before.filter((message) => message.type === "input")).toHaveLength(1);
+    await first.close();
+
+    const second = await start();
+    const { link, messages } = connect(second);
+    expect(messages).toContainEqual({ type: "input.withdraw", conversation: source, input: entry.id });
+    expect(messages.some((message) => message.type === "input")).toBe(false);
+    link.receive({ type: "input.withdrawn", conversation: source, input: entry.id });
+    const queued = messages.filter((message) => message.type === "input");
+    expect(queued).toMatchObject([
+      { conversation: destination, input: { entry: entry.id, text: "Move to code" } },
+      { conversation: destination, input: { text: "Later message" } },
+    ]);
+    expect(queued[0]?.input.id).not.toBe(entry.id);
+    expect(second.conversations.stream().entries.find((item) => item.entry.id === entry.id)?.position).toBe(position);
+
+    const { socket, received } = await pageSocket(second);
+    socket.send(JSON.stringify({ type: "watch.stream", scope: { kind: "daily" }, after: position, revision: 0, subscription: 3 }));
+    await until(() => received.some((message) => message.type === "stream.page"), socket);
+    expect(received.find((message) => message.type === "stream.page")).toMatchObject({ reset: true, revision: 1, entries: [], subscription: 3 });
+  });
+
+  it("redirects a watched topic and transfers ticket links while preserving the selected project", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const sourceTicket = openTicket(running, undefined, "owner/old");
+    const source = sourceTicket.conversation!;
+    const destination = openTicket(running, undefined, "owner/new").conversation!;
+    const { socket, received } = await pageSocket(running);
+    socket.send(JSON.stringify({ type: "watch", conversation: source, after: 0, snapshot: true }));
+    await until(() => received.some((message) => message.type === "topic.detail"), socket);
+    expect((await topicRequest(running, source, "/merge", { destination })).status).toBe(200);
+    await until(() => received.some((message) => message.type === "topic.detail" && message.conversation.id === destination), socket);
+    expect(received).toContainEqual(expect.objectContaining({ type: "topic.detail", requested: source, conversation: expect.objectContaining({ id: destination, repository: "owner/new" }) }));
+    expect(service.list().map(({ id }) => id)).not.toContain(source);
+    expect(running.tickets.get(sourceTicket.id)).toMatchObject({ conversation: destination, repository: "owner/old" });
+    expect(service.tell(sourceTicket.id, "A notice after merging", "Notice prompt")).toBe(destination);
+
+    const oldLink = await topicRequest(running, source);
+    expect(await oldLink.json()).toMatchObject({ conversation: { id: destination, repository: "owner/new" } });
+    const notice = service.entries(destination)[0]!;
+    expect(service.send(source, "Reply using the old address", [], notice.id)).toMatchObject({ conversation: destination, quotedMessage: notice.id });
   });
 });

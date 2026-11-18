@@ -177,6 +177,20 @@ export function App() {
     controller.open(conversationId, inStream, scope);
   }, [controller, conversationId, inStream, scope]);
 
+  useEffect(() => {
+    const redirect = page.topicRedirect;
+    if (redirect !== null && redirect.from === conversationId) {
+      navigate({ view: "conversations", conversation: redirect.to.id, scope: scopeOfTopic(redirect.to, preferredScope) }, true);
+    }
+  }, [conversationId, navigate, page.topicRedirect, preferredScope]);
+
+  const topicActions = useMemo(() => ({
+    rename: (source: string, title: string) => controller.renameTopic(source, title),
+    archive: (source: string) => controller.archiveTopic(source),
+    merge: (source: string, destination: string) => controller.mergeTopic(source, destination),
+    move: (source: string, message: string, destination: string) => controller.moveMessage(source, message, destination),
+  }), [controller]);
+
   const destinationOf = useCallback(
     (view: PageView): PageRoute => (view === "conversations" ? { view, conversation: null } : { view }),
     [],
@@ -311,6 +325,7 @@ export function App() {
           navigation={conversationTabs}
           send={send}
           stop={stop}
+          topicActions={topicActions}
           loadOlder={() => controller.loadOlderStream()}
           now={now}
         />

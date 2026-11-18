@@ -218,6 +218,7 @@ export interface TicketWrites {
 }
 
 export interface TicketService {
+  announce(ids: readonly number[]): void;
   readonly versions: Pick<ReturnType<typeof createTicketVersions>, "requireActive" | "seen">;
   open(request: TicketToOpen, turn?: TicketTurn): Ticket;
   get(id: number): Ticket | undefined;
@@ -1506,6 +1507,14 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return result;
     },
     change,
+    announce: (ids) => {
+      for (const id of ids) {
+        const ticket = get(id);
+        if (ticket !== undefined) {
+          announce(ticket);
+        }
+      }
+    },
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

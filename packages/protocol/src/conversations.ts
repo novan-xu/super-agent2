@@ -38,6 +38,9 @@ export const Conversation = z.object({
   topicState: z.enum(["active", "archived"]).default("active"),
   repository: RepositoryName.nullable().default(null),
   needsRepository: z.literal(true).optional(),
+  system: z.literal(true).optional(),
+  mergedInto: ConversationId.optional(),
+  mergePending: z.literal(true).optional(),
   provider: Provider.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -140,6 +143,9 @@ export const ConversationDetail = z.object({
   entries: z.array(ConversationEntry),
 });
 export type ConversationDetail = z.infer<typeof ConversationDetail>;
+export const TopicDetailUpdate = ConversationDetail.extend({
+  type: z.literal("topic.detail"), requested: ConversationId,
+});
 
 export const OwnerMessage = z
   .object({
@@ -171,7 +177,7 @@ export const StreamPage = z.object({
 export type StreamPage = z.infer<typeof StreamPage>;
 
 const StreamSubscription = z.number().int().positive().optional();
-export const StreamPageUpdate = StreamPage.extend({ type: z.literal("stream.page"), subscription: StreamSubscription, resumed: z.literal(true).optional() });
+export const StreamPageUpdate = StreamPage.extend({ type: z.literal("stream.page"), subscription: StreamSubscription, resumed: z.literal(true).optional(), revision: z.number().int().nonnegative().optional(), reset: z.literal(true).optional() });
 export const StreamEntryUpdate = StreamEntry.extend({ type: z.literal("stream.entry"), subscription: StreamSubscription });
 
 export const WatchStream = z.object({
@@ -179,6 +185,7 @@ export const WatchStream = z.object({
   after: z.number().int().nonnegative().optional(),
   scope: TopicScope.optional(),
   subscription: StreamSubscription,
+  revision: z.number().int().nonnegative().optional(),
 });
 export const UnwatchStream = z.object({ type: z.literal("unwatch.stream") });
 export const ReadStreamPage = z.object({ type: z.literal("read.stream"), before: z.number().int().positive() });
@@ -193,6 +200,13 @@ export const ConversationUpdate = z.object({
   conversation: Conversation,
 });
 export type ConversationUpdate = z.infer<typeof ConversationUpdate>;
+
+export const TopicHistoryUpdate = z.object({ type: z.literal("topic.history"), topics: z.array(ConversationId) });
+export type TopicHistoryUpdate = z.infer<typeof TopicHistoryUpdate>;
+
+export const TopicRename = z.strictObject({ title: z.string().trim().min(1).max(120) });
+export const TopicMerge = z.strictObject({ destination: ConversationId });
+export const TopicMove = TopicMerge.extend({ message: MessageId });
 
 export const TurnUpdate = z.object({
   type: z.literal("turn"),
@@ -225,6 +239,7 @@ export const WatchConversation = z.object({
   type: z.literal("watch"),
   conversation: ConversationId,
   after: z.number().int().nonnegative().default(0),
+  snapshot: z.literal(true).optional(),
 });
 export type WatchConversation = z.input<typeof WatchConversation>;
 

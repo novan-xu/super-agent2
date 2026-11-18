@@ -11,7 +11,9 @@ const routingWait = 5_000;
 export function topicRouter({ connection }: HubDatabase, send: (message: HubToBrain) => boolean) {
   const listTopics = connection.prepare(`
     SELECT id, title, repository, needs_repository, board_status FROM conversations
-    WHERE topic_state = 'active' AND merged_into IS NULL ORDER BY updated_at DESC, rowid DESC
+    WHERE topic_state = 'active' AND merged_into IS NULL
+      AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
+    ORDER BY updated_at DESC, rowid DESC
   `);
   const recent = connection.prepare(`
     SELECT kind, substr(json_extract(body, '$.text'), 1, 320) AS text

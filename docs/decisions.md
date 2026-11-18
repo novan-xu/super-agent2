@@ -4140,3 +4140,23 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Chosen:** The runner invokes dsh's account service `getBalance` inside dsh, using the existing login. It combines normal and bonus wallets per currency; the hub labels totals below the configurable `HUB_DEEPSEEK_LOW_BALANCE` (30 by default) low, and holds dsh unavailable when all totals are nonpositive until a later successful reading shows money. A failed reading is unknown and does not clear that hold.
 - **Why:** The installed dsh account service already reads the platform account's recharge and bonus wallets using the same login as `deepseek-account`. Its response does not contain the public API's `is_available` flag.
 - **Other options:** Call the public balance API with a separate API key, or use an undocumented direct request with the account token. Both would bypass dsh's own account service.
+
+## 2026-11-18 — Topic corrections and idle archiving (#101)
+
+- **Chosen** Allow topics with open tickets to archive after one idle day. Keep System active by default, save
+  completed-turn summaries before archiving, and reactivate on the next direct input or notice.
+- **Why** The topics list shows current activity while ticket updates still reach their original context.
+- **Other options** Keep topics with open tickets active, or wait for each provider program to close before archiving.
+
+- **Chosen** Preserve the message ID and stream position on a move. Deliver it only after the brain confirms
+  withdrawal. Keep transfer and merge requests in the hub database so a reconnect can finish a pending correction.
+- **Why** A provider may still be handling the input during a link outage. Acknowledgements protect against both
+  topics answering the same message and let a merge finish both current turns before any queued work resumes.
+- **Other options** Deliver to the destination immediately during a disconnect, or interrupt both running turns
+  whenever the owner merges their topics.
+
+- **Chosen** Keep the destination's project on a cross-project merge, keep each ticket's project, and allow System
+  as a destination while preserving its address for notices.
+- **Why** The owner chooses the topic that will hold the combined history. Tickets and System retain their
+  established destinations for work and notices.
+- **Other options** Restrict merges to one project, or let the combined topic acquire the source's project.

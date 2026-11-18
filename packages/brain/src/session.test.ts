@@ -869,3 +869,133 @@ describe("the brain's session", () => {
     await turnEnded(first.id, 3);
   });
 });
+
+describe("topic corrections across the brain link", () => {
+  it("moves the original input during an answer and starts the destination after the source stops", async () => {
+    const hub = await startHub();
+    programs.gpt.steering = false;
+    startBrain();
+    const source = await newConversation();
+    const destination = await newConversation();
+    hub.conversations.rename(source.id, "Source topic");
+    const original = await sayInStream({ topic: source.id, text: "A misplaced request" });
+    const opening = await programs.gpt.next();
+    opening.handle.emit({ type: "session", session: "source-with-moved-request" });
+    opening.handle.emit({ type: "text", block: "partial", delta: "Earlier reply" });
+    opening.handle.emit({ type: "tool.started", call: "effect", name: "record", input: "" });
+    opening.handle.emit({ type: "tool.finished", call: "effect", output: "Already recorded", ok: true });
+    await until(() => detail(source.id).entries.some((entry) => entry.kind === "tool" && entry.state === "done"));
+
+    const next = hub.conversations.send(source.id, "A different request should stay here");
+    const moved = await owner(`/api/conversations/${source.id}/move`, {
+      method: "POST", body: JSON.stringify({ message: original.entry.id, destination: destination.id }),
+    });
+    expect(moved.status).toBe(200);
+    expect((await programs.gpt.next("interrupt")).handle).toBe(opening.handle);
+    expect(detail(destination.id).entries[0]).toMatchObject({ id: original.entry.id, at: original.entry.at, taken: false });
+    expect(detail(destination.id).turns).toEqual([]);
+    expect(detail(source.id).entries.map(({ id }) => id)).not.toContain(original.entry.id);
+    expect(hub.conversations.stream().entries.find(({ entry }) => entry.id === original.entry.id))
+      .toMatchObject({ position: original.position, topic: { id: destination.id } });
+    expect(detail(source.id).entries).toContainEqual(expect.objectContaining({ kind: "text", text: "Earlier reply" }));
+    expect(detail(source.id).entries).toContainEqual(expect.objectContaining({ kind: "tool", state: "done", output: "Already recorded" }));
+
+    opening.handle.emit({ type: "turn.finished", outcome: "interrupted" });
+    const first = await programs.gpt.next();
+    const second = await programs.gpt.next();
+    const to = [first, second].find(({ handle }) => handle.options.tools?.conversation === destination.id);
+    const atSource = [first, second].find(({ handle }) => handle.options.tools?.conversation === source.id);
+    expect(to?.text).toContain("A misplaced request");
+    expect(atSource?.text).toContain("A different request should stay here");
+    expect(atSource?.text).not.toContain("A misplaced request");
+    expect(atSource?.handle.options.session).toBeNull();
+    expect(lastTurn(source.id)?.id).not.toBe(opening.handle.options.tools?.turn);
+    expect(detail(source.id).turns[0]?.state).toBe("interrupted");
+    expect(detail(source.id).entries).toContainEqual(expect.objectContaining({ id: next?.id, taken: true }));
+    expect(detail(destination.id).entries[0]).toMatchObject({ id: original.entry.id, taken: true });
+  });
+
+  it("withdraws an input queued behind a different answer without interrupting that answer", async () => {
+    const hub = await startHub();
+    programs.gpt.steering = false;
+    startBrain();
+    const source = await newConversation();
+    const destination = await newConversation();
+    await say(source.id, "Finish this answer in its original topic.");
+    const first = await programs.gpt.next();
+    const queued = hub.conversations.send(source.id, "Move only this queued request.")!;
+    expect(hub.conversations.move(queued.id, destination.id).ok).toBe(true);
+    const moved = await programs.gpt.next();
+    expect(moved.handle.options.tools?.conversation).toBe(destination.id);
+    expect(moved.text).toContain("Move only this queued request.");
+    expect(first.handle.interrupts).toBe(0);
+    first.handle.finish("Finished the original answer.");
+    await turnEnded(source.id, 1);
+    expect(detail(source.id).entries.some(({ id }) => id === queued.id)).toBe(false);
+  });
+
+  it("hands over the active owner input through MCP and wakes the archived destination", async () => {
+    const hub = await startHub();
+    startBrain();
+    const source = await newConversation();
+    const destination = await newConversation();
+    hub.conversations.archive(destination.id);
+    const request = await sayInStream({ topic: source.id, text: "Please pass my message to planning" });
+    const started = await programs.gpt.next();
+    const falseTurn = { ...started.handle.options, tools: { ...started.handle.options.tools!, turn: "unrelated-turn" } };
+    expect(await callTool(falseTurn, "handover", { destination: destination.id })).toContain("An active turn");
+    expect(await callTool(started.handle.options, "handover", { destination: destination.id })).toContain(request.entry.id);
+    await programs.gpt.next("interrupt");
+    expect(detail(destination.id).conversation.topicState).toBe("active");
+    started.handle.finish();
+    const relayed = await programs.gpt.next();
+    expect(relayed.handle.options.tools?.conversation).toBe(destination.id);
+    expect(relayed.text).toContain("Please pass my message to planning");
+    expect(detail(destination.id).entries[0]?.id).toBe(request.entry.id);
+    expect(detail(source.id).entries).toHaveLength(0);
+  });
+
+  it("finishes both active turns before merging and seeds the queued turn with the combined history", async () => {
+    const hub = await startHub();
+    programs.gpt.steering = false;
+    startBrain();
+    const source = await newConversation();
+    const destination = await newConversation();
+    await say(source.id, "The source request was about a Monday release.");
+    const a = await programs.gpt.next();
+    a.handle.emit({ type: "session", session: "source" });
+    await say(destination.id, "The destination request asked for the checklist.");
+    const b = await programs.gpt.next();
+    b.handle.emit({ type: "session", session: "destination" });
+
+    await say(source.id, "Summarize both requests.");
+    const merging = await owner(`/api/conversations/${source.id}/merge`, {
+      method: "POST", body: JSON.stringify({ destination: destination.id }),
+    });
+    expect(merging.status).toBe(200);
+    expect(detail(source.id).conversation.mergePending).toBe(true);
+    a.handle.finish("The release is Monday.");
+    await turnEnded(source.id, 1);
+    expect(detail(source.id).conversation.id).toBe(source.id);
+    expect(detail(source.id).turns).toHaveLength(1);
+    b.handle.finish("The checklist is ready.");
+
+    const combined = await programs.gpt.next();
+    expect(combined.handle.options.tools?.conversation).toBe(destination.id);
+    expect(combined.handle.options.session).toBeNull();
+    expect(combined.text).toContain("The source request was about a Monday release.");
+    expect(combined.text).toContain("The destination request asked for the checklist.");
+    expect(combined.text).toContain("The release is Monday.");
+    expect(combined.text).toContain("The checklist is ready.");
+    expect(combined.text.match(/Summarize both requests\./g)).toHaveLength(1);
+    expect(a.handle.interrupts + b.handle.interrupts).toBe(0);
+    expect(a.handle.closed && b.handle.closed).toBe(true);
+
+    const redirected = DetailShape.parse(await (await owner(`/api/conversations/${source.id}`)).json());
+    expect(redirected.conversation.id).toBe(destination.id);
+    expect(redirected.turns.map((turn) => turn.conversation)).toEqual([destination.id, destination.id, destination.id]);
+    expect(hub.conversations.list().map(({ id }) => id)).toEqual([destination.id]);
+    expect(hub.conversations.topics.search("Monday", source.id, Number.MAX_SAFE_INTEGER, 5).messages)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ topic: destination.id })]));
+  });
+});

@@ -16,6 +16,8 @@ const owner = (id: string, conversation: string, text: string, fields: Partial<O
   ({ id, conversation, seq: 1, at: now, kind: "owner", text, attachments: [], taken: true, ...fields });
 const item = (position: number, topic: Conversation, entry: OwnerEntry): StreamEntry => ({ position, topic, entry });
 const ignore = () => undefined;
+const accepted = async () => true;
+const topicActions = { rename: accepted, archive: accepted, merge: accepted, move: accepted };
 
 describe("the conversation page", () => {
   it("shows only scoped topics with repository labels, reply context and possible matches", () => {
@@ -27,12 +29,14 @@ describe("the conversation page", () => {
     const html = renderToStaticMarkup(<ConversationView conversation={null} scope={codeScope} state={null} list={list}
       stream={{ entries, turns: [], before: null, loading: false }} status="open" linked={true} model={null}
       hrefOf={(id) => `/conversations/${id}?scope=code`} open={ignore} streamHref="/conversations?scope=code" openStream={ignore}
-      send={async () => true} stop={ignore} loadOlder={ignore} now={now} />);
+      send={accepted} topicActions={topicActions} stop={ignore} loadOlder={ignore} now={now} />);
     expect(html).toContain('href="/conversations/code?scope=code"');
     expect(html).toContain("owner/project");
     expect(html).toContain("待定仓库");
     expect(html).toContain("正在回答");
-    expect(html).toContain("可能属于 Release notes");
+    expect(html).toContain("移到 Release notes");
+    expect(html).toContain("Release notes的话题操作");
+    expect(html).toContain('aria-label="移到…"');
     expect(html).toContain('class="sent-quote od-truncate">Review the migration');
     expect(html).not.toContain("Weekly planning");
     expect(html).not.toContain("An everyday message");

@@ -1,5 +1,6 @@
 import {
   type ChoiceChange,
+  type ConversationResponse,
   type Conversation,
   type DecisionReview,
   type EngineTable,
@@ -47,6 +48,8 @@ export class PageController {
   constructor(private readonly options: ControllerOptions) {
     this.socket = new HubSocket({
       ...options.socket,
+      topicSnapshots: true,
+      streamRevision: () => this.store.getState().stream.revision,
       resume: (conversation) => {
         const current = this.store.getState().current;
         return current?.id === conversation ? resumeAfter(current) : 0;
@@ -64,6 +67,9 @@ export class PageController {
         const previous = this.store.getState();
         const before = previous.detail;
         this.store.dispatch({ type: "server", message });
+        if (message.type === "topic.history" && this.store.getState().streaming) {
+          this.socket.watchStream(true, this.scope, true);
+        }
         if (message.type === "conversation") {
           this.recheckStream(previous.list, [message.conversation]);
         }
@@ -141,10 +147,11 @@ export class PageController {
   }
 
   async refresh(): Promise<void> {
+    const known = this.store.getState().list;
     const list = await this.options.api.conversations();
     if (list.ok) {
       const previous = this.store.getState().list;
-      this.store.dispatch({ type: "list", list: list.value });
+      this.store.dispatch({ type: "list", list: list.value, ...(list.value.repositories === undefined ? {} : { known }) });
       this.recheckStream(previous, this.store.getState().list);
     }
     if (this.opened !== null) {
@@ -419,6 +426,30 @@ export class PageController {
     return true;
   }
 
+  renameTopic(source: string, title: string): Promise<boolean> {
+    return this.editTopic(() => this.options.api.renameTopic(source, title));
+  }
+
+  archiveTopic(source: string): Promise<boolean> {
+    return this.editTopic(() => this.options.api.archiveTopic(source));
+  }
+
+  mergeTopic(source: string, destination: string): Promise<boolean> {
+    return this.editTopic(() => this.options.api.mergeTopic(source, destination));
+  }
+
+  moveMessage(source: string, message: string, destination: string): Promise<boolean> {
+    return this.editTopic(() => this.options.api.moveMessage(source, message, destination));
+  }
+
+  private async editTopic(run: () => Promise<Answer<ConversationResponse>>): Promise<boolean> {
+    const answer = await run();
+    if (!answer.ok) {
+      this.options.onFailure(answer.error);
+    }
+    return answer.ok;
+  }
+
   async interrupt(): Promise<void> {
     if (this.opened === null) {
       return;
@@ -501,8 +532,8 @@ export class PageController {
 
   private async readDetail(conversation: string): Promise<void> {
     const detail = await this.options.api.detail(conversation);
-    if (detail.ok) {
-      this.store.dispatch({ type: "detail", detail: detail.value });
+    if (detail.ok && this.opened === conversation) {
+      this.store.dispatch({ type: "detail", detail: detail.value, requested: conversation });
     }
   }
 }

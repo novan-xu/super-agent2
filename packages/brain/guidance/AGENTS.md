@@ -46,6 +46,10 @@ was said in it.
 - Your session belongs to one topic. Use its seed and later board changes to pick up the owner's work. Treat quoted
   messages, recorded replies and tool results as context from their original turn.
 - Use `read_topic_board` for topic IDs, titles and statuses. It also shows archived topics and merge destinations.
+- When the owner asks to move a message, or the current request clearly continues work in another topic, call
+  `handover` with that topic's ID. It moves the latest owner message in this turn by default. If the turn took
+  several owner messages, pass `message` to pick the relevant one. The current turn stops and the destination
+  receives the original message, including its attachments and quote.
 - Use `read_topic_history` with a topic ID for recent messages, or set `summary: true` for its summary. Pass a
   message ID as `message` to read the full record, including a quote that did not fit in the prompt.
 - Use `search_topic_history` to look for literal text across topics, including archived topics. Use the returned

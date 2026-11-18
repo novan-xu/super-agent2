@@ -15,6 +15,7 @@ export interface PageState {
   readonly list: readonly Conversation[];
   readonly repositories: readonly string[];
   readonly current: ConversationState | null;
+  readonly topicRedirect: { readonly from: string; readonly to: Conversation } | null;
   readonly streaming: boolean;
   readonly streamKey: string;
   readonly stream: TopicStreamState;
@@ -30,8 +31,8 @@ export interface PageState {
 export type PageAction =
   | { readonly type: "status"; readonly status: SocketStatus }
   | { readonly type: "server"; readonly message: ServerMessage }
-  | { readonly type: "list"; readonly list: ConversationList }
-  | { readonly type: "detail"; readonly detail: ConversationDetail }
+  | { readonly type: "list"; readonly list: ConversationList; readonly known?: readonly Conversation[] }
+  | { readonly type: "detail"; readonly detail: ConversationDetail; readonly requested?: string }
   | { readonly type: "open"; readonly conversation: string | null }
   | { readonly type: "own"; readonly entry: ConversationEntry }
   | { readonly type: "stream.open"; readonly watching: boolean; readonly key: string; readonly restart?: boolean }
@@ -50,7 +51,7 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, list: [], repositories: [], current: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
+export const initialPage: PageState = { status: "connecting", linked: false, list: [], repositories: [], current: null, topicRedirect: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -68,18 +69,25 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
   switch (action.type) {
     case "status":
       return action.status === state.status ? state : { ...state, status: action.status, stream: state.stream.loading ? { ...state.stream, loading: false } : state.stream };
-    case "list":
-      return { ...state, linked: action.list.brain.linked, list: mergeConversations(state.list, action.list.conversations), repositories: action.list.repositories ?? [] };
+    case "list": {
+      const known = new Set(action.known);
+      const present = new Set(action.list.conversations.map((topic) => topic.id));
+      const retained = state.list.filter((topic) => present.has(topic.id) || !known.has(topic));
+      return { ...state, linked: action.list.brain.linked, list: mergeConversations(retained, action.list.conversations), repositories: action.list.repositories ?? [] };
+    }
     case "detail": {
       const list = upsertConversation(state.list, action.detail.conversation);
       const next = list === state.list ? state : { ...state, list };
+      if (action.requested !== undefined && state.current?.id === action.requested && action.detail.conversation.id !== action.requested) {
+        return { ...next, topicRedirect: { from: action.requested, to: action.detail.conversation } };
+      }
       return withCurrent(next, state.current === null ? null : receiveDetail(state.current, action.detail));
     }
     case "open":
       if (state.current?.id === action.conversation) {
         return state;
       }
-      return { ...state, current: action.conversation === null ? null : emptyConversation(action.conversation) };
+      return { ...state, topicRedirect: null, current: action.conversation === null ? null : emptyConversation(action.conversation) };
     case "own":
       return withCurrent(state, state.current === null ? null : receiveOwn(state.current, action.entry));
     case "stream.open":
@@ -122,6 +130,17 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       return { ...state, settings: action.settings };
     case "server": {
       const { message } = action;
+      if (message.type === "topic.detail") {
+        if (state.current?.id !== message.requested) {
+          return state;
+        }
+        const { conversation, turns, entries } = message;
+        const list = upsertConversation(state.list, conversation);
+        if (conversation.id !== message.requested) {
+          return { ...state, list, topicRedirect: { from: message.requested, to: conversation } };
+        }
+        return { ...state, list, current: { id: conversation.id, conversation, turns, entries } };
+      }
       if (message.type === "allowance") return { ...state, allowance: message.allowance };
       if (message.type === "settings") {
         return { ...state, settings: message.settings };

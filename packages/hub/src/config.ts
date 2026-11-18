@@ -60,6 +60,7 @@ const Environment = z.object({
       .transform(Number)
       .pipe(z.number().int().min(1, { error: "must be at least 1" })),
   ),
+  HUB_TOPIC_ARCHIVE_MS: unlessEmpty(z.string().regex(/^[1-9]\d*$/, { error: "must be a positive number of milliseconds" }).transform(Number).pipe(z.number().int().positive())),
   HUB_DEEPSEEK_LOW_BALANCE: unlessEmpty(z.string().regex(/^\d+(?:\.\d+)?$/, { error: "must be a nonnegative number" }).transform(Number).pipe(z.number().finite())),
   VAPID_PUBLIC_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
   VAPID_PRIVATE_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
@@ -83,6 +84,7 @@ export interface Config {
   readonly sourceRepository?: string;
   readonly firstPipelineAllowanceMinutes?: number;
   readonly deepseekLowBalance?: number;
+  readonly topicArchiveMilliseconds?: number;
 }
 
 export interface VapidSettings {
@@ -143,6 +145,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),
+      ...(value.HUB_TOPIC_ARCHIVE_MS === undefined ? {} : { topicArchiveMilliseconds: value.HUB_TOPIC_ARCHIVE_MS }),
       ...(value.HUB_DEEPSEEK_LOW_BALANCE === undefined ? {} : { deepseekLowBalance: value.HUB_DEEPSEEK_LOW_BALANCE }),
       ...(value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES === undefined ? {} : { firstPipelineAllowanceMinutes: value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES }),
     },

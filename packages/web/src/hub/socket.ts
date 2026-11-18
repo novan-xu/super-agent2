@@ -35,6 +35,8 @@ export interface HubSocketOptions {
   readonly create: (url: string, events: SocketEvents) => SocketLike;
   readonly schedule: Schedule;
   readonly resume: (conversation: string) => number;
+  readonly topicSnapshots?: boolean;
+  readonly streamRevision?: () => number | undefined;
   readonly resumeStream?: () => number | undefined;
   readonly resumeTicket?: (ticket: number) => number;
   readonly onMessage: (message: ServerMessage) => void;
@@ -80,7 +82,7 @@ export class HubSocket {
       this.send({ type: "unwatch", conversation: previous });
     }
     if (conversation !== null) {
-      this.send({ type: "watch", conversation, after: this.options.resume(conversation) });
+      this.followTopic(conversation);
     }
   }
 
@@ -116,12 +118,18 @@ export class HubSocket {
     this.send({ type: "read.stream", before });
   }
 
+  private followTopic(conversation: string): void {
+    this.send({ type: "watch", conversation, after: this.options.resume(conversation),
+      ...(this.options.topicSnapshots ? { snapshot: true } : {}) });
+  }
+
   private followStream(): void {
     const after = this.options.resumeStream?.();
+    const revision = this.options.streamRevision?.();
     this.send({
       type: "watch.stream",
       ...(after === undefined ? {} : { after }),
-      ...(this.streamScope === undefined ? {} : { scope: this.streamScope, subscription: this.streamSubscription }),
+      ...(this.streamScope === undefined ? {} : { scope: this.streamScope, subscription: this.streamSubscription, revision }),
     });
   }
 
@@ -172,7 +180,7 @@ export class HubSocket {
           this.followStream();
         }
         if (this.watching !== null) {
-          this.send({ type: "watch", conversation: this.watching, after: this.options.resume(this.watching) });
+          this.followTopic(this.watching);
         }
         if (this.watchingTicket !== null) {
           this.send({ type: "watch.ticket", ticket: this.watchingTicket, after: this.ticketAfter(this.watchingTicket) });

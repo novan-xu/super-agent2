@@ -7,6 +7,7 @@ import {
   codeEngineChoices,
   codeKinds,
   CommitRef,
+  ConversationId,
   type CommandRecord,
   CommandRequest,
   Difficulty,
@@ -81,6 +82,7 @@ const ReadArguments = z.object({
 
 const StopArguments = z.object({ id: z.string().min(1) });
 const QuoteArguments = z.strictObject({ id: MessageId, offset: z.number().int().nonnegative().default(0) });
+const HandoverArguments = z.strictObject({ destination: ConversationId, message: MessageId.optional() });
 const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName });
 
 const CodeKind = z.enum(codeKinds);
@@ -817,6 +819,20 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "handover",
+        title: "Hand over an owner message",
+        description: "Move the current owner message to another topic when the owner asks or the message belongs there. The current turn stops and the destination answers it.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            destination: { type: "string", description: "The destination topic id from the topic board" },
+            message: { type: "string", description: "An owner message id in this turn. Defaults to the most recent owner message in the turn." },
+          },
+          required: ["destination"],
+          additionalProperties: false,
+        },
+      },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
@@ -1280,6 +1296,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const args = QuoteArguments.safeParse(parsed.data.arguments);
         const part = conversation === undefined || !args.success ? undefined : conversations.readQuote(conversation, args.data.id, args.data.offset);
         result = part === undefined ? { text: "No quote at that offset in this topic.", isError: true } : { text: JSON.stringify(part) };
+        break;
+      }
+      case "handover": {
+        const args = HandoverArguments.safeParse(parsed.data.arguments);
+        const moved = conversation !== undefined && turn !== undefined && !aborted.aborted && conversations.brainReady() && args.success
+          ? conversations.handover(conversation, turn, args.data.destination, args.data.message) : undefined;
+        result = moved?.ok === true ? { text: `Owner message ${moved.value} belongs to the destination topic now and will be delivered after withdrawal.` }
+          : { text: "An active turn with an owner message and an existing destination topic are required.", isError: true };
         break;
       }
       case "set_topic_repository": {

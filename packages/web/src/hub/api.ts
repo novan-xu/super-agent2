@@ -96,6 +96,10 @@ export const hubApi = {
     call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments, quotedMessage }),
   sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope) =>
     call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope }),
+  renameTopic: (source: string, title: string) => call(`${conversationPath(source)}/rename`, ConversationResponse, { title }),
+  archiveTopic: (source: string) => call(`${conversationPath(source)}/archive`, ConversationResponse, {}),
+  mergeTopic: (source: string, destination: string) => call(`${conversationPath(source)}/merge`, ConversationResponse, { destination }),
+  moveMessage: (source: string, message: string, destination: string) => call(`${conversationPath(source)}/move`, ConversationResponse, { message, destination }),
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),
   refuse: (id: string, fingerprint: string) => call(`${commandPath(id)}/refuse`, CommandResponse, { fingerprint }),
