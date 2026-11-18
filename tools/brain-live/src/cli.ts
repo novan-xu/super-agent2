@@ -17,7 +17,7 @@ import {
 import { fingerprintOf, type Hub, startHub } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, type ConversationEntry, type Provider, Provider as ProviderShape } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { solidPng } from "./png.js";
+import { type Shape, shapePng } from "./png.js";
 
 const team = "live-check";
 const audience = "a".repeat(64);
@@ -241,8 +241,33 @@ const colours = [
   { en: "yellow", zh: "黄", rgb: [240, 210, 20] },
 ] as const;
 
-function namesColour(reply: string, colour: (typeof colours)[number]): boolean {
-  return reply.toLowerCase().includes(colour.en) || reply.includes(colour.zh);
+const shapes: readonly { readonly en: Shape; readonly zh: string }[] = [
+  { en: "circle", zh: "圆" },
+  { en: "square", zh: "方" },
+  { en: "triangle", zh: "三角" },
+];
+
+interface Drawn {
+  readonly colour: (typeof colours)[number];
+  readonly shape: (typeof shapes)[number];
+}
+
+function drawn(unlike?: Drawn): Drawn {
+  for (;;) {
+    const candidate = { colour: colours[randomInt(colours.length)] ?? colours[0], shape: shapes[randomInt(shapes.length)] ?? { en: "circle", zh: "圆" } };
+    if (unlike === undefined || (candidate.colour.en !== unlike.colour.en && candidate.shape.en !== unlike.shape.en)) {
+      return candidate;
+    }
+  }
+}
+
+function names(reply: string, picture: Drawn): boolean {
+  const lower = reply.toLowerCase();
+  return (lower.includes(picture.colour.en) || reply.includes(picture.colour.zh)) && (lower.includes(picture.shape.en) || reply.includes(picture.shape.zh));
+}
+
+function openedBy(conversation: string, attachment: string, after: number): string[] {
+  return entriesOf(conversation).flatMap((entry) => (entry.kind === "tool" && entry.seq > after && entry.input.includes(attachment) ? [entry.name] : []));
 }
 
 startBrain();
@@ -316,34 +341,43 @@ if (only.has("interrupt")) {
 
 if (only.has("attachments")) {
   const conversation = hub.conversations.create().id;
-  const colour = colours[randomInt(colours.length)] ?? colours[0];
+  const first = drawn();
   const word = `${["OKAPI", "TAPIR", "QUOKKA", "NUMBAT", "DINGO"][randomInt(5)]}-${randomInt(100, 1000)}`;
-  const image = await attach("photo.png", "image/png", solidPng(96, 64, colour.rgb));
+  const image = await attach("photo.png", "image/png", shapePng(128, first.shape.en, first.colour.rgb));
   const file = await attach("note.txt", "text/plain", new TextEncoder().encode(`The code word is ${word}.\n`));
   const before = lastSeq(conversation);
-  await sendWith(conversation, "我附了一张图片和一个文本文件。图片整个是什么颜色？文本文件里的暗号是什么？用一行回答：颜色，暗号。", [image, file]);
+  await sendWith(
+    conversation,
+    "我附了一张图片和一个文本文件。图片上画的是什么颜色的什么形状？请直接看图回答，不要用任何工具去读这张图片文件。文本文件里的暗号是什么？用一行回答：颜色 形状，暗号。",
+    [image, file],
+  );
   await turnsDone(conversation, 1);
   const reply = replyAfter(conversation, before);
-  const tools = entriesOf(conversation).filter((entry) => entry.kind === "tool").map((entry) => (entry.kind === "tool" ? entry.name : ""));
-  note("an attached image is seen", namesColour(reply, colour), `colour ${colour.en}; tools: ${tools.join(", ") || "none"}; reply: ${reply.slice(0, 300)}`);
+  const opened = openedBy(conversation, image, before);
+  note(
+    "an attached image is seen, not read from its file",
+    names(reply, first) && opened.length === 0,
+    `drawn ${first.colour.en} ${first.shape.en}; tools that opened the image: ${opened.join(", ") || "none"}; reply: ${reply.slice(0, 300)}`,
+  );
   note("an attached file is read at its path", reply.includes(word), `code word ${word}; reply: ${reply.slice(0, 300)}`);
 
-  const second = colours.filter((candidate) => candidate.en !== colour.en)[randomInt(colours.length - 1)] ?? colours[1];
-  const later = await attach("second.png", "image/png", solidPng(64, 96, second.rgb));
+  const second = drawn(first);
+  const later = await attach("second.png", "image/png", shapePng(128, second.shape.en, second.colour.rgb));
   const start = lastSeq(conversation);
   await sendWith(conversation, `用 run_command 在 hub 上运行这条命令（会等 20 秒）：node -e "setTimeout(()=>console.log('done'),20000)"，然后用一句话告诉我结果。`, []);
   await waitFor(() => entriesOf(conversation).some((entry) => entry.kind === "tool" && entry.seq > start));
-  await sendWith(conversation, "另外：我刚又附了一张图。回答的最后一个词必须是这张新图的颜色（英文单词）。", [later]);
+  await sendWith(conversation, "另外：我刚又附了一张图。请直接看图，不要用工具读它。回答的最后两个词必须是这张新图上的颜色和形状（英文单词）。", [later]);
   await waitFor(() => {
     const detail = hub.conversations.detail(conversation);
     return detail !== undefined && detail.turns.every((turn) => turn.state !== "running") && detail.entries.every((entry) => entry.kind !== "owner" || entry.taken);
   });
   const turns = hub.conversations.detail(conversation)?.turns ?? [];
   const steered = replyAfter(conversation, start);
+  const openedLater = openedBy(conversation, later, start);
   note(
-    "an image sent into a running turn is seen",
-    turns.length === 2 && namesColour(steered.slice(-80), second),
-    `second colour ${second.en}; turns: ${turns.length}; reply: ${steered.slice(-200)}`,
+    "an image sent into a running turn is seen, not read from its file",
+    turns.length === 2 && names(steered.slice(-120), second) && openedLater.length === 0,
+    `drawn ${second.colour.en} ${second.shape.en}; turns: ${turns.length}; tools that opened the image: ${openedLater.join(", ") || "none"}; reply: ${steered.slice(-200)}`,
   );
 }
 

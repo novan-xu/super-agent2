@@ -25,18 +25,36 @@ function chunk(type: string, data: Uint8Array): Buffer {
   return Buffer.concat([length, body, sum]);
 }
 
-export function solidPng(width: number, height: number, rgb: readonly [number, number, number]): Buffer {
+export type Shape = "circle" | "square" | "triangle";
+
+function inside(shape: Shape, size: number, x: number, y: number): boolean {
+  const centre = size / 2;
+  const reach = size * 0.32;
+  switch (shape) {
+    case "circle":
+      return (x - centre) ** 2 + (y - centre) ** 2 < reach ** 2;
+    case "square":
+      return Math.abs(x - centre) < reach && Math.abs(y - centre) < reach;
+    case "triangle":
+      return y > centre - reach && y < centre + reach && Math.abs(x - centre) < (y - (centre - reach)) / 2;
+  }
+}
+
+export function shapePng(size: number, shape: Shape, rgb: readonly [number, number, number]): Buffer {
   const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
   header[8] = 8;
   header[9] = 2;
-  const row = Buffer.alloc(width * 3 + 1);
-  for (let x = 0; x < width; x += 1) {
-    row[1 + x * 3] = rgb[0];
-    row[2 + x * 3] = rgb[1];
-    row[3 + x * 3] = rgb[2];
+  const rows = Buffer.alloc((size * 3 + 1) * size);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const colour = inside(shape, size, x, y) ? rgb : [250, 250, 250];
+      const at = y * (size * 3 + 1) + 1 + x * 3;
+      rows[at] = colour[0] ?? 0;
+      rows[at + 1] = colour[1] ?? 0;
+      rows[at + 2] = colour[2] ?? 0;
+    }
   }
-  const rows = Buffer.concat(Array.from({ length: height }, () => row));
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
 }
