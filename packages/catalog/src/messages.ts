@@ -45,6 +45,7 @@ export const messages = {
   "refusal.unsupported": "所选机器的程序不提供这个模型和推理强度",
   "refusal.incomplete": "还缺机器、供应商、模型或推理强度，暂时不能开始",
   "refusal.unavailable": "暂时取不到，请稍后再试",
+  "refusal.too_large": "超过了系统一次能传送的物理上限（64 兆字节），没有发出去",
   "conversation.state.idle": "空闲",
   "conversation.state.working": "工作中",
   "turn.state.running": "进行中",

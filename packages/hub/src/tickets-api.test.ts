@@ -237,19 +237,26 @@ describe("the brain's tool for writing work", () => {
     expect((await callTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing in no repository: Translate a notice");
   });
 
-  it("refuses a missing Chinese copy, an unsafe material name, repeated names and too much text, opening nothing", async () => {
+  it("refuses a missing Chinese copy, an unsafe material name and repeated names, opening nothing", async () => {
     const running = await start();
     const refused = [
       { ...writingArguments, title: { en: "Translate a notice", zh: "Translate a notice" } },
       { ...writingArguments, material: [{ name: "../notice.txt", source: "pasted" }] },
       { ...writingArguments, material: [{ name: "a.txt", source: "pasted" }, { name: "a.txt", source: "pasted again" }] },
-      { ...writingArguments, material: [{ name: "a.txt", source: "pasted", text: "x".repeat(200_000) }, { name: "b.txt", source: "pasted", text: "x".repeat(200_000) }, { name: "c.txt", source: "pasted", text: "x" }] },
       { ...writingArguments, task: "  " },
     ];
     for (const args of refused) {
       expect((await callTool(running, "open_writing_ticket", args)).isError).toBe(true);
     }
     expect(running.tickets.list({})).toEqual([]);
+  });
+
+  it("takes any amount of material and a task of any length", async () => {
+    const running = await start();
+    const material = Array.from({ length: 25 }, (_, index) => ({ name: `piece-${index}.txt`, source: `pasted part ${index} ${"of a long source ".repeat(60)}`, text: "字".repeat(30_000) }));
+    const opened = await callTool(running, "open_writing_ticket", { ...writingArguments, task: "Translate everything. ".repeat(2_000), material });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(running.tickets.writing(1)?.materials).toHaveLength(25);
   });
 });
 

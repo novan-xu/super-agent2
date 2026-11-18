@@ -18,12 +18,7 @@ export const workFailures = ["prepare", "program", "no-pull-request", "lost"] as
 export const WorkFailure = z.enum(workFailures);
 export type WorkFailure = z.infer<typeof WorkFailure>;
 
-export const maximumDeliveredText = 200_000;
-export const maximumDeliveredFileBytes = 4 * 1024 * 1024;
-export const maximumDeliveredBytes = 8 * 1024 * 1024;
-export const maximumDeliveredFiles = 20;
-export const maximumMaterialText = 200_000;
-export const maximumMaterials = 20;
+export const filePartBytes = 8 * 1024 * 1024;
 
 export const DeliveryFileName = z
   .string()
@@ -32,7 +27,7 @@ export const DeliveryFileName = z
 
 export const MaterialName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 
-export const workSenders =["owner", "brain", "hub"] as const;
+export const workSenders = ["owner", "brain", "hub"] as const;
 export const WorkSender = z.enum(workSenders);
 export type WorkSender = z.infer<typeof WorkSender>;
 
@@ -40,7 +35,6 @@ export const DeliveredFile = z.object({
   name: DeliveryFileName,
   size: z.number().int().nonnegative(),
   mediaType: z.string().min(1),
-  data: z.string(),
 });
 export type DeliveredFile = z.infer<typeof DeliveredFile>;
 
@@ -116,8 +110,8 @@ export type WorkTask = z.infer<typeof WorkTask>;
 
 export const WritingMaterial = z.object({
   name: MaterialName,
-  source: z.string().trim().min(1).max(500),
-  text: z.string().max(maximumMaterialText).nullable(),
+  source: z.string().trim().min(1),
+  text: z.string().nullable(),
 });
 export type WritingMaterial = z.infer<typeof WritingMaterial>;
 
@@ -126,7 +120,7 @@ export const WritingTask = z.object({
   attempt: Attempt,
   title: z.string().min(1),
   task: z.string().min(1),
-  materials: z.array(WritingMaterial).max(maximumMaterials),
+  materials: z.array(WritingMaterial),
   engine: WorkEngine,
   model: z.string().min(1),
   effort: z.string().min(1),
@@ -135,7 +129,7 @@ export const WritingTask = z.object({
 });
 export type WritingTask = z.infer<typeof WritingTask>;
 
-export const WorkHeld =z.object({
+export const WorkHeld = z.object({
   ticket: Ticket,
   attempt: Attempt,
   last: z.number().int().nonnegative(),
@@ -166,13 +160,34 @@ export const StartWriting = z.object({
 });
 export type StartWriting = z.infer<typeof StartWriting>;
 
-export const SyncWork =z.object({
+export const SyncWork = z.object({
   type: z.literal("work.sync"),
   ticket: Ticket,
   attempt: Attempt,
   after: z.number().int().nonnegative(),
 });
 export type SyncWork = z.infer<typeof SyncWork>;
+
+export const FetchFile = z.object({
+  type: z.literal("work.file"),
+  ticket: Ticket,
+  attempt: Attempt,
+  name: DeliveryFileName,
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+});
+export type FetchFile = z.infer<typeof FetchFile>;
+
+export const FilePart = z.object({
+  type: z.literal("work.file.part"),
+  ticket: Ticket,
+  attempt: Attempt,
+  name: DeliveryFileName,
+  offset: z.number().int().nonnegative(),
+  data: z.string().nullable(),
+  problem: z.string().nullable(),
+});
+export type FilePart = z.infer<typeof FilePart>;
 
 export const MessageWork = z.object({
   type: z.literal("work.message"),
@@ -222,7 +237,7 @@ export const UnwatchTicket = z.object({
 export type UnwatchTicket = z.infer<typeof UnwatchTicket>;
 
 export const WorkerMessage = z.object({
-  text: z.string().trim().min(1).max(20_000),
+  text: z.string().trim().min(1),
 });
 export type WorkerMessage = z.infer<typeof WorkerMessage>;
 

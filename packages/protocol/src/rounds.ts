@@ -44,12 +44,10 @@ export const stuckAnswers = ["resume", "give-up"] as const;
 export const StuckAnswer = z.enum(stuckAnswers);
 export type StuckAnswer = z.infer<typeof StuckAnswer>;
 
-export const maximumOwnerWords = 4_000;
-
 export const StuckAnswerRequest = z.object({
   at: z.number().int(),
   answer: StuckAnswer,
-  words: z.string().trim().max(maximumOwnerWords).optional(),
+  words: z.string().trim().optional(),
 });
 export type StuckAnswerRequest = z.infer<typeof StuckAnswerRequest>;
 

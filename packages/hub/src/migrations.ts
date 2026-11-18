@@ -455,4 +455,22 @@ export const migrations: readonly Migration[] = [
       UPDATE ticket_rounds SET failure = 'workflow' WHERE failure = 'conflict';
     `,
   },
+  {
+    version: 19,
+    sql: `
+      CREATE TABLE ticket_files_kept (
+        ticket_id INTEGER NOT NULL REFERENCES tickets (id),
+        name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        data BLOB,
+        attempt INTEGER,
+        part INTEGER,
+        PRIMARY KEY (ticket_id, name)
+      ) STRICT;
+      INSERT INTO ticket_files_kept (ticket_id, name, size, media_type, data) SELECT ticket_id, name, size, media_type, data FROM ticket_files;
+      DROP TABLE ticket_files;
+      ALTER TABLE ticket_files_kept RENAME TO ticket_files;
+    `,
+  },
 ];

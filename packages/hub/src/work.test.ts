@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunnerWorkEvent, StoredWorkEvent, Ticket, WorkEvent } from "@super-agent2/protocol";
+import { filePartBytes, type RunnerWorkEvent, type StoredWorkEvent, type Ticket, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Delivery } from "./conversations.js";
 import { type HubDatabase, openDatabase } from "./database.js";
-import { createTicketFiles, type TicketFiles } from "./files.js";
+import { createTicketFiles, type StoredFile, type TicketFiles } from "./files.js";
 import { TestClock } from "./testing/access.js";
 import { testCredentials } from "./testing/commands.js";
 import { FakeRunners } from "./testing/runners.js";
@@ -77,6 +77,21 @@ function working(issues: readonly number[] = [21], machine = "pc", engine: "code
     throw new Error("ticket missing");
   }
   return ticket;
+}
+
+async function read(file: StoredFile | undefined): Promise<Buffer> {
+  if (file === undefined) {
+    throw new Error("no such file");
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.open()) {
+    chunks.push(Buffer.from(chunk as Uint8Array));
+  }
+  return Buffer.concat(chunks);
+}
+
+function part(machine: string, ticket: number, attempt: number, name: string, offset: number, data: Buffer | null, problem: string | null = null): void {
+  runners.link?.part(machine, { type: "work.file.part", ticket, attempt, name, offset, data: data === null ? null : data.toString("base64"), problem });
 }
 
 function emit(machine: string, ticket: number, attempt: number, seq: number, event: WorkEvent): void {
@@ -363,7 +378,7 @@ function writing(engine: "antigravity" | "codex" = "antigravity", machine = "pc"
 const deliveredEvent: WorkEvent = {
   kind: "delivered",
   text: "Hello, world.\n",
-  files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]).toString("base64") }],
+  files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf" }],
   report: { en: "Translated the notice", zh: "翻译了通知" },
 };
 
@@ -398,7 +413,7 @@ describe("work for a writing ticket", () => {
     expect(runners.of("work.write")).toHaveLength(1);
   });
 
-  it("delivers the text and files into the conversation, stores the files, and becomes delivered with no pull request", () => {
+  it("fetches the files from the runner, then delivers the text and files into the conversation, and becomes delivered with no pull request", async () => {
     runners.connect("pc", 2);
     const ticket = writing();
     work.begin(ticket);
@@ -406,6 +421,9 @@ describe("work for a writing ticket", () => {
     work.subscribe((event) => seen.push(event));
     emit("pc", ticket.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
     emit("pc", ticket.id, 1, 2, deliveredEvent);
+    expect(current(ticket.id)).toMatchObject({ state: "working", work: { state: "running" } });
+    expect(runners.of("work.file")).toEqual([{ type: "work.file", ticket: ticket.id, attempt: 1, name: "notes.pdf", offset: 0, length: 4 }]);
+    runners.link?.part("pc", { type: "work.file.part", ticket: ticket.id, attempt: 1, name: "notes.pdf", offset: 0, data: Buffer.from([1, 2, 3, 4]).toString("base64"), problem: null });
     expect(current(ticket.id)).toMatchObject({
       state: "delivered",
       pullRequest: null,
@@ -424,12 +442,70 @@ describe("work for a writing ticket", () => {
     expect(delivered[0]?.delivery.prompt).toContain("Hello, world.");
     expect(delivered[0]?.delivery.prompt).toContain("nothing was verified");
     expect(files.list(ticket.id)).toEqual([{ name: "notes.pdf", size: 4 }]);
-    expect(files.get(ticket.id, "notes.pdf")).toMatchObject({ mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]) });
+    expect(files.get(ticket.id, "notes.pdf")).toMatchObject({ mediaType: "application/pdf", size: 4 });
+    expect(await read(files.get(ticket.id, "notes.pdf"))).toEqual(Buffer.from([1, 2, 3, 4]));
     const stored = work.events(ticket.id).at(-1)?.event;
-    expect(stored).toMatchObject({ kind: "delivered", text: "Hello, world.\n", files: [{ name: "notes.pdf", size: 4, data: "" }] });
+    expect(stored).toEqual({ kind: "delivered", text: "Hello, world.\n", files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf" }], report: { en: "Translated the notice", zh: "翻译了通知" } });
     expect(JSON.stringify(seen)).not.toContain(Buffer.from([1, 2, 3, 4]).toString("base64"));
     expect(runners.of("work.stop")).toEqual([{ type: "work.stop", ticket: ticket.id, save: false, remove: true }]);
     expect(told).toEqual([]);
+  });
+
+  it("fetches a file larger than one part in parts, and an empty file without asking", async () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    const big = Buffer.alloc(filePartBytes * 2 + 5, 7);
+    big[filePartBytes] = 1;
+    emit("pc", ticket.id, 1, 1, {
+      kind: "delivered",
+      text: null,
+      files: [
+        { name: "film.mp4", size: big.length, mediaType: "application/octet-stream" },
+        { name: "empty.txt", size: 0, mediaType: "text/plain" },
+      ],
+      report: { en: "Done", zh: "做好了" },
+    });
+    for (const offset of [0, filePartBytes, filePartBytes * 2]) {
+      const asked = runners.of("work.file").at(-1);
+      expect(asked).toEqual({ type: "work.file", ticket: ticket.id, attempt: 1, name: "film.mp4", offset, length: Math.min(filePartBytes, big.length - offset) });
+      part("pc", ticket.id, 1, "film.mp4", offset, big.subarray(offset, offset + (asked?.length ?? 0)));
+    }
+    expect(runners.of("work.file")).toHaveLength(3);
+    expect(current(ticket.id).state).toBe("delivered");
+    expect((await read(files.get(ticket.id, "film.mp4"))).equals(big)).toBe(true);
+    expect(await read(files.get(ticket.id, "empty.txt"))).toEqual(Buffer.alloc(0));
+    expect(delivered[0]?.delivery.files).toEqual([
+      { name: "film.mp4", size: big.length },
+      { name: "empty.txt", size: 0 },
+    ]);
+  });
+
+  it("goes on from what it already has when the runner comes back, and ignores a part it did not ask for", () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    const data = Buffer.alloc(filePartBytes + 3, 2);
+    emit("pc", ticket.id, 1, 1, { kind: "delivered", text: "Hi", files: [{ name: "a.bin", size: data.length, mediaType: "application/octet-stream" }], report: { en: "Done", zh: "做好了" } });
+    part("pc", ticket.id, 1, "a.bin", 0, data.subarray(0, filePartBytes));
+    part("pc", ticket.id, 1, "a.bin", 0, data.subarray(0, 3));
+    runners.drop("pc");
+    runners.connect("pc", 2, [{ ticket: ticket.id, attempt: 1, last: 1, live: false, ended: true }]);
+    expect(runners.of("work.file").at(-1)).toEqual({ type: "work.file", ticket: ticket.id, attempt: 1, name: "a.bin", offset: filePartBytes, length: 3 });
+    part("pc", ticket.id, 1, "a.bin", filePartBytes, data.subarray(filePartBytes));
+    expect(current(ticket.id).state).toBe("delivered");
+    expect(files.list(ticket.id)).toEqual([{ name: "a.bin", size: data.length }]);
+  });
+
+  it("records the attempt as lost when the runner can no longer send a file", () => {
+    runners.connect("pc", 2);
+    const ticket = writing();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "delivered", text: null, files: [{ name: "a.bin", size: 10, mediaType: "application/octet-stream" }], report: { en: "Done", zh: "做好了" } });
+    part("pc", ticket.id, 1, "a.bin", 0, null, "there is no such file");
+    expect(current(ticket.id)).toMatchObject({ state: "working", work: { state: "failed", failure: "lost" } });
+    expect(told[0]?.prompt).toContain("there is no such file");
+    expect(delivered).toEqual([]);
   });
 
   it("records a failure with its output and tells the brain, and keeps the ticket working", () => {

@@ -40,8 +40,8 @@ Put your result in the output folder named in your task, then write a JSON file 
   shown to the owner as written, so it holds the result only: no preface, no remarks about what you did.
 - Any other file the owner should get (a document, a spreadsheet, an image) goes directly in the output folder, with no
   subfolder, and is listed in `files`. You may deliver a text file, files, or both.
-- At most 20 files, 4 MB for each file and 8 MB together, and at most 200000 characters of text. A result larger than
-  that cannot be delivered: shorten it or split it by file.
+- There is no limit on the number or size of files. A very long text result reaches the owner as a file instead of
+  inline, so it is never cut.
 - `summary` says in one or two sentences what you delivered, in English (`en`) and in Simplified Chinese (`zh`). It is a
   note about the result, not the result itself.
 
