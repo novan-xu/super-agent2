@@ -53,7 +53,7 @@ export function canAnswer(state: WaitingState, key: string, verdict: Verdict): b
   if (step === "sending") {
     return false;
   }
-  return verdict === "release" || verdict === "give-up" ? step === "armed" : true;
+  return verdict === "give-up" ? step === "armed" : true;
 }
 
 function ordered(cards: readonly WaitingCard[]): WaitingCard[] {
@@ -105,7 +105,7 @@ export function waitingReducer(state: WaitingState, action: WaitingAction): Wait
     case "snapshot":
       return receive(state, action.cards);
     case "arm":
-      return useOf(state, action.key).step === "idle" && cardOf(state, action.key) !== undefined
+      return useOf(state, action.key).step === "idle" && cardOf(state, action.key)?.kind === "stuck"
         ? withUse(state, action.key, { step: "armed", verdict: null, failure: null })
         : state;
     case "disarm":
