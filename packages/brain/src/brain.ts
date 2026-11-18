@@ -73,6 +73,7 @@ interface TurnRun {
   readonly id: string;
   readonly inputs: BrainInput[];
   readonly tried: Set<Provider>;
+  readonly withdrawing: Set<string>;
   provider: Provider;
   tokens: number;
   current: Attempt | undefined;
@@ -92,6 +93,8 @@ interface State {
   waiting: number;
   retiring: Promise<void> | undefined;
   steering: boolean;
+  steeringInput: string | undefined;
+  pause: { merge: string; acknowledged: boolean } | undefined;
 }
 
 export const defaultIdleMilliseconds = 2 * 60 * 60 * 1000;
@@ -164,6 +167,7 @@ export function createBrain(options: BrainOptions): Brain {
   const router = options.router === undefined ? undefined : createRouter(options.router.adapters, providers.candidates, options.router.workspace);
   router?.warm();
   const states = new Map<string, State>();
+  const merged = new Set<string>();
   const work = new Set<Promise<void>>();
   let uses = 0;
   let arrivals = 0;
@@ -180,7 +184,7 @@ export function createBrain(options: BrainOptions): Brain {
   const stateOf = (id: string): State => {
     let state = states.get(id);
     if (state === undefined) {
-      state = { id, live: undefined, turn: undefined, queue: [], handled: new Set(), chain: Promise.resolve(), used: 0, idleAt: 0, waiting: 0, retiring: undefined, steering: false };
+      state = { id, live: undefined, turn: undefined, queue: [], handled: new Set(), chain: Promise.resolve(), used: 0, idleAt: 0, waiting: 0, retiring: undefined, steering: false, steeringInput: undefined, pause: undefined };
       states.set(id, state);
     }
     return state;
@@ -226,6 +230,12 @@ export function createBrain(options: BrainOptions): Brain {
     state.used = ++uses;
     state.idleAt = options.clock.now();
     transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason, applied });
+    if (turn.withdrawing.size > 0) {
+      dropLive(state);
+      for (const input of turn.withdrawing) {
+        transport.send({ type: "input.withdrawn", conversation: state.id, input });
+      }
+    }
     pump();
   };
 
@@ -365,23 +375,28 @@ export function createBrain(options: BrainOptions): Brain {
   const steerQueued = async (state: State) => {
     const live = state.live;
     const turn = state.turn;
-    if (live === undefined || turn === undefined || live.attempt !== turn.current || !turn.started || state.steering) {
+    if (live === undefined || turn === undefined || live.attempt !== turn.current || !turn.started || state.steering || state.pause !== undefined) {
       return;
     }
     state.steering = true;
     try {
-      while (state.queue.length > 0 && state.turn === turn && state.live === live && !turn.interrupting) {
+      while (state.queue.length > 0 && state.turn === turn && state.live === live && !turn.interrupting && state.pause === undefined) {
         const input = state.queue[0];
         if (input === undefined) {
           return;
         }
         const prepared = await transport.prepare({ conversation: state.id, provider: live.provider, exclude: [], fresh: false, steer: true });
-        if (state.turn !== turn || state.live !== live || turn.interrupting) {
+        if (state.turn !== turn || state.live !== live || turn.interrupting || state.pause !== undefined) {
           return;
         }
+        if (state.queue[0] !== input) {
+          continue;
+        }
         const prompt = preparePrompt(state, live.provider, [input], { ...prepared, history: [] });
+        state.steeringInput = input.id;
         const result = await live.handle.steer(prompt.text, prompt.images);
-        if (result !== "steered" || state.turn !== turn || state.live !== live) {
+        state.steeringInput = undefined;
+        if (result !== "steered" || state.turn !== turn || state.live !== live || turn.interrupting) {
           return;
         }
         turn.inputs.push(input);
@@ -395,6 +410,7 @@ export function createBrain(options: BrainOptions): Brain {
       return;
     } finally {
       state.steering = false;
+      state.steeringInput = undefined;
       pump();
     }
   };
@@ -408,7 +424,7 @@ export function createBrain(options: BrainOptions): Brain {
     const call: PrepareCall = {
       conversation: state.id,
       provider,
-      exclude: turn.inputs.flatMap((input) => input.quote === undefined ? [input.id] : [input.id, input.quote.id]),
+      exclude: turn.inputs.flatMap((input) => input.quote === undefined ? [input.entry ?? input.id] : [input.entry ?? input.id, input.quote.id]),
       fresh: freshSession,
       seed: state.live?.provider !== provider || freshSession || mode === "continue",
       continuing: mode === "continue",
@@ -493,6 +509,7 @@ export function createBrain(options: BrainOptions): Brain {
       id: newId(),
       inputs: state.queue.splice(0),
       tried: new Set(),
+      withdrawing: new Set(),
       provider,
       tokens: 0,
       current: undefined,
@@ -512,7 +529,7 @@ export function createBrain(options: BrainOptions): Brain {
   };
 
   const accept = async (state: State, input: BrainInput) => {
-    if (state.handled.has(input.id)) {
+    if (merged.has(state.id) || state.handled.has(input.id)) {
       return;
     }
     state.handled.add(input.id);
@@ -529,7 +546,7 @@ export function createBrain(options: BrainOptions): Brain {
 
   const interrupt = (state: State) => {
     const turn = state.turn;
-    if (turn === undefined) {
+    if (turn === undefined || turn.interrupting) {
       return;
     }
     turn.interrupting = true;
@@ -541,6 +558,52 @@ export function createBrain(options: BrainOptions): Brain {
         finishTurn(state, turn, "interrupted", messageOf(error));
       }
     }
+  };
+
+  const withdrawInput = (state: State, input: string) => {
+    const queued = state.queue.findIndex((item) => item.id === input);
+    if (queued !== -1) {
+      state.queue.splice(queued, 1);
+    }
+    state.handled.add(input);
+    const turn = state.turn;
+    if (turn !== undefined && (turn.inputs.some((item) => item.id === input) || state.steeringInput === input)) {
+      turn.withdrawing.add(input);
+      transport.send({ type: "input.withdrawing", conversation: state.id, turn: turn.id, input });
+      interrupt(state);
+    } else {
+      transport.send({ type: "input.withdrawn", conversation: state.id, input });
+      pump();
+    }
+  };
+
+  const applyGates = (message: Extract<HubToBrain, { type: "topic.gates" }>) => {
+    const pending = new Map<string, string>();
+    for (const { merge, source, destination } of message.pending) {
+      pending.set(source, merge);
+      pending.set(destination, merge);
+      stateOf(source);
+      stateOf(destination);
+    }
+    for (const { source, destination } of message.merged) {
+      if (merged.has(source)) {
+        continue;
+      }
+      merged.add(source);
+      for (const id of [source, destination]) {
+        const state = states.get(id);
+        if (state !== undefined) {
+          state.queue.splice(0);
+          state.handled.clear();
+          dropLive(state);
+        }
+      }
+    }
+    for (const state of states.values()) {
+      const merge = pending.get(state.id);
+      state.pause = merge === undefined ? undefined : { merge, acknowledged: false };
+    }
+    pump();
   };
 
   const tryMaintenance = () => {
@@ -575,6 +638,18 @@ export function createBrain(options: BrainOptions): Brain {
     if (closing || maintaining) {
       return;
     }
+    for (const state of states.values()) {
+      const pause = state.pause;
+      if (pause === undefined || pause.acknowledged || state.turn !== undefined || state.steering || state.retiring !== undefined) {
+        continue;
+      }
+      if (state.live !== undefined) {
+        dropLive(state);
+      } else {
+        pause.acknowledged = true;
+        transport.send({ type: "topic.paused", conversation: state.id, merge: pause.merge });
+      }
+    }
     if (maintenance !== undefined) {
       tryMaintenance();
       return;
@@ -586,7 +661,8 @@ export function createBrain(options: BrainOptions): Brain {
       }
     }
     const waiting = [...states.values()]
-      .filter((state) => state.turn === undefined && state.queue.length > 0 && state.retiring === undefined && !state.steering)
+      .filter((state) => state.turn === undefined && state.queue.length > 0 && state.retiring === undefined && !state.steering
+        && state.pause === undefined && !merged.has(state.id))
       .sort((a, b) => a.waiting - b.waiting);
     let open = [...states.values()].filter(occupiesSlot).length;
     for (const state of waiting) {
@@ -649,6 +725,14 @@ export function createBrain(options: BrainOptions): Brain {
         const next = state.chain.then(() => accept(state, message.input));
         state.chain = next.catch(() => undefined);
         track(next);
+        return;
+      }
+      if (message.type === "input.withdraw") {
+        withdrawInput(stateOf(message.conversation), message.input);
+        return;
+      }
+      if (message.type === "topic.gates") {
+        applyGates(message);
         return;
       }
       if (message.type === "interrupt") {

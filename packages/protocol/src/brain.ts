@@ -32,6 +32,7 @@ const BrainQuote = z.object({
 
 export const BrainInput = z.object({
   id: z.string().min(1),
+  entry: MessageId.optional(),
   source: InputSource,
   text: z.string(),
   attachments: z.array(BrainAttachment).default([]),
@@ -247,6 +248,10 @@ export const RouteAnswer = z.object({
 });
 export type RouteAnswer = z.infer<typeof RouteAnswer>;
 
+const Withdrawn = z.object({ type: z.literal("input.withdrawn"), conversation: ConversationId, input: z.string().min(1) });
+const Withdrawing = Withdrawn.extend({ type: z.literal("input.withdrawing"), turn: z.string().min(1) });
+const TopicPaused = z.object({ type: z.literal("topic.paused"), conversation: ConversationId, merge: z.string().min(1) });
+
 export const BrainMessage = z.discriminatedUnion("type", [
   BrainHello,
   TurnStarted,
@@ -261,6 +266,9 @@ export const BrainMessage = z.discriminatedUnion("type", [
   PrepareRequest,
   BrainProviders,
   RouteAnswer,
+  Withdrawn,
+  Withdrawing,
+  TopicPaused,
 ]);
 export type BrainMessage = z.infer<typeof BrainMessage>;
 
@@ -301,7 +309,14 @@ export const SetProviderOrder = z.object({
 });
 export type SetProviderOrder = z.infer<typeof SetProviderOrder>;
 
-export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder, RouteRequest]);
+const WithdrawInput = Withdrawn.extend({ type: z.literal("input.withdraw") });
+const TopicGates = z.object({
+  type: z.literal("topic.gates"),
+  pending: z.array(z.object({ merge: z.string().min(1), source: ConversationId, destination: ConversationId })),
+  merged: z.array(z.object({ source: ConversationId, destination: ConversationId })),
+});
+
+export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder, RouteRequest, WithdrawInput, TopicGates]);
 export type HubToBrain = z.infer<typeof HubToBrain>;
 
 export const brainLinkPath = "/brain/link";

@@ -31,6 +31,7 @@ const shapes = {
   reply: <path d="M9 5L4 10l5 5M4 10h9a6 6 0 0 1 6 6v2" />,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
   chev: <path d="M9.5 6l6 6-6 6" />,
+  more: <path d="M5 12h.01M12 12h.01M19 12h.01" />,
   down: <path d="M6 9.5l6 6 6-6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   x: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,

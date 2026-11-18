@@ -782,6 +782,34 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 33,
+    sql: `
+      ALTER TABLE conversation_entries ADD COLUMN delivery_id TEXT;
+      CREATE UNIQUE INDEX entry_delivery ON conversation_entries (coalesce(delivery_id, id));
+      CREATE TABLE topic_transfers (
+        entry TEXT PRIMARY KEY REFERENCES conversation_entries (id),
+        source TEXT NOT NULL REFERENCES conversations (id),
+        input TEXT NOT NULL UNIQUE,
+        reset_session INTEGER NOT NULL CHECK (reset_session IN (0, 1))
+      ) STRICT;
+      CREATE TABLE topic_merges (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL UNIQUE REFERENCES conversations (id),
+        destination TEXT NOT NULL UNIQUE REFERENCES conversations (id)
+      ) STRICT;
+      CREATE TABLE topic_history_revision (revision INTEGER NOT NULL) STRICT;
+      INSERT INTO topic_history_revision VALUES (0);
+      ALTER TABLE conversations ADD COLUMN activity_at INTEGER NOT NULL DEFAULT 0;
+      UPDATE conversations AS c SET activity_at = coalesce(
+        (SELECT max(created_at) FROM conversation_entries WHERE conversation_id = c.id AND kind <> 'tool'),
+        c.created_at
+      );
+      CREATE TRIGGER topic_message_activity AFTER INSERT ON conversation_entries WHEN NEW.kind <> 'tool' BEGIN
+        UPDATE conversations SET activity_at = max(activity_at, NEW.created_at) WHERE id = NEW.conversation_id;
+      END;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -6,6 +6,7 @@ export interface TopicStreamState {
   readonly turns: readonly Turn[];
   readonly before: number | null;
   readonly loading: boolean;
+  readonly revision?: number | undefined;
 }
 
 export const initialTopicStream: TopicStreamState = { entries: [], turns: [], before: null, loading: false };
@@ -19,14 +20,16 @@ export function resumeStream(state: TopicStreamState): number | undefined {
 export function receiveStream(state: TopicStreamState, message: ServerMessage): TopicStreamState {
   switch (message.type) {
     case "stream.page": {
-      const entries = new Map(state.entries.map((item) => [item.position, item]));
+      const previous = message.reset ? initialTopicStream : state;
+      const entries = new Map(previous.entries.map((item) => [item.position, item]));
       for (const item of message.entries) {
         entries.set(item.position, item);
       }
       return {
         entries: [...entries.values()].sort((a, b) => a.position - b.position),
-        turns: message.turns.reduce(mergeTurn, message.resumed === true ? state.turns.filter((turn) => turn.state !== "running") : state.turns),
-        before: message.resumed === true ? state.before : message.before,
+        turns: message.turns.reduce(mergeTurn, message.resumed === true ? previous.turns.filter((turn) => turn.state !== "running") : previous.turns),
+        before: message.resumed === true ? previous.before : message.before,
+        revision: message.revision ?? previous.revision,
         loading: false,
       };
     }

@@ -12,11 +12,9 @@ import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { clockOf, dayLabel, StreamEntry } from "./Entries.js";
 
-const nearBottom = 48;
+import { TopicActionButton, TopicActionDialog, type TopicActions, type TopicEdit, titleOf } from "./TopicActions.js";
 
-function titleOf(conversation: { readonly title: string } | undefined): string {
-  return conversation?.title || text("conversation.untitled");
-}
+const nearBottom = 48;
 
 function whenOf(at: number, now: number): string {
   const date = new Date(at);
@@ -34,6 +32,7 @@ interface ListProps {
   readonly open: (conversation: string) => void;
   readonly now: number;
   readonly showRepository: boolean;
+  readonly edit: (topic: TopicEdit) => void;
 }
 
 type TopicHeading = StreamRecord["topic"];
@@ -42,7 +41,7 @@ function repositoryOf(topic: TopicHeading | undefined): string | null {
   return topic?.repository ?? (topic?.needsRepository === true ? text("conversation.repository.pending") : null);
 }
 
-export function TopicList({ list, current, hrefOf, open, now, showRepository }: ListProps) {
+export function TopicList({ list, current, hrefOf, open, now, showRepository, edit }: ListProps) {
   return (
     <ul className="conv-list">
       {list.map((conversation) => (
@@ -57,9 +56,11 @@ export function TopicList({ list, current, hrefOf, open, now, showRepository }: 
             <span className="ri-meta">
               {conversation.state === "working" ? <span className="dot dot--ok dot--live" role="img" aria-label={text("conversation.answering")} /> : null}
               {showRepository ? <span className="od-truncate">{repositoryOf(conversation)}</span> : null}
+              {conversation.topicState === "archived" ? <span>{text("conversation.archived")}</span> : null}
               <span className="num">{whenOf(conversation.updatedAt, now)}</span>
             </span>
           </a>
+          <TopicActionButton topic={conversation} edit={edit} />
         </li>
       ))}
     </ul>
@@ -196,6 +197,7 @@ export interface ConversationViewProps {
   readonly streamHref: string;
   readonly openStream: () => void;
   readonly navigation?: ReactNode;
+  readonly topicActions: TopicActions;
   readonly compact?: boolean;
   readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
   readonly stop: () => void;
@@ -207,11 +209,17 @@ export function ConversationView(props: ConversationViewProps) {
   const { state, stream, now, conversation, scope, list, hrefOf, open } = props;
   const following = useRef(true);
   const picker = useRef<HTMLDialogElement>(null);
+  const [edit, setEdit] = useState<TopicEdit | null>(null);
+  const openEdit = (selection: TopicEdit) => {
+    picker.current?.close();
+    setEdit(selection);
+  };
   const [quotes, setQuotes] = useState<Readonly<Record<string, QuotePreview | undefined>>>({});
   const working = state !== null && isWorking(state);
   const draftKey = conversation === null ? `scope:${topicScopeKey(scope)}` : `topic:${conversation}`;
   const showRepository = scope.kind === "code";
-  const filtered = useMemo(() => list.filter((topic) => topicInScope(topic, scope)), [list, scope]);
+  const filtered = useMemo(() => list.filter((topic) => topic.mergedInto === undefined && topicInScope(topic, scope)).sort((a, b) =>
+    Number(a.topicState === "archived") - Number(b.topicState === "archived")), [list, scope]);
   const clearQuote = useCallback((id: string) => {
     setQuotes((all) => all[draftKey]?.id === id ? { ...all, [draftKey]: undefined } : all);
   }, [draftKey]);
@@ -232,7 +240,8 @@ export function ConversationView(props: ConversationViewProps) {
     open(conversation);
   };
 
-  const title = titleOf(state?.conversation ?? list.find((topic) => topic.id === conversation));
+  const selected = state?.conversation ?? list.find((topic) => topic.id === conversation && topic.mergedInto === undefined);
+  const title = titleOf(selected);
   const online = props.status === "open";
   const lastModel = state?.turns.at(-1)?.model ?? props.model;
 
@@ -247,6 +256,10 @@ export function ConversationView(props: ConversationViewProps) {
                 <a className="icon-btn" aria-label={text("conversation.backToStream")} href={props.streamHref}
                   onClick={(event) => followLink(event, props.openStream)}><Icon name="back" size={16} /></a>
                 <h2 className="conv-title od-truncate">{title}</h2>
+                {selected === undefined ? null : <TopicActionButton topic={selected} edit={openEdit} />}
+                {selected?.mergePending ? <span className="topic-merging" role="status" title={text("conversation.merging")}>
+                  <span className="dot dot--warn" aria-label={text("conversation.merging")} />
+                </span> : null}
               </div>
             )}
             <button className="conv-pick" type="button" aria-haspopup="dialog" onClick={() => picker.current?.showModal()}>
@@ -268,13 +281,14 @@ export function ConversationView(props: ConversationViewProps) {
           </div>
         </div>
         <TopicStream key={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
-          following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote} />
+          following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
+          move={props.topicActions.move} openEdit={openEdit} />
         <TopicComposer working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
           quote={quotes[draftKey]} clearQuote={clearQuote} />
       </div>
       {props.compact === true ? null : (
         <aside className="rail" aria-label={text("conversation.list")}>
-          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={open} now={now} showRepository={showRepository} />
+          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={open} now={now} showRepository={showRepository} edit={openEdit} />
         </aside>
       )}
       <dialog className="dlg" ref={picker} aria-label={text("conversation.list")}>
@@ -285,9 +299,10 @@ export function ConversationView(props: ConversationViewProps) {
               <Icon name="x" />
             </button>
           </div>
-          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={pick} now={now} showRepository={showRepository} />
+          <TopicList list={filtered} current={conversation} hrefOf={hrefOf} open={pick} now={now} showRepository={showRepository} edit={openEdit} />
         </div>
       </dialog>
+      {edit === null ? null : <TopicActionDialog edit={edit} list={list} actions={props.topicActions} done={() => setEdit(null)} />}
     </div>
   );
 }
@@ -319,9 +334,11 @@ interface TopicStreamProps {
   readonly open: (topic: string) => void;
   readonly loadOlder: () => void;
   readonly selectQuote: (entry: VisibleEntry) => void;
+  readonly move: TopicActions["move"];
+  readonly openEdit: (topic: TopicEdit) => void;
 }
 
-export function TopicStream({ state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote }: TopicStreamProps) {
+export function TopicStream({ state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const topics = useMemo(() => {
@@ -409,13 +426,14 @@ export function TopicStream({ state, stream, scope, list, online, now, following
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
           return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
             quote={entry === undefined ? undefined : () => selectQuote(entry)}
+            move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
             quoted={entry?.kind === "owner" && entry.quotedMessage !== undefined ? (
               <div className="sent-quote od-truncate">{source === undefined ? text("conversation.quote") : previewOf(source)}</div>
             ) : undefined}
-            match={match === undefined ? undefined : (
-              <a className="possible-match od-truncate" href={hrefOf(match)} onClick={(event) => followLink(event, () => open(match))}>
+            match={match === undefined || entry === undefined ? undefined : (
+              <button className="possible-match od-truncate" type="button" onClick={() => void move(entry.conversation, entry.id, match)}>
                 {text("conversation.possibleMatch", { topic: titleOf(topics.get(match)) })}
-              </a>
+              </button>
             )} />;
         })}
       </div>

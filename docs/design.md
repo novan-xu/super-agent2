@@ -95,9 +95,15 @@ the hub.
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - The brain gives each topic a title. The owner can rename, merge and archive topics. A merge combines the histories
   and ticket ownership in the chosen destination after the affected turns finish. Old topic links resolve to that
-  destination, and its next turn gets the combined history through the seed.
+  destination, and its next turn gets the combined history through the seed. The destination keeps its repository
+  when the owner combines topics across projects. The System topic can receive a merge and keeps its own address.
+- A topic automatically archives after 24 hours without a new owner message, brain answer or ticket notice,
+  once it has no running or queued turn. The hub checks idle topics every minute or at the configured age if
+  shorter. Set `HUB_TOPIC_ARCHIVE_MS` to change the age. System is exempt. An open ticket can stay linked to an
+  archived topic. The hub persists any missing finished-turn summaries before archiving, including when a program
+  session is still open.
 - Archived topics stay in the stream and searchable history. The router leaves them out of automatic matching.
-  A direct message, quoted reply, handover or ticket notice to an archived topic makes it active again.
+  A direct message, quoted reply, move, handover or ticket notice to an archived topic makes it active again.
 - Each existing conversation becomes a topic, keeping its history and saved program session IDs.
   It takes a repository if every ticket linked to it belongs to that repository. Existing ticket links are preserved,
   so a topic with tickets from different repositories or with a repository-free ticket stays in 日常.

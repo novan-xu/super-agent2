@@ -181,7 +181,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    conversations = createConversationService({ database, clock, commands, tickets, memory: memories, order: () => storedOrder() });
+    conversations = createConversationService({ database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder() });
     const told = conversations;
     const modelDiscovery = createModelDiscovery(database, defaults, (notice, prompt) => told.tell(null, notice, prompt));
     modelDiscovery.scan(runners.statuses());

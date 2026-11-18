@@ -107,6 +107,7 @@ describe("the brain's ticket tools", () => {
       "stop_command",
       "read_quote",
       "set_topic_repository",
+      "handover",
       "file_issue",
       "open_ticket",
       "open_task_ticket",

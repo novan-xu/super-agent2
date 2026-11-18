@@ -156,11 +156,12 @@ function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNod
   );
 }
 
-export function StreamEntry({ item, thisYear, topic, quote, match, quoted }: {
+export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move }: {
   readonly item: StreamItem;
   readonly thisYear: number;
   readonly topic?: ReactNode;
   readonly quote?: (() => void) | undefined;
+  readonly move?: (() => void) | undefined;
   readonly match?: ReactNode;
   readonly quoted?: ReactNode;
 }) {
@@ -180,7 +181,11 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted }: {
       );
       switch (entry.kind) {
         case "owner":
-          return <OwnerMessage entry={entry} topic={topic} action={action} match={match} quoted={quoted} />;
+          return <OwnerMessage entry={entry} topic={topic} action={<>
+            {action}
+            {move === undefined ? null : <button className="icon-btn message-quote" type="button" aria-haspopup="dialog"
+              aria-label={text("conversation.move")} title={text("conversation.move")} onClick={move}><Icon name="swap" size={16} /></button>}
+          </>} match={match} quoted={quoted} />;
         case "text":
           return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} action={action} />;
         case "notice":

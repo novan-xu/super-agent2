@@ -25,7 +25,7 @@ function itemText(item: HistoryItem): string {
   return item.text || (item.kind === "owner" ? item.attachments.map((attachment) => attachment.name).join(", ") : "");
 }
 
-export function createTopicContext({ connection }: HubDatabase, itemOf: (row: unknown) => HistoryItem) {
+export function createTopicContext({ connection }: HubDatabase, itemOf: (row: unknown) => HistoryItem, resolve: (topic: string) => string) {
   const selectBoard = connection.prepare(
     `SELECT id, title, repository, topic_state AS state, board_status AS status, merged_into AS mergedInto, board_revision AS revision
       FROM conversations WHERE board_revision > ? ORDER BY board_revision`,
@@ -43,6 +43,7 @@ export function createTopicContext({ connection }: HubDatabase, itemOf: (row: un
     `SELECT id, state, topic_summary FROM turns WHERE conversation_id = ? AND state <> 'running'
       ORDER BY started_at DESC, rowid DESC LIMIT 12 OFFSET ?`,
   );
+  const selectUnsummarized = connection.prepare("SELECT id, state, topic_summary FROM turns WHERE conversation_id = ? AND state <> 'running' AND topic_summary IS NULL");
   const selectFirst = connection.prepare(
     "SELECT id, state, topic_summary FROM turns WHERE conversation_id = ? AND state <> 'running' ORDER BY started_at, rowid LIMIT 1",
   );
@@ -142,15 +143,23 @@ export function createTopicContext({ connection }: HubDatabase, itemOf: (row: un
       saveStatus.run(details.status, topic);
     },
     seed,
-    summary,
-    tickets,
+    saveSummary: (topic: string) => {
+      for (const row of selectUnsummarized.all(topic)) {
+        const { id, state } = TurnSummary.parse(row);
+        saveTurnSummary.run(turnSummary(id, state).summary, id);
+      }
+    },
+    summary: (topic: string) => summary(resolve(topic)),
+    tickets: (topic: string | null) => tickets(topic === null ? null : resolve(topic)),
     message: (id: string) => {
       const row = selectEntry.get(id);
       return row === undefined ? undefined : { id, item: itemOf(row) };
     },
-    recent: (topic: string, before: number, limit: number) => references(selectRecent.all(topic, before, limit + 1), limit),
-    search: (query: string, topic: string | null, before: number, limit: number) =>
-      references(selectMatches.all(before, topic, topic, query, limit + 1), limit),
+    recent: (topic: string, before: number, limit: number) => references(selectRecent.all(resolve(topic), before, limit + 1), limit),
+    search: (query: string, topic: string | null, before: number, limit: number) => {
+      const id = topic === null ? null : resolve(topic);
+      return references(selectMatches.all(before, id, id, query, limit + 1), limit);
+    },
   };
 }
 

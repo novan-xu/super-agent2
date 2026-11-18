@@ -31,6 +31,7 @@ import {
   type StreamEntry,
   type StreamPage,
   streamPageSize,
+  type TopicHistoryUpdate,
   TopicScope,
   topicInScope,
   Turn,
@@ -46,7 +47,9 @@ import type { TicketService } from "./tickets.js";
 import { topicRouter } from "./topic-routing.js";
 import { createTopicContext, type TopicContext } from "./topic-context.js";
 
-export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate;
+import { createTopicCorrections, defaultTopicArchiveMilliseconds, type TopicEdit } from "./topic-corrections.js";
+
+export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate | TopicHistoryUpdate;
 
 export type ConversationListener = (event: ConversationEvent) => void;
 
@@ -75,6 +78,13 @@ export interface ConversationService {
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
   assignRepository(conversation: string, turn: string, repository: string): boolean;
   interrupt(id: string): Conversation | undefined;
+  rename(id: string, title: string): TopicEdit<string>;
+  merge(source: string, destination: string): TopicEdit<string>;
+  archive(id: string): TopicEdit<string>;
+  archiveIdle(): void;
+  historyRevision(): number;
+  move(message: string, destination: string, source?: string): TopicEdit<string>;
+  handover(source: string, turn: string, destination: string, message?: string): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
   deliver(delivery: Delivery): string;
@@ -108,6 +118,7 @@ export interface ConversationServiceOptions {
   readonly commands: CommandService;
   readonly tickets: TicketService;
   readonly memory?: MemoryBriefing;
+  readonly archiveMilliseconds?: number | undefined;
   readonly order?: () => readonly Provider[] | undefined;
 }
 
@@ -138,6 +149,8 @@ const ConversationRow = z.object({
   topic_state: z.string(),
   repository: z.string().nullable(),
   needs_repository: z.number().int(),
+  system: z.number().int(),
+  merged_into: z.string().nullable(),
   provider: z.string().nullable(),
   created_at: z.number().int(),
   updated_at: z.number().int(),
@@ -165,6 +178,7 @@ const EntryRow = z.object({
   prompt: z.string().nullable(),
   taken: z.number().int().nullable(),
   quote_id: z.string().nullable(),
+  delivery_id: z.string().nullable(),
   created_at: z.number().int(),
 });
 type EntryRow = z.infer<typeof EntryRow>;
@@ -202,6 +216,8 @@ function toConversation(row: unknown): Conversation {
     topicState: value.topic_state,
     repository: value.repository,
     ...(value.needs_repository === 1 ? { needsRepository: true } : {}),
+    ...(value.system === 1 ? { system: true } : {}),
+    ...(value.merged_into === null ? {} : { mergedInto: value.merged_into }),
     provider: value.provider,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
@@ -315,7 +331,7 @@ function heldPrompt(command: CommandRecord, output: string, conversation: string
 export function createConversationService(options: ConversationServiceOptions): ConversationService {
   const { connection } = options.database;
   const { clock, commands, tickets } = options;
-  const topics = createTopicContext(options.database, historyItem);
+  const topics = createTopicContext(options.database, historyItem, (id) => corrections.resolve(id) ?? id);
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
   let closing = false;
@@ -339,7 +355,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       SELECT 1 FROM turns WHERE id = ? AND conversation_id = conversations.id AND state = 'running' AND ticket_writes_revoked = 0
     )
   `);
-  const selectConversations = connection.prepare("SELECT * FROM conversations ORDER BY updated_at DESC, rowid DESC LIMIT ?");
+  const selectConversations = connection.prepare("SELECT * FROM conversations WHERE merged_into IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?");
   const savePending = connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)");
   const listPending = connection.prepare("SELECT * FROM pending_topic_inputs ORDER BY created_at, rowid");
   const deletePending = connection.prepare("DELETE FROM pending_topic_inputs WHERE id = ?");
@@ -364,6 +380,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   );
   const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND (? OR taken IS NOT 0) ORDER BY seq");
   const selectWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE taken = 0 ORDER BY created_at, rowid");
+  const selectTopicWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND taken = 0 ORDER BY seq");
   const selectLastSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ?");
   const insertEntry = connection.prepare(
     `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, stream_seq)
@@ -381,7 +398,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const selectScopedAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ${scopeFilter} ORDER BY e.stream_seq`);
   const updateBody = connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?");
   const markTaken = connection.prepare(
-    "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE id = ? AND conversation_id = ? AND taken = 0",
+    "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE coalesce(delivery_id, id) = ? AND conversation_id = ? AND taken = 0 RETURNING id",
   );
   const selectSession = connection.prepare("SELECT session, through, memory_seen, memory_offered, board_seen FROM program_sessions WHERE conversation_id = ? AND provider = ?");
   const discardSession = connection.prepare("DELETE FROM program_sessions WHERE conversation_id = ? AND provider = ?");
@@ -415,9 +432,19 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
-  const get = (id: string): Conversation | undefined => {
+  const withMerge = (row: unknown): Conversation => {
+    const topic = toConversation(row);
+    return corrections.pending(topic.id) ? { ...topic, mergePending: true } : topic;
+  };
+
+  const rawGet = (id: string): Conversation | undefined => {
     const row = selectConversation.get(id);
-    return row === undefined ? undefined : toConversation(row);
+    return row === undefined ? undefined : withMerge(row);
+  };
+
+  const get = (id: string): Conversation | undefined => {
+    const topic = corrections.resolve(id);
+    return topic === undefined ? undefined : rawGet(topic);
   };
 
   const getTurn = (id: string): Turn | undefined => {
@@ -479,7 +506,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const announce = (id: string) => {
-    const conversation = get(id);
+    const conversation = rawGet(id);
     if (conversation !== undefined) {
       emit({ type: "conversation", conversation });
     }
@@ -577,12 +604,15 @@ export function createConversationService(options: ConversationServiceOptions): 
   const router = topicRouter(options.database, sendToBrain);
 
   const deliver = (row: EntryRow) => {
-    if (row.prompt === null) {
+    if (row.prompt === null || row.taken !== 0 || corrections.blocked(row.conversation_id, row.seq)) {
       return;
     }
     const body = row.kind === "owner" ? Body.parse(JSON.parse(row.body)) : undefined;
     const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
-    const input: BrainInput = { id: row.id, source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached) };
+    const input: BrainInput = {
+      id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
+      source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached),
+    };
     if (row.quote_id !== null) {
       const quoted = quoteOf(row.quote_id);
       if (quoted !== undefined) {
@@ -598,6 +628,20 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
+
+  const corrections = createTopicCorrections({
+    database: options.database,
+    clock,
+    archiveMilliseconds: options.archiveMilliseconds ?? defaultTopicArchiveMilliseconds,
+    ready: () => link?.ready === true,
+    send: sendToBrain,
+    topic: rawGet,
+    announce,
+    historyChanged: (topics) => emit({ type: "topic.history", topics }),
+    ticketsChanged: tickets.announce,
+    deliverTopic: (id) => selectTopicWaiting.all(id).forEach((row) => deliver(EntryRow.parse(row))),
+    saveSummary: topics.saveSummary,
+  });
 
   const runningTurnOf = (conversation: string): Turn | undefined => {
     const row = selectRunningTurn.get(conversation);
@@ -624,6 +668,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     emitTurn(id);
     announce(turn.conversation);
+    corrections.finishOfflineMerges();
   };
 
   const history = (conversation: string, through: number, exclude: ReadonlySet<string>, includeWaiting: boolean): HistoryItem[] =>
@@ -651,7 +696,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const known = (conversation: string, turn: string) => {
     const found = getTurn(turn);
-    return found !== undefined && found.conversation === conversation;
+    return found?.state === "running" && found.conversation === conversation;
   };
 
   const receive = (message: BrainMessage) => {
@@ -685,19 +730,25 @@ export function createConversationService(options: ConversationServiceOptions): 
             sendToBrain({ type: "interrupt", conversation: item.conversation });
           }
         }
+        corrections.sync();
         for (const row of selectWaiting.all().map((value) => EntryRow.parse(value))) {
           deliver(row);
         }
         return;
       }
       case "turn.started": {
-        if (get(message.conversation) === undefined || getTurn(message.turn) !== undefined) {
+        const topic = rawGet(message.conversation);
+        if (topic?.mergedInto !== undefined) {
+          sendToBrain({ type: "interrupt", conversation: topic.id });
+        }
+        if (topic === undefined || topic.mergedInto !== undefined || getTurn(message.turn) !== undefined) {
           return;
         }
         insertTurn.run(message.turn, message.conversation, message.provider, message.model, clock.now());
         for (const input of message.inputs) {
-          if (markTaken.run(message.turn, input, message.conversation).changes > 0) {
-            emitEntry(input);
+          const entry = markTaken.get(message.turn, input, message.conversation);
+          if (entry !== undefined) {
+            emitEntry(z.string().parse(entry["id"]));
           }
         }
         emitTurn(message.turn);
@@ -706,14 +757,25 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       case "input.taken": {
         const turn = getTurn(message.turn);
-        if (turn?.conversation === message.conversation && markTaken.run(message.turn, message.input, message.conversation).changes > 0) {
+        const entry = turn?.state === "running" && turn.conversation === message.conversation
+          ? markTaken.get(message.turn, message.input, message.conversation) : undefined;
+        if (turn !== undefined && entry !== undefined) {
           if (message.memoryRevision !== undefined) {
             seeMemory.run(message.memoryRevision, message.conversation, turn.provider);
           }
-          emitEntry(message.input);
+          emitEntry(z.string().parse(entry["id"]));
         }
         return;
       }
+      case "input.withdrawing":
+        corrections.withdrawing(message.conversation, message.turn, message.input);
+        return;
+      case "input.withdrawn":
+        corrections.withdrawn(message.conversation, message.input);
+        return;
+      case "topic.paused":
+        corrections.paused(message.merge, message.conversation);
+        return;
       case "provider.changed": {
         if (!known(message.conversation, message.turn)) {
           return;
@@ -798,12 +860,17 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "session": {
-        if (get(message.conversation) !== undefined) {
+        const topic = rawGet(message.conversation);
+        if (topic !== undefined && topic.mergedInto === undefined) {
           upsertSession.run(message.conversation, message.provider, message.session, clock.now());
         }
         return;
       }
       case "prepare": {
+        if (rawGet(message.conversation)?.mergedInto !== undefined) {
+          sendToBrain({ type: "prepared", request: message.request, session: null, history: [], memory: null });
+          return;
+        }
         if (message.fresh) {
           discardSession.run(message.conversation, message.provider);
         }
@@ -929,19 +996,22 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string): StreamEntry | undefined => {
-    const quote = quotedMessage === undefined ? undefined : quoteOf(quotedMessage);
-    if (quotedMessage !== undefined && (quote === undefined || (topic !== undefined && topic !== quote.conversation))) {
+    const explicit = topic === undefined ? undefined : get(topic);
+    if (topic !== undefined && explicit === undefined) {
       return undefined;
     }
-    const id = topic ?? quote?.conversation;
-    const conversation = id === undefined ? undefined : get(id);
+    const quote = quotedMessage === undefined ? undefined : quoteOf(quotedMessage);
+    if (quotedMessage !== undefined && (quote === undefined || (explicit !== undefined && explicit.id !== quote.conversation))) {
+      return undefined;
+    }
+    const conversation = explicit ?? (quote === undefined ? undefined : get(quote.conversation));
     return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage }));
   };
 
   const finishRouting = (id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, choice: RouteChoice | null): StreamEntry => {
     const candidate = (topic: string | undefined) => {
-      const found = topic === undefined ? undefined : get(topic);
-      return found?.topicState === "active" && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
+      const found = topic === undefined ? undefined : rawGet(topic);
+      return found?.topicState === "active" && !found.mergePending && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
     };
     let conversation = candidate(choice?.kind === "existing" ? choice.topic : undefined);
     const match = choice?.kind === "new" ? candidate(choice.possibleMatch) : undefined;
@@ -963,6 +1033,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     return publishOwner(id);
   };
 
+  corrections.finishOfflineMerges();
   for (const row of listPending.all().map((row) => PendingInput.parse(row))) {
     finishRouting(row.id, row.created_at, PendingBody.parse(JSON.parse(row.body)), null);
   }
@@ -974,7 +1045,14 @@ export function createConversationService(options: ConversationServiceOptions): 
     deliver: deliverResult,
     get,
     announce,
-    list: (limit = 50) => selectConversations.all(limit).map(toConversation),
+    list: (limit = 50) => selectConversations.all(limit).map(withMerge),
+    move: corrections.move,
+    handover: corrections.handover,
+    rename: corrections.rename,
+    merge: corrections.merge,
+    archive: corrections.archive,
+    archiveIdle: corrections.archiveIdle,
+    historyRevision: corrections.revision,
     detail: (id) => {
       const conversation = get(id);
       if (conversation === undefined) {
@@ -982,11 +1060,14 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       return {
         conversation,
-        turns: selectTurns.all(id).map(toTurn),
-        entries: selectEntries.all(id, 0, id).map((row) => toEntry(EntryRow.parse(row))),
+        turns: selectTurns.all(conversation.id).map(toTurn),
+        entries: selectEntries.all(conversation.id, 0, conversation.id).map((row) => toEntry(EntryRow.parse(row))),
       };
     },
-    entries: (id, after = 0) => selectEntries.all(id, after, id).map((row) => toEntry(EntryRow.parse(row))),
+    entries: (id, after = 0) => {
+      const topic = corrections.resolve(id);
+      return topic === undefined ? [] : selectEntries.all(topic, after, topic).map((row) => toEntry(EntryRow.parse(row)));
+    },
     stream: (before = Number.MAX_SAFE_INTEGER, limit = streamPageSize, repository) => {
       const scope: TopicScope | undefined = repository === null ? { kind: "daily" }
         : typeof repository === "string" ? { kind: "repository", repository } : repository;
@@ -1042,20 +1123,21 @@ export function createConversationService(options: ConversationServiceOptions): 
       if (conversation === undefined) {
         return undefined;
       }
-      const running = runningTurnOf(id);
+      const running = runningTurnOf(conversation.id);
       if (running !== undefined) {
         revokeTicketWrites.run(running.id);
-        if (!sendToBrain({ type: "interrupt", conversation: id })) {
+        if (!sendToBrain({ type: "interrupt", conversation: conversation.id })) {
           endTurn(running.id, "interrupted", brainAbsentReason);
         }
       }
       return get(id);
     },
     recordCommand: (command, conversation) => {
-      if (get(conversation) === undefined) {
+      const topic = corrections.resolve(conversation);
+      if (topic === undefined) {
         return;
       }
-      insertBrainCommand.run(command, conversation);
+      insertBrainCommand.run(command, topic);
       const record = commands.get(command);
       if (record?.state === "held") {
         markHeld.run(command);
@@ -1094,6 +1176,7 @@ export function createConversationService(options: ConversationServiceOptions): 
           if (link === current) {
             link = undefined;
             router.disconnect();
+            corrections.finishOfflineMerges();
             brainProviders = undefined;
             emit({ type: "brain", brain: { linked: false } });
             brainChanged();
@@ -1109,6 +1192,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     close: () => {
       closing = true;
+      corrections.close();
       router.disconnect();
       unsubscribeCommands();
       link?.connection.close();
