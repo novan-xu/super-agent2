@@ -1,6 +1,8 @@
-import { constants, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { access, mkdir, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FolderPath, storageFolders, type StorageProblem, type StorageReport, StorageSettings } from "@super-agent2/protocol";
 import { replaceFile } from "./replace-file.js";
 
@@ -28,42 +30,30 @@ function isDirectory(path: string): boolean {
   }
 }
 
-async function sharedPath<T>(operation: () => Promise<T>): Promise<T | undefined> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    const timeout = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 3000); });
-    return await Promise.race([operation(), timeout]);
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const probeFile = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./storage-probe.ts" : "./storage-probe.js", import.meta.url));
 
-async function checkArtifacts(root: string): Promise<void> {
-  if (!(await stat(root)).isDirectory()) throw new Error("The artifacts path is not a folder");
-  await access(root, constants.W_OK | constants.X_OK);
+function sharedPath(root: string, parts: readonly string[] = []): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [probeFile, root, ...parts], { stdio: "ignore", windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve(false);
+    }, 3000);
+    const finish = (reachable: boolean) => {
+      clearTimeout(timer);
+      resolve(reachable);
+    };
+    child.unref();
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
+  });
 }
 
 export async function ticketArtifacts(home: string, root: string | undefined, repository: string | null, ticket: number): Promise<ArtifactFolder> {
   const repositoryName = repository?.split("/").at(-1)?.toLowerCase() ?? "_tasks";
   const parts = [repositoryName, "tickets", `t${ticket}`];
-  if (root !== undefined) {
-    const path = await sharedPath(async () => {
-      await checkArtifacts(root);
-      let next = root;
-      for (const part of parts) {
-        next = join(next, part);
-        try {
-          await mkdir(next);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await stat(next)).isDirectory()) throw error;
-        }
-      }
-      await access(next, constants.W_OK | constants.X_OK);
-      return next;
-    });
-    if (path !== undefined) return { path, unavailable: null };
+  if (root !== undefined && await sharedPath(root, parts)) {
+    return { path: join(root, ...parts), unavailable: null };
   }
   const path = join(home, "artifacts", ...parts);
   await mkdir(path, { recursive: true });
@@ -149,7 +139,7 @@ export class MachineStorage {
   async report(): Promise<StorageReport> {
     const { selection, problems } = this.select();
     const shared = selection.artifactsDir;
-    const reachable = shared === undefined ? undefined : (await sharedPath(async () => { await checkArtifacts(shared); return true; })) === true;
+    const reachable = shared === undefined ? undefined : await sharedPath(shared);
     return {
       projectsDir: { path: selection.projectsDir ?? join(this.home, "repos"), problem: problems.projectsDir },
       artifactsDir: { path: reachable && shared !== undefined ? shared : join(this.home, "artifacts"), reachable, problem: problems.artifactsDir ?? (reachable === false ? "unreachable" : undefined) },

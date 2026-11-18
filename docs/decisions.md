@@ -4170,3 +4170,11 @@ says what was chosen, why, and what the other options were, so it can be reviewe
   outputs in place also avoids overwriting files a later session may create on the NAS.
 - **Other options.** Move retained workspaces when settings change, or add a background process to copy local
   outputs to the NAS after an outage.
+
+## 2026-11-18 — NAS probes run in a separate process (#117)
+
+- **Chosen.** Check the artifacts share and prepare its ticket directory in a short-lived process with a timeout.
+- **Why.** A disconnected SMB mount can stall inside a filesystem call. Isolating the call keeps the runner's
+  filesystem thread pool available for work, including local fallback.
+- **Other options.** Race filesystem promises against a timeout inside the runner, where timed-out calls would
+  still hold filesystem threads until the mount responds.

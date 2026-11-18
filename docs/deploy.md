@@ -259,7 +259,7 @@ card. Windows paths must include a drive and root or a UNC server and share. Wit
 uses its state directory for clones, worktrees, and scratch folders. Already allocated worktrees and scratch folders
 stay in place when settings change. Workers that start afterwards get the newly selected artifacts path.
 
-When a share is unavailable at session start, the ticket records the local path under `~/.superagent2/artifacts`.
+When a share fails or times out at session start, the ticket records the local path under `~/.superagent2/artifacts`.
 Files written there stay local. Once the share returns, subsequent sessions can write to the NAS. Ending a ticket
 leaves its artifacts in place.
 
