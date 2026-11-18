@@ -20,7 +20,7 @@ export interface BrainConfig {
 }
 
 export const startingModels: Readonly<Record<Provider, { readonly model: string; readonly effort: string; readonly program: string }>> = {
-  gpt: { model: "gpt-6-astra", effort: "high", program: "codex" },
+  gpt: { model: "gpt-6.2-astra", effort: "high", program: "codex" },
   claude: { model: "claude-opus-5-5", effort: "high", program: "claude" },
   deepseek: { model: "deepseek-flash", effort: "high", program: "dsh" },
 };

@@ -16,7 +16,7 @@ describe("loadBrainConfig", () => {
         order: ["claude", "gpt", "deepseek"],
         maximumOpen: 4,
         providers: {
-          gpt: { program: "codex", model: "gpt-6-astra", effort: "high" },
+          gpt: { program: "codex", model: "gpt-6.2-astra", effort: "high" },
           claude: { program: "claude", model: "claude-opus-5-5", effort: "high" },
           deepseek: { program: "dsh", model: "deepseek-flash", effort: "high" },
         },

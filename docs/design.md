@@ -265,7 +265,7 @@ The brain's own starting values:
 
 | Provider | Model | Effort |
 | --- | --- | --- |
-| Codex | `gpt-6-astra` | high |
+| Codex | `gpt-6.2-astra` | high |
 | Claude Code | `claude-opus-5-5` | high |
 | dsh | `deepseek-flash` | high |
 
