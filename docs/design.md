@@ -109,8 +109,8 @@ the hub.
   quote across topics. Both forms of direct routing skip the router.
 - For other messages in the main stream, a resident router uses the [topic board](#topic-board) and the message to
   choose an existing topic or a new one. It uses a fast model through the provider's program, with about one second
-  of routing latency as the target. The router has no tools. Until topic statuses are available, it sees titles and
-  up to three recent owner or assistant excerpts per topic.
+  of routing latency as the target. The router has no tools. It sees titles and statuses, with up to three recent
+  owner or assistant excerpts for topics without a status.
 - The composer for 日常 matches daily topics. A repository composer matches topics in that repository. The composer
   for all of 代码 matches topics across repositories, including topics waiting for a repository. For a new topic in
   all of 代码, the router can pick a repository from active topics and open tickets. If it cannot pick one, the new
@@ -127,7 +127,7 @@ the hub.
 
 ### Session lifecycle
 
-- After a configurable idle period of two hours by default, the brain saves a topic summary and closes its program.
+- After `BRAIN_IDLE_MS` (two hours by default), the brain closes the idle program with its topic summary saved in the hub.
   It keeps the session ID. When a topic needs a slot sooner, the least recently used idle topic closes the same way.
   If all slots are busy, waiting topics keep their inputs until a slot frees.
 - The next input resumes the saved session after a close or a restart of the brain, hub or NAS. When a program reports
@@ -147,8 +147,8 @@ The seed is an index. The brain reads details through tools. Completeness comes 
 history. The input and its attachments accompany the seed. The seed goes to new and reopened sessions, in this order.
 
 1. **Quoted message.** Include it in full on any quoted turn, including one in a session that is already open. If it
-   exceeds the reserved inline quote budget, give its reference and read it in parts with `read_quote`. The same
-   rule applies to input steered into a running turn.
+   exceeds the reserved inline quote budget or the provider's input capacity, give its reference and read it in
+   parts with `read_quote`. The same rule applies to input steered into a running turn.
 2. **This topic's history.** Include the whole history when it has at most 50 turns. Otherwise include the full summary
    and the last 50 turns verbatim. Keep the summary and newest complete turns when the provider's hard input capacity
    requires omissions; omit older turns first.
@@ -496,8 +496,8 @@ asks for. Clipping of logs and output handed to an LLM, or listed on the page, i
 
 The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default, plus one resident router.
 
-The [session seed](#session-seed) has a configurable soft line, about 15% of the input capacity of the provider and
-model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
+The [session seed](#session-seed) uses `BRAIN_SEED_SOFT_SHARE`, 0.15 by default, as the soft share of the input
+capacity of the provider and model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
 open tickets and the topic board in full by default; there are no fixed token totals or per-part token shares. Once the
 soft line is passed, the hub starts leaving material out in this order: topic-board statuses (keeping titles), the
 oldest of the last 50 history turns (always keeping the summary), ticket lines beyond this topic's own, then confirmed

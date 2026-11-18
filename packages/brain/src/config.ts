@@ -1,4 +1,6 @@
 import { type Provider, startingOrder } from "@super-agent2/protocol";
+import { defaultIdleMilliseconds } from "./brain.js";
+import { defaultSoftShare, fallbackInputCapacity } from "./seed.js";
 import { defaultAttachmentsFolder } from "./prompt.js";
 import { z } from "zod";
 import { providerOrder } from "./providers.js";
@@ -17,6 +19,9 @@ export interface BrainConfig {
   readonly order: readonly Provider[];
   readonly providers: Readonly<Record<Provider, ProviderSettings>>;
   readonly maximumOpen: number;
+  readonly idleMilliseconds: number;
+  readonly seedSoftShare: number;
+  readonly inputCapacity: Readonly<Record<Provider, number>>;
 }
 
 export const startingModels: Readonly<Record<Provider, { readonly model: string; readonly effort: string; readonly program: string }>> = {
@@ -37,17 +42,21 @@ const Preferred = z
       .min(1, { error: "must name at least one of gpt and claude" }),
   );
 
+const positiveInteger = z.string().regex(/^[1-9]\d*$/, { error: "must be a positive whole number" }).transform(Number).pipe(z.number().int().positive());
+const fraction = text.transform(Number).pipe(z.number().positive().max(1));
+
 const Environment = z.object({
   BRAIN_HUB_URL: z.url({ protocol: /^https?$/, error: "must be the hub's http or https address" }),
   BRAIN_TOKEN_FILE: text,
   BRAIN_WORKSPACE: text,
   BRAIN_ATTACHMENTS_DIR: text.default(defaultAttachmentsFolder),
   BRAIN_PROVIDERS: Preferred,
-  BRAIN_MAX_OPEN: z
-    .string()
-    .regex(/^[1-9]\d*$/, { error: "must be a positive whole number" })
-    .transform(Number)
-    .default(4),
+  BRAIN_MAX_OPEN: positiveInteger.default(4),
+  BRAIN_IDLE_MS: positiveInteger.default(defaultIdleMilliseconds),
+  BRAIN_SEED_SOFT_SHARE: fraction.default(defaultSoftShare),
+  BRAIN_GPT_INPUT_CAPACITY: positiveInteger.default(fallbackInputCapacity.gpt),
+  BRAIN_CLAUDE_INPUT_CAPACITY: positiveInteger.default(fallbackInputCapacity.claude),
+  BRAIN_DEEPSEEK_INPUT_CAPACITY: positiveInteger.default(fallbackInputCapacity.deepseek),
   BRAIN_GPT_MODEL: text.default(startingModels.gpt.model),
   BRAIN_GPT_EFFORT: text.default(startingModels.gpt.effort),
   BRAIN_CODEX_PROGRAM: text.default(startingModels.gpt.program),
@@ -76,6 +85,9 @@ export function loadBrainConfig(env: Readonly<Record<string, string | undefined>
       attachments: value.BRAIN_ATTACHMENTS_DIR,
       order: providerOrder(value.BRAIN_PROVIDERS, "deepseek"),
       maximumOpen: value.BRAIN_MAX_OPEN,
+      idleMilliseconds: value.BRAIN_IDLE_MS,
+      seedSoftShare: value.BRAIN_SEED_SOFT_SHARE,
+      inputCapacity: { gpt: value.BRAIN_GPT_INPUT_CAPACITY, claude: value.BRAIN_CLAUDE_INPUT_CAPACITY, deepseek: value.BRAIN_DEEPSEEK_INPUT_CAPACITY },
       providers: {
         gpt: { program: value.BRAIN_CODEX_PROGRAM, model: value.BRAIN_GPT_MODEL, effort: value.BRAIN_GPT_EFFORT },
         claude: { program: value.BRAIN_CLAUDE_PROGRAM, model: value.BRAIN_CLAUDE_MODEL, effort: value.BRAIN_CLAUDE_EFFORT },

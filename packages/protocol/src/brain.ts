@@ -16,13 +16,19 @@ export type BrainAttachment = z.infer<typeof BrainAttachment>;
 export const quoteInlineLimit = 16_000;
 export const quoteChunkLimit = 8_000;
 
-export const BrainQuote = z.object({
+export const HistoryItem = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("owner"), text: z.string(), attachments: z.array(BrainAttachment).default([]) }),
+  z.object({ kind: z.literal("notice"), text: z.string() }),
+  z.object({ kind: z.literal("text"), provider: Provider.nullable(), text: z.string() }),
+  z.object({ kind: z.literal("tool"), provider: Provider.nullable(), name: z.string(), input: z.string(), output: z.string() }),
+]);
+export type HistoryItem = z.infer<typeof HistoryItem>;
+
+const BrainQuote = z.object({
   id: MessageId,
-  length: z.number().int().nonnegative(),
-  text: z.string().optional(),
-  attachments: z.array(BrainAttachment),
+  item: HistoryItem.optional(),
+  attachments: z.array(BrainAttachment).optional(),
 });
-export type BrainQuote = z.infer<typeof BrainQuote>;
 
 export const BrainInput = z.object({
   id: z.string().min(1),
@@ -34,13 +40,23 @@ export const BrainInput = z.object({
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 
-export const HistoryItem = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("owner"), text: z.string(), attachments: z.array(BrainAttachment).default([]) }),
-  z.object({ kind: z.literal("notice"), text: z.string() }),
-  z.object({ kind: z.literal("text"), provider: Provider.nullable(), text: z.string() }),
-  z.object({ kind: z.literal("tool"), provider: Provider.nullable(), name: z.string(), input: z.string(), output: z.string() }),
-]);
-export type HistoryItem = z.infer<typeof HistoryItem>;
+export const TopicBoardEntry = z.object({
+  id: ConversationId,
+  title: z.string(),
+  repository: z.string().nullable(),
+  state: z.enum(["active", "archived"]),
+  status: z.string(),
+  mergedInto: ConversationId.nullable(),
+});
+export type TopicBoardEntry = z.infer<typeof TopicBoardEntry>;
+
+export const TopicSeed = z.object({
+  summary: z.string(),
+  olderTurns: z.number().int().nonnegative(),
+  turns: z.array(z.array(HistoryItem)),
+  tickets: z.array(z.object({ own: z.boolean(), line: z.string() })),
+});
+export type TopicSeed = z.infer<typeof TopicSeed>;
 
 export const TurnOutcome = z.enum(["completed", "interrupted", "failed"]);
 export type TurnOutcome = z.infer<typeof TurnOutcome>;
@@ -73,6 +89,7 @@ export const InputTaken = z.object({
   conversation: ConversationId,
   turn: z.string().min(1),
   input: z.string().min(1),
+  memoryRevision: z.number().int().nonnegative().optional(),
 });
 export type InputTaken = z.infer<typeof InputTaken>;
 
@@ -131,6 +148,7 @@ export const TurnFinished = z.object({
   turn: z.string().min(1),
   outcome: TurnOutcome,
   reason: z.string().nullable(),
+  applied: z.boolean().optional(),
 });
 export type TurnFinished = z.infer<typeof TurnFinished>;
 
@@ -149,6 +167,9 @@ export const PrepareRequest = z.object({
   provider: Provider,
   exclude: z.array(z.string().min(1)),
   fresh: z.boolean(),
+  seed: z.boolean().optional(),
+  steer: z.boolean().optional(),
+  continuing: z.boolean().optional(),
 });
 export type PrepareRequest = z.infer<typeof PrepareRequest>;
 
@@ -172,6 +193,7 @@ const RouteTopic = z.object({
   id: ConversationId,
   title: z.string(),
   repository: RepositoryName.nullable(),
+  status: z.string().optional(),
   recent: z.array(z.object({ speaker: z.enum(["owner", "assistant"]), text: z.string() })),
 });
 
@@ -267,6 +289,9 @@ export const Prepared = z.object({
   session: z.string().min(1).nullable(),
   history: z.array(HistoryItem),
   memory: MemoryBrief.nullable().default(null),
+  memoryRevision: z.number().int().nonnegative().optional(),
+  seed: TopicSeed.optional(),
+  board: z.array(TopicBoardEntry).optional(),
 });
 export type Prepared = z.infer<typeof Prepared>;
 

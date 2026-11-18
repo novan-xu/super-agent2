@@ -2,7 +2,7 @@ import { type HubToBrain, openTicketStates, type RouteChoice, type RouteRequest,
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 
-const Topic = z.object({ id: z.string(), title: z.string(), repository: z.string().nullable() });
+const Topic = z.object({ id: z.string(), title: z.string(), repository: z.string().nullable(), board_status: z.string() });
 const Recent = z.object({ kind: z.enum(["owner", "text"]), text: z.string() });
 const Ticket = z.object({ id: z.number().int().positive(), repository: z.string(), title: z.string() });
 const Issue = z.object({ number: z.number().int().positive() });
@@ -21,8 +21,8 @@ export function topicInScope(topic: { repository: string | null; needsRepository
 
 export function topicRouter({ connection }: HubDatabase, send: (message: HubToBrain) => boolean) {
   const listTopics = connection.prepare(`
-    SELECT id, title, repository, needs_repository FROM conversations
-    WHERE topic_state = 'active' ORDER BY updated_at DESC, rowid DESC
+    SELECT id, title, repository, needs_repository, board_status FROM conversations
+    WHERE topic_state = 'active' AND merged_into IS NULL ORDER BY updated_at DESC, rowid DESC
   `);
   const recent = connection.prepare(`
     SELECT kind, substr(json_extract(body, '$.text'), 1, 320) AS text
@@ -39,15 +39,15 @@ export function topicRouter({ connection }: HubDatabase, send: (message: HubToBr
   return {
     route: (request: string, scope: TopicScope, message: string, files: string[]): Promise<RouteChoice | null> => {
       const topics = listTopics.all().flatMap((row) => {
-        const topic = Topic.parse(row);
+        const { board_status: status, ...topic } = Topic.parse(row);
         if (!topicInScope({ ...topic, needsRepository: row["needs_repository"] === 1 ? true : undefined }, scope)) {
           return [];
         }
-        const messages = recent.all(topic.id).reverse().map((entry): RouteRequest["topics"][number]["recent"][number] => {
+        const messages = (status === "" ? recent.all(topic.id).reverse() : []).map((entry): RouteRequest["topics"][number]["recent"][number] => {
           const item = Recent.parse(entry);
           return { speaker: item.kind === "owner" ? "owner" : "assistant", text: item.text };
         });
-        return [{ ...topic, recent: messages }];
+        return [{ ...topic, ...(status === "" ? {} : { status }), recent: messages }];
       });
       const repositories = new Map<string, string>();
       const tickets: RouteRequest["tickets"] = [];

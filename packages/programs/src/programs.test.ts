@@ -39,6 +39,20 @@ function track<T extends ProgramHandle>(handle: T): T {
   return handle;
 }
 
+describe("reported model input capacity", () => {
+  it.each([
+    ["codex", codexAdapter, fakeCodexSource, "gpt-6-astra", 272_000],
+    ["claude", claudeAdapter, fakeClaudeSource, "claude-opus-5-5", 200_000],
+    ["dsh", dshAdapter, fakeDshSource, "deepseek-flash", 1_000_000],
+  ] as const)("reads the context window from %s", async (name, adapter, source, model, tokens) => {
+    const log = new EventLog();
+    const handle = track(adapter(settings(writeFake(directory, `${name}.mjs`, source), model, "high")).open(options(null), log.listener));
+    handle.start("report capacity");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "capacity", tokens });
+  });
+});
+
 describe("Codex through its app server", () => {
   it("starts a full-access thread with the hub's tools and streams the turn", async () => {
     const adapter = codexAdapter(settings(writeFake(directory, "codex.mjs", fakeCodexSource), "gpt-6-astra", "high"));

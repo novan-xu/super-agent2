@@ -151,7 +151,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -535,5 +535,120 @@ describe("the topic stream", () => {
       { kind: "notice", text: expect.stringContaining("new") },
       { kind: "notice", text: expect.stringContaining("newer") },
     ]);
+  });
+});
+
+describe("topic context", () => {
+  function connected(running: Hub) {
+    const sent: HubToBrain[] = [];
+    const link = running.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+    link.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    const prepare = (conversation: string, snapshot: boolean, exclude: string[] = []) => {
+      link.receive({ type: "prepare", request: "seed", conversation, provider: "gpt", exclude, fresh: false, seed: snapshot });
+      const result = sent.at(-1);
+      if (result?.type !== "prepared") {
+        throw new Error("The hub did not prepare the topic.");
+      }
+      return result;
+    };
+    const finish = (conversation: string, turn: string, input: string, answer: string) => {
+      link.receive({ type: "turn.started", conversation, turn, inputs: [input], provider: "gpt", model: "model" });
+      link.receive({ type: "text", conversation, turn, block: "answer", delta: answer });
+      link.receive({ type: "turn.finished", conversation, turn, outcome: "completed", reason: null });
+    };
+    return { link, prepare, finish };
+  }
+
+  it("seeds complete turns through 50, then the older summary and the newest 50 turns", async () => {
+    const running = await start();
+    const topic = running.conversations.create().id;
+    const other = running.conversations.create().id;
+    const own = openTicket(running, topic);
+    const foreign = openTicket(running, other);
+    const { link, prepare, finish } = connected(running);
+    for (let index = 1; index <= 51; index += 1) {
+      const entry = running.conversations.send(topic, `Request ${index}`);
+      finish(topic, `turn-${index}`, entry?.id ?? "", `Result ${index}`);
+      if (index === 50) {
+        const result = prepare(topic, true).seed;
+        expect(result).toMatchObject({ summary: "", olderTurns: 0 });
+        expect(result?.turns).toHaveLength(50);
+        expect(result?.turns[0]).toMatchObject([{ text: "Request 1" }, { text: "Result 1" }]);
+      }
+    }
+    const current = running.conversations.send(topic, "Current request");
+    running.conversations.send(topic, "Still waiting");
+    link.receive({ type: "turn.started", conversation: topic, turn: "current", provider: "gpt", model: "model", inputs: [current?.id ?? ""] });
+    const result = prepare(topic, true, [current?.id ?? ""]).seed;
+    expect(result?.olderTurns).toBe(1);
+    expect(result?.summary).toContain("Request 1 — Result 1");
+    expect(result?.turns).toHaveLength(50);
+    expect(result?.turns[0]).toMatchObject([{ text: "Request 2" }, { text: "Result 2" }]);
+    expect(result?.turns.at(-1)).toMatchObject([{ text: "Request 51" }, { text: "Result 51" }]);
+    expect(result?.tickets).toEqual([{ own: true, line: expect.stringContaining(`#${own.id} `) }, { own: false, line: expect.stringContaining(`#${foreign.id} `) }]);
+  });
+
+  it("tracks board changes by revision and resets the saved destination session on merge", async () => {
+    const running = await start();
+    const reader = running.conversations.create().id;
+    const writer = running.conversations.create().id;
+    const { link, prepare, finish } = connected(running);
+    const read = running.conversations.send(reader, "Read the board");
+    expect(prepare(reader, true).board?.map(({ id }) => id)).toEqual([writer, reader]);
+    link.receive({ type: "session", conversation: reader, provider: "gpt", session: "saved" });
+    finish(reader, "reader-1", read?.id ?? "", "");
+    expect(prepare(reader, false).board).toEqual([expect.objectContaining({ id: reader, status: "Turn completed" })]);
+
+    const write = running.conversations.send(writer, "Other topic");
+    finish(writer, "writer-1", write?.id ?? "", "Completed the release.\nSupporting details.");
+    expect(prepare(reader, false).board).toContainEqual(expect.objectContaining({ id: writer, status: "Completed the release." }));
+    finish(reader, "reader-2", "", "");
+    expect(prepare(reader, false).board).toEqual([]);
+
+    const db = running.database.connection;
+    db.prepare("UPDATE conversations SET title = ?, topic_state = 'archived' WHERE id = ?").run("Renamed", writer);
+    expect(prepare(reader, false).board).toEqual([expect.objectContaining({ id: writer, state: "archived", title: "Renamed" })]);
+    db.prepare("UPDATE turns SET conversation_id = ? WHERE conversation_id = ?").run(reader, writer);
+    db.prepare("UPDATE conversation_entries SET conversation_id = ?, seq = seq + 100 WHERE conversation_id = ?").run(reader, writer);
+    db.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?").run(reader, writer);
+    const merged = prepare(reader, false);
+    expect(merged.session).toBeNull();
+    expect(merged.board).toContainEqual(expect.objectContaining({ id: writer, mergedInto: reader }));
+    expect(merged.seed?.turns.flat()).toContainEqual(expect.objectContaining({ text: "Completed the release.\nSupporting details." }));
+    expect(running.conversations.topics.summary(reader)).toContain("Completed the release.");
+  });
+
+  it("exposes board, archived history, search and complete omitted records through MCP", async () => {
+    const running = await start();
+    const topic = running.conversations.create().id;
+    const { finish } = connected(running);
+    const body = "Launch details 🚀 with the full numbered checklist.";
+    const entry = running.conversations.send(topic, body);
+    finish(topic, "launch", entry?.id ?? "", "The owner approved the launch.");
+    running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(topic);
+    const ticket = openTicket(running);
+    running.memories.add("你希望记录每次发布的时间。");
+
+    const call = async (name: string, args: object) => {
+      const response = await mcp(running, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
+      expect(response.status).toBe(200);
+      const payload = await response.json() as { result: { isError: boolean; content: { text: string }[] } };
+      expect(payload.result.isError).toBe(false);
+      return JSON.parse(payload.result.content[0]?.text ?? "");
+    };
+
+    expect(JSON.parse((await call("read_topic_board", {})).text)).toContainEqual(expect.objectContaining({ id: topic, state: "archived" }));
+    const matching = await call("search_topic_history", { query: "LAUNCH", limit: 1 });
+    expect(matching.messages).toEqual([expect.objectContaining({ topic, kind: "text" })]);
+    expect((await call("search_topic_history", { query: "launch", before: matching.before })).messages[0]?.id).toBe(entry?.id);
+    const recent = await call("read_topic_history", { topic, limit: 1 });
+    expect(recent.messages).toEqual([expect.objectContaining({ preview: "The owner approved the launch." })]);
+    expect((await call("read_topic_history", { topic, summary: true })).text).toContain("The owner approved the launch.");
+    const firstPart = await call("read_topic_history", { message: entry?.id, length: 70 });
+    const secondPart = await call("read_topic_history", { message: entry?.id, offset: firstPart.nextOffset });
+    expect(JSON.parse(firstPart.text + secondPart.text).item.text).toBe(body);
+    expect(secondPart.nextOffset).toBeNull();
+    expect((await call("read_seed_material", { section: "tickets" })).text).toContain(`#${ticket.id} `);
+    expect((await call("read_seed_material", { section: "memory" })).text).toContain("你希望记录每次发布的时间。");
   });
 });
