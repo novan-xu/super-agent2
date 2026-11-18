@@ -1,3 +1,4 @@
+import { text as t } from "@super-agent2/catalog";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { z } from "zod";
 import { Attachment, AttachmentUpload, Refusal } from "@super-agent2/protocol";
@@ -48,7 +49,7 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
       if (!response.ok || !parsed.success) throw new Error();
       setItems((previous) => before === undefined ? parsed.data.items : [...parsed.data.items, ...previous.filter((item) => item.seq >= before)]);
       setMore(parsed.data.more); setError("");
-    } catch { setError("加载失败，请重试。"); }
+    } catch { setError(t("transfer.loadFailed")); }
   }, []);
   useEffect(() => { void load(); const refresh = () => { void load(); }; window.addEventListener("transfer.changed", refresh); return () => window.removeEventListener("transfer.changed", refresh); }, [load]);
   const send = async (event: FormEvent) => {
@@ -61,27 +62,27 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
       if (!response.ok) throw new Error();
       setDraft(""); try { localStorage.removeItem("transfer.draft"); } catch {}
       attaching.clear(); await load();
-    } catch { setError("发送失败，请重试。文件最多 100 MB，每条最多 30 个。"); }
+    } catch { setError(t("transfer.sendFailed")); }
     finally { setSending(false); }
   };
   const remove = async (seq: number) => {
-    if (!window.confirm("删除这条传输内容及其文件？")) return;
-    try { const response = await fetch(`/api/transfer/${seq}`, { method: "DELETE" }); if (!response.ok) throw new Error(); await load(); } catch { setError("删除失败，请重试。"); }
+    if (!window.confirm(t("transfer.deleteConfirm"))) return;
+    try { const response = await fetch(`/api/transfer/${seq}`, { method: "DELETE" }); if (!response.ok) throw new Error(); await load(); } catch { setError(t("transfer.deleteFailed")); }
   };
   return <div className="conv conv--solo"><div className="conv-main"><div className="conv-bar">{navigation}</div>
-    <div className="transfer-list" aria-label="传输">
-      {more && items[0] !== undefined ? <button type="button" onClick={() => void load(items[0]?.seq)}>加载更早内容</button> : null}
-      {items.length === 0 ? <p>还没有内容</p> : items.map((item) => <article className="transfer-entry" key={item.seq}>
-        <div className="transfer-meta"><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time> · {item.device === "phone" ? "来自手机" : "来自桌面"}</div>
+    <div className="transfer-list" aria-label={t("conversation.transfer")}>
+      {more && items[0] !== undefined ? <button type="button" onClick={() => void load(items[0]?.seq)}>{t("transfer.older")}</button> : null}
+      {items.length === 0 ? <p>{t("transfer.empty")}</p> : items.map((item) => <article className="transfer-entry" key={item.seq}>
+        <div className="transfer-meta"><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time> · {item.device === "phone" ? t("transfer.phone") : t("transfer.desktop")}</div>
         {item.text !== "" ? <p className="transfer-text">{linked(item.text)}</p> : null}
         <div className="transfer-files">{item.files.map((file) => <a key={file.id} href={filePath(file.id)} download={file.name}>{file.name}</a>)}</div>
-        <div>{item.text !== "" ? <button type="button" onClick={() => void navigator.clipboard.writeText(item.text).catch(() => setError("复制失败。"))}>复制</button> : null} <button type="button" onClick={() => void remove(item.seq)}>删除</button></div>
+        <div>{item.text !== "" ? <button type="button" onClick={() => void navigator.clipboard.writeText(item.text).catch(() => setError(t("transfer.copyFailed")))}>{t("transfer.copy")}</button> : null} <button type="button" onClick={() => void remove(item.seq)}>{t("transfer.delete")}</button></div>
       </article>)}
     </div>
     <form className="transfer-compose" onSubmit={(event) => void send(event)} onDragOver={attaching.over} onDrop={attaching.drop}>
       {error ? <p role="alert">{error}</p> : null}<PendingList attaching={attaching} />
-      <textarea aria-label="传输内容" value={draft} onPaste={attaching.paste} onChange={(event) => { setDraft(event.target.value); try { localStorage.setItem("transfer.draft", event.target.value); } catch {} }} />
-      <div><AttachButton add={attaching.add} /><button type="submit" disabled={sending}>发送</button></div>
+      <textarea aria-label={t("transfer.content")} value={draft} onPaste={attaching.paste} onChange={(event) => { setDraft(event.target.value); try { localStorage.setItem("transfer.draft", event.target.value); } catch {} }} />
+      <div><AttachButton add={attaching.add} /><button type="submit" disabled={sending}>{t("transfer.send")}</button></div>
     </form>
   </div></div>;
 }
