@@ -35,6 +35,7 @@ describe("the level of a change", () => {
       mergeCommit: null,
       deployment: null,
       skipReason: null,
+      conflictReturns: 0,
       checkedAt: 1,
     });
     expect(parsed.rule).toBe("workflows");

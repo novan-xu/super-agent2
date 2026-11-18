@@ -271,7 +271,7 @@ describe("notifying a device", () => {
     expect(PushKey.parse(await (await owner(bare, "/api/push", { method: "GET" })).json())).toEqual({ publicKey: null });
   });
 
-  it("sends a Chinese notification to a subscribed device when a command is held, without the command in it", async () => {
+  it("sends a Chinese notification to a subscribed device when a command is held, naming where it runs and the command", async () => {
     const service = pushService();
     const running = await start({ push: service });
     const device = createPushDevice();
@@ -285,9 +285,12 @@ describe("notifying a device", () => {
     expect(received?.endpoint).toBe("http://127.0.0.1:9/device/one");
     const readable = receivePush(device, received?.body ?? Buffer.alloc(0));
     const payload = PushPayload.parse(JSON.parse(readable));
-    expect(payload).toEqual({ title: "等你", body: "有一条命令等你确认", url: `/workbench?card=${encodeURIComponent(`hold:${held.id}`)}`, tag: `hold:${held.id}` });
-    expect(readable).not.toContain("secret-project");
-    expect(readable).not.toContain("gh repo");
+    expect(payload).toEqual({
+      title: "等你",
+      body: "hub 上有一条命令等你确认：\ngh repo delete novan-xu/secret-project --yes",
+      url: `/workbench?card=${encodeURIComponent(`hold:${held.id}`)}`,
+      tag: `hold:${held.id}`,
+    });
   });
 
   it("sends once for each hold and not when the hold is answered", async () => {

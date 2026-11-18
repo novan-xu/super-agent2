@@ -159,6 +159,9 @@ describe("a ticket's worker for the page and the brain", () => {
     expect(answer.status).toBe(202);
     const { id } = (await answer.json()) as { id: string };
     expect(sent.filter((message) => message.type === "work.message")).toEqual([{ type: "work.message", ticket: ticket.id, attempt: 1, id, from: "owner", text: "Use the short greeting" }]);
+    const long = "Keep every greeting. ".repeat(10_000);
+    expect((await post(running, `/api/tickets/${ticket.id}/messages`, { text: long })).status).toBe(202);
+    expect(sent.some((message) => message.type === "work.message" && message.text === long.trim())).toBe(true);
   });
 
   it("lets the brain message the worker and read its output with the ticket", async () => {
@@ -247,9 +250,12 @@ describe("a writing ticket's delivery", () => {
     event(runner, 1, 2, {
       kind: "delivered",
       text: "Hello, world.\n",
-      files: [{ name: "译文.pdf", size: 4, mediaType: "application/pdf", data: Buffer.from([1, 2, 3, 4]).toString("base64") }],
+      files: [{ name: "译文.pdf", size: 4, mediaType: "application/pdf" }],
       report: { en: "Translated the notice", zh: "翻译了通知" },
     });
+    expect(running.tickets.get(1)?.state).toBe("working");
+    expect(sent.filter((message) => message.type === "work.file")).toEqual([{ type: "work.file", ticket: 1, attempt: 1, name: "译文.pdf", offset: 0, length: 4 }]);
+    runner.receive({ type: "work.file.part", ticket: 1, attempt: 1, name: "译文.pdf", offset: 0, data: Buffer.from([1, 2, 3, 4]).toString("base64"), problem: null });
     expect(running.tickets.get(1)).toMatchObject({ state: "delivered", pullRequest: null, branch: null });
     const detail = (await (await owner(running, `/api/conversations/${conversation.id}`)).json()) as { entries: { kind: string; ticket?: number; text?: string | null; files?: unknown[] }[] };
     const delivery = detail.entries.find((entry) => entry.kind === "delivery");

@@ -112,6 +112,9 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     if (verification.deployment !== null) {
       parts.push(verification.deployment ? "the repository has a deployment" : "the repository has no deployment");
     }
+    if (verification.conflictReturns > 0) {
+      parts.push(`went back to its worker for a conflict ${verification.conflictReturns} time${verification.conflictReturns === 1 ? "" : "s"}`);
+    }
     lines.push(`${parts.join("; ")}${verification.reason === null ? "" : `. ${verification.reason}`}`);
   }
   if (ticket.deployedAt !== null) {

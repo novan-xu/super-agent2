@@ -34,7 +34,7 @@ API directly.
 
 | Role | Providers |
 | --- | --- |
-| Brain | GPT through Codex, and Claude through Claude Code. DeepSeek, through `dsh`, answers only while both are unavailable. |
+| Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
 | Worker, code | Codex, Claude Code and `dsh`. |
 | Worker, writing | Antigravity: translation, articles, emails and other text work. Any writing that concerns code is code work and stays with the code workers. |
 
@@ -78,7 +78,8 @@ Two things follow:
    through the chain's issues in order, runs the tests itself, resolves conflicts with the default branch itself, and
    opens one pull request for the chain.
 6. **Verification.** Rules only; see below.
-7. **Merge.** Automatic when the rules pass. A conflict at merge time goes back to the worker.
+7. **Merge.** Automatic when the rules pass. A conflict at merge time goes back to the worker, every time it is found.
+   It is never a failure and never counts as a guided round; the ticket says how many times it went back.
 8. **Report.** The ticket ends at the merge and reports to the brain, saying whether the change needs deploying.
 9. **Failure.** At any step, the hub hands the failing output to the brain. The brain writes guidance, and the worker
    tries again.
@@ -105,7 +106,7 @@ by one worker on one branch into one pull request. The smallest ticket is a sing
 
 For each chain the brain chooses, once, where and how it runs: machine, engine, model and effort, for example Mac mini,
 Codex, `gpt-6.1-sol`, high. They are defaults: the owner can change any of them on the card before the start, and the
-owner's choice wins.
+owner's choice wins. The card has one select for each, in that order; the page calls the engine 供应商.
 
 The brain decides from four things.
 
@@ -171,7 +172,7 @@ This is the complete list.
 
    The list matches known forms. It cannot see inside a script, so that part rests on the LLM's own judgement.
 2. **Retry cap.** After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the
-   owner.
+   owner. A merge conflict is not a failure and is not counted.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.** A chain starts only from 开始 on its card, in the owner's own authenticated session.
@@ -184,6 +185,15 @@ No test fails because something took longer than expected.
   is off; only the pipeline's overall limit ends a run that hangs.
 - Logic that depends on time is tested with a clock the test controls.
 - A test waits for an event, never for a duration.
+
+## Limits
+
+Nothing the owner, the brain or a worker sends has an upper limit of its own: not a message, a task, material, a
+reason, a command, a list, or the number and size of a writing worker's files. What remains is physical. One request
+body or live message is at most 64 MiB, and a request past it is refused with a plain statement that this is the
+system's physical limit. A writing worker's text result too long for one message reaches the owner whole, as a file.
+Delivered files go from the runner to the hub in parts the hub asks for, and are kept as files beside the hub's
+database. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
 
 ## Decisions
 
@@ -208,7 +218,8 @@ are.
 ## Notices
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and
-is sent as a push notification from the web page. There is no Lark channel.
+is sent as a push notification from the web page. There is no Lark channel. The notification for a held operation names
+where it runs and the command, cut visibly when it is too long for a push message, and never its environment.
 
 ## Interface
 
@@ -227,6 +238,7 @@ Kept from it:
 Changed by this design:
 
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
+  确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.
 - Everything that showed the issue reviewer, the repairer, LLM verification or Lark is gone.
 

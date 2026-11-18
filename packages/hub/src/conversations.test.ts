@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationState, type HubToBrain, ServerMessage, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationState, type HubToBrain, largestMessageBytes, ServerMessage, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -153,6 +154,34 @@ describe("conversations for the page", () => {
     expect((await fetch(path, { method: "POST", headers: { ...headers, "content-type": "text/plain" }, body: "hi" })).status).toBe(415);
     const missing = `${base(running)}/api/conversations/nope/messages`;
     expect((await fetch(missing, { method: "POST", headers, body: JSON.stringify({ text: "hi" }) })).status).toBe(404);
+  });
+
+  it("takes a message of any length, and says plainly when a request is past what the system can carry at once", async () => {
+    const running = await start();
+    const conversation = running.conversations.create();
+    const headers = { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json" };
+    const path = `${base(running)}/api/conversations/${conversation.id}/messages`;
+    const long = "很长的一段话。".repeat(300_000);
+    expect((await fetch(path, { method: "POST", headers, body: JSON.stringify({ text: long }) })).status).toBe(202);
+    expect(running.conversations.detail(conversation.id)?.entries.some((entry) => entry.kind === "owner" && entry.text === long)).toBe(true);
+    const refused = await new Promise<{ readonly status: number; readonly body: string }>((resolve, reject) => {
+      const sent = httpRequest(path, { method: "POST", headers: { ...headers, "content-length": String(largestMessageBytes + 1) } }, (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          sent.destroy();
+          resolve({ status: response.statusCode ?? 0, body });
+        });
+      });
+      sent.on("error", reject);
+      sent.flushHeaders();
+    });
+    expect(refused.status).toBe(413);
+    expect(JSON.parse(refused.body)).toEqual({ error: "too_large" });
+    expect(messages["refusal.too_large"]).toContain("物理上限");
   });
 
   it("streams a watched conversation to the page as the brain works, and nothing of an unwatched one", async () => {

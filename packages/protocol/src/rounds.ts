@@ -5,7 +5,7 @@ import type { WorkStatus } from "./work.js";
 
 export const roundCap = 3;
 
-export const loopFailureKinds = ["workflow", "conflict", "no-pull-request", "program", "lost", "prepare"] as const;
+export const loopFailureKinds = ["workflow", "no-pull-request", "program", "lost", "prepare"] as const;
 export const LoopFailureKind = z.enum(loopFailureKinds);
 export type LoopFailureKind = z.infer<typeof LoopFailureKind>;
 
@@ -44,12 +44,10 @@ export const stuckAnswers = ["resume", "give-up"] as const;
 export const StuckAnswer = z.enum(stuckAnswers);
 export type StuckAnswer = z.infer<typeof StuckAnswer>;
 
-export const maximumOwnerWords = 4_000;
-
 export const StuckAnswerRequest = z.object({
   at: z.number().int(),
   answer: StuckAnswer,
-  words: z.string().trim().max(maximumOwnerWords).optional(),
+  words: z.string().trim().optional(),
 });
 export type StuckAnswerRequest = z.infer<typeof StuckAnswerRequest>;
 
@@ -89,9 +87,6 @@ export function loopFailureOf(ticket: LoopTicket): LoopFailure | null {
     const verification = ticket.verification;
     if (verification?.state === "failed") {
       return { kind: "workflow", detail: verification.reason ?? "" };
-    }
-    if (verification?.state === "conflict") {
-      return { kind: "conflict", detail: verification.reason ?? "" };
     }
   }
   return null;
