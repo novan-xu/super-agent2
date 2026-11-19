@@ -888,6 +888,7 @@ export const migrations: readonly Migration[] = [
         SELECT min(repository), 1 FROM tickets WHERE repository IS NOT NULL GROUP BY lower(repository);
     `,
   },
+  { version: 41, sql: `ALTER TABLE repositories ADD COLUMN alias TEXT;` },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -488,6 +488,7 @@ export const messages = {
   "repositories.unpinLabel": "取消置顶 {repository}",
   "repositories.emptyPinned": "暂无置顶仓库",
   "repositories.emptyArchived": "暂无归档仓库",
+  "repositories.alias": "{repository} 的别名",
   "repositories.account": "{repository} 的 GitHub 账号",
   "models.brain": "大脑",
   "models.earlier": "提前",

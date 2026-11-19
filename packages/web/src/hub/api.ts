@@ -140,6 +140,7 @@ export const hubApi = {
   setOrder: (order: readonly Provider[]) => call("/api/brain/order", SettingsSnapshot, { order }, "PUT"),
   setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
   setPinned: (repository: string, pinned: boolean) => call("/api/repositories/pin", SettingsSnapshot, { repository, pinned }),
+  setAlias: (repository: string, alias: string | null) => call("/api/repositories/alias", SettingsSnapshot, { repository, alias }),
   refreshRepositories: () => call("/api/repositories/refresh", z.object({}), {}),
   setTable: (table: EngineTable) => call("/api/engine-table", EngineTableBody, { table }, "PUT"),
   pushKey: () => call("/api/push", PushKey),

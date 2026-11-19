@@ -13,7 +13,7 @@ const second = ticket(2, { repository: "org/one", waits: waits(1), waitsFor: [1]
 const third = ticket(3, { repository: null, kind: "writing", form: "task", issues: [] });
 const start = startCard(2, { ticket: second, before: [{ id: 1, zh: "工作 1", state: "working" }] });
 const props: CanvasWorkbenchProps = {
-  tickets: [first, second, third], topics: [topic], pinnedRepositories: ["org/zzz", "org/empty"], waiting: { ...initialWaiting, known: true, cards: [start] },
+  tickets: [first, second, third], topics: [topic], pinnedRepositories: [{ repository: "org/zzz" }, { repository: "org/empty" }], waiting: { ...initialWaiting, known: true, cards: [start] },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
   panel: <div>Repository conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
@@ -33,6 +33,13 @@ describe("workbench canvas", () => {
     expect(html).toContain("Repository conversation");
     expect(html).toContain("wb-card--pending");
     expect(html).toContain("在 #1 工作 1 之后");
+  });
+
+  it("sorts by alias while retaining the full repository in the tooltip", () => {
+    const html = renderToStaticMarkup(<CanvasWorkbench {...props} pinnedRepositories={[{ repository: "org/zzz", alias: "Alpha" }, { repository: "org/empty" }]} />);
+    const rail = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    expect(rail).toContain('title="org/zzz"');
+    expect(rail.indexOf("Alpha")).toBeLessThan(rail.indexOf("org/empty"));
   });
 
   it("scopes work to a repository or daily tickets", () => {

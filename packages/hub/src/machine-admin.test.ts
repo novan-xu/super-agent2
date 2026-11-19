@@ -546,6 +546,29 @@ describe("the other settings", () => {
     expect(SettingsSnapshot.parse(await removed.json()).repositories[0]?.pinned).toBe(false);
   });
 
+  it("validates, publishes and persists repository aliases", async () => {
+    const running = await start();
+    const path = "/api/repositories/alias";
+    const request = { repository: "Novan-Xu/Super-Agent2", alias: "  Agent  " };
+    expect((await fetch(`${base(running)}${path}`, { method: "POST" })).status).toBe(403);
+    expect((await owner(running, path, "POST", { ...request, alias: "x".repeat(41) })).status).toBe(400);
+    expect((await owner(running, path, "POST", { ...request, alias: "bad\nname" })).status).toBe(400);
+    expect((await owner(running, path, "POST", { ...request, extra: true })).status).toBe(400);
+    expect((await owner(running, path, "POST", { ...request, repository: "org/unknown" })).status).toBe(404);
+    const updates: SettingsSnapshot[] = [];
+    const unsubscribe = running.settings.subscribe((snapshot) => updates.push(snapshot));
+    const saved = await owner(running, path, "POST", request);
+    expect(SettingsSnapshot.parse(await saved.json()).repositories[0]?.alias).toBe("Agent");
+    expect(updates.at(-1)?.repositories[0]?.alias).toBe("Agent");
+    unsubscribe();
+    await running.close();
+    hub = undefined;
+    const restarted = await start();
+    expect(restarted.settings.snapshot().repositories[0]?.alias).toBe("Agent");
+    const cleared = await owner(restarted, path, "POST", { ...request, alias: null });
+    expect(SettingsSnapshot.parse(await cleared.json()).repositories[0]?.alias).toBeUndefined();
+  });
+
   it("discovers repositories on start and refreshes the catalog for an owner request", async () => {
     const path = "/api/repositories/refresh";
     let name = "novan-xu/First";

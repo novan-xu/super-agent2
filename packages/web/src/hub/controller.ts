@@ -295,6 +295,10 @@ export class PageController {
     return this.changeSettings(() => this.options.api.setAccount(repository, account));
   }
 
+  setAlias(repository: string, alias: string | null): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setAlias(repository, alias));
+  }
+
   setPinned(repository: string, pinned: boolean): Promise<boolean> {
     return this.changeSettings(() => this.options.api.setPinned(repository, pinned));
   }

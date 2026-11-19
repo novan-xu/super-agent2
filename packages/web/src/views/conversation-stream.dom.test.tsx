@@ -213,6 +213,11 @@ it("starts on archived repositories and updates the workbench rail after pinning
     ],
   });
   const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/repositories/alias") {
+      const { repository, alias } = JSON.parse(String(init?.body));
+      snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, alias } : row) };
+      return Response.json(snapshot);
+    }
     if (path === "/api/repositories/pin") {
       const { repository, pinned } = JSON.parse(String(init?.body));
       snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, pinned } : row) };
@@ -238,10 +243,18 @@ it("starts on archived repositories and updates the workbench rail after pinning
   expect(fetcher).toHaveBeenCalledWith("/api/repositories/refresh", expect.objectContaining({ method: "POST" }));
   expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
   expect(titles()).toEqual([archived]);
+  const input = host.querySelector<HTMLInputElement>(`input[aria-label="${archived} 的别名"]`)!;
+  await act(async () => {
+    input.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Short name");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.blur());
+  expect(snapshot.repositories[1]?.alias).toBe("Short name");
   await toggle("置顶");
   expect(titles()).toEqual([]);
   await visit("/workbench");
-  expect(rail()).toContain(archived);
+  expect(rail()).toContain("Short name");
 
   await visit("/settings");
   await visit("/settings/repositories");
@@ -251,5 +264,5 @@ it("starts on archived repositories and updates the workbench rail after pinning
   await toggle("取消置顶");
   expect(titles()).toEqual(["owner/one"]);
   await visit("/workbench");
-  expect(rail()).not.toContain(archived);
+  expect(rail()).not.toContain("Short name");
 });

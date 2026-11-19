@@ -9,7 +9,7 @@ const noop = () => undefined;
 const first = ticket(1, { repository: "org/one", state: "working", work: workStatus() });
 const second = ticket(2, { repository: "org/one", waits: [{ ticket: 1, deployment: false, waived: false }], waitsFor: [1] });
 const props: CanvasWorkbenchProps = {
-  tickets: [first, second], topics: [], pinnedRepositories: ["org/one"], waiting: { ...initialWaiting, known: true },
+  tickets: [first, second], topics: [], pinnedRepositories: [{ repository: "org/one" }], waiting: { ...initialWaiting, known: true },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
   panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
@@ -67,6 +67,15 @@ describe("workbench panel resizing", () => {
     expect(rearrange).toHaveBeenCalledOnce();
     expect(host.querySelector(".wb-canvas")?.classList.contains("wb-mobile-hidden")).toBe(true);
     expect(host.querySelectorAll(".wb-mobile-tabs button")[1]?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("selects the real repository when its alias is clicked", async () => {
+    const selectRepository = vi.fn();
+    await act(async () => root.render(<CanvasWorkbench {...props} pinnedRepositories={[{ repository: "org/one", alias: "Project" }]} selectRepository={selectRepository} />));
+    const button = host.querySelector<HTMLButtonElement>('button[title="org/one"]')!;
+    expect(button.textContent).toContain("Project");
+    await act(async () => button.click());
+    expect(selectRepository).toHaveBeenCalledWith("org/one");
   });
 
   it("opens the ticket when a start-card link outlives its card", async () => {

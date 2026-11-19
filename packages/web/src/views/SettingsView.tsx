@@ -19,7 +19,7 @@ import {
   type Ticket,
   withCell,
 } from "@super-agent2/protocol";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
 import {
   availableNow,
@@ -52,6 +52,7 @@ export interface SettingsActions {
   readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
+  readonly setAlias: (repository: string, alias: string | null) => Promise<boolean>;
   readonly setTable: (table: SettingsSnapshot["table"]) => Promise<"saved" | "unsupported" | "failed">;
   readonly setAppearance: (change: Partial<Appearance>) => void;
 }
@@ -465,6 +466,17 @@ function ModelsSection({ settings, actions }: { readonly settings: SettingsSnaps
 
 function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repositories"][number]; readonly actions: SettingsActions }) {
   const [sending, setSending] = useState(false);
+  const [alias, setAlias] = useState(row.alias ?? "");
+  const cancelled = useRef(false);
+  useEffect(() => setAlias(row.alias ?? ""), [row.alias]);
+  const saveAlias = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
+    const value = alias.trim();
+    setAlias(value);
+    if (value === (row.alias ?? "")) return;
+    setSending(true);
+    void actions.setAlias(row.repository, value || null).then((ok) => { if (!ok) setAlias(row.alias ?? ""); }).finally(() => setSending(false));
+  };
   const save = (update: () => Promise<boolean>) => {
     setSending(true);
     void update().finally(() => setSending(false));
@@ -473,6 +485,10 @@ function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repos
     <div className="srow">
       <div className="srow-text">
         <span className="srow-title mono od-truncate" title={row.repository}>{row.repository}</span>
+        <input className="field repository-alias" aria-label={text("repositories.alias", { repository: row.repository })} placeholder={row.repository.split("/").at(-1)} value={alias} maxLength={40} disabled={sending} onChange={(event) => setAlias(event.target.value)} onBlur={saveAlias} onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") { cancelled.current = true; setAlias(row.alias ?? ""); event.currentTarget.blur(); }
+        }} />
       </div>
       <div className="srow-ctl repository-actions">
         <div className="seg" role="group" aria-label={text("repositories.account", { repository: row.repository })}>
