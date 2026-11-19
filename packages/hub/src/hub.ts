@@ -265,6 +265,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
               const outcome = worker.onward(ticket, merged);
               return outcome.ok ? { ok: true as const } : { ok: false as const, reason: outcome.reason };
             },
+            resumeOpenIssues: (ticket: number, note: string) => worker.again(ticket, note),
           }),
     });
     const listed = chains;

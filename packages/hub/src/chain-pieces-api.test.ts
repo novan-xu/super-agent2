@@ -172,6 +172,22 @@ function handIn(runner: RunnerLink, ticket: number, attempt: number, pull: numbe
   event(runner, ticket, attempt, { kind: "finished", pullRequest: pull, url: `https://github.com/${repository}/pull/${pull}`, closes: [...closes], report: { en: `Pull request ${pull}`, zh: `交了 PR ${pull}` } });
 }
 
+function closeOutside(number: number, reason: string, comment?: string): void {
+  const repo = forge.repository(repository);
+  const at = "2026-11-17T11:59:59Z";
+  const user = { login: "novan-xu" };
+  repo.issues.set(number, "closed");
+  repo.issueClosures.set(number, {
+    reason,
+    at,
+    timeline: [
+      ...(comment === undefined ? [] : [{ event: "commented", created_at: "2026-11-17T11:59:57Z", user, body: comment }]),
+      { event: "closed", created_at: at, actor: user },
+      { event: "commented", created_at: at, user: { login: "someone-else" }, body: "Unrelated comment" },
+    ],
+  });
+}
+
 async function settled(running: Hub): Promise<void> {
   await running.verification.idle();
   await running.chains.idle();
@@ -264,6 +280,145 @@ describe("a chain handed in as several pull requests", () => {
     expect(note).toContain("It closed no issue of the chain.");
     expect(note).toContain("Closed so far: none.");
     expect([...forge.repository(repository).issues.values()]).toEqual(["open", "open", "open"]);
+  });
+
+  it("ends after the second merge when the third issue was dropped before it merged", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    pullAt(21, "aaa111", ticket.branch ?? "", [7]);
+    pipeline(1, "aaa111", 21, "success");
+    handIn(runner, ticket.id, 1, 21, [7]);
+    await settled(running);
+    const second = current(running, ticket.id);
+    pullAt(22, "bbb222", second.branch ?? "", [8, 9]);
+    handIn(runner, ticket.id, 2, 22, [8, 9]);
+    await settled(running);
+    expect(current(running, ticket.id).state).toBe("verifying");
+
+    closeOutside(9, "not_planned", "We dropped the final step.");
+    pipeline(2, "bbb222", 22, "success");
+    await running.verification.check(ticket.id);
+    await settled(running);
+
+    expect(current(running, ticket.id)).toMatchObject({
+      state: "merged",
+      closedOutside: [{ number: 9, stateReason: "NOT_PLANNED", comment: "We dropped the final step." }],
+      pullRequests: [{ number: 21, closes: [7] }, { number: 22, closes: [8] }],
+      verification: { mergeCommit: "merge-of-bbb222" },
+    });
+    expect(starts(sent, ticket.id)).toHaveLength(2);
+    expect(notices(running, conversation).at(-1)?.prompt).toContain('Issue #9 was closed on GitHub without a pull request of this chain (stateReason: NOT_PLANNED). Closing comment: "We dropped the final step."');
+  });
+
+  it("confirms a running worker's settlement on GitHub and preserves the final commit and deployment", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    pullAt(21, "aaa111", ticket.branch ?? "", [7, 8]);
+    forge.file(repository, "aaa111", ".superagent2/deployment.json", "{}");
+    pipeline(1, "aaa111", 21, "success");
+    handIn(runner, ticket.id, 1, 21, [7, 8]);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", verification: null });
+    const deployment = running.tickets.open({
+      form: "task",
+      repository,
+      issues: [],
+      title: { en: "Deploy the chain", zh: "部署工单" },
+      summary: { en: "Deploy its final commit", zh: "部署最后一次合并的提交" },
+      kind: "operation",
+      waitsFor: [ticket.id],
+      task: { task: "Deploy the final merge commit.", materials: [], commitRef: "merged", deploys: true },
+    });
+    running.tickets.change((writes) => {
+      writes.choose(deployment.id, { machine: "pc", engine: "claude", model: "claude-haiku-5-5", effort: "low", by: { machine: "owner", engine: "owner", model: "owner", effort: "owner" } });
+      writes.move(deployment.id, "waiting");
+    });
+
+    closeOutside(9, "completed");
+    forge.failing = /\/issues\/9$/;
+    event(runner, ticket.id, 2, { kind: "settled" });
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", work: { state: "finished" } });
+    expect(notices(running, conversation)).toHaveLength(0);
+
+    forge.failing = undefined;
+    await running.verification.poll();
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({
+      state: "merged",
+      closedOutside: [{ number: 9, stateReason: "COMPLETED", comment: null }],
+      pullRequest: 21,
+      verification: { state: "merged", mergeCommit: "merge-of-aaa111", deployment: true },
+    });
+    expect(starts(sent, ticket.id)).toHaveLength(2);
+    const told = notices(running, conversation);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.prompt).toContain("The last, #21, was merged as commit merge-of-aaa111.");
+    expect(told[0]?.prompt).toContain("Issue #9 was closed on GitHub without a pull request of this chain (stateReason: COMPLETED).");
+    expect(told[0]?.prompt).toContain(`task ticket ${deployment.id} deploys it`);
+    expect(current(running, deployment.id)).toMatchObject({ state: "working", commit: "merge-of-aaa111" });
+  });
+
+  it("settles an otherwise finished chain when its last handed-in pull request was abandoned", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    pullAt(21, "aaa111", ticket.branch ?? "", [7]);
+    pipeline(1, "aaa111", 21, "success");
+    handIn(runner, ticket.id, 1, 21, [7]);
+    await settled(running);
+    const branch = current(running, ticket.id).branch ?? "";
+    const pull = forge.pull(repository, 22, "bbb222", ["src/unneeded.ts"], branch, [8, 9]);
+    forge.tree(repository, "bbb222", ["src/unneeded.ts", ".woodpecker/check.yaml"]);
+    handIn(runner, ticket.id, 2, 22, [8, 9]);
+    await settled(running);
+    expect(current(running, ticket.id).state).toBe("verifying");
+
+    pull.open = false;
+    closeOutside(8, "not_planned");
+    closeOutside(9, "not_planned");
+    await running.verification.check(ticket.id);
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({
+      state: "merged",
+      pullRequest: 21,
+      pullRequests: [{ number: 21, state: "merged" }, { number: 22, state: "closed" }],
+      verification: { state: "merged", mergeCommit: "merge-of-aaa111" },
+    });
+    expect(starts(sent, ticket.id)).toHaveLength(2);
+    expect(forge.merges.map((merge) => merge.number)).toEqual([21]);
+  });
+
+  it("retries the same branch when an issue reopens before settlement is confirmed", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    closeOutside(7, "not_planned");
+    closeOutside(8, "not_planned");
+    event(runner, ticket.id, 1, { kind: "settled" });
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", work: { attempt: 2 }, closedOutside: [{ number: 7 }, { number: 8 }] });
+    expect(starts(sent, ticket.id)[1]?.task).toMatchObject({ branch: ticket.branch, closedOutside: [7, 8], note: expect.stringContaining("#9") });
+
+    forge.repository(repository).issues.set(7, "open");
+    closeOutside(9, "not_planned");
+    event(runner, ticket.id, 2, { kind: "settled" });
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", work: { attempt: 3 }, closedOutside: [{ number: 8 }, { number: 9 }] });
+    expect(starts(sent, ticket.id)[2]?.task.note).toContain("#7");
+  });
+
+  it("stops and reports a chain dropped without any merged pull request", async () => {
+    const { running, runner, sent, conversation } = await start();
+    const ticket = begin(running, conversation);
+    chainIssues.forEach((number) => closeOutside(number, "not_planned"));
+    event(runner, ticket.id, 1, { kind: "settled" });
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({
+      state: "stopped",
+      stopReason: { en: "Every issue was closed on GitHub without a pull request" },
+      closedOutside: [{ number: 7 }, { number: 8 }, { number: 9 }],
+    });
+    expect(starts(sent, ticket.id)).toHaveLength(1);
+    expect(notices(running, conversation)[0]?.prompt).toContain("Every issue was closed on GitHub without a pull request.");
   });
 
   it("keeps what is merged when the owner stops the chain, records what remains, and tells the brain once", async () => {

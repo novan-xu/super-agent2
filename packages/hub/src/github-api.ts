@@ -16,6 +16,7 @@ export interface PullRequestState {
   readonly number: number;
   readonly open: boolean;
   readonly merged: boolean;
+  readonly mergedAt: string | null;
   readonly mergeCommit: string | null;
   readonly head: string;
   readonly headRef: string;
@@ -46,6 +47,13 @@ export interface MergeMethods {
   readonly rebase: boolean;
 }
 
+interface IssueState {
+  readonly state: "open" | "closed";
+  readonly stateReason: string | null;
+  readonly closedAt: string | null;
+  readonly comments: number;
+}
+
 export interface GitHubApi {
   repositories(affiliation: string): Promise<GitHubRepository[]>;
   hasAuthoredCommits(repository: string, author: GitHubAccount): Promise<boolean>;
@@ -58,7 +66,8 @@ export interface GitHubApi {
   compare(repository: string, base: string, head: string): Promise<Comparison>;
   mergeMethods(repository: string): Promise<MergeMethods>;
   merge(repository: string, number: number, sha: string, method: MergeMethod): Promise<MergeAnswer>;
-  issueOpen(repository: string, number: number): Promise<boolean | null>;
+  issue(repository: string, number: number): Promise<IssueState | null>;
+  closingComment(repository: string, number: number): Promise<string | null>;
   closeIssue(repository: string, number: number): Promise<void>;
   deleteBranch(repository: string, branch: string): Promise<void>;
   closingIssues(repository: string, number: number): Promise<number[]>;
@@ -115,7 +124,35 @@ export type GitHubRepository = z.infer<typeof RepositoryListing>;
 
 const MergeJson = z.looseObject({ sha: z.string() });
 
-const IssueJson = z.looseObject({ state: z.string() });
+const IssueJson = z.looseObject({
+  state: z.enum(["open", "closed"]),
+  state_reason: z.string().nullable().optional(),
+  closed_at: z.string().nullable().optional(),
+  comments: z.number().int().nonnegative().default(0),
+});
+
+const TimelineEvent = z.looseObject({
+  event: z.string(),
+  created_at: z.string().optional(),
+  actor: z.looseObject({ login: z.string() }).nullable().optional(),
+  user: z.looseObject({ login: z.string() }).nullable().optional(),
+  commit_id: z.string().nullable().optional(),
+  body: z.string().optional(),
+});
+type TimelineEvent = z.infer<typeof TimelineEvent>;
+
+function adjacentClosingComment(events: readonly TimelineEvent[]): string | null {
+  const index = events.findLastIndex((event) => event.event === "closed" || event.event === "reopened");
+  const closing = events[index];
+  if (closing?.event !== "closed" || closing.actor == null || closing.commit_id != null) {
+    return null;
+  }
+  const at = Date.parse(closing.created_at ?? "");
+  const comment = [events[index - 1], events[index + 1]].find((event) =>
+    event?.event === "commented" && (event.actor ?? event.user)?.login === closing.actor?.login
+    && Math.abs(Date.parse(event.created_at ?? "") - at) <= 10_000);
+  return comment?.body?.trim() || null;
+}
 
 const MessageJson = z.looseObject({ message: z.string() });
 
@@ -242,6 +279,7 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
         number: pull.number,
         open: pull.state === "open",
         merged: pull.merged === true || (pull.merged_at !== undefined && pull.merged_at !== null),
+        mergedAt: pull.merged_at ?? null,
         mergeCommit: pull.merge_commit_sha ?? null,
         head: pull.head.sha,
         headRef: pull.head.ref,
@@ -356,20 +394,25 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
       }
       throw new ForgeError(said, response.status);
     },
-    issueOpen: async (repository, number) => {
+    issue: async (repository, number) => {
       const path = `${repo(repository)}/issues/${number}`;
       const response = await send("GET", path);
       if (response.status === 404 || response.status === 410) {
         return null;
       }
-      if (!response.ok) {
-        throw await failure("GET", path, response);
+      const issue = await readResponse(path, response, IssueJson);
+      return { state: issue.state, stateReason: issue.state_reason?.toUpperCase() ?? null, closedAt: issue.closed_at ?? null, comments: issue.comments };
+    },
+    closingComment: async (repository, number) => {
+      const events: TimelineEvent[] = [];
+      for (let page = 1; ; page += 1) {
+        const path = `${repo(repository)}/issues/${number}/timeline?per_page=${pageSize}&page=${page}`;
+        const response = await send("GET", path);
+        events.push(...await readResponse(path, response, z.array(TimelineEvent)));
+        if (!response.headers.get("link")?.includes('rel="next"')) {
+          return adjacentClosingComment(events);
+        }
       }
-      const parsed = IssueJson.safeParse(await response.json());
-      if (!parsed.success) {
-        throw new ForgeError(`GitHub answered GET ${path} in an unexpected shape`, response.status);
-      }
-      return parsed.data.state === "open";
     },
     closeIssue: async (repository, number) => {
       const path = `${repo(repository)}/issues/${number}`;

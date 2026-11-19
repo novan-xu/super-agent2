@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, ProgramSettings, PromptImage, SteerResult, WorkerAdapter } from "@super-agent2/programs";
-import { type Attachment, type RunnerToHub, type RunnerWorkEvent, storedName, type TaskAssignment, type WorkEngine, type WorkEvent, type WorkTask } from "@super-agent2/protocol";
+import { type Attachment, endsWork, type RunnerToHub, type RunnerWorkEvent, storedName, type TaskAssignment, type WorkEngine, type WorkEvent, type WorkTask } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createGit, type ProcessRunner, runProcess } from "./git.js";
 import type { PullRequestState } from "./handback.js";
@@ -214,6 +214,8 @@ function start(overrides: Partial<WorksOptions> = {}): Works {
     run,
     remote: () => remote,
     readPullRequest: (_repository, number) => Promise.resolve(pulls.get(number) ?? `no pull request ${number}`),
+    readClosedIssues: async () => [],
+    readBranchPull: async () => null,
     ...overrides,
   });
   opened.push(works);
@@ -253,9 +255,9 @@ function kinds(ticket: number, attempt = 1): string[] {
 
 function ended(ticket: number, attempt = 1): Promise<WorkEvent> {
   return sent
-    .until(() => events(ticket, attempt).some((message) => ["finished", "delivered", "failed", "stopped", "unavailable"].includes(message.event.kind)))
+    .until(() => events(ticket, attempt).some((message) => endsWork(message.event)))
     .then(() => {
-      const last = events(ticket, attempt).find((message) => ["finished", "delivered", "failed", "stopped", "unavailable"].includes(message.event.kind));
+      const last = events(ticket, attempt).find((message) => endsWork(message.event));
       if (last === undefined) {
         throw new Error("no ending");
       }
@@ -449,6 +451,58 @@ describe("a worker on the runner", () => {
     handBack(6, 41, [11, 12]);
     handle.emit({ type: "turn.finished", outcome: "completed" });
     expect(await ended(6)).toMatchObject({ kind: "finished", pullRequest: 41, closes: [11, 12] });
+  });
+
+  it("checks GitHub when resuming or repairing and marks the closed issues in each brief", async () => {
+    const works = start({ readClosedIssues: async () => [11] });
+    works.receive({ type: "work.start", task: task(65, { session: "prior-session", note: "Continue with the rest." }) });
+    const resumed = await programs.prompted(1);
+    expect(resumed.options.session).toBe("prior-session");
+    expect(resumed.prompts[0]).toContain("#11 First issue (https://github.com/novan-xu/super-agent-sandbox/issues/11), closed on GitHub without a pull request of this chain; nothing to do");
+    expect(resumed.prompts[0]).toContain("#12 Second issue (https://github.com/novan-xu/super-agent-sandbox/issues/12)\n");
+
+    works.receive({ type: "work.start", task: task(66, { takeover: true, note: "This is a repair ticket." }) });
+    await works.idle();
+    const repair = programs.last();
+    expect(repair.prompts[0]).toContain("This is a repair ticket.");
+    expect(repair.prompts[0]).toContain("#11 First issue (https://github.com/novan-xu/super-agent-sandbox/issues/11), closed on GitHub without a pull request of this chain; nothing to do");
+  });
+
+  it("ends without a hand-back prompt when the last open issue closes during a turn", async () => {
+    let dropped = false;
+    const works = start({
+      readClosedIssues: async (_context, numbers) => dropped ? [...numbers] : [],
+      readBranchPull: async (_context, branch, issues) => {
+        expect(branch).toBe("sa2/ticket-67-abcd");
+        expect(issues).toEqual([12]);
+        return null;
+      },
+    });
+    works.receive({ type: "work.start", task: task(67, { merged: [11] }) });
+    const handle = await programs.prompted(1);
+    dropped = true;
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(67)).toEqual({ kind: "settled" });
+    expect(handle.prompts).toHaveLength(1);
+    expect(kinds(67)).not.toContain("message");
+    expect(works.held()[0]).toMatchObject({ ended: true, live: false });
+  });
+
+  it("still asks for an open pull request from this branch when all issues closed during a turn", async () => {
+    let dropped = false;
+    const works = start({
+      readClosedIssues: async (_context, numbers) => dropped ? [...numbers] : [],
+      readBranchPull: async () => 48,
+    });
+    works.receive({ type: "work.start", task: task(68, { merged: [11] }) });
+    const handle = await programs.prompted(1);
+    dropped = true;
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain("pull request #48 is still open from this branch");
+    handBack(68, 48, [12]);
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(68)).toMatchObject({ kind: "finished", pullRequest: 48 });
   });
 
   it("hands in the decisions the worker wrote with its pull request, and asks again for one that is not complete", async () => {

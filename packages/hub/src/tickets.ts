@@ -2,6 +2,7 @@ import { text } from "@super-agent2/catalog";
 import {
   canMoveTicket,
   capReached,
+  ClosedChainIssue,
   Decision,
   type DecisionReview,
   type DecisionSource,
@@ -24,7 +25,7 @@ import {
   ChosenBy,
   type Difficulty,
   GeneratedText,
-  openIssueNumbers,
+  mergedIssueNumbers,
   openTicketStates,
   type Platform,
   type RepairOpener,
@@ -207,6 +208,9 @@ export interface TicketWrites {
   setBranch(id: number, branch: string): void;
   setPullRequest(id: number, pullRequest: number, report: GeneratedText, details?: HandedInDetails): void;
   pullRequestMerged(id: number, merged: MergedPullRequest): void;
+  pullRequestClosed(id: number, number: number): void;
+  setClosedOutside(id: number, issues: readonly ClosedChainIssue[]): void;
+  setFinalPullRequest(id: number, number: number): void;
   nextPiece(id: number, branch: string): void;
   setReport(id: number, report: GeneratedText): void;
   setCommit(id: number, commit: string): void;
@@ -284,6 +288,7 @@ const TicketRow = z.object({
   effort: z.string().nullable(),
   branch: z.string().nullable(),
   pull_request: z.number().int().nullable(),
+  closed_outside: z.string(),
   report_en: z.string().nullable(),
   report_zh: z.string().nullable(),
   round: z.number().int(),
@@ -614,6 +619,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   );
   const updateHandedIn = connection.prepare("UPDATE ticket_pull_requests SET url = ?, closes = ?, handed_at = ? WHERE ticket_id = ? AND seq = ? AND state <> 'merged'");
   const closeReplaced = connection.prepare("UPDATE ticket_pull_requests SET state = 'closed' WHERE ticket_id = ? AND state = 'open' AND number <> ?");
+  const closePullRequest = connection.prepare("UPDATE ticket_pull_requests SET state = 'closed' WHERE ticket_id = ? AND number = ? AND state = 'open'");
   const updateMergedPullRequest = connection.prepare(
     "UPDATE ticket_pull_requests SET state = 'merged', closes = ?, merge_commit = ?, deployment = ?, merged_at = COALESCE(merged_at, ?) WHERE ticket_id = ? AND number = ?",
   );
@@ -629,6 +635,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   );
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
+  const updateFinalPullRequest = connection.prepare("UPDATE tickets SET pull_request = ? WHERE id = ?");
+  const updateClosedOutside = connection.prepare("UPDATE tickets SET closed_outside = ? WHERE id = ? AND closed_outside <> ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
   const selectTask = connection.prepare("SELECT task, materials, commit_ref, commit_sha, deploys FROM ticket_tasks WHERE ticket_id = ?");
   const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys) VALUES (?, ?, ?, ?, ?)");
@@ -720,6 +728,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const attempt = selectAttempt.get(value.id);
     const verification = selectVerification.get(value.id);
     const pullRequests = selectPullRequests.all(value.id).map(pullRequestOf);
+    const closedOutside = z.array(ClosedChainIssue).parse(JSON.parse(value.closed_outside));
     const task = taskOf(value.id);
     const decisions = selectDecisions.all(value.id).map(decisionOf);
     const repairing = selectRepairOf.get(value.id);
@@ -752,6 +761,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       branch: value.branch,
       pullRequest: value.pull_request,
       pullRequests,
+      ...(closedOutside.length === 0 ? {} : { closedOutside }),
       decisions,
       report: pair(value.report_en, value.report_zh),
       work: attempt === undefined ? null : workStatusOf(attempt),
@@ -1059,16 +1069,16 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           throw new TicketError(`Ticket ${id} already has a repair ticket`);
         }
         if (!hasRemainingWork(old)) {
-          throw new TicketError(`Every issue of ticket ${id} is closed by a merged pull request, so nothing remains to repair`);
+          throw new TicketError(`Every issue of ticket ${id} is closed, so nothing remains to repair`);
         }
-        const remaining = new Set(openIssueNumbers(old));
+        const merged = new Set(mergedIssueNumbers(old));
         const task = old.form === "task" ? taskOf(id) : undefined;
         const raw = TicketRow.parse(selectTicket.get(id));
         const stuck = raw.stuck_failure === null ? undefined : LoopFailureKind.safeParse(raw.stuck_failure);
         const repair = open({
           form: old.form,
           repository: old.repository,
-          issues: old.issues.filter((issue) => remaining.has(issue.number)),
+          issues: old.issues.filter((issue) => !merged.has(issue.number)),
           title: old.title,
           summary: old.summary,
           kind: old.kind,
@@ -1217,6 +1227,21 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           id,
           merged.number,
         );
+        touch(id);
+      },
+      setClosedOutside: (id, issues) => {
+        const value = JSON.stringify(z.array(ClosedChainIssue).parse(issues));
+        if (updateClosedOutside.run(value, id, value).changes > 0) {
+          touch(id);
+        }
+      },
+      pullRequestClosed: (id, number) => {
+        if (closePullRequest.run(id, number).changes > 0) {
+          touch(id);
+        }
+      },
+      setFinalPullRequest: (id, number) => {
+        updateFinalPullRequest.run(number, id);
         touch(id);
       },
       nextPiece: (id, branch) => {

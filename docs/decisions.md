@@ -3430,3 +3430,21 @@ Streaming larger files was an alternative, but would require a separate resource
   Ignore tables, headings, code, HTML, references and front matter, and use a small abbreviation list for common non-terminal periods.
 - **Why:** The owner required enforcement in CI, and parsing keeps code and other non-prose syntax out of the check while including new files before they are committed.
 - **Other options:** Check only tracked files, use line-based matching without a Markdown parser, or require punctuation on every list item.
+
+## 2026-11-19 — Settle chain issues closed on GitHub (#189)
+
+- **Chosen:** Count issues closed by any means on GitHub as settled.
+  When the last issue settles, merge the ticket at its last merged pull request's commit, or stop it if no pull request merged.
+  Include the GitHub state reason and any associated closing comment in the report.
+  Recheck externally closed issues until the ticket ends, so reopening one restores it to the chain.
+- **Why:** Dropping an issue in GitHub should end the work requested for that issue and leave merged work available to deployment and dependent tickets.
+- **Other options:** Require a pull request for each issue or add a separate control to drop started issues.
+
+- **Chosen:** Check the live issue state at the runner before opening or resuming a worker session and independently at the hub before settling a ticket.
+  Preserve a matching open pull request for hand-in when all its issues close during work.
+- **Why:** The runner checks as the worker is about to see the brief, and a stale runner report cannot settle a ticket.
+- **Other options:** Check only when the previous pull request merges, or discard an open pull request when GitHub closes its issues first.
+
+- **Chosen:** Use a nearby timeline comment by the actor who closed the issue as evidence for the closing comment.
+- **Why:** GitHub records the close and the comment separately.
+- **Other options:** Show the state reason only or include unrelated comments from the issue.
