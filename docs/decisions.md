@@ -4181,6 +4181,33 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 
 Office preview conversion is limited to 64 MiB for both input and output, with at most four distinct conversions in progress and a 90-second timeout. This bounds hub memory and converter load; larger originals remain downloadable. Streaming larger files was an alternative, but would require a separate resource-control design.
 
+## 2026-11-18 — The Windows runner outlives what started it and comes back by itself
+
+- **Chosen:** `install` on Windows keeps the `Run` value and also registers the per-user scheduled task
+  `SuperAgent2Runner` (`schtasks /create /xml`, no elevation, interactive logon, normal priority, no time limit, one
+  instance at a time). The task runs `conhost.exe --headless node start.mjs launch --direct` every 5 minutes, which
+  starts the supervisor unless one is alive. `launch` without `--direct` asks the task to run (`schtasks /run`), so the
+  supervisor is created by the Task Scheduler service and not by the caller; when there is no task, the request fails,
+  or `SUPERAGENT2_RUNNER_HOME` is set, it starts the supervisor itself as before. `uninstall` deletes the task, then the
+  `Run` value, then stops the supervisor. `status` says which of the two are in place. A supervised runner that reaches
+  the hub and finds the `Run` value without the task registers the task, which is how a runner installed earlier gets
+  it after it updates itself. A supervisor on Windows holds a named pipe derived from its folder and stops at once when
+  another one holds it. macOS is unchanged.
+- **Why:** On 2026-11-18 Windows updated the Claude desktop package and ended every process below it, among them a
+  supervisor that had been started from a session of that app; nothing started it again for seven hours because the
+  `Run` value only acts at login. Measured on this PC: processes below the packaged app sit in its job objects and
+  Node's `detached` does not leave a job; a process started by a scheduled task has no ancestor in the caller's tree,
+  its detached child stays alive after the task's action ends, and an unprivileged user can register such a task. A
+  task without `Priority` runs its processes below normal, hence 4. With the login, the timer and people all starting
+  the supervisor, two could start in the same moment and each run a runner; the pipe lets only one stay.
+- **Other options:** A logon trigger in the task instead of the `Run` value: not verified to register without
+  elevation, and a runner that falls back to an older version would lose its start at login. WMI
+  `Win32_Process.Create` or `explorer.exe` as the starter: both leave the caller's tree, neither brings a dead
+  supervisor back, and a process created by WMI gets another environment. The supervisor as the task's own long-running
+  action: the task would then own its lifetime, which changes how updates and `uninstall` stop it.
+- **Not done:** `launch` still takes any live process with the number in `supervisor.pid` for the supervisor, so a
+  number that Windows gave to another process keeps the task from starting one.
+
 ## 2026-11-18 — Evaluation of routing without a model call (#139)
 
 - **Chosen:** Copy Super-agent2's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts
