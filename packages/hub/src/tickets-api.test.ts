@@ -128,6 +128,7 @@ describe("the brain's ticket tools", () => {
       "remember",
       "recall",
       "forget",
+      "ask_owner",
       "read_topic_board",
       "read_topic_history",
       "search_topic_history",

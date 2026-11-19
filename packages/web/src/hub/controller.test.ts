@@ -24,6 +24,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     calls,
     conversations: () => answer("conversations", { brain: { linked: true }, conversations: [] }),
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
+    answerQuestions: (id) => answer(`questions ${id}`, { entry }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
     sendToStream: (text) => answer(`stream ${text}`, { entry, topic: conversation, position: 1 }),
     renameTopic: (id, title) => answer(`rename ${id} ${title}`, { conversation }),

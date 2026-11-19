@@ -1,7 +1,7 @@
 import type { Conversation, OwnerEntry, StreamEntry } from "@super-agent2/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { codeScope, conversationRepositories, dailyScope, scopeOfTopic } from "../live/topic-scope.js";
+import { codeScope, conversationRepositories, dailyScope, scopeOfTopic, workbenchScope } from "../live/topic-scope.js";
 import { ConversationTabs } from "./ConversationTabs.js";
 import { ConversationView } from "./ConversationView.js";
 
@@ -20,6 +20,12 @@ const accepted = async () => true;
 const topicActions = { rename: accepted, archive: accepted, merge: accepted, move: accepted };
 
 describe("the conversation page", () => {
+  it("scopes a workbench panel to its selected repository or daily stream", () => {
+    expect(workbenchScope("owner/project")).toEqual({ kind: "repository", repository: "owner/project" });
+    expect(workbenchScope(null)).toEqual(dailyScope);
+    expect(workbenchScope(undefined)).toEqual(codeScope);
+  });
+
   it("shows only scoped topics with repository labels, reply context and possible matches", () => {
     const entries = [
       item(1, project, owner("first", project.id, "Review the migration")),

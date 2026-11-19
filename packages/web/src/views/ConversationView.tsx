@@ -5,6 +5,7 @@ import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { combinedStreamItems, streamItems } from "../live/stream.js";
 import { topicScopeKey } from "../live/topic-scope.js";
+import { loadComposerDraft, saveComposerDraft } from "../live/drafts.js";
 import type { TopicStreamState } from "../live/topic-stream.js";
 import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
@@ -83,10 +84,9 @@ interface QuotePreview {
 }
 
 export function TopicComposer({ working, canStop, send, stop, draftKey, quote, clearQuote }: ComposerProps) {
-  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
+  const [draft, setDraft] = useState(() => loadComposerDraft(draftKey).text);
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
-  const draft = drafts[draftKey] ?? "";
   const attaching = useAttachments(draftKey);
   const empty = draft.trim() === "" && attaching.items.length === 0;
 
@@ -104,6 +104,10 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
     }
   }, [quote]);
 
+  useEffect(() => {
+    saveComposerDraft(draftKey, { text: draft, ...(quote === undefined ? {} : { quote }) });
+  }, [draft, draftKey, quote]);
+
   const submit = useCallback(async () => {
     const message = draft.trim();
     if (empty || sending) {
@@ -114,7 +118,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
     const sent = attachments === undefined ? false : await send(message, attachments, quote?.id);
     setSending(false);
     if (sent) {
-      setDrafts((all) => ({ ...all, [draftKey]: "" }));
+      setDraft("");
       attaching.clear();
       if (quote !== undefined) {
         clearQuote(quote.id);
@@ -159,7 +163,8 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
           aria-label={text("composer.label")}
           onChange={(event) => {
             const value = event.target.value;
-            setDrafts((all) => ({ ...all, [draftKey]: value }));
+            setDraft(value);
+            saveComposerDraft(draftKey, { text: value, ...(quote === undefined ? {} : { quote }) });
           }}
           onKeyDown={keyDown}
           onPaste={attaching.paste}
@@ -210,21 +215,32 @@ export function ConversationView(props: ConversationViewProps) {
   const following = useRef(true);
   const picker = useRef<HTMLDialogElement>(null);
   const [edit, setEdit] = useState<TopicEdit | null>(null);
+  const draftKey = conversation === null ? `scope:${topicScopeKey(scope)}` : `topic:${conversation}`;
   const openEdit = (selection: TopicEdit) => {
     picker.current?.close();
     setEdit(selection);
   };
-  const [quotes, setQuotes] = useState<Readonly<Record<string, QuotePreview | undefined>>>({});
+  const [quotes, setQuotes] = useState<Readonly<Record<string, QuotePreview | undefined>>>(() => ({
+    [draftKey]: loadComposerDraft(draftKey).quote,
+  }));
+  useEffect(() => {
+    setQuotes((all) => ({ ...all, [draftKey]: loadComposerDraft(draftKey).quote }));
+  }, [draftKey]);
   const working = state !== null && isWorking(state);
-  const draftKey = conversation === null ? `scope:${topicScopeKey(scope)}` : `topic:${conversation}`;
   const showRepository = scope.kind === "code";
   const filtered = useMemo(() => list.filter((topic) => topic.mergedInto === undefined && topicInScope(topic, scope)).sort((a, b) =>
     Number(a.topicState === "archived") - Number(b.topicState === "archived")), [list, scope]);
   const clearQuote = useCallback((id: string) => {
-    setQuotes((all) => all[draftKey]?.id === id ? { ...all, [draftKey]: undefined } : all);
+    setQuotes((all) => {
+      if (all[draftKey]?.id !== id) return all;
+      saveComposerDraft(draftKey, { ...loadComposerDraft(draftKey), quote: undefined });
+      return { ...all, [draftKey]: undefined };
+    });
   }, [draftKey]);
   const selectQuote = useCallback((entry: VisibleEntry) => {
-    setQuotes((all) => ({ ...all, [draftKey]: { id: entry.id, text: previewOf(entry) } }));
+    const quote = { id: entry.id, text: previewOf(entry) };
+    setQuotes((all) => ({ ...all, [draftKey]: quote }));
+    saveComposerDraft(draftKey, { ...loadComposerDraft(draftKey), quote });
   }, [draftKey]);
 
   const send = useCallback(
@@ -283,7 +299,7 @@ export function ConversationView(props: ConversationViewProps) {
         <TopicStream key={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} />
-        <TopicComposer working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
+        <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
           quote={quotes[draftKey]} clearQuote={clearQuote} />
       </div>
       {props.compact === true ? null : (
@@ -311,7 +327,7 @@ type VisibleEntry = Exclude<ConversationEntry, { kind: "tool" }>;
 
 function previewOf(entry: VisibleEntry): string {
   const fallback = entry.kind === "owner" ? entry.attachments[0]?.name : entry.kind === "delivery" ? entry.title.zh : undefined;
-  return (entry.text?.trim() || fallback || text("conversation.quote")).slice(0, 240);
+  return ((entry.kind === "question" ? entry.questions.map((question) => question.prompt).join("；") : entry.text?.trim()) || fallback || text("conversation.quote")).slice(0, 240);
 }
 
 function toneOf(id: string): number {
@@ -425,7 +441,7 @@ export function TopicStream({ state, stream, scope, list, online, now, following
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
           return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
-            quote={entry === undefined ? undefined : () => selectQuote(entry)}
+            quote={entry === undefined || entry.kind === "question" ? undefined : () => selectQuote(entry)}
             move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
             quoted={entry?.kind === "owner" && entry.quotedMessage !== undefined ? (
               <div className="sent-quote od-truncate">{source === undefined ? text("conversation.quote") : previewOf(source)}</div>
