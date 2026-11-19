@@ -141,7 +141,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     stop: (ticket) => work?.stop(ticket),
     reassign: (ticket) => work?.reassign(ticket),
   };
-  const tickets = createTicketService({ database, clock, work: ticketWork, topicChanged: (id) => conversations.announce(id) });
+  const tickets = createTicketService({ database, clock, work: ticketWork, topicChanged: (id) => conversations.announce(id), entryChanged: (id) => conversations.announceEntry(id) });
   const repositories = createRepositoryAccounts(database, clock, config.sourceRepository);
   const accountOf = (repository: string) => repositories.accountOf(repository);
   let settingsChanged = () => undefined as void;
@@ -217,6 +217,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         report: (report) => loop?.failed(report),
         accountOf,
       });
+      work.subscribe(told.taskProgress);
     }
     chains = createChains({
       database,

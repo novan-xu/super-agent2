@@ -39,6 +39,15 @@ describe("workbench canvas", () => {
     expect(daily).not.toContain("工作 1");
   });
 
+  it("lists pending and working repository-less tasks in daily", () => {
+    const pending = { ...third, state: "pending" as const };
+    const working = ticket(4, { repository: null, kind: "writing", form: "task", issues: [], state: "working" });
+    const html = renderToStaticMarkup(<CanvasWorkbench {...props} repository={null} tickets={[pending, working]} waiting={{ ...initialWaiting, known: true, cards: [startCard(3, { ticket: pending })] }} />);
+    expect(html).toContain("工作 3");
+    expect(html).toContain("工作 4");
+    expect(html).toContain("wb-card--pending");
+  });
+
   it("renders a started waiting card as queued in its predecessor's chain", () => {
     const queued = { ...second, state: "waiting" as const };
     const html = renderToStaticMarkup(<CanvasWorkbench {...props} tickets={[first, queued]} waiting={{ ...initialWaiting, known: true }} />);

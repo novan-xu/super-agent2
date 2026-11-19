@@ -26,6 +26,15 @@ const delivery: ConversationEntry = {
 };
 
 describe("a delivery in the conversation", () => {
+  it("links a daily task to its start card and a source notice to its daily topic", () => {
+    const notice = { id: "n1", conversation: id, seq: 1, at, kind: "notice" as const, turn: null, text: "等待开始：翻译", ticket: 4, start: true as const };
+    const card = renderToString(<StreamEntry item={{ kind: "entry", key: "n1", entry: notice, lead: false, live: false }} thisYear={2026} />);
+    expect(card).toContain('href="/workbench?card=start%3A4"');
+    expect(card).toContain('href="/tickets/4"');
+    const moved = renderToString(<StreamEntry item={{ kind: "entry", key: "n2", entry: { id: "n2", conversation: id, seq: 2, at, kind: "notice", turn: null, text: "已在日常继续", destination: "daily" }, lead: false, live: false }} thisYear={2026} />);
+    expect(moved).toContain('href="/conversations/daily?scope=daily"');
+  });
+
   it("shows the text as written, the Chinese title, and each file as a download of its own ticket", () => {
     const items = streamItems(
       { id, conversation: undefined, turns: [], entries: [{ id: "o1", conversation: id, seq: 1, at, kind: "owner", text: "翻译一下", attachments: [], taken: true }, delivery] },

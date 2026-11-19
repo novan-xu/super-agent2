@@ -87,7 +87,8 @@ export const OwnerEntry = z.object({
 });
 export type OwnerEntry = z.infer<typeof OwnerEntry>;
 
-export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable() });
+export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable(),
+  ticket: z.number().int().positive().optional(), destination: ConversationId.optional(), start: z.literal(true).optional() });
 export type NoticeEntry = z.infer<typeof NoticeEntry>;
 
 export const DeliveryFile = z.object({ name: z.string().min(1), size: z.number().int().nonnegative() });

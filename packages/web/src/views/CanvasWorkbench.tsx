@@ -86,10 +86,15 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       props.selectRepository(card.ticket.repository);
       if (card.kind === "start") setPopup(card.ticket.id);
       else { props.selectTicket(card.ticket.id); setPane("panel"); }
+    } else if (/^start:[1-9][0-9]*$/.test(props.focus)) {
+      const id = Number(props.focus.slice(6));
+      props.selectRepository(tickets.find((ticket) => ticket.id === id)?.repository ?? null);
+      props.selectTicket(id);
+      setPane("panel");
     }
     const timer = window.setTimeout(props.focused, 1000);
     return () => window.clearTimeout(timer);
-  }, [props.focus, props.focused, props.selectRepository, props.selectTicket, waiting]);
+  }, [props.focus, props.focused, props.selectRepository, props.selectTicket, tickets, waiting]);
   const holds = waiting.cards.filter((card) => card.kind === "hold");
   const activeStart = popup === null ? undefined : starts.get(popup);
   const close = () => { dialog.current?.close(); setPopup(null); source.current?.focus(); };

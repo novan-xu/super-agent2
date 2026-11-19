@@ -4522,3 +4522,13 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   could silently relocate work and can instead be made explicitly in two steps when no tickets conflict.
 - **Other options:** Keep the old daily default, split a conversation from its repository work, allow mixed tickets
   to move, or omit the reverse move.
+
+## 2026-11-19 — Keep repository-less tasks in daily conversations (#157)
+
+- **Chosen:** Reuse the daily topic where the task was requested; for a request in code, create a daily topic and
+  leave a single link to it in the source. Put a link to the start card and ticket in the daily stream, and show
+  worker start and text updates there as well as failure notices and delivered results.
+- **Why:** Related tasks stay with their conversation, and the owner can follow a request from code to its work,
+  start it and see questions, progress and results in daily. The ticket detail keeps the full execution log.
+- **Other options:** Create a new topic for every task, leave the task only on the workbench, or copy the entire
+  worker event log into the conversation.

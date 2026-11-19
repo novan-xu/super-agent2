@@ -312,6 +312,7 @@ describe("conversations for the page", () => {
     });
     const prepared = brain.received.find((message) => message.type === "prepared");
     expect(prepared?.type === "prepared" && prepared.history).toEqual([
+      { kind: "notice", text: "任务：翻译一则通知" },
       { kind: "notice", text: expect.stringContaining(`The result of task ticket ${ticket.id} (Translate a notice) was delivered`) },
     ]);
   });
@@ -847,7 +848,7 @@ describe("topic context", () => {
         const result = prepare(topic, true).seed;
         expect(result).toMatchObject({ summary: "", olderTurns: 0 });
         expect(result?.turns).toHaveLength(50);
-        expect(result?.turns[0]).toMatchObject([{ text: "Request 1" }, { text: "Result 1" }]);
+        expect(result?.turns[0]).toMatchObject([{ text: "任务：翻译一则通知" }, { text: "Request 1" }, { text: "Result 1" }]);
       }
     }
     const current = running.conversations.send(topic, "Current request");
@@ -928,6 +929,27 @@ describe("topic context", () => {
 });
 
 describe("topic corrections and archive policy", () => {
+  it("keeps repository-less tasks together in daily, including repairs and work requested in unassigned code", async () => {
+    const hub = await start();
+    const daily = hub.conversations.create().id;
+    const first = openTicket(hub, daily);
+    const second = openTicket(hub, daily);
+    expect([first.conversation, second.conversation]).toEqual([daily, daily]);
+    expect(hub.conversations.entries(daily).filter((entry) => entry.kind === "notice" && entry.start === true)).toHaveLength(2);
+    hub.tickets.stop(first.id, { en: "Stopped", zh: "停止" });
+    const repair = hub.tickets.repair(first.id, "owner", "Continue");
+    expect(repair).toMatchObject({ ok: true, ticket: { conversation: daily, repository: null } });
+    const pending = (await hub.conversations.sendToStream(undefined, "A code request", [], { scope: { kind: "code" }, newTopic: true }))!.topic.id;
+    const task = openTicket(hub, pending);
+    expect(task.conversation).not.toBe(pending);
+    expect(hub.conversations.get(task.conversation!)?.repository).toBeNull();
+    expect(hub.conversations.entries(pending).filter((entry) => entry.kind === "notice" && entry.destination === task.conversation)).toHaveLength(1);
+    const project = hub.conversations.create().id;
+    const repositoryTask = openTicket(hub, project, "owner/project");
+    expect(repositoryTask.conversation).toBe(project);
+    expect(hub.conversations.entries(project)).toEqual([]);
+  });
+
   it("claims daily conversations for repository tickets unless existing tickets conflict", async () => {
     const hub = await start();
     const service = hub.conversations;
