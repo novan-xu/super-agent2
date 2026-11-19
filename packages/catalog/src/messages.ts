@@ -99,6 +99,7 @@ export const messages = {
   "transfer.deleteConfirm": "删除这条传输内容及其文件？",
   "transfer.copyFailed": "复制失败。",
   "transfer.older": "加载更早内容",
+  "transfer.recentFiles": "最近文件",
   "transfer.empty": "还没有内容",
   "transfer.phone": "来自手机",
   "transfer.desktop": "来自桌面",
