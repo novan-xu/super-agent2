@@ -207,6 +207,7 @@ export const messages = {
   "workbench.mark.runs": "进行中",
   "workbench.mark.idle": "空闲",
   "workbench.all": "全部",
+  "workbench.resizePanel": "调整对话面板宽度",
   "workbench.section.waits": "等你",
   "workbench.section.running": "进行中",
   "workbench.section.ready": "可以开始",

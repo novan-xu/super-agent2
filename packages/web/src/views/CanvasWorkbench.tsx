@@ -2,6 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { chineseOf, type Conversation, type StartCard as StartData, type Ticket } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
+import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
 import { kindKey, phaseLooks, ticketPhase, whereOf } from "../live/phase.js";
 import { type WaitingState, useOf } from "../live/waiting.js";
@@ -37,6 +38,33 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   const { tickets, topics, waiting, repository, actions } = props;
   const [popup, setPopup] = useState<number | null>(null);
   const [pane, setPane] = useState<"canvas" | "panel">("canvas");
+  const layout = useRef<HTMLDivElement>(null);
+  const railElement = useRef<HTMLElement>(null);
+  const drag = useRef<{ pointer: number; x: number; width: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [preferredWidth, setPreferredWidth] = useState(loadPanelWidth);
+  const [maximum, setMaximum] = useState(defaultPanelWidth);
+  const panelWidth = clampPanelWidth(preferredWidth, maximum);
+  useLayoutEffect(() => {
+    const element = layout.current;
+    const rail = railElement.current;
+    if (element === null || rail === null) return;
+    const measure = () => {
+      if (window.matchMedia("(max-width: 767px)").matches) return;
+      setMaximum(panelMaximum(element.clientWidth, rail.getBoundingClientRect().width));
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    observer?.observe(rail);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
+  const changeWidth = (width: number) => {
+    const next = clampPanelWidth(width, maximum);
+    setPreferredWidth(next);
+    savePanelWidth(next);
+  };
   const dialog = useRef<HTMLDialogElement>(null);
   const source = useRef<HTMLElement | null>(null);
   const starts = useMemo(() => new Map(waiting.cards.flatMap((card) => card.kind === "start" ? [[card.ticket.id, card] as const] : [])), [waiting.cards]);
@@ -87,8 +115,8 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       <span className={`dot dot--${waitingHere ? "warn" : running ? "ok" : "mute"}`} role="img" aria-label={text(waitingHere ? "workbench.mark.waits" : running ? "workbench.mark.runs" : "workbench.mark.idle")} /><span className="od-truncate">{label}</span><span className="count">{matching.length}</span>
     </button>;
   };
-  return <div className="wb-layout">
-    <aside className="wb-repos" aria-label={text("conversation.repository")}>
+  return <div ref={layout} className={`wb-layout${dragging ? " wb-layout--dragging" : ""}`} style={{ "--wb-panel-width": `${panelWidth}px` } as CSSProperties}>
+    <aside ref={railElement} className="wb-repos" aria-label={text("conversation.repository")}>
       {rail(undefined, text("workbench.all"))}{repositories.map((name) => rail(name, name))}{rail(null, text("conversation.daily"))}
     </aside>
     <div className="wb-mobile-tabs"><button type="button" aria-pressed={pane === "canvas"} onClick={() => setPane("canvas")}>{text("navigation.workbench")}</button><button type="button" aria-pressed={pane === "panel"} onClick={() => setPane("panel")}>{text("navigation.conversation")}</button></div>
@@ -101,6 +129,27 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
         <CanvasGrid chains={repository === null ? canvas[section].flatMap((chain) => chain.map((node) => [node])) : canvas[section]} daily={repository === null} starts={starts} stuck={stuck} waiting={waiting} actions={actions} selected={props.selected} select={select} openStart={openStart} ticketHref={props.ticketHref} />
       </section>)}
     </main>
+    <div className="wb-splitter" role="separator" aria-label={text("workbench.resizePanel")} aria-orientation="vertical"
+      aria-valuemin={minPanelWidth} aria-valuemax={maximum} aria-valuenow={panelWidth} tabIndex={0}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { pointer: event.pointerId, x: event.clientX, width: panelWidth };
+        setDragging(true);
+      }}
+      onPointerMove={(event) => {
+        if (drag.current?.pointer === event.pointerId) changeWidth(drag.current.width + drag.current.x - event.clientX);
+      }}
+      onPointerUp={(event) => { if (drag.current?.pointer === event.pointerId) { drag.current = null; setDragging(false); } }}
+      onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
+      onDoubleClick={() => changeWidth(defaultPanelWidth)}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        changeWidth(panelWidth + (event.key === "ArrowLeft" ? 24 : -24));
+      }}
+    />
     <aside className={`wb-panel ${pane === "canvas" ? "wb-mobile-hidden" : ""}`}>{props.panel}</aside>
     <dialog ref={dialog} className="dlg wb-dialog" aria-label={text("chains.start")} onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <div className="dlg-in"><button className="icon-btn wb-close" type="button" aria-label={text("conversation.close")} onClick={close}><Icon name="x" /></button>
