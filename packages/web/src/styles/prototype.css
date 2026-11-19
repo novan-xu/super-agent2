@@ -599,18 +599,24 @@ dialog.dlg.is-leaving { animation: sink var(--motion-exit) var(--ease-in) forwar
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: var(--space-1) var(--space-1) calc(var(--space-1) + env(safe-area-inset-bottom));
     border-top: 1px solid var(--border-soft); background: var(--sunk);
   }
-  .tab { position: relative; display: grid; justify-items: center; gap: 2px; min-height: 52px; padding: 6px 0 4px; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; }
+  .tab { position: relative; display: grid; justify-items: center; gap: 2px; min-height: 46px; padding: 4px 0 2px; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; }
   .tab > span { display: block; }
-  .tab .od-icon { --od-icon-size: 22px; }
+  .tab .od-icon { --od-icon-size: 20px; }
   .tab[aria-current="page"] { color: var(--meta); }
   .tab .tab-badge { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-on); font: 700 10px/16px var(--font-body); font-variant-numeric: tabular-nums; }
-  .top { min-height: 56px; padding: var(--space-2) var(--space-4); gap: var(--space-2); }
+  .top { min-height: 44px; padding: var(--space-1) var(--space-4); gap: var(--space-2); }
   .top-title h1 { font-size: var(--title-section); }
   .page { padding: var(--space-5) var(--space-4) var(--space-10); }
-  .conv-bar { padding: var(--space-3) var(--space-4) 0; }
+  .conv-bar { padding: var(--space-2) var(--space-4) 0; }
   .conv-bar .od-fill { display: none; }
-  .stream-inner { padding: var(--space-4) var(--space-4) var(--space-6); gap: var(--space-4); }
-  .composer-wrap { padding: 0 var(--space-3) var(--space-3); }
+  .stream-inner { padding: var(--space-3) var(--space-4) var(--space-4); gap: var(--space-3); }
+  .msg-text { font-size: var(--text-md); line-height: 1.6; }
+  .msg--me .msg-text { padding: var(--space-2) var(--space-3); }
+  .composer-wrap { padding: 0 var(--space-3) var(--space-2); }
+  .composer { gap: var(--space-1); padding: var(--space-2); }
+  .composer textarea { padding-block: 0; }
+  .composer-foot .icon-btn { width: 36px; height: 36px; }
+  .composer-foot .btn { min-height: 36px; }
   .wcard { padding: var(--space-4); }
   .wcard-where { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wcard-where .field--sm { width: 100%; min-width: 0; }
