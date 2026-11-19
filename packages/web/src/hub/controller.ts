@@ -130,7 +130,9 @@ export class PageController {
     }
     const old = new Set(previous.filter((topic) => topicInScope(topic, scope)).map((topic) => topic.id));
     const seen = new Set(previous.map((topic) => topic.id));
-    if (topics.some((topic) => seen.has(topic.id) && old.has(topic.id) !== topicInScope(topic, scope))) {
+    const streamed = new Set(this.store.getState().stream.entries.map(({ topic }) => topic.id));
+    if (topics.some((topic) => seen.has(topic.id) ? old.has(topic.id) !== topicInScope(topic, scope)
+      : streamed.has(topic.id) || topicInScope(topic, scope))) {
       this.store.dispatch({ type: "stream.open", watching: true, key: topicScopeKey(scope), restart: true });
       this.socket.watchStream(true, scope, true);
     }

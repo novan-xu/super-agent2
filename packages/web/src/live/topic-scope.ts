@@ -13,7 +13,7 @@ export function topicScopeKey(scope?: TopicScope): string {
 
 export function scopeOfTopic(topic: Conversation | undefined, preferred?: TopicScope): TopicScope {
   if (topic === undefined || (preferred !== undefined && topicInScope(topic, preferred))) {
-    return preferred ?? dailyScope;
+    return preferred ?? codeScope;
   }
   if (topic.repository !== null) {
     return { kind: "repository", repository: topic.repository };

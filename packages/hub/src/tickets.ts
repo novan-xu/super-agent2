@@ -580,15 +580,16 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
-  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND needs_repository = 0 AND repository IS ? COLLATE NOCASE");
+  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND merged_into IS NULL AND needs_repository = 0 AND repository IS ? COLLATE NOCASE");
   const claimTopic = connection.prepare(
     `UPDATE conversations SET repository = ?, needs_repository = 0
-     WHERE id = ? AND system = 0 AND repository IS NULL AND (
-       needs_repository = 1 OR NOT EXISTS (SELECT 1 FROM conversation_entries WHERE conversation_id = conversations.id)
-     ) AND NOT EXISTS (
+     WHERE id = ? AND system = 0 AND merged_into IS NULL AND repository IS NULL
+     AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
+     AND NOT EXISTS (
        SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE
      )`,
   );
+  const changeTopicHistory = connection.prepare("UPDATE topic_history_revision SET revision = revision + 1");
   const selectTicketTopic = connection.prepare("SELECT c.id FROM tickets AS t JOIN conversations AS c ON c.id = t.conversation_id WHERE t.id = ?");
   const updateTicketTopic = connection.prepare("UPDATE tickets SET conversation_id = ? WHERE id = ?");
   const selectIssues = connection.prepare("SELECT * FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
@@ -922,6 +923,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           return conversation;
         }
         if (repository !== null && claimTopic.run(repository, conversation, repository).changes > 0) {
+          changeTopicHistory.run();
           changedTopics.add(conversation);
           return conversation;
         }

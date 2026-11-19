@@ -78,6 +78,28 @@ function controller(hub: HubApi, failures: Failure[] = []): PageController {
 }
 
 describe("PageController", () => {
+  it("refreshes a scoped stream when a topic moves into or out of it", () => {
+    for (const scope of [{ kind: "daily" } as const, { kind: "repository", repository: "owner/project" } as const]) {
+      let events: SocketEvents | undefined;
+      const sent: unknown[] = [];
+      const page = new PageController({
+        api: api(),
+        socket: { url: "ws://hub/ws", create: (_url, given) => {
+          events = given;
+          return { isOpen: () => true, send: (data) => sent.push(JSON.parse(data)), close: () => undefined };
+        }, schedule: () => () => undefined },
+        onFailure: () => undefined,
+      });
+      page.store.dispatch({ type: "list", list: { brain: { linked: true }, conversations: [conversation] } });
+      page.start();
+      page.open(null, true, scope);
+      events?.message(JSON.stringify({ type: "conversation", conversation: { ...conversation, repository: "owner/project", updatedAt: 2 } }));
+      expect(sent.filter((message) => (message as { type: string }).type === "watch.stream")).toHaveLength(2);
+      expect(page.store.getState().stream.entries).toEqual([]);
+      page.stop();
+    }
+  });
+
   it("sends a new-topic move using the selected message and its source", async () => {
     const hub = api();
     const page = controller(hub);

@@ -62,7 +62,7 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
     const params = new URLSearchParams(search);
     const repository = RepositoryName.safeParse(params.get("repository"));
     const scope: TopicScope | undefined = repository.success ? { kind: "repository", repository: repository.data }
-      : params.get("scope") === "code" ? { kind: "code" } : undefined;
+      : params.get("scope") === "code" ? { kind: "code" } : params.get("scope") === "daily" ? { kind: "daily" } : undefined;
     return { view, conversation: conversation ?? null, ...(scope === undefined ? {} : { scope }) };
   }
   if (view === "settings" && conversation !== undefined) {
@@ -82,7 +82,7 @@ export function pagePath(route: PageRoute): string {
       if (scope?.kind === "repository") {
         return `${path}?${new URLSearchParams({ repository: scope.repository })}`;
       }
-      return scope?.kind === "code" ? `${path}?scope=code` : path;
+      return scope?.kind === "code" || scope?.kind === "daily" ? `${path}?scope=${scope.kind}` : path;
     }
     case "ticket":
       return ticketAddress(route.ticket);

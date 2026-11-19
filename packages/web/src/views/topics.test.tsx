@@ -88,6 +88,7 @@ describe("the conversation page", () => {
     expect(transfer).toContain('href="/transfer" aria-current="page"');
     expect(transfer).not.toContain("<select");
     expect(scopeOfTopic(project)).toEqual({ kind: "repository", repository: "owner/project" });
+    expect(scopeOfTopic(undefined)).toEqual(codeScope);
     expect(scopeOfTopic(project, codeScope)).toBe(codeScope);
     expect(conversationRepositories(["OWNER/PROJECT", "owner/other"], list, codeScope)).toEqual(["owner/other", "owner/project"]);
   });
