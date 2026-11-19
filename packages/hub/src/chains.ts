@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { createHash } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
@@ -190,7 +191,7 @@ function reasonOf(error: unknown): string {
 }
 
 function described(ticket: Ticket): string {
-  return `ticket ${ticket.id} (${ticket.title.en})`;
+  return `ticket ${ticketReference(ticket)} (${ticket.title.en})`;
 }
 
 export function createChains(options: ChainsOptions): Chains {
@@ -263,7 +264,7 @@ export function createChains(options: ChainsOptions): Chains {
             tickets.change((writes) => writes.touched(id));
             tell(
               ticket.id,
-              text("notice.ticketBeginFailed", { ticket: id }),
+              text("notice.ticketBeginFailed", { ticket: ticket.code }),
               [
                 `[hub] The owner started ${described(ticket)}, but its work could not begin: ${reason}`,
                 "It stays recorded as working, with that failure. Decide what happens to it: stop it with stop_ticket and arrange the work again, or find and fix the cause. Tell the owner what you decided.",
@@ -324,11 +325,11 @@ export function createChains(options: ChainsOptions): Chains {
       }
       const choice =
         after.state === "waiting"
-          ? `The owner already started it, and it waits for ${described(stopped)}. Decide what happens to it: let it go ahead without ticket ${stopped.id} with proceed_ticket, or stop it with stop_ticket.`
-          : `It is not started yet and is arranged after ticket ${stopped.id}. Arrange it again with arrange_chains, or stop it with stop_ticket.`;
+          ? `The owner already started it, and it waits for ${described(stopped)}. Decide what happens to it: let it go ahead without ticket ${ticketReference(stopped)} with proceed_ticket, or stop it with stop_ticket.`
+          : `It is not started yet and is arranged after ticket ${ticketReference(stopped)}. Arrange it again with arrange_chains, or stop it with stop_ticket.`;
       tell(
         after.id,
-        text("notice.ticketBeforeStopped", { before: stopped.id, ticket: after.id }),
+        text("notice.ticketBeforeStopped", { before: stopped.code, ticket: after.code }),
         [`[hub] ${described(stopped)} stopped${why}.`, `${described(after)} is ${after.state}. ${choice}`, "Tell the owner what you decided."].join("\n"),
       );
     }
@@ -397,11 +398,11 @@ export function createChains(options: ChainsOptions): Chains {
         for (const id of order) {
           const ticket = writes.get(id);
           if (ticket?.state !== "pending") {
-            throw new TicketError(`Ticket ${id} is no longer pending`);
+            throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} is no longer pending`);
           }
           const run = chosenRun(choices.get(id));
           if (run === undefined) {
-            throw new TicketError(`Ticket ${id} has no complete choice`);
+            throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} has no complete choice`);
           }
           writes.choose(id, run);
           const lookup = new Map<number, ChainNode>();
@@ -456,7 +457,7 @@ export function createChains(options: ChainsOptions): Chains {
     try {
       tickets.change((writes) => {
         if (writes.get(ticket.id)?.state !== "pending") {
-          throw new TicketError(`Ticket ${ticket.id} is no longer pending`);
+          throw new TicketError(`Ticket ${ticketReference(ticket)} is no longer pending`);
         }
         writes.ownerChoice(ticket.id, owner);
       });
@@ -493,7 +494,7 @@ export function createChains(options: ChainsOptions): Chains {
     try {
       tickets.change((writes) => {
         if (writes.get(ticket.id)?.state !== ticket.state) {
-          throw new TicketError(`Ticket ${ticket.id} changed meanwhile`);
+          throw new TicketError(`Ticket ${ticketReference(ticket)} changed meanwhile`);
         }
         writes.ownerChoice(ticket.id, owner);
         writes.choose(ticket.id, run);
@@ -511,7 +512,7 @@ export function createChains(options: ChainsOptions): Chains {
       } catch (error) {
         tell(
           now.id,
-          text("notice.ticketBeginFailed", { ticket: now.id }),
+          text("notice.ticketBeginFailed", { ticket: now.code }),
           `[hub] The owner reassigned ${described(now)} to ${run.machine} with ${run.engine} ${run.model} ${run.effort}, but its work could not restart there: ${reasonOf(error)}. Decide what happens to it and tell the owner.`,
         );
       }
@@ -527,24 +528,25 @@ export function createChains(options: ChainsOptions): Chains {
     const statements = new Map<number, DefaultsStatement>();
     for (const spec of specs) {
       if (statements.has(spec.ticket)) {
-        return refuse(`ticket ${spec.ticket} is named twice`);
+        return refuse(`ticket ${tickets.reference(spec.ticket) ?? "(unavailable)"} is named twice`);
       }
       const ticket = tickets.get(spec.ticket);
       if (ticket === undefined) {
-        return refuse(`there is no ticket ${spec.ticket}`);
+        return refuse(`there is no ticket ${tickets.reference(spec.ticket) ?? "(unavailable)"}`);
       }
+      const reference = ticketReference(ticket);
       if (ticket.state !== "pending") {
-        return refuse(`ticket ${spec.ticket} is ${ticket.state}; defaults are stated for chains that have not started`);
+        return refuse(`ticket ${reference} is ${ticket.state}; defaults are stated for chains that have not started`);
       }
       if (!fitsForm(ticket.form, spec.kind)) {
         return refuse(
           ticket.form === "task"
-            ? `ticket ${spec.ticket} is a task ticket: its kind is writing (prose) or operation (anything done on a machine), not ${spec.kind}`
-            : `ticket ${spec.ticket} is a code ticket and cannot be stated as ${spec.kind}`,
+            ? `ticket ${reference} is a task ticket: its kind is writing (prose) or operation (anything done on a machine), not ${spec.kind}`
+            : `ticket ${reference} is a code ticket and cannot be stated as ${spec.kind}`,
         );
       }
       if (!GeneratedText.safeParse(spec.reason).success || /[\r\n]/.test(spec.reason.en) || /[\r\n]/.test(spec.reason.zh)) {
-        return refuse(`the reason for ticket ${spec.ticket} must be one line in English with a one-line Chinese copy`);
+        return refuse(`the reason for ticket ${reference} must be one line in English with a one-line Chinese copy`);
       }
       let difficulty: Difficulty | null;
       if (ticket.issues.length > 0) {
@@ -553,7 +555,7 @@ export function createChains(options: ChainsOptions): Chains {
         const own = new Set(ticket.issues.map((issue) => issue.number));
         if (given.length !== named.size || named.size !== own.size || [...own].some((number) => !named.has(number))) {
           return refuse(
-            `ticket ${spec.ticket} holds issues ${[...own].map((number) => `#${number}`).join(", ")}; give the difficulty of each of them, and only them, in issues`,
+            `ticket ${reference} holds issues ${[...own].map((number) => `#${number}`).join(", ")}; give the difficulty of each of them, and only them, in issues`,
           );
         }
         difficulty = chainDifficulty(given.map((entry) => entry.difficulty));
@@ -561,11 +563,11 @@ export function createChains(options: ChainsOptions): Chains {
         difficulty = spec.difficulty ?? (spec.kind === "writing" ? "standard" : null);
       }
       if (difficulty === null) {
-        return refuse(`ticket ${spec.ticket} needs a difficulty`);
+        return refuse(`ticket ${reference} needs a difficulty`);
       }
       if (spec.kind !== "writing" && spec.engine !== "codex" && spec.engine !== "claude") {
         return refuse(
-          `ticket ${spec.ticket} ${spec.kind === "operation" ? "is an operation on a machine" : "is code work"}: choose its engine, codex or claude, from what is left on each subscription`,
+          `ticket ${reference} ${spec.kind === "operation" ? "is an operation on a machine" : "is code work"}: choose its engine, codex or claude, from what is left on each subscription`,
         );
       }
       statements.set(spec.ticket, {
@@ -580,7 +582,7 @@ export function createChains(options: ChainsOptions): Chains {
       tickets.change((writes) => {
         for (const [id, statement] of statements) {
           if (writes.get(id)?.state !== "pending") {
-            throw new TicketError(`Ticket ${id} is no longer pending`);
+            throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} is no longer pending`);
           }
           writes.state(id, statement);
         }
@@ -648,17 +650,17 @@ export function createChains(options: ChainsOptions): Chains {
           const started = tickets.forIssue(spec.repository, number).find((found) => found.state !== "stopped");
           if (started !== undefined) {
             return refuse(
-              `issue ${spec.repository}#${number} is on ticket ${started.id}, which is ${started.state}. A started chain is closed: file the later work as a new issue and arrange it after ticket ${started.id}`,
+              `issue ${spec.repository}#${number} is on ticket ${ticketReference(started)}, which is ${started.state}. A started chain is closed: file the later work as a new issue and arrange it after ticket ${ticketReference(started)}`,
             );
           }
           return refuse(`no pending ticket holds issue ${spec.repository}#${number}; it does not exist here. File it with file_issue, or open a ticket for it with open_ticket, first`);
         }
         if (ticket.repairs !== null) {
-          return refuse(`issue ${spec.repository}#${number} is on ticket ${ticket.id}, a repair ticket that continues the work of ticket ${ticket.repairs} on its branch; it cannot be regrouped, and the owner starts it as it is`);
+          return refuse(`issue ${spec.repository}#${number} is on ticket ${ticketReference(ticket)}, a repair ticket that continues the work of ticket ${tickets.reference(ticket.repairs) ?? "(unavailable)"} on its branch; it cannot be regrouped, and the owner starts it as it is`);
         }
         const issue = ticket.issues.find((entry) => entry.number === number && entry.repository.toLowerCase() === spec.repository.toLowerCase());
         if (issue === undefined) {
-          return refuse(`issue ${spec.repository}#${number} could not be read from ticket ${ticket.id}`);
+          return refuse(`issue ${spec.repository}#${number} could not be read from ticket ${ticketReference(ticket)}`);
         }
         issues.push(issue);
         sources.set(ticket.id, ticket);
@@ -669,7 +671,7 @@ export function createChains(options: ChainsOptions): Chains {
       const left = source.issues.filter((issue) => !named.has(issueKey(issue.repository, issue.number)));
       if (left.length > 0) {
         return refuse(
-          `ticket ${source.id} also holds ${left.map((issue) => `${issue.repository}#${issue.number}`).join(", ")}; name every issue of a ticket you arrange`,
+          `ticket ${ticketReference(source)} also holds ${left.map((issue) => `${issue.repository}#${issue.number}`).join(", ")}; name every issue of a ticket you arrange`,
         );
       }
     }
@@ -687,16 +689,16 @@ export function createChains(options: ChainsOptions): Chains {
         }
         const ticket = byId.get(before) ?? tickets.get(before);
         if (ticket === undefined) {
-          return refuse(`chain ${spec.name} comes after ticket ${before}, which does not exist`);
+          return refuse(`chain ${spec.name} comes after ticket ${tickets.reference(before) ?? "(unavailable)"}, which does not exist`);
         }
         if (sources.has(before)) {
-          return refuse(`chain ${spec.name} comes after ticket ${before}, which this arrangement rearranges; name its chain instead`);
+          return refuse(`chain ${spec.name} comes after ticket ${ticketReference(ticket)}, which this arrangement rearranges; name its chain instead`);
         }
         if (ticket.state === "stopped") {
           return refuse(
             ticket.repairedBy === null
-              ? `chain ${spec.name} comes after ticket ${before}, which has stopped`
-              : `chain ${spec.name} comes after ticket ${before}, which has stopped; ticket ${ticket.repairedBy} repairs it, so come after that`,
+              ? `chain ${spec.name} comes after ticket ${ticketReference(ticket)}, which has stopped`
+              : `chain ${spec.name} comes after ticket ${ticketReference(ticket)}, which has stopped; ticket ${ticket.repairedByReference ?? "(unavailable)"} repairs it, so come after that`,
           );
         }
       }
@@ -817,7 +819,7 @@ export function createChains(options: ChainsOptions): Chains {
     const cycle = findCycle(waitEdges(graph));
     if (cycle !== undefined) {
       const nameOf = (id: number) => specs.find((spec) => idOf.get(spec.name) === id)?.name;
-      return refuse(`it has a cycle: ${cycle.map((id) => (nameOf(id) === undefined ? `ticket ${id}` : `chain ${nameOf(id) ?? ""}`)).join(" waits for ")}`);
+      return refuse(`it has a cycle: ${cycle.map((id) => (nameOf(id) === undefined ? `ticket ${tickets.reference(id) ?? "(unavailable)"}` : `chain ${nameOf(id) ?? ""}`)).join(" waits for ")}`);
     }
     let written: { chains: Map<string, number>; joined: number[] };
     try {
@@ -876,7 +878,7 @@ export function createChains(options: ChainsOptions): Chains {
             continue;
           }
           const into = targets(source).map(actual)[0] ?? 0;
-          writes.join(source.id, into, { en: `Joined ticket ${into} by an arrangement`, zh: text("ticket.reason.joined", { ticket: into }) });
+          writes.join(source.id, into, { en: `Joined into ticket ${tickets.reference(into) ?? "(unavailable)"} by an arrangement`, zh: text("ticket.reason.joined", { ticket: writes.get(into)?.code ?? "?" }) });
           joined.push(source.id);
         }
         return { chains: real, joined };
@@ -901,10 +903,10 @@ export function createChains(options: ChainsOptions): Chains {
   const deployed = (id: number, turn?: TicketTurn): TicketOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
-      return { ok: false, reason: `There is no ticket ${id}.` };
+      return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}.` };
     }
     if (ticket.state !== "merged") {
-      return { ok: false, reason: `Ticket ${id} is ${ticket.state}; only merged work is deployed.` };
+      return { ok: false, reason: `Ticket ${ticketReference(ticket)} is ${ticket.state}; only merged work is deployed.` };
     }
     const before = new Set(openTickets().filter((entry) => entry.state === "working").map((entry) => entry.id));
     tickets.change((writes) => writes.deployed(id), turn);
@@ -915,20 +917,20 @@ export function createChains(options: ChainsOptions): Chains {
   const proceed = (id: number, turn?: TicketTurn): TicketOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
-      return { ok: false, reason: `There is no ticket ${id}.` };
+      return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}.` };
     }
     if (ticket.state !== "waiting") {
       return {
         ok: false,
         reason:
           ticket.state === "pending"
-            ? `Ticket ${id} is not started; only the owner starts it, with 开始 on its card. Arrange it again with arrange_chains if what it waits for has changed.`
-            : `Ticket ${id} is ${ticket.state} and is not waiting.`,
+            ? `Ticket ${ticketReference(ticket)} is not started; only the owner starts it, with 开始 on its card. Arrange it again with arrange_chains if what it waits for has changed.`
+            : `Ticket ${ticketReference(ticket)} is ${ticket.state} and is not waiting.`,
       };
     }
     const stopped = ticket.waits.filter((wait) => !wait.waived && tickets.get(wait.ticket)?.state === "stopped").map((wait) => wait.ticket);
     if (stopped.length === 0) {
-      return { ok: false, reason: `Nothing ticket ${id} waits for has stopped; it begins by itself when what it waits for has merged or is done.` };
+      return { ok: false, reason: `Nothing ticket ${tickets.reference(id) ?? "(unavailable)"} waits for has stopped; it begins by itself when what it waits for has merged or is done.` };
     }
     tickets.change((writes) => {
       for (const before of stopped) {

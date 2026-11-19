@@ -32,6 +32,9 @@ import {
   RepositoryName,
   fitsForm,
   Ticket,
+  TicketCode,
+  TicketCodeDate,
+  ticketReference,
   type TicketDetail,
   TicketIssue,
   type TicketForm,
@@ -50,6 +53,7 @@ import { z } from "zod";
 import type { Clock } from "./clock.js";
 import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import { codeAfter, ticketCodesExhausted, ticketDate, ticketDateFormatter, ticketReferences } from "./ticket-codes.js";
 import { createTicketVersions, type TicketTurn } from "./ticket-versions.js";
 import { createTopicResolver } from "./topic-corrections.js";
 import { verificationOf } from "./verification-record.js";
@@ -229,6 +233,8 @@ export interface TicketService {
   open(request: TicketToOpen, turn?: TicketTurn): Ticket;
   get(id: number): Ticket | undefined;
   topic(id: number): string;
+  resolve(reference: string): number | undefined;
+  reference(id: number): string | undefined;
   list(options?: ListOptions): Ticket[];
   history(options?: HistoryOptions): HistoryPage;
   moves(id: number): TicketMove[];
@@ -261,6 +267,8 @@ export class TicketError extends Error {}
 
 const TicketRow = z.object({
   id: z.number().int(),
+  code: TicketCode,
+  code_date: TicketCodeDate,
   form: z.string(),
   required_machine: z.string().nullable(),
   repository: z.string().nullable(),
@@ -588,6 +596,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
+  const references = ticketReferences(connection);
+  const dayFormatter = ticketDateFormatter(options.database.ticketTimeZone);
+  const lastCode = connection.prepare("SELECT code FROM tickets WHERE code_date = ? ORDER BY code DESC LIMIT 1");
   const resolveTopic = createTopicResolver(options.database);
   const claimTopic = connection.prepare(
     `UPDATE conversations SET repository = ?, needs_repository = 0
@@ -649,8 +660,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (form, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    `INSERT INTO tickets (form, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -722,7 +733,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     });
     const waits = selectWaits.all(value.id).map((entry) => {
       const wait = WaitRow.parse(entry);
-      return { ticket: wait.waits_for, deployment: wait.deployment === 1, waived: wait.waived_at !== null };
+      return { ticket: wait.waits_for, reference: references.get(wait.waits_for), deployment: wait.deployment === 1, waived: wait.waived_at !== null };
     });
     const begin = selectBegin.get(value.id);
     const attempt = selectAttempt.get(value.id);
@@ -733,8 +744,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const decisions = selectDecisions.all(value.id).map(decisionOf);
     const repairing = selectRepairOf.get(value.id);
     const repaired = selectRepairedBy.get(value.id);
+    const repairs = repairing === undefined ? null : RepairRow.parse(repairing).repairs;
+    const repairedBy = repaired === undefined ? null : IdRow.parse(repaired).ticket_id;
     return Ticket.parse({
       id: value.id,
+      code: value.code,
+      codeDate: value.code_date,
       form: value.form,
       repository: value.repository,
       issues,
@@ -775,8 +790,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
       joinedInto: value.joined_into,
-      repairs: repairing === undefined ? null : RepairRow.parse(repairing).repairs,
-      repairedBy: repaired === undefined ? null : IdRow.parse(repaired).ticket_id,
+      repairs,
+      repairedBy,
+      repairsReference: repairs === null ? undefined : references.get(repairs),
+      repairedByReference: repairedBy === null ? undefined : references.get(repairedBy),
       conversation: value.conversation_id,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
@@ -882,8 +899,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     GeneratedText.parse(request.title);
     GeneratedText.parse(request.summary);
     for (const before of request.waitsFor ?? []) {
-      if (get(before) === undefined) {
-        throw new TicketError(`There is no ticket ${before} to wait for`);
+      if (references.get(before) === undefined) {
+        throw new TicketError("The predecessor ticket could not be found");
       }
     }
   };
@@ -955,13 +972,16 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const existing = (id: number): Ticket => {
       const ticket = get(id);
       if (ticket === undefined) {
-        throw new TicketError(`There is no ticket ${id}`);
+        throw new TicketError(`There is no ticket ${references.get(id) ?? "(unavailable)"}`);
       }
       return ticket;
     };
     const open = (request: TicketToOpen, inheritedTopic?: string): number => {
       check(request);
       const now = clock.now();
+      const date = ticketDate(dayFormatter, now);
+      const code = codeAfter(TicketCode.optional().parse(lastCode.get(date)?.code));
+      if (code === undefined) throw new TicketError(ticketCodesExhausted(date));
       const topic = inheritedTopic ?? chooseTopic(request);
       const result = insertTicket.run(
         formOf(request),
@@ -977,6 +997,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         topic,
         now,
         now,
+        code,
+        date,
       );
       const id = Number(result.lastInsertRowid);
       if (formOf(request) === "task" && request.repository === null) {
@@ -1037,7 +1059,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const seen = new Set<number>();
         for (const wait of waits) {
           if (wait.ticket === id) {
-            throw new TicketError(`Ticket ${id} cannot wait for itself`);
+            throw new TicketError(`Ticket ${references.get(id) ?? "(unavailable)"} cannot wait for itself`);
           }
           existing(wait.ticket);
           if (!seen.has(wait.ticket)) {
@@ -1063,13 +1085,13 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       openRepair: (id, by, words) => {
         const old = existing(id);
         if (old.state !== "stopped" || old.joinedInto !== null) {
-          throw new TicketError(`Ticket ${id} is ${old.state}${old.joinedInto === null ? "" : " and was joined into another ticket"}; only a stopped ticket that was not joined into another has a repair`);
+          throw new TicketError(`Ticket ${ticketReference(old)} is ${old.state}${old.joinedInto === null ? "" : " and was joined into another ticket"}; only a stopped ticket that was not joined into another has a repair`);
         }
         if (selectRepairedBy.get(id) !== undefined) {
-          throw new TicketError(`Ticket ${id} already has a repair ticket`);
+          throw new TicketError(`Ticket ${ticketReference(old)} already has a repair ticket`);
         }
         if (!hasRemainingWork(old)) {
-          throw new TicketError(`Every issue of ticket ${id} is closed, so nothing remains to repair`);
+          throw new TicketError(`Every issue of ticket ${ticketReference(old)} is closed, so nothing remains to repair`);
         }
         const merged = new Set(mergedIssueNumbers(old));
         const task = old.form === "task" ? taskOf(id) : undefined;
@@ -1139,7 +1161,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       move: (id, to, reason) => {
         const current = existing(id);
         if (!canMoveTicket(current.form, current.state, to)) {
-          throw new TicketError(`Ticket ${id} is ${current.state} and cannot become ${to}`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state} and cannot become ${to}`);
         }
         const now = clock.now();
         updateState.run(to, now, id, current.state);
@@ -1156,7 +1178,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       join: (id, into, reason) => {
         existing(into);
         if (into === id) {
-          throw new TicketError(`Ticket ${id} cannot join itself`);
+          throw new TicketError(`Ticket ${references.get(id) ?? "(unavailable)"} cannot join itself`);
         }
         writes.move(id, "stopped", reason);
         updateJoined.run(into, id);
@@ -1170,7 +1192,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const current = existing(id);
         const reason = GeneratedText.parse(statement.difficultyReason);
         if (!fitsForm(current.form, statement.kind)) {
-          throw new TicketError(`Ticket ${id} is a ${current.form} ticket and cannot be of kind ${statement.kind}`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is a ${current.form} ticket and cannot be of kind ${statement.kind}`);
         }
         updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, statement.brainEngine, id);
         touch(id);
@@ -1247,7 +1269,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       nextPiece: (id, branch) => {
         const current = existing(id);
         if (current.state !== "working") {
-          throw new TicketError(`Ticket ${id} is ${current.state}; the next piece of its chain starts only when it goes back to work`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state}; the next piece of its chain starts only when it goes back to work`);
         }
         deleteVerification.run(id);
         updateBranch.run(branch, id);
@@ -1268,12 +1290,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       startRound: (id, start) => {
         const current = existing(id);
         if (current.state !== "working") {
-          throw new TicketError(`Ticket ${id} is ${current.state}; a guided round starts only on a ticket going back to work`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state}; a guided round starts only on a ticket going back to work`);
         }
         const failure = LoopFailure.parse(start.failure);
         const guidance = GeneratedText.parse(start.guidance);
         if (capReached(current.round, failure.kind, current.freeRetry)) {
-          throw new TicketError(`Ticket ${id} has had ${current.round} guided rounds, the cap of ${roundCap}; only the owner can give it more`);
+          throw new TicketError(`Ticket ${ticketReference(current)} has had ${current.round} guided rounds, the cap of ${roundCap}; only the owner can give it more`);
         }
         const counted = countsAsRound(failure.kind, current.freeRetry);
         const round = counted ? current.round + 1 : current.round;
@@ -1288,7 +1310,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const current = existing(id);
         const from = StuckFrom.safeParse(current.state);
         if (!from.success || !canMoveTicket(current.form, current.state, "stuck")) {
-          throw new TicketError(`Ticket ${id} is ${current.state} and cannot stop for the owner`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state} and cannot stop for the owner`);
         }
         const failure = LoopFailure.parse(given);
         const now = clock.now();
@@ -1301,7 +1323,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       describeStuck: (id, where) => {
         const current = existing(id);
         if (current.state !== "stuck") {
-          throw new TicketError(`Ticket ${id} is ${current.state}, not stopped for the owner`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state}, not stopped for the owner`);
         }
         const given = GeneratedText.parse(where);
         updateStuckWhere.run(given.en, given.zh, id);
@@ -1311,11 +1333,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       resume: (id, reason) => {
         const current = existing(id);
         if (current.state !== "stuck" || current.stuck === null) {
-          throw new TicketError(`Ticket ${id} is ${current.state}, not stopped for the owner`);
+          throw new TicketError(`Ticket ${ticketReference(current)} is ${current.state}, not stopped for the owner`);
         }
         const to = current.stuck.from;
         if (!canMoveTicket(current.form, "stuck", to)) {
-          throw new TicketError(`Ticket ${id} cannot go back to ${to}`);
+          throw new TicketError(`Ticket ${ticketReference(current)} cannot go back to ${to}`);
         }
         const now = clock.now();
         updateState.run(to, now, id, "stuck");
@@ -1370,10 +1392,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const current = existing(id);
         const found = current.decisions.find((entry) => entry.id === decision);
         if (found === undefined) {
-          throw new TicketError(`Ticket ${id} has no decision ${decision}`);
+          throw new TicketError(`Ticket ${references.get(id) ?? "(unavailable)"} has no decision ${decision}`);
         }
         if (found.verdict !== null) {
-          throw new TicketError(`Decision ${decision} of ticket ${id} is already settled`);
+          throw new TicketError(`Decision ${decision} of ticket ${references.get(id) ?? "(unavailable)"} is already settled`);
         }
         const now = clock.now();
         const opinion = review.verdict === "opinion" ? review.opinion.trim() : null;
@@ -1441,11 +1463,13 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const id = change((writes) => writes.open(request), turn);
       const ticket = get(id);
       if (ticket === undefined) {
-        throw new Error(`Ticket ${id} was not stored`);
+        throw new Error(`Ticket ${references.get(id) ?? "(unavailable)"} was not stored`);
       }
       return ticket;
     },
     get,
+    resolve: references.resolve,
+    reference: references.get,
     topic: (id) => topicOf(id) ?? change((writes) => writes.topic(id)),
     list: (listing = {}) => {
       const limit = listing.limit ?? defaultLimit;
@@ -1488,12 +1512,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     repair: (id, by, words, turn) => {
       const before = get(id);
       if (before === undefined) {
-        return { ok: false, reason: `There is no ticket ${id}.` };
+        return { ok: false, reason: `There is no ticket ${references.get(id) ?? "(unavailable)"}.` };
       }
       try {
         const repair = change((writes) => writes.get(writes.openRepair(id, by, words.trim())), turn);
         const opened = repair === undefined ? undefined : get(repair.id);
-        return opened === undefined ? { ok: false, reason: `The repair of ticket ${id} was not stored.` } : { ok: true, ticket: opened, followers: followersOf(opened) };
+        return opened === undefined ? { ok: false, reason: `The repair of ticket ${references.get(id) ?? "(unavailable)"} was not stored.` } : { ok: true, ticket: opened, followers: followersOf(opened) };
       } catch (error) {
         if (error instanceof TicketError) {
           return { ok: false, reason: error.message };

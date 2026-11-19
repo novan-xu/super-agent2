@@ -11,7 +11,7 @@ import { followLink } from "../parts/Shell.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
-import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers, RepairChip } from "./TicketParts.js";
+import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers, RepairChip, TicketCodeLabel } from "./TicketParts.js";
 
 export interface CardActions {
   answer(key: string, verdict: Verdict): void;
@@ -76,7 +76,7 @@ function TicketRow({ ticket, known, hrefOf, open, now }: { readonly ticket: Tick
     <a className="lrow" id={`ticket-${ticket.id}`} href={hrefOf(ticket.id)} onClick={(event) => followLink(event, () => open(ticket.id))}>
       <PhaseStatus phase={phase} />
       <span className="lrow-main">
-        <span className="lrow-title">{chineseOf(ticket.title)}</span>
+        <span className="lrow-title"><TicketCodeLabel code={ticket.code} /> {chineseOf(ticket.title)}</span>
         <span className="lrow-meta">
           <span className="chip">{text(kindKey(ticket))}</span>
           <RepairChip ticket={ticket} />

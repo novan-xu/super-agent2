@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
@@ -369,14 +370,14 @@ export function createVerification(options: VerificationOptions): VerificationSe
     ].join("\n");
     const notice =
       usual.milliseconds === null
-        ? text("notice.pipelineLongFirst", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(firstAllowance) })
-        : text("notice.pipelineLong", { ticket: ticket.id, waited: durationChinese(waited), usual: durationChinese(usual.milliseconds) });
+        ? text("notice.pipelineLongFirst", { ticket: ticket.code, waited: durationChinese(waited), usual: durationChinese(firstAllowance) })
+        : text("notice.pipelineLong", { ticket: ticket.code, waited: durationChinese(waited), usual: durationChinese(usual.milliseconds) });
     tell(ticket.id, notice, prompt);
   };
 
   const entryOf = (id: number): number => SeqRow.parse(selectEntry.get(id)).seq ?? 0;
 
-  const described = (ticket: Ticket) => `ticket ${ticket.id} (${ticket.title.en})`;
+  const described = (ticket: Ticket) => `ticket ${ticketReference(ticket)} (${ticket.title.en})`;
 
   const gitHubFor = (repository: string): GitHubApi | string => {
     const found = options.credentials((options.accountOf ?? accountFor)(repository));
@@ -557,24 +558,24 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const merged = mergedPullsOf(ticket);
     const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
     const lines = [
-      `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: every issue of its chain is settled.`,
+      `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) is merged: every issue of its chain is settled.`,
       `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
       `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}${rule === null ? "" : `, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}`}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
       ...closureLines(ticket),
       deployed
         ? deploying.length > 0
-          ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${after.id}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
-          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner said otherwise, open one with open_task_ticket (deploy true, after ${ticket.id}, commit ${row.merge_commit ?? "merged"}) and state its defaults; the owner starts it.`
+          ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${ticketReference(after)}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
+          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner said otherwise, open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}) and state its defaults; the owner starts it.`
         : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
       ...(deployed && waitingForDeployment.length > 0
-        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${after.id}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]
+        ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${ticketReference(after)}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]
         : []),
       "Tell the owner in Chinese, in a line or two.",
       ...decisionReport(ticket),
     ];
     save(id, { reported_at: clock.now() });
-    tell(ticket.id, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
+    tell(ticket.id, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: ticket.code }), lines.join("\n"));
   };
 
   const isSettling = (ticket: Ticket): boolean =>
@@ -617,8 +618,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
       }
       return false;
     } else if (last === undefined) {
-      tell(ticket.id, text("notice.chainClosed", { ticket: ticket.id }), [
-        `[hub] Ticket ${ticket.id} (${ticket.title.en}) stopped. ${reason.en}.`,
+      tell(ticket.id, text("notice.chainClosed", { ticket: ticket.code }), [
+        `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) stopped. ${reason.en}.`,
         ...closureLines({ ...ticket, closedOutside: closures }),
         "Tell the owner in Chinese.",
         ...decisionReport(ticket),
@@ -719,7 +720,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         tellOnce(
           ticket,
           `onward:${entryOf(ticket.id)}:${pull.number}`,
-          text("notice.verificationFailed", { ticket: ticket.id }),
+          text("notice.verificationFailed", { ticket: ticket.code }),
           `[hub] ${reason}. The ticket stays verifying and the hub tries again at every check. Tell the owner in Chinese what happened.`,
         );
       }
@@ -757,7 +758,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     tellOnce(
       ticket,
       `again:${head}`,
-      text("notice.verificationFailed", { ticket: ticket.id }),
+      text("notice.verificationFailed", { ticket: ticket.code }),
       `[hub] The pull request #${ticket.pullRequest ?? 0} of ${described(ticket)} conflicts with ${base} at ${head}, and it could not go back to its worker: ${outcome.reason}. Tell the owner in Chinese what happened.`,
     );
   };
@@ -824,7 +825,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     tellOnce(
       ticket,
       `refused:${head}`,
-      text("notice.verificationFailed", { ticket: ticket.id }),
+      text("notice.verificationFailed", { ticket: ticket.code }),
       `[hub] GitHub refused to merge pull request #${number} of ${described(ticket)} at ${head}: ${answer.message}. The ticket stays verifying and the merge is tried again on the next check. Tell the owner in Chinese if it keeps failing.`,
     );
   };
@@ -853,7 +854,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const repository = ticket.repository;
     const number = ticket.pullRequest;
     if (repository === null || number === null) {
-      wait(id, "github", `Ticket ${id} has no pull request to verify`);
+      wait(id, "github", `Ticket ${ticketReference(ticket)} has no pull request to verify`);
       return;
     }
     const gitHub = gitHubFor(repository);
@@ -887,7 +888,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       tellOnce(
         ticket,
         `closed:${entry}:${pull.head}`,
-        text("notice.pullRequestClosed", { ticket: id }),
+        text("notice.pullRequestClosed", { ticket: ticket.code }),
         `[hub] The pull request #${number} of ${described(ticket)} was closed on GitHub without merging. The ticket stays verifying, and merges by its rules if the pull request is reopened. Tell the owner in Chinese; stop it with stop_ticket if the work is abandoned.`,
       );
       return;
@@ -974,7 +975,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
                 ...outcome.logs.flatMap((log) => [`The log of workflow ${log.workflow}, step ${log.step}${log.exitCode === null ? "" : ` (exit code ${log.exitCode})`}, ends with:`, tail(log.log || "(empty)", 8_000)]),
               ].join("\n"),
             },
-            text("notice.verificationFailed", { ticket: id }),
+            text("notice.verificationFailed", { ticket: ticket.code }),
             [
               `[hub] The verification rules failed for ${described(ticket)}: ${outcome.reason}.`,
               `Pull request #${number} in ${repository}, head ${pull.head}; pipeline ${outcome.pipeline.url}.`,
@@ -1062,15 +1063,15 @@ export function createVerification(options: VerificationOptions): VerificationSe
     skip: async (id, reason, turn) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
-        return { ok: false, reason: `There is no ticket ${id}.` };
+        return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}.` };
       }
       if (ticket.state !== "verifying") {
         return {
           ok: false,
           reason:
             ticket.state === "merged"
-              ? `Ticket ${id} is already merged.`
-              : `Ticket ${id} is ${ticket.state}; only a ticket in verifying, whose worker has handed back its pull request, can be merged.`,
+              ? `Ticket ${ticketReference(ticket)} is already merged.`
+              : `Ticket ${ticketReference(ticket)} is ${ticket.state}; only a ticket in verifying, whose worker has handed back its pull request, can be merged.`,
         };
       }
       if (reason.trim() === "") {
@@ -1079,7 +1080,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       save(id, { skip_at: clock.now(), skip_reason: reason.trim() }, turn);
       await check(id);
       const after = tickets.get(id);
-      return after === undefined ? { ok: false, reason: `There is no ticket ${id}.` } : { ok: true, ticket: after };
+      return after === undefined ? { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}.` } : { ok: true, ticket: after };
     },
     logs: (id) => {
       const row = rowOf(id);

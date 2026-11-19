@@ -63,7 +63,7 @@ export function payloadOf(card: WaitingCard): PushPayload {
     case "stuck":
       return {
         title: text("waiting.title"),
-        body: text("notice.waiting.stuck", { ticket: card.ticket.id, round: card.ticket.stuck?.round ?? card.ticket.round }),
+        body: text("notice.waiting.stuck", { ticket: card.ticket.code, round: card.ticket.stuck?.round ?? card.ticket.round }),
         url: cardAddress(card.key),
         tag: card.key,
       };

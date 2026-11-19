@@ -10,7 +10,7 @@ import { Icon } from "../parts/icons.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartCard } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
-import { engineName, TicketNumber } from "./TicketParts.js";
+import { engineName, TicketCodeLabel } from "./TicketParts.js";
 import type { CardActions } from "./WorkbenchView.js";
 
 export interface CanvasWorkbenchProps {
@@ -179,7 +179,7 @@ function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, 
   const [width, setWidth] = useState(0);
   const [paths, setPaths] = useState<string[]>([]);
   const columns = daily ? 1 : Math.max(1, Math.floor((width + 20) / 240));
-  const names = new Map(chains.flat().map((node) => [node.ticket.id, chineseOf(node.ticket.title)]));
+  const related = new Map(chains.flat().map((node) => [node.ticket.id, node.ticket]));
   const cells = useMemo(() => layoutChains(chains, columns), [chains, columns]);
   useLayoutEffect(() => {
     const element = grid.current;
@@ -220,15 +220,16 @@ function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, 
       const where = whereOf(ticket);
       const phaseIndex = ticket.state === "waiting" ? 0 : ticket.state === "verifying" ? (ticket.verification?.waiting === "finishing" || ticket.verification?.waiting === "mergeable" ? 3 : 2) : 1;
       const waits = ticket.waits.filter((wait) => !wait.waived && (node.after.includes(wait.ticket) || node.missing.includes(wait.ticket)));
+      const codeOf = (id: number) => related.get(id)?.code ?? waits.find((wait) => wait.ticket === id)?.reference?.split("-")[0] ?? "?";
       return <div className="wb-slot" key={ticket.id} data-ticket={ticket.id} style={{ gridColumn: column + 1, gridRow: line + 1 }}>
-        {stopped === undefined || node.reference ? <button type="button" className={`wb-card${start === undefined ? "" : " wb-card--pending"}${node.reference ? " wb-card--reference" : ""}`} aria-label={`${chineseOf(ticket.title)} #${ticket.id}`} aria-pressed={selected === ticket.id} onClick={(event) => start !== undefined && !node.reference ? openStart(start, event.currentTarget) : select(ticket.id)}>
-          <span className="wb-card-title"><span className={`dot dot--${phaseLooks[phase].tone}`} /><TicketNumber id={ticket.id} /><span>{chineseOf(ticket.title)}</span></span>
+        {stopped === undefined || node.reference ? <button type="button" className={`wb-card${start === undefined ? "" : " wb-card--pending"}${node.reference ? " wb-card--reference" : ""}`} aria-label={`${chineseOf(ticket.title)} ${ticket.code}`} aria-pressed={selected === ticket.id} onClick={(event) => start !== undefined && !node.reference ? openStart(start, event.currentTarget) : select(ticket.id)}>
+          <span className="wb-card-title"><span className={`dot dot--${phaseLooks[phase].tone}`} /><TicketCodeLabel code={ticket.code} /><span>{chineseOf(ticket.title)}</span></span>
           {start === undefined ? <span className="wb-phases" aria-hidden="true">{[0, 1, 2, 3].map((step) => <i key={step} className={step <= phaseIndex ? "is-active" : ""} />)}</span> : null}
           <span className="wb-card-meta">{[text(kindKey(ticket)), start === undefined ? text(`workbench.phase.${phaseIndex}`) : null, ticket.state === "waiting" ? text("workbench.queued") : text(`ticket.phase.${phase}`), where?.machine ?? ticket.machine, engineName(where?.engine ?? ticket.engine)].filter(Boolean).join(" · ")}</span>
         </button> : <div className="wb-card"><StuckCard card={stopped} use={useOf(waiting, stopped.key)} focused={false} href={ticketHref(ticket.id)} open={() => select(ticket.id)} answer={(answer, words) => actions.answerStuck(stopped.key, answer, words)} /></div>}
-        {node.after.length === 0 ? null : <span className="sr-only">{text("workbench.follows", { tickets: node.after.map((id) => `#${id} ${names.get(id) ?? ""}`.trim()).join("、") })}</span>}
-        {ticket.state !== "waiting" || waits.length === 0 ? null : <p className="wb-after">{waits.map((wait) => text(wait.deployment ? "workbench.waitDeployment" : chains.flat().find((item) => item.ticket.id === wait.ticket)?.ticket.form === "task" ? "workbench.waitTicket" : "workbench.waitMerge", { ticket: wait.ticket })).join("、")}</p>}
-        {node.missing.length === 0 ? null : <p className="wb-after">{text("workbench.follows", { tickets: node.missing.map((id) => `#${id}`).join("、") })}</p>}
+        {node.after.length === 0 ? null : <span className="sr-only">{text("workbench.follows", { tickets: node.after.map((id) => `${codeOf(id)} ${(related.get(id)?.title.zh ?? "")}`.trim()).join("、") })}</span>}
+        {ticket.state !== "waiting" || waits.length === 0 ? null : <p className="wb-after">{waits.map((wait) => text(wait.deployment ? "workbench.waitDeployment" : related.get(wait.ticket)?.form === "task" ? "workbench.waitTicket" : "workbench.waitMerge", { ticket: codeOf(wait.ticket) })).join("、")}</p>}
+        {node.missing.length === 0 ? null : <p className="wb-after">{text("workbench.follows", { tickets: node.missing.map(codeOf).join("、") })}</p>}
       </div>;
     })}
     <svg className="wb-links" aria-hidden="true"><defs><marker id="wb-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M 0 0 L 6 3 L 0 6 z" /></marker></defs>{paths.map((path, index) => <path key={index} d={path} markerEnd="url(#wb-arrow)" />)}</svg>

@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -155,8 +156,8 @@ async function stated(running: Hub, tickets: readonly Ticket[]): Promise<void> {
   const answer = await callBrainTool(running, "choose_defaults", {
     chains: tickets.map((ticket) =>
       ticket.form === "task"
-        ? { ticket: ticket.id, kind: "operation", difficulty: "standard", reason: { en: "A known procedure", zh: "已知的步骤" }, platform: "any", engine: "codex" }
-        : { ticket: ticket.id, kind: "feature", issues: ticket.issues.map((issue) => ({ number: issue.number, difficulty: "standard" })), reason: { en: "Bounded work", zh: "有边界的工作" }, platform: "any", engine: "codex" },
+        ? { ticket: ticket.code, kind: "operation", difficulty: "standard", reason: { en: "A known procedure", zh: "已知的步骤" }, platform: "any", engine: "codex" }
+        : { ticket: ticket.code, kind: "feature", issues: ticket.issues.map((issue) => ({ number: issue.number, difficulty: "standard" })), reason: { en: "Bounded work", zh: "有边界的工作" }, platform: "any", engine: "codex" },
     ),
   });
   expect(answer.isError, answer.text).toBe(false);
@@ -216,7 +217,7 @@ describe("a deployment arranged with the work it deploys", () => {
         kind: "operation",
         repository,
         deploy: true,
-        after: [first.id],
+        after: [first.code],
       },
       conversation,
     );
@@ -264,7 +265,7 @@ describe("a deployment arranged with the work it deploys", () => {
       engine: "codex",
     });
     const merged = running.database.connection.prepare("SELECT prompt FROM conversation_entries WHERE conversation_id = ? AND kind = 'notice' ORDER BY seq").all(conversation);
-    expect(JSON.stringify(merged)).toContain(`task ticket ${deployment.id} deploys it`);
+    expect(JSON.stringify(merged)).toContain(`task ticket ${ticketReference(deployment)} deploys it`);
 
     event(pc.link, deployment.id, 1, { kind: "phase", phase: "started", detail: "Started" });
     event(pc.link, deployment.id, 1, {
@@ -311,7 +312,7 @@ describe("a deployment arranged with the work it deploys", () => {
     expect(deliveries(running, conversation)).toEqual([]);
     const told = running.database.connection.prepare("SELECT prompt FROM conversation_entries WHERE conversation_id = ? AND kind = 'notice' ORDER BY seq").all(conversation);
     expect(JSON.stringify(told)).toContain("the worker handed back that its task failed");
-    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Check the port before deploying.", zh: "部署前先检查端口。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.code, guidance: { en: "Check the port before deploying.", zh: "部署前先检查端口。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
     expect(tasksSent(pc.sent, ticket.id)[1]?.task).toMatchObject({ attempt: 2, checkout: { commit: "head1" } });
@@ -327,7 +328,7 @@ describe("opening a task ticket", () => {
       [{ ...base, deploy: true }, "needs the repository"],
       [{ ...base, commit: "main" }, "needs the repository"],
       [{ ...base, repository, commit: "merged" }, "name that chain's ticket in after"],
-      [{ ...base, repository, after: [99] }, "there is no ticket 99"],
+      [{ ...base, repository, after: ["zz"] }, "There is no ticket zz"],
       [{ ...base, kind: "writing", repository, deploy: true }, "a deployment is an operation"],
       [{ ...base, kind: "fix" }, "not valid"],
     ] as const;

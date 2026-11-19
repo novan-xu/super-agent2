@@ -52,6 +52,8 @@ export function ticket(id: number, overrides: Partial<Ticket> = {}): Ticket {
   const summary = { en: "Do it", zh: "做这件事" };
   return {
     id,
+    code: String.fromCharCode(97 + Math.floor((id - 1) / 26), 97 + (id - 1) % 26),
+    codeDate: "2026-11-19",
     form: "code",
     repository,
     issues: [{ repository, number: id, url: `https://github.com/${repository}/issues/${id}`, title, summary }],

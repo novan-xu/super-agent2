@@ -8,6 +8,8 @@ function ticket(id: number): Ticket {
   const repository = "novan-xu/super-agent-sandbox";
   return {
     id,
+    code: "aa",
+    codeDate: "2026-11-19",
     form: "code",
     repository,
     issues: [{ repository, number: id, url: `https://github.com/${repository}/issues/${id}`, title, summary: title }],

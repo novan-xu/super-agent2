@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,7 +121,7 @@ describe("work for a started ticket", () => {
   it("queues the first attempt, starts it on the chosen machine with the owner's token, and begins only once", () => {
     const ticket = working([21, 22]);
     work.begin(ticket);
-    expect(current(ticket.id)).toMatchObject({ branch: "sa2/ticket-1-beef", work: { attempt: 1, state: "queued", machine: "pc" } });
+    expect(current(ticket.id)).toMatchObject({ branch: "sa2/aa-2026-11-17-beef", work: { attempt: 1, state: "queued", machine: "pc" } });
     expect(runners.sent).toEqual([]);
     runners.connect("pc", 2);
     const [start] = runners.of("work.start", "pc");
@@ -129,7 +130,7 @@ describe("work for a started ticket", () => {
       attempt: 1,
       repository,
       account: "novan-xu",
-      branch: "sa2/ticket-1-beef",
+      branch: "sa2/aa-2026-11-17-beef",
       issues: [
         { number: 21, title: "Issue 21" },
         { number: 22, title: "Issue 22" },
@@ -217,7 +218,7 @@ describe("work for a started ticket", () => {
 
   it("passes a message to the running worker, keeps it while the machine is away, and refuses when nothing runs", () => {
     const ticket = working();
-    expect(work.message(ticket.id, "hello", "owner")).toEqual({ ok: false, reason: `Ticket ${ticket.id} has no running worker` });
+    expect(work.message(ticket.id, "hello", "owner")).toEqual({ ok: false, reason: `Ticket ${ticketReference(ticket)} has no running worker` });
     runners.connect("pc", 2);
     work.begin(ticket);
     const sent = work.message(ticket.id, "Also update the README", "brain");
@@ -323,7 +324,7 @@ describe("reassigning and trying again", () => {
     work.reassign(current(ticket.id));
     const starts = runners.of("work.start");
     expect(starts).toHaveLength(2);
-    expect(starts[1]?.task).toMatchObject({ attempt: 2, model: "gpt-6.1-sol", effort: "high", session: "thread-1", branch: "sa2/ticket-1-beef" });
+    expect(starts[1]?.task).toMatchObject({ attempt: 2, model: "gpt-6.1-sol", effort: "high", session: "thread-1", branch: "sa2/aa-2026-11-17-beef" });
     expect(starts[1]?.task.note).toContain("reassigned");
     expect(current(ticket.id).work).toMatchObject({ attempt: 2, state: "preparing" });
   });
@@ -340,7 +341,7 @@ describe("reassigning and trying again", () => {
     expect(runners.of("work.start", "mac")).toEqual([]);
     emit("pc", ticket.id, 1, 2, { kind: "stopped", saved: true, detail: "Pushed the branch" });
     const [start] = runners.of("work.start", "mac");
-    expect(start?.task).toMatchObject({ attempt: 2, engine: "claude", session: null, branch: "sa2/ticket-1-beef" });
+    expect(start?.task).toMatchObject({ attempt: 2, engine: "claude", session: null, branch: "sa2/aa-2026-11-17-beef" });
     expect(start?.task.note).toContain("moved this ticket here from pc");
   });
 
@@ -355,7 +356,7 @@ describe("reassigning and trying again", () => {
     expect(outcome.ok).toBe(true);
     expect(current(ticket.id)).toMatchObject({ state: "working", work: { attempt: 2 } });
     expect(runners.of("work.start")[1]?.task).toMatchObject({ attempt: 2, session: "thread-1", note: "The pipeline failed in the lint step; fix it and push." });
-    expect(work.again(ticket.id, "again")).toEqual({ ok: false, reason: `Ticket ${ticket.id} already has a worker` });
+    expect(work.again(ticket.id, "again")).toEqual({ ok: false, reason: `Ticket ${ticketReference(ticket)} already has a worker` });
   });
 });
 
@@ -402,6 +403,7 @@ describe("work for a task ticket", () => {
         type: "work.task",
         task: {
           ticket: ticket.id,
+          ticketReference: "aa-2026-11-17",
           attempt: 1,
           title: "Translate a notice",
           task: "Translate input/notice.txt into English.",

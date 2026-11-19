@@ -32,7 +32,7 @@ import { createTicketFiles } from "./files.js";
 import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
 import { type AttachmentStore, attachmentsFolder, createAttachmentStore } from "./attachments.js";
 import type { Fetch } from "./github-api.js";
-import type { GeneratedText } from "@super-agent2/protocol";
+import { type GeneratedText, ticketReference } from "@super-agent2/protocol";
 import { createVerification, type MergedPart, type Ticker, type VerificationService } from "./verification.js";
 import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
 import { createDecisionReviews, type DecisionReviews } from "./reviews.js";
@@ -106,7 +106,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const { config } = options;
   const environment = options.environment ?? process.env;
   const extraMcp = extraMcpFromEnvironment(environment);
-  const database = openDatabase({ dataDir: config.dataDir, clock });
+  const database = openDatabase({ dataDir: config.dataDir, clock, ...(config.ticketTimeZone === undefined ? {} : { ticketTimeZone: config.ticketTimeZone }) });
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
   const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
   const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
@@ -299,8 +299,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         if (notes.length > 0) {
           told.tell(
             ticket.id,
-            text("notice.deploymentUnclear", { ticket: ticket.id }),
-            [`[hub] Task ticket ${ticket.id} (${ticket.title.en}) deployed ${ticket.repository ?? ""}, but not every merged ticket could be checked against what it deployed:`, ...notes, "Those tickets stay unmarked; if they are in fact deployed, record it with report_deployment so what waits for them begins."].join("\n"),
+            text("notice.deploymentUnclear", { ticket: ticket.code }),
+            [`[hub] Task ticket ${ticketReference(ticket)} (${ticket.title.en}) deployed ${ticket.repository ?? ""}, but not every merged ticket could be checked against what it deployed:`, ...notes, "Those tickets stay unmarked; if they are in fact deployed, record it with report_deployment so what waits for them begins."].join("\n"),
           );
         }
       },

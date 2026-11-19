@@ -157,10 +157,10 @@ describe("a ticket's worker for the page and the brain", () => {
   it("lets the brain message the worker and read its output with the ticket", async () => {
     const { running, ticket, runner, sent } = await start();
     event(runner, ticket.id, 1, { kind: "text", block: "b", delta: "Looking at greet.ts" });
-    const told = await callBrainTool(running, "message_worker", { ticket: ticket.id, text: "Keep it to one line" });
+    const told = await callBrainTool(running, "message_worker", { ticket: ticket.code, text: "Keep it to one line" });
     expect(told.isError).toBe(false);
     expect(sent.filter((message) => message.type === "work.message").map((message) => (message.type === "work.message" ? message.from : ""))).toEqual(["brain"]);
-    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id });
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.code });
     expect(read.text).toContain("Worker: attempt 1 on pc with claude claude-haiku-5-5 low is preparing");
     expect(read.text).toContain("Looking at greet.ts");
   });
@@ -220,7 +220,7 @@ describe("a writing ticket's delivery", () => {
       conversation.id,
     );
     expect(opened.isError).toBe(false);
-    expect(opened.text).toContain("Opened task ticket 1");
+    expect(opened.text).toContain("Opened task ticket aa-2026-11-17");
     expect(opened.text).toContain("choose_defaults");
     const ticket = running.tickets.get(1);
     expect(ticket).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id });
@@ -236,7 +236,7 @@ describe("a writing ticket's delivery", () => {
       deploys: false,
     });
     const stated = await callBrainTool(running, "choose_defaults", {
-      chains: [{ ticket: 1, kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
+      chains: [{ ticket: "aa", kind: "writing", reason: { en: "A short translation", zh: "一段很短的翻译" }, platform: "any" }],
     });
     expect(stated.isError).toBe(false);
     const card = running.chains.cards().find((entry) => entry.ticket.id === 1);
@@ -251,10 +251,10 @@ describe("a writing ticket's delivery", () => {
     event(runner, 1, 2, { kind: "text", block: "question", delta: "Which " });
     event(runner, 1, 3, { kind: "text", block: "question", delta: "format?" });
     const progress = (await stream(sandbox)).entries;
-    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 1 已开始" }) }));
-    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 1：Which format?", ticket: 1 }) }));
+    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 aa 已开始" }) }));
+    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 aa：Which format?", ticket: 1 }) }));
     expect(updates).toContain("task-card-1");
-    const question = progress.find(({ entry }) => entry.text === "工单 1：Which format?");
+    const question = progress.find(({ entry }) => entry.text === "工单 aa：Which format?");
     expect(updates).toContain(question?.entry.id);
     expect(updates.filter((id) => id === question?.entry.id)).toHaveLength(2);
     event(runner, 1, 4, {
@@ -292,7 +292,7 @@ describe("a writing ticket's delivery", () => {
     running.work.begin(running.tickets.get(2)!);
     event(runner, 2, 1, { kind: "phase", phase: "started", detail: "Started" });
     event(runner, 2, 2, { kind: "failed", failure: "task-failed", reason: "The source is missing" });
-    expect((await stream(sandbox)).entries).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ kind: "notice", text: "工单 2 的执行没有完成，大脑会决定怎么处理" }) }));
+    expect((await stream(sandbox)).entries).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ kind: "notice", text: "工单 ab 的执行没有完成，大脑会决定怎么处理" }) }));
     expect((await stream("")).entries).toEqual([]);
   });
 });

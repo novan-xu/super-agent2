@@ -1,9 +1,9 @@
-import { type HistoryItem, openTicketStates, TopicBoardEntry, type TopicSeed, type TurnOutcome } from "@super-agent2/protocol";
+import { type HistoryItem, openTicketStates, ticketReference, TopicBoardEntry, type TopicSeed, type TurnOutcome } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 
 const BoardRow = TopicBoardEntry.extend({ revision: z.number().int() });
-const SeedTicket = z.object({ id: z.number(), own: z.number(), state: z.string(), repository: z.string().nullable(), title: z.string() });
+const SeedTicket = z.object({ code: z.string(), codeDate: z.string(), own: z.number(), state: z.string(), repository: z.string().nullable(), title: z.string() });
 const HistoryRow = z.object({ id: z.string(), conversation_id: z.string(), turn_id: z.string().nullable(), stream_seq: z.number(), kind: z.string() });
 const TurnId = z.object({ id: z.string() });
 const TurnSummary = z.object({
@@ -31,7 +31,7 @@ export function createTopicContext({ connection }: HubDatabase, itemOf: (row: un
       FROM conversations WHERE board_revision > ? ORDER BY board_revision`,
   );
   const selectTickets = connection.prepare(
-    `SELECT id, conversation_id IS ? AS own, state, repository, title_en AS title FROM tickets
+    `SELECT code, code_date AS codeDate, conversation_id IS ? AS own, state, repository, title_en AS title FROM tickets
       WHERE state IN (${openTicketStates.map(() => "?").join(", ")}) ORDER BY own DESC, created_at DESC, id DESC`,
   );
   const selectTurns = connection.prepare(
@@ -93,8 +93,9 @@ export function createTopicContext({ connection }: HubDatabase, itemOf: (row: un
   };
 
   const tickets = (topic: string | null): TopicSeed["tickets"] => selectTickets.all(topic, ...openTicketStates).map((row) => {
-    const { id, own, state, repository, title } = SeedTicket.parse(row);
-    return { own: own === 1, line: `#${id} [${state}]${repository === null ? "" : ` ${repository}`} — ${title.replace(/\s+/gu, " ")}` };
+    const ticket = SeedTicket.parse(row);
+    const { own, state, repository, title } = ticket;
+    return { own: own === 1, line: `ticket ${ticketReference(ticket)} [${state}]${repository === null ? "" : ` ${repository}`} — ${title.replace(/\s+/gu, " ")}` };
   });
 
   const seed = (topic: string, exclude: ReadonlySet<string>, continuing: boolean): TopicSeed => {

@@ -60,6 +60,30 @@ describe("openDatabase", () => {
 });
 
 describe("applyMigrations", () => {
+  it("backfills codes in local creation order and preserves the old work branch", () => {
+    using connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    applyMigrations(connection, migrations.filter(({ version }) => version < 43), clock);
+    const insert = connection.prepare(`
+      INSERT INTO tickets (id, repository, kind, title_en, title_zh, summary_en, summary_zh, state, branch, created_at, updated_at)
+      VALUES (?, 'novan-xu/a', 'fix', 't', 't', 's', 's', 'working', 'sa2/ticket-1-beef', ?, ?)
+    `);
+    const midnight = Date.parse("2026-11-19T05:00:00Z");
+    for (const [id, at] of [[4, midnight - 1], [3, midnight - 1], [2, midnight], [1, midnight - 2]] as const) {
+      insert.run(id, at, at);
+    }
+    applyMigrations(connection, migrations, clock, "America/New_York");
+    expect(connection.prepare("SELECT id, code, code_date, branch FROM tickets ORDER BY id").all()).toEqual([
+      { id: 1, code: "aa", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+      { id: 2, code: "aa", code_date: "2026-11-19", branch: "sa2/ticket-1-beef" },
+      { id: 3, code: "ab", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+      { id: 4, code: "ac", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+    ]);
+    expect(() => connection.exec("UPDATE tickets SET code = 'aa' WHERE id = 3")).toThrow(/UNIQUE constraint failed/);
+    expect(() => connection.exec("UPDATE tickets SET code = 'abc' WHERE id = 3")).toThrow(/CHECK constraint failed/);
+    expect(() => connection.exec("UPDATE tickets SET code = NULL WHERE id = 3")).toThrow(/require a code and creation day/);
+  });
+
   it("rolls back a migration that fails and applies nothing after it", () => {
     const connection = new DatabaseSync(":memory:");
     const broken = [

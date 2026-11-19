@@ -219,7 +219,7 @@ function ProblemBox({ problem, now }: { readonly problem: TicketProblem; readonl
         {problem.before.map((entry) => (
           <span key={entry.id} className="chain-before-item">
             <span className={`dot dot--${entry.state === "working" || entry.state === "verifying" ? "ok" : "mute"}`} />
-            <span>{entry.title ?? text("ticket.number", { ticket: entry.id })}</span>
+            <span>{entry.title ?? (entry.code ?? text("ticket.missing"))}</span>
           </span>
         ))}
       </div>
@@ -750,7 +750,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
         {backLink}
         <div className="meta-row">
           <PhaseStatus phase={ticketPhase(ticket)} />
-          <span className="chip chip--mono">{text("ticket.number", { ticket: ticket.id })}</span>
+          <span className="chip chip--mono">{ticket.code}</span>
           {ticket.repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />
@@ -761,12 +761,12 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
           <RepairChip ticket={ticket} />
           {ticket.repairs === null ? null : (
             <a className="chip chip--mono" href={ticketHref(ticket.repairs)} onClick={(event) => followLink(event, () => openTicket(ticket.repairs ?? 0))}>
-              {text("ticket.repairs", { ticket: ticket.repairs })}
+              {text("ticket.repairs", { ticket: ticket.repairsReference?.split("-")[0] ?? known.get(ticket.repairs)?.code ?? "?" })}
             </a>
           )}
           {ticket.repairedBy === null ? null : (
             <a className="chip chip--mono" href={ticketHref(ticket.repairedBy)} onClick={(event) => followLink(event, () => openTicket(ticket.repairedBy ?? 0))}>
-              {text("ticket.repairedBy", { ticket: ticket.repairedBy })}
+              {text("ticket.repairedBy", { ticket: ticket.repairedByReference?.split("-")[0] ?? known.get(ticket.repairedBy)?.code ?? "?" })}
             </a>
           )}
         </div>

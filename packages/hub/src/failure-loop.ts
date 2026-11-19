@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
   capReached,
@@ -77,7 +78,7 @@ export const ownerGaveUpReason = { en: "The owner gave it up after its guided ro
 const everyTicket = 100_000;
 
 function described(ticket: Ticket): string {
-  return `ticket ${ticket.id} (${ticket.title.en})`;
+  return `ticket ${ticketReference(ticket)} (${ticket.title.en})`;
 }
 
 export function workerNote(ticket: Ticket, failure: LoopFailure, guidance: GeneratedText, counted: boolean, round: number): string {
@@ -129,7 +130,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     }
     tell(
       stuck.id,
-      text("notice.ticketStuck", { ticket: stuck.id, round: stuck.round }),
+      text("notice.ticketStuck", { ticket: stuck.code, round: stuck.round }),
       [
         `[hub] ${described(stuck)} failed again after ${stuck.round} guided rounds, the cap of ${roundCap}: ${failureWords[report.failure.kind]}.`,
         report.evidence,
@@ -160,7 +161,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const verifying = report.failure.kind === "workflow";
     tell(
       ticket.id,
-      text(verifying ? "notice.verificationFailed" : "notice.workerFailed", { ticket: ticket.id }),
+      text(verifying ? "notice.verificationFailed" : "notice.workerFailed", { ticket: ticket.code }),
       [
         `[hub] ${described(ticket)} failed: ${failureWords[report.failure.kind]}.`,
         report.evidence,
@@ -173,16 +174,16 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
   const guide = (id: number, guidance: GeneratedText, turn?: TicketTurn): LoopOutcome => {
     const ticket = tickets.get(id);
     if (ticket === undefined) {
-      return { ok: false, reason: `There is no ticket ${id}.` };
+      return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}.` };
     }
     const refusal = guidanceRefusal(ticket);
     if (refusal !== null) {
-      return { ok: false, reason: `Ticket ${id} cannot have a guided round: ${refusalWords[refusal]}.` };
+      return { ok: false, reason: `Ticket ${ticketReference(ticket)} cannot have a guided round: ${refusalWords[refusal]}.` };
     }
     const failure = loopFailureOf(ticket);
     const work = options.work();
     if (failure === null || work === undefined) {
-      return { ok: false, reason: `Ticket ${id} cannot have a guided round: ${refusalWords["nothing-failed"]}.` };
+      return { ok: false, reason: `Ticket ${ticketReference(ticket)} cannot have a guided round: ${refusalWords["nothing-failed"]}.` };
     }
     const next = nextRound(ticket, failure);
     const reason = next.counted
@@ -229,7 +230,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       const repair = gave.repair;
       tell(
         ended.id,
-        repair === null ? text("notice.ownerGaveUpEnded", { ticket: ticket.id }) : text("notice.ownerGaveUp", { ticket: ticket.id, repair: repair.id }),
+        repair === null ? text("notice.ownerGaveUpEnded", { ticket: ticket.code }) : text("notice.ownerGaveUp", { ticket: ticket.code, repair: repair.code }),
         [
           `[hub] The owner gave up ${described(ticket)} on its card, after ${stuck.round} guided rounds. It is stopped, and nothing of it is destroyed: its branch and any pull request stay on GitHub, and its folder is kept for the repair and saved to the branch where its machine can.`,
           ...chainProgress(ended),
@@ -246,7 +247,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       resumed = tickets.change((writes) => {
         const current = writes.get(ticket.id);
         if (current?.state !== "stuck" || current.stuck?.at !== given.request.at) {
-          throw new TicketError(`Ticket ${ticket.id} changed meanwhile`);
+          throw new TicketError(`Ticket ${ticketReference(ticket)} changed meanwhile`);
         }
         return writes.resume(ticket.id, ownerResumedReason);
       });
@@ -259,7 +260,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const evidence = evidenceOf(resumed, stuck.failure);
     tell(
       resumed.id,
-      words === "" ? text("notice.ownerResumed", { ticket: resumed.id }) : text("notice.ownerResumedWords", { ticket: resumed.id, words }),
+      words === "" ? text("notice.ownerResumed", { ticket: resumed.code }) : text("notice.ownerResumedWords", { ticket: resumed.code, words }),
       [
         `[hub] The owner resumed ${described(resumed)} on its card. Its guided rounds count from 0 of ${roundCap} again. It is ${resumed.state} again with the failure it stopped on, and nothing runs for it yet.`,
         words === "" ? "The owner gave no words." : `The owner's words to you: ${words}`,
@@ -278,7 +279,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     }
     tell(
       ticket.id,
-      text(merged ? "notice.ownerStoppedChain" : "notice.ownerStopped", { ticket: ticket.id }),
+      text(merged ? "notice.ownerStoppedChain" : "notice.ownerStopped", { ticket: ticket.code }),
       [
         merged
           ? `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed; its branch and any open pull request stay on GitHub, and nothing more of the chain is done unless the owner asks for it to go on: then open a repair ticket for it with open_repair_ticket.`

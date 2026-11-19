@@ -24,8 +24,8 @@ export function PhaseStatus({ phase }: { readonly phase: TicketPhase }) {
   );
 }
 
-export function TicketNumber({ id }: { readonly id: number }) {
-  return <span className="mono wb-ticket-number">{`#${id}`}</span>;
+export function TicketCodeLabel({ code }: { readonly code: string }) {
+  return <span className="mono wb-ticket-code">{code}</span>;
 }
 
 export const pullRequestTones: Readonly<Record<TicketPullRequestState, "ok" | "info" | "mute">> = { merged: "ok", open: "info", closed: "mute" };
@@ -68,7 +68,7 @@ export function engineName(engine: Ticket["engine"]): string {
 export function problemLines(problem: TicketProblem, now: number): readonly string[] {
   switch (problem.kind) {
     case "waits":
-      return [problem.before.map((entry) => entry.title ?? text("ticket.number", { ticket: entry.id })).join("、")];
+      return [problem.before.map((entry) => entry.title ?? (entry.code ?? text("ticket.missing"))).join("、")];
     case "beginFailed":
       return [problem.reason];
     case "queued":

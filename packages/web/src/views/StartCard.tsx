@@ -6,7 +6,7 @@ import { kindKey } from "../live/phase.js";
 import { type CardUse, type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
-import { RepairChip, TicketNumber } from "./TicketParts.js";
+import { RepairChip, TicketCodeLabel } from "./TicketParts.js";
 
 export interface StartCardProps {
   readonly card: Card;
@@ -112,7 +112,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
   const { ticket } = card;
   const sending = use.step === "sending";
   return (
-    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} #${ticket.id}`}>
+    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code}`}>
       <div className="wcard-kind">
         {ticket.repository === null ? null : (
           <span className="chip chip--mono">
@@ -127,7 +127,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
       </div>
       {ticket.issues.length > 0 ? null : (
         <>
-          <p className="card-title"><TicketNumber id={ticket.id} /> {chineseOf(ticket.title)}</p>
+          <p className="card-title"><TicketCodeLabel code={ticket.code} /> {chineseOf(ticket.title)}</p>
           <p className="chain-reason">{chineseOf(ticket.summary)}</p>
         </>
       )}

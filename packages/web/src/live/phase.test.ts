@@ -69,15 +69,15 @@ describe("what a ticket's row and panel say", () => {
       state: "waiting",
       waits: [
         { ticket: 1, deployment: false, waived: false },
-        { ticket: 2, deployment: false, waived: false },
+        { ticket: 2, reference: "ab-2026-11-18", deployment: false, waived: false },
         { ticket: 4, deployment: false, waived: true },
       ],
     });
     expect(ticketProblem(waiting, new Map([[1, first]]))).toEqual({
       kind: "waits",
       before: [
-        { id: 1, title: "甲", state: "working" },
-        { id: 2, title: null, state: null },
+        { id: 1, code: "aa", title: "甲", state: "working" },
+        { id: 2, code: "ab", title: null, state: null },
       ],
     });
   });

@@ -32,6 +32,10 @@ export function namedReferences(text: string, bare: boolean): Reference[] {
     const value = String(Number(match[2]));
     found.push({ kind: match[1]!.startsWith("工单") ? "ticket" : "issue", value, key: `n:${value}` });
   }
+  for (const match of text.matchAll(/(?:\bticket\s+|\u5de5\u5355\s*)([a-z]{2}(?:-\d{4}-\d{2}-\d{2})?)(?![a-z0-9-])/gi)) {
+    const value = match[1]!.toLowerCase();
+    found.push({ kind: "ticket", value, key: `ticket:${value}` });
+  }
   if (bare) {
     for (const match of text.matchAll(/(?<![\d.:#\w-])(\d{2,4})(?![\d.:%\w-])/g)) {
       const rest = text.slice((match.index ?? 0) + match[0].length);

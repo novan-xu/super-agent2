@@ -19,6 +19,12 @@ function problemsFor(env: Record<string, string | undefined>): readonly string[]
 }
 
 describe("loadConfig", () => {
+  it("reads a configured time zone for the ticket sequence", () => {
+    const result = loadConfig({ ...valid, HUB_TICKET_TIME_ZONE: "Asia/Shanghai" });
+    expect(result.ok && result.config.ticketTimeZone).toBe("Asia/Shanghai");
+    expect(problemsFor({ ...valid, HUB_TICKET_TIME_ZONE: "Somewhere/Nowhere" })[0]).toMatch(/^HUB_TICKET_TIME_ZONE must be a valid time zone/);
+  });
+
   it("accepts a complete environment and fills in the defaults", () => {
     expect(loadConfig(valid)).toEqual({
       ok: true,

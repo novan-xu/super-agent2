@@ -85,7 +85,7 @@ export function ticketPhase(ticket: Ticket): TicketPhase {
 }
 
 export type TicketProblem =
-  | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
+  | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly code: string | null; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
   | { readonly kind: "beginFailed"; readonly reason: string }
   | { readonly kind: "queued"; readonly machine: string }
   | { readonly kind: "providerWaiting"; readonly reason: string }
@@ -104,7 +104,7 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
     case "waiting": {
       const before = unmetWaits(ticket, known).map((wait) => {
         const found = known.get(wait.ticket);
-        return { id: wait.ticket, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
+        return { id: wait.ticket, code: found?.code ?? wait.reference?.split("-")[0] ?? null, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
       });
       return { kind: "waits", before };
     }

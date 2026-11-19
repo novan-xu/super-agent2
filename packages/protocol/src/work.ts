@@ -4,6 +4,7 @@ import { Attachment, AttachmentId } from "./attachments.js";
 import { GitHubAccount } from "./commands.js";
 import { Decision } from "./decisions.js";
 import { GeneratedText } from "./generated.js";
+import { TicketReference } from "./ticket-reference.js";
 
 export const workEngines = ["codex", "claude", "dsh", "antigravity"] as const;
 export const WorkEngine = z.enum(workEngines);
@@ -124,6 +125,7 @@ export type WorkIssue = z.infer<typeof WorkIssue>;
 
 export const WorkTask = z.object({
   ticket: Ticket,
+  ticketReference: TicketReference.optional(),
   attempt: Attempt,
   repository: z.string().min(3),
   account: GitHubAccount,
@@ -162,6 +164,7 @@ export type TaskCheckout = z.infer<typeof TaskCheckout>;
 
 export const TaskAssignment = z.object({
   ticket: Ticket,
+  ticketReference: TicketReference.optional(),
   attempt: Attempt,
   title: z.string().min(1),
   task: z.string().min(1),

@@ -53,11 +53,11 @@ function topic(running: Hub, brain: BrainLink, name: string): RunningTurn {
 }
 
 function read(running: Hub, scope: RunningTurn, ticket: number) {
-  return requestBrainTool(running, "read_ticket", { ticket }, scope);
+  return requestBrainTool(running, "read_ticket", { ticket: running.tickets.reference(ticket) }, scope);
 }
 
 function record(running: Hub, scope: RunningTurn | undefined, ticket: number, choice: string) {
-  return requestBrainTool(running, "record_decision", { ticket, chosen: { en: choice, zh: "已作选择" }, why: rationale, other_options: rationale }, scope);
+  return requestBrainTool(running, "record_decision", { ticket: running.tickets.reference(ticket), chosen: { en: choice, zh: "已作选择" }, why: rationale, other_options: rationale }, scope);
 }
 
 function end(brain: BrainLink, scope: RunningTurn, outcome: TurnOutcome = "completed"): void {
@@ -129,8 +129,8 @@ describe("topic turn ticket writes", () => {
     expect(await record(running, second, follower, "Keep the dependency")).toMatchObject({ isError: false });
     await Promise.all([read(running, first, original), read(running, first, follower)]);
 
-    const repair = () => requestBrainTool(running, "open_repair_ticket", { ticket: original }, first);
-    expect(await repair()).toMatchObject({ isError: true, text: expect.stringContaining(`Ticket ${follower} is locked by topic "Follower topic"`) });
+    const repair = () => requestBrainTool(running, "open_repair_ticket", { ticket: running.tickets.reference(original) }, first);
+    expect(await repair()).toMatchObject({ isError: true, text: expect.stringContaining(`Ticket ${running.tickets.reference(follower)} is locked by topic "Follower topic"`) });
     expect(lockedTickets(running, first)).toEqual([]);
     expect(running.tickets.get(original)?.repairedBy).toBeNull();
     expect(running.tickets.get(follower)?.waits[0]?.ticket).toBe(original);
@@ -244,7 +244,7 @@ describe("topic turn ticket writes", () => {
     expect(refused).toMatchObject({ isError: true, text: expect.stringContaining(`The GitHub issue was filed at ${url}. No ticket was opened`) });
     expect(running.tickets.list()).toEqual([]);
     const current = startToolTurn(brain, first.conversation);
-    expect(await file(current)).toMatchObject({ isError: false, text: expect.stringContaining("opened ticket 1") });
+    expect(await file(current)).toMatchObject({ isError: false, text: expect.stringContaining("opened ticket aa-2026-11-17") });
     expect(lockedTickets(running, current)).toEqual([1]);
     expect(created).toBe(1);
   });

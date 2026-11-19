@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -153,9 +154,9 @@ describe("workbench rearrangement", () => {
     const input = brain.messages.find((message) => message.type === "input" && message.conversation === topic.id);
     expect(input?.type).toBe("input");
     if (input?.type !== "input") throw new Error("Missing rearrangement input");
-    expect(input.input.text).toContain(`"id":${project.id}`);
-    expect(input.input.text).not.toContain(`"id":${daily.id}`);
-    expect(input.input.text).not.toContain(`"id":${other.id}`);
+    expect(input.input.text).toContain(`"ticket":"ticket ${ticketReference(project)}"`);
+    expect(input.input.text).not.toContain(`"ticket":"ticket ${ticketReference(daily)}"`);
+    expect(input.input.text).not.toContain(`"ticket":"ticket ${ticketReference(other)}"`);
     for (const rule of ["list_tickets", "read_ticket", "arrange_chains", "choose_defaults", "stop_ticket", "record_decision", "Never touch a ticket whose worker is running", "Never start anything", "Reply in Chinese"]) expect(input.input.text).toContain(rule);
     expect((await post({})).status).toBe(409);
     brain.link.receive({ type: "turn.started", conversation: topic.id, turn: "rearrange-turn", provider: "gpt", model: "test", inputs: [input.input.id] });
@@ -167,8 +168,8 @@ describe("workbench rearrangement", () => {
     expect(dailyTopic.repository).toBeNull();
     const dailyInput = brain.messages.find((message) => message.type === "input" && message.conversation === dailyTopic.id);
     if (dailyInput?.type !== "input") throw new Error("Missing daily input");
-    expect(dailyInput.input.text).toContain(`"id":${daily.id}`);
-    expect(dailyInput.input.text).not.toContain(`"id":${project.id}`);
+    expect(dailyInput.input.text).toContain(`"ticket":"ticket ${ticketReference(daily)}"`);
+    expect(dailyInput.input.text).not.toContain(`"ticket":"ticket ${ticketReference(project)}"`);
     brain.link.receive({ type: "turn.started", conversation: dailyTopic.id, turn: "daily-turn", provider: "gpt", model: "test", inputs: [dailyInput.input.id] });
     brain.link.receive({ type: "turn.finished", conversation: dailyTopic.id, turn: "daily-turn", outcome: "completed", reason: null });
     const all = await post({});
@@ -176,7 +177,7 @@ describe("workbench rearrangement", () => {
     const allTopic = ConversationResponse.parse(await all.json()).conversation;
     const allInput = brain.messages.find((message) => message.type === "input" && message.conversation === allTopic.id);
     if (allInput?.type !== "input") throw new Error("Missing all-scope input");
-    for (const item of [project, daily, other]) expect(allInput.input.text).toContain(`"id":${item.id}`);
+    for (const item of [project, daily, other]) expect(allInput.input.text).toContain(`"ticket":"ticket ${ticketReference(item)}"`);
   });
 });
 
@@ -360,7 +361,7 @@ describe("conversations for the page", () => {
     const prepared = brain.received.find((message) => message.type === "prepared");
     expect(prepared?.type === "prepared" && prepared.history).toEqual([
       { kind: "notice", text: "任务：翻译一则通知" },
-      { kind: "notice", text: expect.stringContaining(`The result of task ticket ${ticket.id} (Translate a notice) was delivered`) },
+      { kind: "notice", text: expect.stringContaining(`The result of task ticket ${ticketReference(ticket)} (Translate a notice) was delivered`) },
     ]);
   });
 
@@ -911,7 +912,7 @@ describe("topic context", () => {
     expect(result?.turns).toHaveLength(50);
     expect(result?.turns[0]).toMatchObject([{ text: "Request 2" }, { text: "Result 2" }]);
     expect(result?.turns.at(-1)).toMatchObject([{ text: "Request 51" }, { text: "Result 51" }]);
-    expect(result?.tickets).toEqual([{ own: true, line: expect.stringContaining(`#${own.id} `) }, { own: false, line: expect.stringContaining(`#${foreign.id} `) }]);
+    expect(result?.tickets).toEqual([{ own: true, line: expect.stringContaining(`ticket ${ticketReference(own)} `) }, { own: false, line: expect.stringContaining(`ticket ${ticketReference(foreign)} `) }]);
   });
 
   it("tracks board changes by revision and resets the saved destination session on merge", async () => {
@@ -974,7 +975,7 @@ describe("topic context", () => {
     const secondPart = await call("read_topic_history", { message: entry?.id, offset: firstPart.nextOffset });
     expect(JSON.parse(firstPart.text + secondPart.text).item.text).toBe(body);
     expect(secondPart.nextOffset).toBeNull();
-    expect((await call("read_seed_material", { section: "tickets" })).text).toContain(`#${ticket.id} `);
+    expect((await call("read_seed_material", { section: "tickets" })).text).toContain(`ticket ${ticketReference(ticket)} `);
     expect((await call("read_seed_material", { section: "memory" })).text).toContain("你希望记录每次发布的时间。");
   });
 });

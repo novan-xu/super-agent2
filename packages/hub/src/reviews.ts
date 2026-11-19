@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import { type DecisionReview, type Ticket, type TicketDecision, unsettledDecisions } from "@super-agent2/protocol";
 import type { Tell } from "./chains.js";
@@ -18,7 +19,7 @@ export interface DecisionReviewsOptions {
 }
 
 function described(ticket: Ticket): string {
-  return `ticket ${ticket.id} (${ticket.title.en})`;
+  return `ticket ${ticketReference(ticket)} (${ticket.title.en})`;
 }
 
 export function reviewPrompt(ticket: Ticket, batch: readonly TicketDecision[]): string {
@@ -68,7 +69,7 @@ export function createDecisionReviews(options: DecisionReviewsOptions): Decision
       }
       const opinions = batch.filter((entry) => entry.verdict === "opinion");
       if (opinions.length > 0) {
-        tell(ticket.id, text("notice.decisionsReviewed", { ticket: ticket.id, count: opinions.length }), reviewPrompt(ticket, batch));
+        tell(ticket.id, text("notice.decisionsReviewed", { ticket: ticket.code, count: opinions.length }), reviewPrompt(ticket, batch));
       }
       return { ok: true, ticket, sent: batch };
     },
