@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { Attachment } from "./attachments.js";
-import { ConversationId, MessageId, Provider, TopicScope } from "./conversations.js";
+import { ConversationId, MessageId, Provider } from "./conversations.js";
 import { QuestionAnswers } from "./questions.js";
 import { MemoryBrief } from "./memory.js";
-import { RepositoryName } from "./repositories.js";
 import { ProtocolVersion } from "./version.js";
 
 export const InputSource = z.enum(["owner", "hub"]);
@@ -192,64 +191,6 @@ export const BrainProviders = z.object({
 });
 export type BrainProviders = z.infer<typeof BrainProviders>;
 
-const RouteTopic = z.object({
-  id: ConversationId,
-  title: z.string(),
-  repository: RepositoryName.nullable(),
-  status: z.string().optional(),
-  recent: z.array(z.object({ speaker: z.enum(["owner", "assistant"]), text: z.string() })),
-});
-
-export const RouteRequest = z.object({
-  type: z.literal("route"),
-  request: z.string().min(1),
-  scope: TopicScope,
-  topics: z.array(RouteTopic),
-  repositories: z.array(RepositoryName),
-  tickets: z.array(z.object({
-    id: z.number().int().positive(),
-    repository: RepositoryName,
-    title: z.string(),
-    issues: z.array(z.number().int().positive()),
-  })),
-  text: z.string(),
-  files: z.array(z.string()),
-});
-export type RouteRequest = z.infer<typeof RouteRequest>;
-
-export const RouteChoice = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("existing"), topic: ConversationId }),
-  z.strictObject({
-    kind: z.literal("new"),
-    title: z.string().trim().min(1).max(120).regex(/^[^\r\n]+$/),
-    repository: RepositoryName.nullable().optional(),
-    possibleMatch: ConversationId.optional(),
-  }),
-]);
-export type RouteChoice = z.infer<typeof RouteChoice>;
-
-export function routeFits(request: RouteRequest, choice: RouteChoice): boolean {
-  if (choice.kind === "existing") {
-    return request.topics.some(({ id }) => id === choice.topic);
-  }
-  if (choice.possibleMatch !== undefined && !request.topics.some(({ id }) => id === choice.possibleMatch)) {
-    return false;
-  }
-  const repository = choice.repository?.toLowerCase();
-  return repository === undefined || (
-    request.scope.kind === "repository"
-      ? repository === request.scope.repository.toLowerCase()
-      : request.scope.kind === "code" && request.repositories.some((name) => name.toLowerCase() === repository)
-  );
-}
-
-export const RouteAnswer = z.object({
-  type: z.literal("routed"),
-  request: z.string().min(1),
-  choice: RouteChoice.nullable(),
-});
-export type RouteAnswer = z.infer<typeof RouteAnswer>;
-
 const Withdrawn = z.object({ type: z.literal("input.withdrawn"), conversation: ConversationId, input: z.string().min(1) });
 const Withdrawing = Withdrawn.extend({ type: z.literal("input.withdrawing"), turn: z.string().min(1) });
 const TopicPaused = z.object({ type: z.literal("topic.paused"), conversation: ConversationId, merge: z.string().min(1) });
@@ -267,7 +208,6 @@ export const BrainMessage = z.discriminatedUnion("type", [
   SessionRecorded,
   PrepareRequest,
   BrainProviders,
-  RouteAnswer,
   Withdrawn,
   Withdrawing,
   TopicPaused,
@@ -318,7 +258,7 @@ const TopicGates = z.object({
   merged: z.array(z.object({ source: ConversationId, destination: ConversationId })),
 });
 
-export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder, RouteRequest, WithdrawInput, TopicGates]);
+export const HubToBrain = z.discriminatedUnion("type", [HubHello, DeliverInput, InterruptTurn, Prepared, SetProviderOrder, WithdrawInput, TopicGates]);
 export type HubToBrain = z.infer<typeof HubToBrain>;
 
 export const brainLinkPath = "/brain/link";

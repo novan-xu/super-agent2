@@ -43,7 +43,6 @@ API directly.
 | Role | Providers |
 | --- | --- |
 | Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
-| Router | Uses the brain's provider order and the same subscriptions and programs. Starts with Claude Haiku 5.5 (`claude-haiku-5-5`), the lightest GPT model offered in Codex (initially `gpt-6-luna`), and `deepseek-flash`. |
 | Worker, code | Codex, Claude Code and `dsh`. |
 | Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
 
@@ -55,8 +54,6 @@ for workers as well.
 The brain switches provider by itself when its program reports itself unavailable. A worker does the same, decided by
 the hub.
 
-- The router follows the brain's order and skips unavailable providers. With no routing result from any provider,
-  the hub keeps the input in a new topic.
 - When a worker's program reports itself unavailable (a used-up subscription, a rate limit, a failed login, an
   overloaded or failing service), the ticket continues on the next provider in the owner's order, on the same machine
   when that machine has the program, with the model and effort the start-defaults table gives for that provider and the
@@ -102,7 +99,7 @@ the hub.
   shorter. Set `HUB_TOPIC_ARCHIVE_MS` to change the age. System is exempt. An open ticket can stay linked to an
   archived topic. The hub persists any missing finished-turn summaries before archiving, including when a program
   session is still open.
-- Archived topics stay in the stream and searchable history. The router leaves them out of automatic matching.
+- Archived topics stay in the stream and searchable history. Routing leaves them out of automatic matching.
   A direct message, quoted reply, move, handover or ticket notice to an archived topic makes it active again.
 - Each existing conversation becomes a topic, keeping its history and saved program session IDs.
   It takes a repository if every ticket linked to it belongs to that repository. Existing ticket links are preserved,
@@ -112,21 +109,43 @@ the hub.
 
 - A message sent in a topic view goes straight to that topic. A quoted reply goes to the quoted message's topic and
   gives the session the quoted message. The topic view offers quotes from its own messages, and the main stream can
-  quote across topics. Both forms of direct routing skip the router.
-- For other messages in the main stream, a resident router uses the [topic board](#topic-board) and the message to
-  choose an existing topic or a new one. It uses a fast model through the provider's program, with about one second
-  of routing latency as the target. The router has no tools. It sees titles and statuses, with up to three recent
-  owner or assistant excerpts for topics without a status.
-- The composer for 日常 matches daily topics. A repository composer matches topics in that repository. The composer
-  for all of 代码 matches topics across repositories, including topics waiting for a repository. For a new topic in
-  all of 代码, the router can pick a repository from active topics and open tickets. If it cannot pick one, the new
-  topic asks the owner which repository it belongs to and assigns it when the owner names it.
-- When unsure, the router starts a new topic. If there is a plausible match, it marks the new topic as possibly
-  belonging to that topic. The owner can move the message to another topic with 移到…. A topic session can also
-  hand a message over to another topic.
-- A new topic uses the router's title or, if routing fails, a short title derived from the first message. The hub
-  records the chosen topic and any possible match with the owner's message. It keeps an input while routing is
-  pending and opens a fresh topic for it if the hub restarts before routing completes.
+  quote across topics. Answers to a question card stay in the card's topic. None of these is routed.
+- Every other message in the main stream is routed by the hub, with rules and a score and without a large-model call
+  (#143; the evaluation behind it is [routing-evaluation.md](routing-evaluation.md)). The candidates are the active
+  topics in the composer's scope, except System, merged topics and topics with a merge pending, most recently active
+  first. In this order:
+
+  | Step | Rule |
+  | --- | --- |
+  | a | Open question: the most recently active candidate is waiting for the owner (an unanswered question card, or its last assistant reply has `?` or `？` in its last line within the last 40 characters) and was active at most 30 minutes ago. Join it. |
+  | e | Reference: the message names a ticket (`工单 n`), an issue or a pull request (`#n`, `issue n`, `PR n`) that belongs to exactly one candidate. The hub asks its database first (the ticket's topic, through `ticket_issues` and the ticket's pull requests); a reference the database does not know matches the candidates whose messages or replies contain it. Join that topic. |
+  | b | Short reply: at most 12 characters, no attachment, and the most recently active candidate was active at most 30 minutes ago. Join it. |
+  | c | Score: the best similarity between the message and a topic's texts (its first owner message, its last five owner messages and its last three replies clipped to 320 characters), minus `decay × log2(1 + idle / 10 min)`. Join the best topic if it reaches the threshold and leads the runner-up by the margin. |
+  | d | Otherwise open a new topic titled with the message's first line, marked as possibly belonging to the best-scoring candidate when there is one. |
+
+- Two configurations exist, with their constants together in `packages/routing`. The primary one uses all five steps
+  with `bge-small-zh-v1.5` (fp32, CLS pooling, normalised, compared by dot product) as the scorer: threshold 0.570,
+  margin 0.096, decay 0.048. The other uses steps b, c and d with character bigrams: threshold 0.055, margin 0.091,
+  decay 0.18. `HUB_ROUTING_PRIMARY` (`model` by default, or `bigram`) picks the primary one; the other runs beside
+  it as a shadow whenever it can.
+- The hub loads the model in the background after it starts, from the files baked into its image
+  (`HUB_ROUTING_MODELS`, see [deploy.md](deploy.md)), and never downloads it. It keeps a vector of every topic text
+  a candidate could be scored on and refreshes them in the background when entries are written, so routing a message
+  embeds only that message. While the model is loading or missing, if it failed to load, or if it fails to embed a
+  message, the bigram configuration decides at once and the reason is recorded.
+- Every routing decision is stored in `routing_decisions` without the message's text: the owner's entry, scope,
+  number of candidates, configuration, any fallback reason, rule, joined topic, the topic the entry was placed in, the
+  best topic with the best and runner-up scores, and the shadow configuration's rule, topic and scores. Moving the entry
+  later with 移到… records the destination and time beside the decision, so the owner's corrections become labels for
+  the next evaluation. The hub also logs one line per decision with the same fields.
+- In 日常 a new topic has no repository; in a repository composer it takes that repository. In all of 代码 it takes a
+  repository only when the message names exactly one of the known repositories (those of the candidates and of open
+  tickets, case-insensitive, as a whole word or as `owner/name`); otherwise it asks the owner which repository it
+  belongs to and assigns it when the owner names it.
+- The owner can move a message to another topic with 移到…, and use a possible match in one tap. A topic session can
+  also hand a message over to another topic.
+- The hub keeps an input in `pending_topic_inputs` while it routes it. If the hub restarts before routing completes,
+  the input is routed at startup with the bigram configuration and the decision records that it was recovered.
 - A move or handover changes where the original message belongs and queues it at the destination. Pending work on that
   message is removed from the source. If the source is answering it, that turn is interrupted before the destination
   handles it. Earlier replies stay in their source topic and completed work is kept.
@@ -143,8 +162,8 @@ the hub.
 The brain checks npm `latest` for Codex, Claude Code and dsh at startup and every six hours. It waits until all
 turns finish, queues new inputs, closes idle program processes and installs newer versions into a persistent volume.
 Each successful install is activated atomically; a failure leaves the previous program in place and is retried at the
-next check. The image pins remain the minimum versions, including dsh's prerelease when npm latest is older. The router
-uses the updated program and topics resume their saved sessions through the hub. The brain container logs updates and
+next check. The image pins remain the minimum versions, including dsh's prerelease when npm latest is older. Topics
+resume their saved sessions through the hub. The brain container logs updates and
 failures.
 
 ### Session seed
@@ -504,7 +523,7 @@ Delivered files go from the runner to the hub in parts the hub asks for, and are
 database. The owner's attachments go to the hub in parts the page sends, and from the hub to a runner in parts the runner
 asks for. Clipping of logs and output handed to an LLM, or listed on the page, is not a limit: the full text stays.
 
-The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default, plus one resident router.
+The brain keeps at most `BRAIN_MAX_OPEN` topic programs open at once, four by default.
 
 The [session seed](#session-seed) uses `BRAIN_SEED_SOFT_SHARE`, 0.15 by default, as the soft share of the input
 capacity of the provider and model running the session. It scales with that capacity and is not a hard cut. The seed includes confirmed memory,
@@ -560,7 +579,7 @@ are.
 ## Notices
 
 - Ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic
-  and appear in the main stream. They skip the router. The first event for an older ticket without a topic creates
+  and appear in the main stream. They are not routed. The first event for an older ticket without a topic creates
   one named after the ticket. Later events use that same topic.
 - Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use in 日常.
   New-model notices link to Settings → Models and tell the brain the reported efforts, machines and current row.
@@ -603,7 +622,7 @@ Changed by this design:
   waiting for predecessors remain in their chain and show their queue; cross-repository predecessors are references
   in a repository view and full cards in 全部. Daily tickets are listed in one column.
 - The owner can quote a message when replying, as in Teams. The composer shows the quoted message. Picking a
-  destination under 移到… moves an owner message immediately. A possible match from the router can be used in one tap.
+  destination under 移到… moves an owner message immediately. A possible match from routing can be used in one tap.
 - Held irreversible operations appear as confirmation cards in 工作台's 等你. That is the only place they can be confirmed.
   确认 and 拒绝 each take one press.
 - A ticket shows which verification rule applied and which guided round it is on.

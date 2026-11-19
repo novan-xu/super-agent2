@@ -70,6 +70,13 @@ describe("loadConfig", () => {
     expect(problemsFor({ ...valid, HUB_DEEPSEEK_LOW_BALANCE: "-1" })[0]).toMatch(/^HUB_DEEPSEEK_LOW_BALANCE/);
   });
 
+  it("reads the routing model's folder and which routing configuration is primary", () => {
+    const result = loadConfig({ ...valid, HUB_ROUTING_MODELS: "/opt/superagent2/models", HUB_ROUTING_PRIMARY: "bigram" });
+    expect(result).toMatchObject({ ok: true, config: { routingModels: "/opt/superagent2/models", routingPrimary: "bigram" } });
+    expect(problemsFor({ ...valid, HUB_ROUTING_MODELS: "models" })[0]).toMatch(/^HUB_ROUTING_MODELS must be an absolute folder/);
+    expect(problemsFor({ ...valid, HUB_ROUTING_PRIMARY: "llm" })[0]).toMatch(/^HUB_ROUTING_PRIMARY must be model or bigram/);
+  });
+
   it("reads the project folders", () => {
     const result = loadConfig({
       ...valid,

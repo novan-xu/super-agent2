@@ -9,12 +9,12 @@ const start = Date.UTC(2026, 10, 1, 12);
 const history: History = {
   name: "sample",
   messages: [
-    { id: "m1", at: start, text: "deploy the photo gallery to the server", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
-    { id: "m2", at: start + 5 * minute, text: "ok", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
-    { id: "m3", at: start + 20 * minute, text: "what is the weather tomorrow", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
-    { id: "m4", at: start + 30 * minute, text: "the photo gallery deploy failed on the server", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
-    { id: "m5", at: start + 40 * minute, text: "ticket 42 stuck?", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
-    { id: "m6", at: start + 30 * hour, text: "photo gallery again", scope: "daily", group: null, explicit: false, routed: true, origin: "test" },
+    { id: "m1", at: start, text: "deploy the photo gallery to the server", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
+    { id: "m2", at: start + 5 * minute, text: "ok", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
+    { id: "m3", at: start + 20 * minute, text: "what is the weather tomorrow", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
+    { id: "m4", at: start + 30 * minute, text: "the photo gallery deploy failed on the server", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
+    { id: "m5", at: start + 40 * minute, text: "ticket 42 stuck?", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
+    { id: "m6", at: start + 30 * hour, text: "photo gallery again", scope: "daily", group: null, explicit: false, routed: true, attachments: false, origin: "test" },
   ],
   replies: [
     { id: "r1", at: start + minute, text: "Started ticket #42 for the gallery. Shall I deploy it now?", about: "m1", asks: true, card: false },

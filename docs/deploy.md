@@ -31,6 +31,8 @@ moves is checked to be inside its own folder and every image it tags or removes 
 | Codex, Claude Code and `dsh` logins and sessions | volumes `superagent2-brain-codex`, `superagent2-brain-claude`, `superagent2-brain-dsh` |
 | Brain's working folder | volume `superagent2-brain-workspace` |
 | Images | `superagent2-hub` and `superagent2-brain`, tagged `current`, `previous` and the commit; commit tags other than the running and the previous version are removed after each release |
+| Topic routing model | inside the hub image, `/opt/superagent2/models/Xenova/bge-small-zh-v1.5` (`HUB_ROUTING_MODELS`); no volume, see [The routing model](#the-routing-model) |
+| Topic routing decisions | table `routing_decisions` of `hub.sqlite` |
 | The hub on the NAS itself | `http://127.0.0.1:18180` (only `/health` answers without the front door; it names the running commit) |
 
 Docker is `/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker`. To look at the project by hand:
@@ -97,6 +99,34 @@ git archive --format=tar -o "superagent2-$C.tar" "$C"
 ssh novan-nas-maintenance "cat > /share/Container/superagent2/incoming/$C.tar" < "superagent2-$C.tar"
 ssh novan-nas-maintenance "bash /share/Container/superagent2/deploy.sh release $C"
 ```
+
+## The routing model
+
+The hub routes a stream message without a topic itself, with `Xenova/bge-small-zh-v1.5` (fp32) as its scorer (see
+[design.md](design.md#routing)). The model is baked into the hub image, so the hub starts and routes without reaching
+the model host:
+
+- The image's `routing-model` stage downloads `config.json`, `tokenizer.json`, `tokenizer_config.json` and
+  `onnx/model.onnx` (about 95 MB) from huggingface.co at the revision pinned in `deploy/Dockerfile`
+  (`ROUTING_MODEL_REVISION`) and checks each file against its SHA-256 there; a changed or missing file fails the build.
+  The first build of a release with this stage needs huggingface.co, as the build already needs npm and GitHub; later
+  builds take the files from Docker's build cache.
+- The hub stage copies them to `/opt/superagent2/models` and sets `HUB_ROUTING_MODELS` to that folder. The hub loads
+  the model from there in the background after it starts and never downloads it.
+- The revision and checksums are also in `packages/routing/src/model.ts` (`bgeSmallZh`); a test of the hub fails if the
+  two differ, so moving to another revision changes both.
+
+The hub logs `Topic routing model bge-small-zh loaded in … ms` once the model is ready. Until then, or if it cannot
+load (the log says why), messages are routed with the bigram configuration at once and each decision records the
+reason. One line per decision starts with `Topic routing decision`:
+
+```sh
+/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker logs superagent2-hub 2>&1 | grep "Topic routing"
+```
+
+To make the bigram configuration the primary one and the model the shadow, set `HUB_ROUTING_PRIMARY=bigram` in
+`secrets/hub.env` and recreate the hub with `bash /share/Container/superagent2/deploy.sh up`; remove the line and
+recreate it again to go back to the model.
 
 ## Updating an instance that let the hub sign in to the NAS host
 

@@ -38,6 +38,8 @@ import { createDecisionReviews, type DecisionReviews } from "./reviews.js";
 import type { AccessServiceTokens } from "./cloudflare.js";
 import { createMachineAdmin, type MachineAdmin } from "./machine-admin.js";
 import { createRepositoryAccounts, type RepositoryAccounts } from "./repositories.js";
+import { bgeSmallZh, modelScorer } from "@super-agent2/routing";
+import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
 
 export interface HubOptions {
@@ -61,6 +63,7 @@ export interface HubOptions {
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
+  readonly routingModel?: ModelLoader;
 }
 
 const accessCheckMilliseconds = 60 * 60 * 1000;
@@ -181,7 +184,16 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       gate: options.gate ?? lock?.gate ?? allowEverything,
     });
-    conversations = createConversationService({ database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder() });
+    const routingModels = config.routingModels;
+    conversations = createConversationService({
+      database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
+      routing: {
+        primary: config.routingPrimary,
+        model: options.routingModel ?? (routingModels === undefined ? undefined : () => modelScorer(bgeSmallZh, { directory: routingModels, offline: true })),
+        report: options.report ?? ((line) => process.stderr.write(`${line}
+`)),
+      },
+    });
     const told = conversations;
     const modelDiscovery = createModelDiscovery(database, defaults, (notice, prompt) => told.tell(null, notice, prompt));
     modelDiscovery.scan(runners.statuses());

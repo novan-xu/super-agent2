@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { configurations, ownerTextLimit, replyTextLimit } from "@super-agent2/routing";
 import { auc, best, type RuleGrid, ruleConfigs, ruleGrid, ruleTallies, recencyConfigs, scoreConfigs, type ScoreSpace, fullSpace, spreadOf, type Tally, tallyOf, wilson, cost, quantile, wrongJoinWeight } from "./evaluate.js";
 import { type History, readSuperAgent, readSuperAgent2 } from "./history.js";
 import { activeWindow, attachScores, buildDecisions, characterLength, type Config, decide, type Decision, newTopicOnly, outcomeOf, type ScoredDecision, scoreKey, variants } from "./replay.js";
@@ -134,24 +135,22 @@ interface PairSummary {
 const pairSummary: PairSummary[] = [];
 const scorerNames = values.scorers!.split(",").filter((name) => name !== "");
 const timings: Array<{ name: string; loadMs: number; median: number; p95: number; replyMedian: number }> = [];
-const clipOwner = 1_000;
-const clipReply = 320;
 
 for (const name of scorerNames) {
   const spec = modelSpecs.find((item) => item.name === name);
-  const scorer: Scorer = spec === undefined ? bigramScorer() : await modelScorer(spec, required("models", values.models));
+  const scorer: Scorer = spec === undefined ? bigramScorer() : await modelScorer(spec, { directory: required("models", values.models), offline: false });
   const vectors = new Map<string, Vector>();
   const ownerTimes: number[] = [];
   const replyTimes: number[] = [];
   for (const history of histories) {
     for (const message of history.messages) {
       const started = performance.now();
-      vectors.set(message.id, await scorer.represent(message.text.slice(0, clipOwner)));
+      vectors.set(message.id, await scorer.represent(message.text.slice(0, ownerTextLimit)));
       ownerTimes.push(performance.now() - started);
     }
     for (const reply of history.replies) {
       const started = performance.now();
-      vectors.set(reply.id, await scorer.represent(reply.text.slice(0, clipReply)));
+      vectors.set(reply.id, await scorer.represent(reply.text.slice(0, replyTextLimit)));
       replyTimes.push(performance.now() - started);
     }
   }
@@ -305,6 +304,19 @@ say();
 tableHead.forEach((line) => say(line));
 for (const [name, config] of chosen) {
   results(name, config);
+}
+say();
+
+say("## Shipped configurations (constants from @super-agent2/routing)");
+say();
+const shipped = Object.values(configurations).filter((configuration) => scorerNames.includes(configuration.scorer));
+for (const configuration of shipped) {
+  say(`- ${configuration.name}: ${describe({ ...configuration.rules, score: scoreKey(configuration.scorer, "all") })}`);
+}
+say();
+tableHead.forEach((line) => say(line));
+for (const configuration of shipped) {
+  results(configuration.name, { ...configuration.rules, score: scoreKey(configuration.scorer, "all") });
 }
 say();
 

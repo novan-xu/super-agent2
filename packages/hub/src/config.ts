@@ -62,6 +62,8 @@ const Environment = z.object({
       .pipe(z.number().int().min(1, { error: "must be at least 1" })),
   ),
   HUB_TOPIC_ARCHIVE_MS: unlessEmpty(z.string().regex(/^[1-9]\d*$/, { error: "must be a positive number of milliseconds" }).transform(Number).pipe(z.number().int().positive())),
+  HUB_ROUTING_MODELS: unlessEmpty(z.string().refine(isAbsolutePath, { error: "must be an absolute folder" })),
+  HUB_ROUTING_PRIMARY: unlessEmpty(z.enum(["model", "bigram"], { error: "must be model or bigram" })),
   HUB_DEEPSEEK_LOW_BALANCE: unlessEmpty(z.string().regex(/^\d+(?:\.\d+)?$/, { error: "must be a nonnegative number" }).transform(Number).pipe(z.number().finite())),
   VAPID_PUBLIC_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
   VAPID_PRIVATE_KEY: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]+={0,2}$/, { error: "must be URL-safe base64" })),
@@ -87,6 +89,8 @@ export interface Config {
   readonly firstPipelineAllowanceMinutes?: number;
   readonly deepseekLowBalance?: number;
   readonly topicArchiveMilliseconds?: number;
+  readonly routingModels?: string;
+  readonly routingPrimary?: "model" | "bigram";
 }
 
 export interface VapidSettings {
@@ -150,6 +154,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),
       ...(value.HUB_TOPIC_ARCHIVE_MS === undefined ? {} : { topicArchiveMilliseconds: value.HUB_TOPIC_ARCHIVE_MS }),
       ...(value.HUB_DEEPSEEK_LOW_BALANCE === undefined ? {} : { deepseekLowBalance: value.HUB_DEEPSEEK_LOW_BALANCE }),
+      ...(value.HUB_ROUTING_MODELS === undefined ? {} : { routingModels: value.HUB_ROUTING_MODELS }),
+      ...(value.HUB_ROUTING_PRIMARY === undefined ? {} : { routingPrimary: value.HUB_ROUTING_PRIMARY }),
       ...(value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES === undefined ? {} : { firstPipelineAllowanceMinutes: value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES }),
     },
   };

@@ -227,6 +227,9 @@ importers:
       '@super-agent2/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@super-agent2/routing':
+        specifier: workspace:*
+        version: link:../routing
       jose:
         specifier: 6.2.17
         version: 6.2.17
@@ -262,6 +265,16 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+
+  packages/routing:
+    dependencies:
+      '@huggingface/transformers':
+        specifier: 4.3.2
+        version: 4.3.2(@types/node@24.19.2)
     devDependencies:
       '@types/node':
         specifier: ^24.19.2
@@ -397,9 +410,9 @@ importers:
 
   tools/route-eval:
     dependencies:
-      '@huggingface/transformers':
-        specifier: 4.3.2
-        version: 4.3.2(@types/node@24.19.2)
+      '@super-agent2/routing':
+        specifier: workspace:*
+        version: link:../../packages/routing
     devDependencies:
       '@types/node':
         specifier: ^24.19.2

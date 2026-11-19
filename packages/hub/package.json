@@ -21,6 +21,7 @@
   "dependencies": {
     "@super-agent2/catalog": "workspace:*",
     "@super-agent2/protocol": "workspace:*",
+    "@super-agent2/routing": "workspace:*",
     "jose": "6.2.17",
     "ws": "8.23.0",
     "zod": "4.6.7"

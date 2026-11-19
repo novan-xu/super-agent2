@@ -59,10 +59,8 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     "--effort",
     settings.effort,
     "--setting-sources",
-    options.textOnly === true ? "" : "project",
-    ...(options.textOnly === true
-      ? ["--tools", "", "--disable-slash-commands", "--no-session-persistence"]
-      : ["--dangerously-skip-permissions"]),
+    "project",
+    "--dangerously-skip-permissions",
     "--mcp-config",
     options.tools === null ? JSON.stringify({ mcpServers: {} }) : claudeToolConfig(options.tools.url, options.tools.conversation, options.tools.turn),
     "--strict-mcp-config",
@@ -299,7 +297,7 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
   });
 
   void child.exited.then((exit) => {
-    if (closed || (!running && options.textOnly !== true)) {
+    if (closed || !running) {
       running = false;
       return;
     }

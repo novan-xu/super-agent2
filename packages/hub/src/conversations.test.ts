@@ -393,7 +393,7 @@ describe("the topic stream", () => {
     expect(running.conversations.get(second.id)?.topicState).toBe("active");
   });
 
-  it("offers only active topics within scope and lets all-code routing choose from open ticket repositories", async () => {
+  it("routes among active topics within scope and names a repository from active topics and open tickets", async () => {
     const running = await start();
     const daily = running.conversations.create().id;
     running.conversations.send(daily, "Daily context");
@@ -403,40 +403,26 @@ describe("the topic stream", () => {
     running.database.connection.prepare("UPDATE tickets SET conversation_id = NULL WHERE id = ?").run(ticketWithoutTopic.id);
     running.database.connection.prepare("DELETE FROM conversations WHERE id = ?").run(ticketWithoutTopic.conversation);
     running.database.connection.prepare("UPDATE conversations SET topic_state = 'archived' WHERE id = ?").run(archived);
-    const requests: Extract<HubToBrain, { type: "route" }>[] = [];
-    const brain = running.conversations.attach({
-      close: () => undefined,
-      send: (message) => {
-        if (message.type !== "route") {
-          return;
-        }
-        requests.push(message);
-        const choice = message.scope.kind === "code"
-          ? message.text === "Unknown project"
-            ? { kind: "new" as const, title: "Which project" }
-            : { kind: "new" as const, title: "Work on a ticket", repository: "Owner/Tickets", possibleMatch: project }
-          : { kind: "existing" as const, topic: message.scope.kind === "daily" ? daily : project };
-        brain.receive({ type: "routed", request: message.request, choice });
-      },
-    });
-    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    const decisions = () => running.database.connection.prepare("SELECT scope, candidates, rule, topic, placed_in FROM routing_decisions ORDER BY rowid").all();
 
     const dailyReply = await running.conversations.sendToStream(undefined, "Another daily message", [], { scope: { kind: "daily" } });
     expect(dailyReply?.topic.id).toBe(daily);
-    expect(requests[0]?.topics).toEqual([{ id: daily, title: "Daily context", repository: null, recent: [{ speaker: "owner", text: "Daily context" }] }]);
-    const projectReply = await running.conversations.sendToStream(undefined, "Continue work", [], { scope: { kind: "repository", repository: "OWNER/Project" } });
+    const projectReply = await running.conversations.sendToStream(undefined, "Continue", [], { scope: { kind: "repository", repository: "OWNER/Project" } });
     expect(projectReply?.topic.id).toBe(project);
-    expect(requests[1]?.topics.map(({ id }) => id)).toEqual([project]);
 
     const codeReply = await running.conversations.sendToStream(undefined, "Work for owner/tickets", [], { scope: { kind: "code" } });
-    expect(requests[2]?.topics.map(({ id }) => id)).toEqual([project]);
-    expect(requests[2]?.repositories).toEqual(expect.arrayContaining(["owner/project", "owner/tickets"]));
     expect(codeReply).toMatchObject({
-      topic: { title: "Work on a ticket", repository: "owner/tickets" },
+      topic: { title: "Work for owner/tickets", repository: "owner/tickets" },
       entry: { possibleMatch: project, text: "Work for owner/tickets" },
     });
-    const pending = await running.conversations.sendToStream(undefined, "Unknown project", [], { scope: { kind: "code" } });
-    expect(pending?.topic).toMatchObject({ title: "Which project", repository: null, needsRepository: true });
+    const pending = await running.conversations.sendToStream(undefined, "Something unrelated", [], { scope: { kind: "code" } });
+    expect(pending?.topic).toMatchObject({ title: "Something unrelated", repository: null, needsRepository: true });
+    expect(decisions()).toEqual([
+      { scope: "daily", candidates: 1, rule: "c", topic: daily, placed_in: daily },
+      { scope: "repository", candidates: 1, rule: "b", topic: project, placed_in: project },
+      { scope: "code", candidates: 1, rule: "d", topic: null, placed_in: codeReply?.topic.id },
+      { scope: "code", candidates: 2, rule: "d", topic: null, placed_in: pending?.topic.id },
+    ]);
     expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
     expect(openTicket(running, pending?.topic.id).conversation).not.toBe(pending?.topic.id);
     expect(openTicket(running, daily, "owner/project").conversation).not.toBe(daily);
@@ -749,15 +735,9 @@ describe("topic corrections and archive policy", () => {
     expect(service.topics.search("searchable", idle, Number.MAX_SAFE_INTEGER, 5).messages[0]?.id).toBe(owner.id);
     expect(db.prepare("SELECT topic_summary FROM turns WHERE id = ?").get("idle-turn")?.["topic_summary"]).toContain("Saved reply");
 
-    const routed = service.sendToStream(undefined, "Something new", []);
-    const route = messages.at(-1);
-    expect(route?.type).toBe("route");
-    if (route?.type !== "route") {
-      throw new Error("Expected a route request");
-    }
-    expect(route.topics.map(({ id }) => id)).not.toContain(idle);
-    link.receive({ type: "routed", request: route.request, choice: null });
-    await routed;
+    const routed = await service.sendToStream(undefined, "Something new", []);
+    expect(routed?.topic.id).not.toBe(idle);
+    expect(db.prepare("SELECT candidates, rule FROM routing_decisions WHERE entry = ?").get(routed!.entry.id)).toEqual({ candidates: 2, rule: "d" });
 
     expect((await topicRequest(running, idle, "/rename", { title: "  New title  " })).status).toBe(200);
     expect(service.get(idle)).toMatchObject({ title: "New title", topicState: "archived" });

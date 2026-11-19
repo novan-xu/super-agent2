@@ -9,7 +9,7 @@
     "eval": "node dist/cli.js"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.3.2"
+    "@super-agent2/routing": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.19.2"

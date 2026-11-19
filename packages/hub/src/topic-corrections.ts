@@ -84,6 +84,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       turn_id = NULL, taken = 0, delivery_id = ?, prompt = coalesce(prompt, json_extract(body, '$.text'), ''),
       body = json_remove(body, '$.possibleMatch') WHERE id = ?
   `);
+  const correctRouting = connection.prepare("UPDATE routing_decisions SET moved_to = ?, moved_at = ? WHERE entry = ?");
   const activate = connection.prepare("UPDATE conversations SET topic_state = 'active', activity_at = max(activity_at, ?), updated_at = ? WHERE id = ?");
   const saveMerge = connection.prepare("INSERT INTO topic_merges (id, source, destination) VALUES (?, ?, ?)");
   const selectMerge = connection.prepare("SELECT * FROM topic_merges WHERE id = ?");
@@ -192,6 +193,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     const transfer = transaction(() => {
       saveTransfer.run(id, source, owner.delivery_id ?? id, Number(owner.turn_id !== null));
       moveEntry.run(destination, destination, randomUUID(), id);
+      correctRouting.run(destination, now, id);
       if (owner.turn_id !== null) {
         revoke.run(owner.turn_id, source);
         if (clearSummary.run(owner.turn_id).changes > 0) {
