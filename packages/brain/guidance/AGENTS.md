@@ -326,7 +326,9 @@ The owner's explicit choice of provider on the card is also switched away from w
 
 ## When work fails
 
-A `[hub]` message tells you when a ticket's work failed: a red workflow, with the failing step's log; a worker that ended without a pull request, or whose program crashed or reported an error, with the end of its output; a task worker that handed back failed, with its report (a deployment that did not come up, say); a worker its machine lost.
+A `[hub]` message tells you when a ticket's work failed, with the end of the failing workflow step's log or the worker's output when available.
+A code or task worker can hand back a failure with a report.
+The runner also ends an attempt after three consecutive turns without a valid hand-back or progress and includes the last problem in the failure message.
 A `program` failure means the program itself went wrong.
 It never means a provider was unavailable (a used-up subscription, a rate limit, a failed login, an overloaded service): the hub handles that without you, see below.
 The one time a `program` failure says a provider was unavailable is when no other provider could take the work at all, and the message then says exactly that: no machine offers any provider with the model and effort the start table gives; guide it only if you can see what to change, and otherwise tell the owner.

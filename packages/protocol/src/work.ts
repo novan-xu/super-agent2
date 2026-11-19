@@ -78,7 +78,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     decisions: z.array(Decision).optional(),
   }),
   z.object({ kind: z.literal("settled") }),
-  z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
+  z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string(), report: GeneratedText.optional() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
   z.object({ kind: z.literal("unavailable"), reason: z.string(), until: z.number().int().nullable(), unsent: z.array(z.string()).default([]) }),
 ]);
@@ -324,11 +324,15 @@ export const WorkerMessageResponse = z.object({
 });
 export type WorkerMessageResponse = z.infer<typeof WorkerMessageResponse>;
 
-export const Handback = z.object({
-  pullRequest: z.number().int().positive(),
-  summary: GeneratedText,
-  decisions: z.array(Decision).default([]),
-});
+export const Handback = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.undefined().optional(),
+    pullRequest: z.number().int().positive(),
+    summary: GeneratedText,
+    decisions: z.array(Decision).default([]),
+  }),
+  z.object({ outcome: z.literal("failed"), report: GeneratedText }),
+]);
 export type Handback = z.infer<typeof Handback>;
 
 export const TaskHandback = z.preprocess(

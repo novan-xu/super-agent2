@@ -295,18 +295,21 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     return tail(parts.join(""), limit);
   };
 
-  const failed = (ticket: Ticket, attempt: Attempt, failure: WorkFailure, reason: string) => {
+  const failed = (ticket: Ticket, attempt: Attempt, failure: WorkFailure, reason: string, report?: GeneratedText) => {
     if (closed) {
       return;
     }
+    const what = ticket.form === "task" && failure === "no-pull-request" ? "ended without handing back a valid result" : failureWords[failure];
+    const chineseReport = report === undefined ? [] : [`The worker's report in Simplified Chinese: ${report.zh}`];
     if (options.report !== undefined) {
       options.report({
         ticket: ticket.id,
         failure: { kind: failure, detail: reason },
         evidence: [
-          `The worker of ticket ${ticket.id} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${failureWords[failure]}: ${reason}`,
+          `The worker of ticket ${ticket.id} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${what}: ${reason}`,
           ticket.form === "task" ? taskWords(ticket) : `Branch: ${ticket.branch ?? "(none)"}; pull request: ${ticket.pullRequest === null ? "none yet" : `#${ticket.pullRequest}`}.`,
           ...(ticket.report === null || failure !== "task-failed" ? [] : [`The worker's report: ${ticket.report.en}`]),
+          ...chineseReport,
           "The worker's output ends with:",
           outputOf(ticket.id, attempt.attempt, 8_000) || "(no output)",
         ].join("\n"),
@@ -317,7 +320,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       ticket.id,
       text("notice.workerFailed", { ticket: ticket.id }),
       [
-        `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${failureWords[failure]}: ${reason}`,
+        `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${what}: ${reason}`,
+        ...chineseReport,
         `The ticket stays working with this failure recorded${ticket.form === "task" ? "" : `, on branch ${ticket.branch ?? "(none)"}`}, and nothing is running for it now.`,
         "Its output ends with:",
         outputOf(ticket.id, attempt.attempt, 6_000) || "(no output)",
@@ -814,7 +818,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const event = message.event;
     const latest = latestOf(attempt.ticket_id);
     const current = latest?.attempt === attempt.attempt;
-    let told: { readonly failure: WorkFailure; readonly reason: string } | undefined;
+    let told: { readonly failure: WorkFailure; readonly reason: string; readonly report?: GeneratedText | undefined } | undefined;
     let recoveredMark = false;
     let unavailable: { readonly reason: string; readonly until: number | null; readonly unsent: readonly string[] } | undefined;
     let handedOver = false;
@@ -906,7 +910,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           if (live) {
             end(attempt.ticket_id, attempt.attempt, "failed", event.failure, event.reason);
             if (current) {
-              told = { failure: event.failure, reason: event.reason };
+              const report = event.failure === "no-pull-request" && event.report !== undefined && writes.get(attempt.ticket_id)?.form === "code" ? event.report : undefined;
+              if (report !== undefined) {
+                writes.setReport(attempt.ticket_id, report);
+              }
+              told = { failure: event.failure, reason: event.reason, report };
             }
           }
           writes.touched(attempt.ticket_id);
@@ -962,7 +970,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const ticket = tickets.get(attempt.ticket_id);
       const now = attemptOf(attempt.ticket_id, attempt.attempt);
       if (ticket !== undefined && now !== undefined && !isFinal(ticket)) {
-        failed(ticket, now, told.failure, told.reason);
+        failed(ticket, now, told.failure, told.reason, told.report);
       }
     }
     if (handedOver || event.kind === "finished" || event.kind === "settled" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped" || event.kind === "unavailable" || recoveredMark) {

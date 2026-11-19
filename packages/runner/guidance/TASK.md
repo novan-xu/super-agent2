@@ -115,3 +115,4 @@ When you are done, or know that the task cannot be done, write a JSON file at th
 
 Your work is finished only when that file exists and every file it names is in the output folder.
 If it is missing or wrong, you will be told what to fix.
+After three consecutive turns without a valid hand-back or progress, the runner ends the attempt and sends the last problem and the end of your output to the brain.
