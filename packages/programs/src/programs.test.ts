@@ -39,6 +39,45 @@ function track<T extends ProgramHandle>(handle: T): T {
   return handle;
 }
 
+describe("extra MCP servers", () => {
+  const server = { name: "Agent_wring", url: "http://mini:3000/mcp", token: "extra-example-secret" };
+  it("configures dsh with an environment reference", () => {
+    for (const hub of [null, "http://hub/mcp"]) {
+      const patch = dshPatch(hub, null, [server]);
+      expect(patch).toContain('serverName: "Agent_wring"');
+      expect(patch).toContain("process.env.SUPER_AGENT_EXTRA_MCP_TOKEN_0");
+      expect(patch).not.toContain(server.token);
+    }
+  });
+  it.each(["brain", "worker"] as const)("configures Claude for %s without putting the secret in arguments", async (role) => {
+    const source = fakeClaudeSource.replace('host: process.env.CLAUDECODE ?? null', 'extra: process.env.SUPER_AGENT_EXTRA_MCP_TOKEN_0 ?? null, host: process.env.CLAUDECODE ?? null');
+    const adapter = claudeAdapter(settings(writeFake(directory, "claude-extra.mjs", source), "claude", "high"));
+    const log = new EventLog();
+    track(adapter.open({ ...options(null), tools: role === "worker" ? null : options(null).tools, extraMcp: [server] }, log.listener)).start("hello");
+    await log.ended();
+    const entry = readLog(logFile)[0] as { args: string[]; env: { extra: string } };
+    expect(entry.env.extra).toBe(server.token);
+    expect(entry.args).toContain("--strict-mcp-config");
+    expect(JSON.stringify(entry.args)).not.toContain(server.token);
+    const config = JSON.parse(entry.args[entry.args.indexOf("--mcp-config") + 1]!);
+    expect(config.mcpServers.Agent_wring).toEqual({ type: "http", url: server.url, headers: { Authorization: "Bearer ${SUPER_AGENT_EXTRA_MCP_TOKEN_0}" } });
+    expect(Boolean(config.mcpServers.hub)).toBe(role === "brain");
+  });
+  it.each(["brain", "worker"] as const)("configures Codex for %s without putting the secret in configuration", async (role) => {
+    const source = fakeCodexSource.replace('token: process.env.SUPER_AGENT_HUB_TOKEN ?? null', 'token: process.env.SUPER_AGENT_HUB_TOKEN ?? null, extra: process.env.SUPER_AGENT_EXTRA_MCP_TOKEN_0 ?? null');
+    const adapter = codexAdapter(settings(writeFake(directory, "codex-extra.mjs", source), "gpt", "high"));
+    const log = new EventLog();
+    track(adapter.open({ ...options(null), tools: role === "worker" ? null : options(null).tools, extraMcp: [server] }, log.listener)).start("hello");
+    await log.ended();
+    const entries = readLog(logFile);
+    expect(entries[0]).toMatchObject({ env: { extra: server.token } });
+    expect(JSON.stringify(entries.slice(1))).not.toContain(server.token);
+    const start = entries.find((entry) => entry["method"] === "thread/start") as { params: { config: Record<string, unknown> } };
+    expect(start.params.config["mcp_servers.Agent_wring"]).toEqual({ url: server.url, bearer_token_env_var: "SUPER_AGENT_EXTRA_MCP_TOKEN_0" });
+    expect(Boolean(start.params.config["mcp_servers.hub"])).toBe(role === "brain");
+  });
+});
+
 describe("reported model input capacity", () => {
   it.each([
     ["codex", codexAdapter, fakeCodexSource, "gpt-6-astra", 272_000],

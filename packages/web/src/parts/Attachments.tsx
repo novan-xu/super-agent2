@@ -225,7 +225,7 @@ export function PendingList({ attaching }: { readonly attaching: Attaching }) {
   );
 }
 
-export function SentAttachments({ attachments }: { readonly attachments: readonly Attachment[] }) {
+export function SentAttachments({ attachments, path = attachmentPath }: { readonly attachments: readonly Attachment[]; readonly path?: (id: string) => string }) {
   const [selected, setSelected] = useState<number | null>(null);
   const close = useCallback(() => setSelected(null), []);
   if (attachments.length === 0) {
@@ -234,16 +234,16 @@ export function SentAttachments({ attachments }: { readonly attachments: readonl
   const images = attachments.filter((attachment) => isNativeImage(attachment.mediaType));
   const files = attachments.filter((attachment) => !isNativeImage(attachment.mediaType));
   const ordered = [...images, ...files];
-  const viewFiles = ordered.map(a => ({ name: a.name, size: a.size, mime: a.mediaType, url: attachmentPath(a.id) }));
+  const viewFiles = ordered.map(a => ({ name: a.name, size: a.size, mime: a.mediaType, url: path(a.id) }));
   return (
     <div className="msg-files msg-attachments">
       {images.map((attachment) => (
-        <a key={attachment.id} className="att-image" href={attachmentPath(attachment.id)} download={attachment.name} title={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
-          <img src={attachmentPath(attachment.id)} alt={attachment.name} loading="lazy" />
+        <a key={attachment.id} className="att-image" href={path(attachment.id)} download={attachment.name} title={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
+          <img src={path(attachment.id)} alt={attachment.name} loading="lazy" />
         </a>
       ))}
       {files.map((attachment) => (
-        <a key={attachment.id} className="chip" href={attachmentPath(attachment.id)} download={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
+        <a key={attachment.id} className="chip" href={path(attachment.id)} download={attachment.name} onClick={event => { event.preventDefault(); history.pushState({ ...history.state, fileViewer: true }, ""); setSelected(ordered.indexOf(attachment)); }}>
           <Icon name="clip" />
           <span className="od-truncate att-name">{attachment.name}</span>
           <span className="num">{sizeOf(attachment.size)}</span>

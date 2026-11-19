@@ -54,6 +54,7 @@ import { intervalTicker, type Ticker } from "./verification.js";
 export type WorkRunners = Pick<Runners, "bindWork" | "sendWork" | "report" | "subscribe">;
 
 export interface WorkServiceOptions {
+  readonly extraMcp?: readonly import("@super-agent2/protocol").ExtraMcpServer[];
   readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
@@ -371,6 +372,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       takeover: attempt.takeover === 1,
       ...folderField(ticket),
       environment: { GH_TOKEN: token, GITHUB_TOKEN: token },
+      ...(options.extraMcp?.length ? { extraMcp: [...options.extraMcp] } : {}),
     };
   };
 
@@ -415,6 +417,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       note: attempt.note,
       takeover: attempt.takeover === 1,
       ...folderField(ticket),
+      ...(options.extraMcp?.length ? { extraMcp: [...options.extraMcp] } : {}),
       environment,
     };
   };

@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
-import { conversationVariable, type ProgramSettings, toolTokenVariable, turnVariable } from "./settings.js";
+import { conversationVariable, extraMcpVariable, type ProgramSettings, toolTokenVariable, turnVariable } from "./settings.js";
 
 export const dshProvider = "deepseek-account";
 
@@ -122,9 +122,21 @@ function controlRows(control: DshControl | null): string[] {
   ];
 }
 
-export function dshPatch(url: string | null, control: DshControl | null = null): string {
+export function dshPatch(url: string | null, control: DshControl | null = null, extra: readonly import("@super-agent2/protocol").ExtraMcpServer[] = []): string {
   const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", ""];
   const rows = controlRows(control);
+  for (const [index, server] of extra.entries()) {
+    rows.push(
+      `    - id: super-agent-extra-${index}`,
+      "      name: '@deepseek-ai/dsh-mcp-client'",
+      "      config:",
+      `        serverName: ${JSON.stringify(server.name)}`,
+      "        transport: streamable-http",
+      `        url: ${JSON.stringify(server.url)}`,
+      "        headers:",
+      `          Authorization: !!js '\`Bearer \${process.env.${extraMcpVariable(index)}}\`'`,
+    );
+  }
   if (url === null) {
     return [...(rows.length === 0 ? [] : ["- insert:", ...rows]), ...quiet].join("\n");
   }
@@ -250,7 +262,7 @@ const SessionStatus = z.looseObject({ sessionId: z.string(), status: z.string() 
 function openDsh(settings: ProgramSettings, options: OpenOptions, listener: ProgramListener): ProgramHandle {
   const patch = join(tmpdir(), `super-agent2-dsh-${randomUUID()}.yml`);
   const control = openControl(dshControlPath());
-  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }));
+  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }, options.extraMcp));
   let session = options.session;
   let stored = options.session !== null;
   let current: Running | undefined;
@@ -341,6 +353,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       cwd: options.workspace,
       env: {
         ...settings.environment,
+        ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [extraMcpVariable(index), server.token])),
         DSH_PERMISSION_MODE: "danger-full-access",
         ...(options.tools === null ? {} : {
           [toolTokenVariable]: options.tools.token, [conversationVariable]: options.tools.conversation, [turnVariable]: options.tools.turn,

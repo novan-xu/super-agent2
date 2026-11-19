@@ -3472,3 +3472,9 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Why:** GitHub issues and pull requests already use numbers, so reusing the same notation for hub tickets made it possible to deploy the wrong merge.
   A configured time zone aligns the reset with the owner's calendar, and retaining the internal key keeps existing relationships, links and running work intact.
 - **Other options:** A sequence based on UTC, or replacing the internal key and migrating every dependent record and runner message.
+
+## 2026-11-19 ? Extra MCP servers
+
+- **Chosen:** Configure extra HTTP MCP servers in the hub environment and send selected servers over existing authenticated links to the brain and workers.
+- **Why:** This keeps the list and secrets in one place without adding a settings interface or putting tokens in process arguments.
+- **Other options:** A settings page, separate configuration on each machine, or a proxy through the runner.

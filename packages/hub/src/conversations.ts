@@ -133,6 +133,7 @@ export interface Delivery {
 }
 
 export interface ConversationServiceOptions {
+  readonly extraMcp?: readonly import("@super-agent2/protocol").ExtraMcpServer[];
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly commands: CommandService;
@@ -1396,7 +1397,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         emit({ type: "brain", brain: { linked: true } });
       }
       brainChanged();
-      connection.send({ type: "hello", protocol: protocolVersion });
+      connection.send({ type: "hello", protocol: protocolVersion, ...(options.extraMcp?.length ? { extraMcp: [...options.extraMcp] } : {}) });
       return {
         receive: (message) => {
           if (link === current) {

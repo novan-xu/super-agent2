@@ -4,7 +4,7 @@ import { conversationHeader, isNativeImage, turnHeader } from "@super-agent2/pro
 import { z } from "zod";
 import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
-import { type ProgramSettings, toolTokenVariable } from "./settings.js";
+import { extraMcpVariable, type ProgramSettings, toolTokenVariable } from "./settings.js";
 
 const keptVariables = new Set(["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]);
 
@@ -45,6 +45,12 @@ export function claudeToolConfig(url: string, conversation: string, turn: string
   });
 }
 
+export function claudeExtraConfig(options: OpenOptions): string {
+  const hub = options.tools === null ? {} : JSON.parse(claudeToolConfig(options.tools.url, options.tools.conversation, options.tools.turn)).mcpServers;
+  const extra = Object.fromEntries((options.extraMcp ?? []).map((server, index) => [server.name, { type: "http", url: server.url, headers: { Authorization: `Bearer \${${extraMcpVariable(index)}}` } }]));
+  return JSON.stringify({ mcpServers: { ...hub, ...extra } });
+}
+
 export function claudeArguments(settings: ProgramSettings, options: OpenOptions, session: { readonly id: string; readonly resume: boolean }): string[] {
   return [
     "-p",
@@ -62,7 +68,7 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     "project",
     "--dangerously-skip-permissions",
     "--mcp-config",
-    options.tools === null ? JSON.stringify({ mcpServers: {} }) : claudeToolConfig(options.tools.url, options.tools.conversation, options.tools.turn),
+    claudeExtraConfig(options),
     "--strict-mcp-config",
     session.resume ? "--resume" : "--session-id",
     session.id,
@@ -291,7 +297,7 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
 
   const child: LineProcess = spawnLines(invocationOf(settings.program, claudeArguments(settings, options, { id: session, resume: !fresh })), {
     cwd: options.workspace,
-    env: claudeEnvironment(settings.environment, options.tools?.token ?? null),
+    env: { ...claudeEnvironment(settings.environment, options.tools?.token ?? null), ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [extraMcpVariable(index), server.token])) },
     onMessage: onOutput,
     tree: settings.processTree === true,
   });

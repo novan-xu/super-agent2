@@ -1,3 +1,4 @@
+export * from "./extra-mcp.js";
 export * from "./access.js";
 export * from "./allowance.js";
 export * from "./attachments.js";

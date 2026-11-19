@@ -437,6 +437,14 @@ describe("a worker on the runner", () => {
     expect(readFileSync(join(paths.folder, "work.json"), "utf8")).not.toContain(token);
   });
 
+  it("passes assigned MCP servers to the worker program", async () => {
+    const works = start();
+    const extraMcp = [{ name: "Agent_wring", url: "http://mini/mcp", token: "example-secret" }];
+    works.receive({ type: "work.start", task: { ...task(55), extraMcp } });
+    const handle = await programs.prompted(1);
+    expect(handle.options.extraMcp).toEqual(extraMcp);
+  });
+
   it("asks the worker to fix a missing or wrong hand-back, and hands back once it is right", async () => {
     const works = start();
     works.receive({ type: "work.start", task: task(6) });

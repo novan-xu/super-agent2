@@ -793,3 +793,10 @@ Office previews are generated on demand by an isolated Gotenberg converter.
 The hub caches PDFs by SHA-256 in its data directory, shares concurrent conversions, and serves the result as an inert download.
 The viewer renders that PDF and retains the original download.
 Conversion requests and results are limited to 64 MiB, and requests time out after 90 seconds.
+
+## Extra MCP servers
+
+The hub can offer additional HTTP MCP servers to the brain, workers, or both.
+It reads definitions and named token variables from its environment, sends selected endpoints over its authenticated brain and runner links, and keeps tokens out of program arguments.
+Claude Code receives environment references in its strict MCP configuration, and Codex receives bearer token environment variable names.
+The dsh adapter uses its HTTP MCP client, while Antigravity does not receive extra servers.
