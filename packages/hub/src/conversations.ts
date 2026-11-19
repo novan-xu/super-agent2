@@ -88,6 +88,7 @@ export interface ConversationService {
   assignRepository(conversation: string, turn: string, repository: string): boolean;
   interrupt(id: string): Conversation | undefined;
   rename(id: string, title: string): TopicEdit<string>;
+  proposeTitle(conversation: string, turn: string, title: string): boolean;
   merge(source: string, destination: string): TopicEdit<string>;
   archive(id: string): TopicEdit<string>;
   archiveIdle(): void;
@@ -140,11 +141,13 @@ export interface MemoryBriefing {
   revision(): number;
 }
 
-export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean; needsRepository?: boolean } = {}): string {
+type TitleOrigin = "automatic" | "brain" | "owner";
+
+export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean; needsRepository?: boolean; titleOrigin?: TitleOrigin } = {}): string {
   const id = randomUUID();
   database.connection
-    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, needs_repository) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?)")
-    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null, options.needsRepository === true ? 1 : 0);
+    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, needs_repository, title_origin) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?)")
+    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null, options.needsRepository === true ? 1 : 0, options.titleOrigin ?? "owner");
   return id;
 }
 
@@ -395,9 +398,27 @@ export function createConversationService(options: ConversationServiceOptions): 
   const insertTurn = connection.prepare(
     "INSERT INTO turns (id, conversation_id, provider, model, state, started_at) VALUES (?, ?, ?, ?, 'running', ?)",
   );
-  const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1 WHERE id = ?");
+  const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1, proposed_title = NULL WHERE id = ?");
   const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
+  const proposeTitle = connection.prepare(`
+    UPDATE turns SET proposed_title = ?
+    WHERE id = ? AND conversation_id = ? AND state = 'running' AND ticket_writes_revoked = 0 AND EXISTS (
+      SELECT 1 FROM conversations WHERE id = turns.conversation_id AND merged_into IS NULL AND title_origin IN ('automatic', 'brain')
+    )
+  `);
+  const applyTitle = connection.prepare(`
+    UPDATE conversations SET title = turns.proposed_title, title_origin = 'brain'
+    FROM turns
+    WHERE turns.id = ? AND conversations.id = turns.conversation_id AND turns.proposed_title IS NOT NULL
+      AND turns.ticket_writes_revoked = 0 AND conversations.merged_into IS NULL
+      AND conversations.title_origin IN ('automatic', 'brain')
+  `);
+  const activateOwnerTopic = connection.prepare(`
+    UPDATE conversations SET topic_state = 'active', updated_at = ?,
+      title = CASE WHEN title_origin = 'automatic' AND title = '' THEN ? ELSE title END
+    WHERE id = ?
+  `);
   const originalPlacement = "r.moved_at IS NULL AND e.handed_over = 0 AND e.conversation_id = r.placed_in";
   const placedByRouter = `${originalPlacement} AND coalesce(r.owner_placed, r.owner_changed) = 0`;
   const joinedByRouter = `${placedByRouter} AND r.topic = r.placed_in`;
@@ -691,8 +712,8 @@ export function createConversationService(options: ConversationServiceOptions): 
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
-  const createOwnerTopic = (at: number, title: string, scope: TopicScope, repository: string | null) =>
-    storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null });
+  const openTopic = (at: number, title: string, scope: TopicScope, repository: string | null, titleOrigin: TitleOrigin = "automatic") =>
+    storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null, titleOrigin });
 
   const createMoveDestination = (id: string, at: number, title?: string): string => {
     const row = EntryRow.parse(selectEntry.get(id));
@@ -704,7 +725,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       : original?.["scope"] === "code" ? { kind: "code" }
       : repository !== null ? { kind: "repository", repository }
       : source.needsRepository === true ? { kind: "code" } : { kind: "daily" };
-    return createOwnerTopic(at, title ?? titleOf(owner.text, owner.attachments), scope, router.repositoryFor(owner.text, scope));
+    return openTopic(at, title ?? titleOf(owner.text, owner.attachments), scope, router.repositoryFor(owner.text, scope), title === undefined ? "automatic" : "brain");
   };
 
   const corrections = createTopicCorrections({
@@ -735,6 +756,9 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     connection.exec("BEGIN IMMEDIATE");
     try {
+      if (outcome === "completed") {
+        applyTitle.run(id);
+      }
       finishTurn.run(outcome, reason, clock.now(), id);
       topics.finish(turn.conversation, id, outcome);
       if (applied) {
@@ -943,7 +967,8 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "prepare": {
-        if (rawGet(message.conversation)?.mergedInto !== undefined) {
+        const topic = selectConversation.get(message.conversation);
+        if (topic?.["merged_into"] != null) {
           sendToBrain({ type: "prepared", request: message.request, session: null, history: [], memory: null });
           return;
         }
@@ -974,6 +999,7 @@ export function createConversationService(options: ConversationServiceOptions): 
           memory: brief,
           ...(snapshot ? { seed: topics.seed(message.conversation, exclude, message.continuing === true) } : {}),
           ...(structured && !message.steer ? { board: board.map(({ revision: _, ...entry }) => entry) } : {}),
+          ...(!message.steer && topic?.["title_origin"] === "automatic" ? { automaticTitle: true as const } : {}),
           ...(message.steer ? { memoryRevision } : {}),
         });
         return;
@@ -1009,7 +1035,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   });
 
   const create = (title = "", system = false): Conversation => {
-    const id = storeTopic(options.database, clock.now(), title, { system });
+    const id = storeTopic(options.database, clock.now(), title, { system, titleOrigin: title === "" && !system ? "automatic" : "owner" });
     const conversation = get(id);
     if (conversation === undefined) {
       throw new Error(`Conversation ${id} was not stored`);
@@ -1072,7 +1098,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     conversation: Conversation, message: string, attachments: readonly Attachment[],
     { quotedMessage, possibleMatch, id, at, markQuestions = true }: { quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
   ): string => {
-    writeConversation(conversation.id, { topic_state: "active", title: conversation.title || titleOf(message, attachments) });
+    activateOwnerTopic.run(clock.now(), titleOf(message, attachments), conversation.id);
     if (markQuestions) answerByMessage(conversation.id, message);
     return writeEntry({
       ...(id === undefined ? {} : { id }), ...(at === undefined ? {} : { at }),
@@ -1110,7 +1136,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (conversation === undefined) {
-        const topic = createOwnerTopic(at, titleOf(message, attachments), scope, repository);
+        const topic = openTopic(at, titleOf(message, attachments), scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
@@ -1147,6 +1173,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     move: corrections.move,
     handover: corrections.handover,
     rename: corrections.rename,
+    proposeTitle: (conversation, turn, title) => link?.ready === true && proposeTitle.run(title, turn, conversation).changes > 0,
     merge: corrections.merge,
     archive: corrections.archive,
     archiveIdle: corrections.archiveIdle,

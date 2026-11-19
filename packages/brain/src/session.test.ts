@@ -929,6 +929,62 @@ describe("topic corrections across the brain link", () => {
     expect(detail(source.id).entries).toHaveLength(0);
   });
 
+  it("names an automatic topic on completion and lets the owner take over its title", async () => {
+    const hub = await startHub();
+    programs.gpt.steering = false;
+    startBrain();
+    const first = await sayInStream({ text: "Do both\nCheck the routes and the timetable" });
+    const topic = first.topic.id;
+    expect(first.topic.title).toBe("Do both");
+    const opening = await programs.gpt.next();
+    expect(opening.text.match(/This topic has an automatic title/g)).toHaveLength(1);
+    const options = opening.handle.options;
+    const other = hub.conversations.create();
+    const otherTopic = { ...options, tools: { ...options.tools!, conversation: other.id } };
+    expect(await callTool(otherTopic, "set_topic_title", { title: "Routes and timetable" })).toContain("Only an active turn");
+    expect(await callTool(options, "set_topic_title", { title: "Routes and timetable", topic: other.id })).toContain("Pass only a title");
+    for (const title of ["a".repeat(41), "路".repeat(21), `${"路".repeat(19)}abc`, "Two\nlines"]) {
+      expect(await callTool(options, "set_topic_title", { title })).toContain("Each Han character counts as two");
+    }
+    for (const title of ["a".repeat(40), "路".repeat(20), `${"路".repeat(19)}ab`, "  Routes and timetable  "]) {
+      expect(await callTool(options, "set_topic_title", { title })).toContain("will be updated");
+    }
+    expect(detail(topic).conversation.title).toBe("Do both");
+    expect(detail(other.id).conversation.title).toBe("");
+    opening.handle.emit({ type: "session", session: "title-session" });
+    await say(topic, "Now plan the departure");
+    opening.handle.finish("I checked the routes and timetable.");
+    await turnEnded(topic, 1);
+    expect(detail(topic).conversation.title).toBe("Routes and timetable");
+    expect(hub.conversations.topics.board().find(({ id }) => id === topic)?.title).toBe("Routes and timetable");
+    expect(await callTool(options, "set_topic_title", { title: "Late title" })).toContain("Only an active turn");
+
+    const next = await programs.gpt.next();
+    expect(next.text).not.toContain("This topic has an automatic title");
+    expect(await callTool(next.handle.options, "set_topic_title", { title: "Departure plan" })).toContain("will be updated");
+    next.handle.finish("Here is the departure plan.");
+    await turnEnded(topic, 2);
+    expect(detail(topic).conversation.title).toBe("Departure plan");
+
+    await say(topic, "Make this a packing list");
+    const third = await programs.gpt.next();
+    expect(await callTool(third.handle.options, "set_topic_title", { title: "Packing list" })).toContain("will be updated");
+    const renamed = await owner(`/api/conversations/${topic}/rename`, {
+      method: "POST", body: JSON.stringify({ title: "Departure plan" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(await callTool(third.handle.options, "set_topic_title", { title: "Another title" })).toContain("Owner titles are protected");
+    third.handle.finish("The list is ready.");
+    await turnEnded(topic, 3);
+    expect(detail(topic).conversation.title).toBe("Departure plan");
+
+    await say(topic, "Add a jacket");
+    const fourth = await programs.gpt.next();
+    expect(fourth.text).not.toContain("This topic has an automatic title");
+    fourth.handle.finish();
+    await turnEnded(topic, 4);
+  });
+
   it("hands a routed input over to a titled new topic once and keeps the owner's later correction", async () => {
     const hub = await startHub();
     startBrain();
@@ -938,6 +994,7 @@ describe("topic corrections across the brain link", () => {
     const started = await programs.gpt.next();
     expect(started.text).toContain(`Message ${request.entry.id} was routed here (short reply, existing topic)`);
     expect(started.text).toContain("If unsure, answer here.");
+    expect(await callTool(started.handle.options, "set_topic_title", { title: "Discarded title" })).toContain("will be updated");
     expect(await callTool(started.handle.options, "handover", { destination: { title: " " } })).toContain("valid destination");
 
     const title = "旅行计划";
@@ -954,6 +1011,9 @@ describe("topic corrections across the brain link", () => {
     expect(delivered.handle.options.tools?.conversation).toBe(destination.id);
     expect(delivered.text).toContain("Plan travel");
     expect(delivered.text).not.toContain("was routed here");
+    expect(delivered.text).not.toContain("This topic has an automatic title");
+    expect(detail(source.id).conversation.title).toBe("Plan travel");
+    expect(await callTool(delivered.handle.options, "set_topic_title", { title: "Travel plans" })).toContain("will be updated");
     expect(detail(source.id).turns).toMatchObject([{ state: "interrupted" }]);
     expect(detail(destination.id).entries).toMatchObject([{ id: request.entry.id, taken: true }]);
     expect(await callTool(delivered.handle.options, "handover", { destination: source.id, message: request.entry.id })).toContain("eligible for handover");

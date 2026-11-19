@@ -93,6 +93,9 @@ const HandoverArguments = z.strictObject({
   ownerRequested: z.literal(true).describe("Set only when the owner explicitly asks to move the message.").optional(),
 });
 const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName });
+const SetTopicTitleArguments = z.strictObject({
+  title: z.string().trim().min(1).max(80).describe("A short, single-line title in the owner's language"),
+});
 
 const CodeKind = z.enum(codeKinds);
 
@@ -829,6 +832,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         },
       },
       {
+        name: "set_topic_title",
+        title: "Set the title of this topic",
+        description: "Propose a descriptive title in the owner's language for this topic. It takes effect when the turn completes. Owner titles are protected. Use up to 20 Chinese or 40 Latin characters on one line.",
+        inputSchema: z.toJSONSchema(SetTopicTitleArguments, { io: "input" }),
+      },
+      {
         name: "handover",
         title: "Hand over an owner message",
         description: "Move a message when the owner asks or its automatic routing is clearly wrong. If unsure or it is a new aspect of the same subject, answer here. The current turn stops and the destination answers.",
@@ -1319,6 +1328,19 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const assigned = conversation !== undefined && turn !== undefined && !aborted.aborted && args.success
           && conversations.assignRepository(conversation, turn, args.data.repository);
         result = assigned ? { text: "Repository assigned to this topic." } : { text: "An active turn in a pending code topic and a repository in owner/name form are required.", isError: true };
+        break;
+      }
+      case "set_topic_title": {
+        const args = SetTopicTitleArguments.safeParse(parsed.data.arguments);
+        if (!args.success || /[\r\n\v\f\u0085\u2028\u2029]/u.test(args.data.title)
+          || [...args.data.title].reduce((width, character) => width + (/\p{Script=Han}/u.test(character) ? 2 : 1), 0) > 40) {
+          result = { text: "Pass only a title in the owner's language on one line. Use up to 20 Chinese or 40 Latin characters. Each Han character counts as two toward the limit of 40.", isError: true };
+          break;
+        }
+        const proposed = conversation !== undefined && turn !== undefined && !aborted.aborted
+          && conversations.proposeTitle(conversation, turn, args.data.title);
+        result = proposed ? { text: "This topic's title will be updated if the turn completes and the title is still eligible." }
+          : { text: "Only an active turn can set its own topic title. Owner titles are protected.", isError: true };
         break;
       }
       default: {

@@ -57,7 +57,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   `);
   const running = connection.prepare("SELECT 1 FROM turns WHERE conversation_id = ? AND state = 'running' LIMIT 1");
   const queued = connection.prepare("SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND taken = 0 LIMIT 1");
-  const renameTopic = connection.prepare("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?");
+  const renameTopic = connection.prepare("UPDATE conversations SET title = ?, title_origin = 'owner', updated_at = ? WHERE id = ?");
   const archiveTopic = connection.prepare("UPDATE conversations SET topic_state = 'archived', updated_at = ? WHERE id = ? AND topic_state = 'active'");
   const archiveCandidates = connection.prepare(`
     SELECT c.id FROM conversations c

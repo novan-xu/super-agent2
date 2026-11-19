@@ -72,6 +72,9 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
   const repositoryPrompt = inputs.some(({ needsRepository }) => needsRepository === true)
     ? "[hub] This code topic is waiting for a repository. Ask the owner which GitHub repository it belongs to if they haven't identified it. Once they identify it, call set_topic_repository with its owner/name before carrying on."
     : "";
+  const titlePrompt = prepared.automaticTitle === true
+    ? "[hub] This topic has an automatic title. When answering here, call set_topic_title in this turn with a short, descriptive title in the owner's language. Keep it to one line, up to 20 Chinese or 40 Latin characters."
+    : "";
   const parts = [...quoteParts, ...history, ...tickets, ...board.flatMap(({ title, status }) => status === undefined ? [title] : [title, status])];
   if (summary !== undefined) {
     parts.push(summary);
@@ -119,7 +122,7 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     return lines;
   };
 
-  const fixed = cost([continuation, repositoryPrompt, input].filter(Boolean).join("\n\n"));
+  const fixed = cost([continuation, repositoryPrompt, titlePrompt, input].filter(Boolean).join("\n\n"));
   const withHeading = (heading: string, content: readonly string[]) => content.length === 0 ? "" : [heading, ...content].join("\n");
   const render = () => [
     ...quoteParts.filter((part) => part.visible).map((part) => part.text),
@@ -132,6 +135,7 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     ...notes(),
     continuation,
     repositoryPrompt,
+    titlePrompt,
     input,
   ].filter(Boolean).join("\n\n");
 
