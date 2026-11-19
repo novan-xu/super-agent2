@@ -305,9 +305,11 @@ describe("a worker on the runner", () => {
     }
     expect(existsSync(join(projects, "super-agent-sandbox"))).toBe(false);
     await works.close();
-    const restarted = start({ storage: () => ({}) });
+    const cleanupLogs: string[] = [];
+    const restarted = start({ storage: () => ({}), log: (line) => cleanupLogs.push(line) });
     for (const ticket of [51, 52]) restarted.receive({ type: "work.stop", ticket, save: false, remove: true });
     await restarted.idle();
+    expect(cleanupLogs).toEqual([]);
     for (const ticket of [51, 52]) {
       expect(existsSync(join(projects, "_agent", "Sandbox in use", `t${ticket}`))).toBe(false);
       expect(existsSync(join(nas, "super-agent-sandbox", "tickets", `t${ticket}`, "check.log"))).toBe(true);
