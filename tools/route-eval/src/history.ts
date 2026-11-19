@@ -1,4 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
+import { endsWithQuestion } from "@super-agent2/routing";
+
+export { endsWithQuestion } from "@super-agent2/routing";
 
 export interface OwnerMessage {
   readonly id: string;
@@ -8,6 +11,7 @@ export interface OwnerMessage {
   readonly group: string | null;
   readonly explicit: boolean;
   readonly routed: boolean;
+  readonly attachments: boolean;
   readonly origin: string;
 }
 
@@ -40,12 +44,6 @@ function text(row: Row, key: string): string {
 function number(row: Row, key: string): number {
   const value = row[key];
   return typeof value === "number" ? value : Number(value);
-}
-
-export function endsWithQuestion(value: string): boolean {
-  const lines = value.trim().split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
-  const last = lines.at(-1) ?? "";
-  return /[?？]\s*[)）】"”'*_`]*$/.test(last) || /[?？]/.test(last.slice(-40));
 }
 
 export function isCardAction(value: string): boolean {
@@ -99,7 +97,7 @@ export function readSuperAgent2(path: string): History {
       const group = root(conversation);
       const explicit = group !== conversation;
       lastOwner.set(conversation, id);
-      messages.push({ id, at, text: shown, scope: scopes.get(group) ?? "daily", group, explicit, routed: true, origin: "stream" });
+      messages.push({ id, at, text: shown, scope: scopes.get(group) ?? "daily", group, explicit, routed: true, attachments: attachments.length > 0, origin: "stream" });
     } else {
       const about = lastOwner.get(conversation);
       if (about === undefined) {
@@ -141,6 +139,7 @@ export function readSuperAgent(path: string): History {
       group: ticket === undefined ? null : `ticket:${ticket}`,
       explicit: false,
       routed: !isCardAction(text(row, "text")),
+      attachments: false,
       origin: `stream:${text(row, "entry")}`,
     });
   }
@@ -159,6 +158,7 @@ export function readSuperAgent(path: string): History {
       group,
       explicit: typeof ticket === "string",
       routed: typeof ticket !== "string",
+      attachments: false,
       origin: `chat:${text(row, "client") || "unknown"}:${text(row, "kind")}`,
     });
   }

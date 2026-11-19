@@ -157,10 +157,6 @@ export function createHubLink(options: LinkOptions): HubLink {
     connect,
     connected: () => open,
     send: (message) => {
-      if (message.type === "routed") {
-        write(message);
-        return;
-      }
       if (outbox.length > 0 || !write(message)) {
         outbox.push(message);
       }

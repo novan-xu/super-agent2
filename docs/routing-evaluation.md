@@ -364,6 +364,10 @@ pnpm --filter @super-agent2/route-eval build
 node tools/route-eval/dist/cli.js --superagent <first hub.sqlite> --superagent2 <hub.sqlite> --labels <labels.json> --models <model cache> --out <folder outside the repository>
 ```
 
+The bigram representation, the reference extraction, the rules and the model scorer are those of `packages/routing`,
+which the hub routes with (#143); the section "Shipped configurations" of the output measures the hub's two
+configurations with their constants.
+
 `--scorers bigram,e5-small,bge-small-zh,bge-m3` picks the scorers (default all), `--train 0.6` the train share and
 `--short 10` the short-message limit for reporting. The label file maps each data set's name (`super-agent`,
 `super-agent2`) to an object from message id to topic name.

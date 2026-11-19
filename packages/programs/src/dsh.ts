@@ -98,7 +98,6 @@ export interface DshControl {
 }
 
 export const dshControlPlugin: string = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./dsh-control.ts" : "./dsh-control.js", import.meta.url));
-const dshTextOnlyPlugin = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./dsh-text-only.ts" : "./dsh-text-only.js", import.meta.url));
 
 const socketPathLimit = 100;
 
@@ -123,19 +122,8 @@ function controlRows(control: DshControl | null): string[] {
   ];
 }
 
-export function dshPatch(url: string | null, control: DshControl | null = null, textOnly = false): string {
+export function dshPatch(url: string | null, control: DshControl | null = null): string {
   const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", ""];
-  if (textOnly) {
-    return [
-      "- insert:",
-      "    - id: super-agent2-text-only",
-      `      name: ${JSON.stringify(dshTextOnlyPlugin.replaceAll("\\", "/"))}`,
-      "- id: tools",
-      "  config:",
-      "    mode: native",
-      ...quiet,
-    ].join("\n");
-  }
   const rows = controlRows(control);
   if (url === null) {
     return [...(rows.length === 0 ? [] : ["- insert:", ...rows]), ...quiet].join("\n");
@@ -261,8 +249,8 @@ const SessionStatus = z.looseObject({ sessionId: z.string(), status: z.string() 
 
 function openDsh(settings: ProgramSettings, options: OpenOptions, listener: ProgramListener): ProgramHandle {
   const patch = join(tmpdir(), `super-agent2-dsh-${randomUUID()}.yml`);
-  const control = options.textOnly === true ? undefined : openControl(dshControlPath());
-  writeFileSync(patch, dshPatch(options.tools?.url ?? null, control === undefined ? null : { plugin: dshControlPlugin, path: control.path }, options.textOnly));
+  const control = openControl(dshControlPath());
+  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }));
   let session = options.session;
   let stored = options.session !== null;
   let current: Running | undefined;
@@ -353,7 +341,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       cwd: options.workspace,
       env: {
         ...settings.environment,
-        ...(options.textOnly === true ? {} : { DSH_PERMISSION_MODE: "danger-full-access" }),
+        DSH_PERMISSION_MODE: "danger-full-access",
         ...(options.tools === null ? {} : {
           [toolTokenVariable]: options.tools.token, [conversationVariable]: options.tools.conversation, [turnVariable]: options.tools.turn,
         }),
@@ -431,7 +419,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         }
         return;
       }
-      if (running || options.textOnly === true) {
+      if (running) {
         fail(reason);
       }
     });
@@ -480,7 +468,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
       );
     },
     steer: async (text, images = []): Promise<SteerResult> => {
-      const link = control?.link();
+      const link = control.link();
       if (!running || interruptRequested || link === undefined || session === null) {
         return "queued";
       }
@@ -505,7 +493,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
           if (!sent) {
             return;
           }
-          const link = control?.link();
+          const link = control.link();
           const result = link === undefined || session === null ? undefined : await link.request("cancel", { sessionId: session }).catch(() => undefined);
           if (result !== "cancelled" && result !== "idle") {
             kill();
@@ -523,7 +511,7 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         entry.child.kill();
         await entry.child.exited;
       }
-      await control?.close();
+      await control.close();
       rmSync(patch, { force: true });
     },
     processId: () => current?.child.pid,

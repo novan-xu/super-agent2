@@ -6,7 +6,6 @@ import type { Schedule } from "./link.js";
 import { continuationPrompt, defaultAttachmentsFolder, promptImages, turnPrompt } from "./prompt.js";
 import { defaultSoftShare, fallbackInputCapacity, topicPrompt } from "./seed.js";
 import { createProviderChoice, type ProviderChoice } from "./providers.js";
-import { createRouter } from "./router.js";
 
 export interface PrepareCall {
   readonly conversation: string;
@@ -37,7 +36,6 @@ export interface BrainOptions {
   readonly seedSoftShare?: number;
   readonly inputCapacity?: Readonly<Record<Provider, number>>;
   readonly newId?: () => string;
-  readonly router?: { readonly adapters: ReadonlyMap<Provider, ProgramAdapter>; readonly workspace: string };
 }
 
 export interface Brain {
@@ -164,8 +162,6 @@ export function createBrain(options: BrainOptions): Brain {
       tell();
     },
   };
-  const router = options.router === undefined ? undefined : createRouter(options.router.adapters, providers.candidates, options.router.workspace);
-  router?.warm();
   const states = new Map<string, State>();
   const merged = new Set<string>();
   const work = new Set<Promise<void>>();
@@ -616,17 +612,13 @@ export function createBrain(options: BrainOptions): Brain {
     for (const state of states.values()) {
       dropLive(state);
     }
-    const outstanding = [...work, router?.reset()];
     track((async () => {
       try {
-        await Promise.all(outstanding);
+        await Promise.all([...work]);
         await task.action();
       } finally {
         maintaining = false;
         task.done();
-        if (!closing) {
-          router?.warm();
-        }
         pump();
       }
     })());
@@ -705,19 +697,6 @@ export function createBrain(options: BrainOptions): Brain {
       }
       if (message.type === "order") {
         providers.setOrder(message.order);
-        if (maintenance === undefined && !maintaining) {
-          router?.warm();
-        }
-        return;
-      }
-      if (message.type === "route") {
-        const reply = async () => {
-          const choice = await (maintenance === undefined && !maintaining ? router?.route(message).catch(() => null) : null);
-          if (!closing) {
-            transport.send({ type: "routed", request: message.request, choice: choice ?? null });
-          }
-        };
-        track(reply());
         return;
       }
       if (message.type === "input") {
@@ -757,7 +736,6 @@ export function createBrain(options: BrainOptions): Brain {
       for (const state of states.values()) {
         dropLive(state);
       }
-      await router?.reset();
       while (work.size > 0) {
         await Promise.all([...work]);
       }

@@ -7,6 +7,25 @@ RUN --mount=type=cache,id=superagent2-pnpm-store,target=/pnpm-store pnpm install
 RUN pnpm --filter "@super-agent2/hub..." --filter "@super-agent2/brain..." --filter "@super-agent2/web..." build
 RUN --mount=type=cache,id=superagent2-pnpm-store,target=/pnpm-store pnpm install --frozen-lockfile --prod --store-dir /pnpm-store
 
+FROM node:24.14.1-bookworm-slim AS routing-model
+ARG ROUTING_MODEL=Xenova/bge-small-zh-v1.5
+ARG ROUTING_MODEL_REVISION=75c43b069aac4d136ba6bc1122f995fedcfd2781
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /models/${ROUTING_MODEL}
+RUN set -eu; \
+    for pinned in \
+      "config.json d4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f" \
+      "tokenizer.json 48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26" \
+      "tokenizer_config.json e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a" \
+      "onnx/model.onnx 69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a"; do \
+      file=${pinned%% *}; \
+      mkdir -p "$(dirname "$file")"; \
+      curl --fail --silent --show-error --location --retry 3 --output "$file" "https://huggingface.co/${ROUTING_MODEL}/resolve/${ROUTING_MODEL_REVISION}/$file"; \
+      echo "${pinned##* }  $file" | sha256sum --check --strict; \
+    done
+
 FROM node:24.14.1-bookworm-slim AS hub
 ARG GH_VERSION=2.102.0
 RUN apt-get update \
@@ -23,10 +42,11 @@ RUN git config --system credential.https://github.com.helper "!/usr/local/bin/gh
  && mkdir -p /var/lib/superagent2/hub /var/lib/superagent2/link /share/Container/superagent2/projects /home/node/.ssh \
  && chmod 0700 /home/node/.ssh \
  && chown -R node:node /var/lib/superagent2 /share/Container/superagent2 /home/node
+COPY --from=routing-model /models /opt/superagent2/models
 COPY --from=build /app /app
 USER node
 WORKDIR /app/packages/hub
-ENV NODE_ENV=production HOME=/home/node HUB_DATA_DIR=/var/lib/superagent2/hub HUB_PORT=8080
+ENV NODE_ENV=production HOME=/home/node HUB_DATA_DIR=/var/lib/superagent2/hub HUB_PORT=8080 HUB_ROUTING_MODELS=/opt/superagent2/models
 ARG SUPERAGENT2_REVISION=
 ENV SUPERAGENT2_REVISION=${SUPERAGENT2_REVISION}
 EXPOSE 8080

@@ -1,88 +1,492 @@
-import { type HubToBrain, openTicketStates, type RouteChoice, type RouteRequest, routeFits, topicInScope, type TopicScope } from "@super-agent2/protocol";
+import { type Attachment, openTicketStates, type TopicScope } from "@super-agent2/protocol";
+import {
+  bigramConfiguration,
+  bigramSimilarity,
+  bigramVector,
+  characterLength,
+  type Configuration,
+  type ConfigurationName,
+  configurations,
+  decide,
+  endsWithQuestion,
+  namedReferences,
+  ownerTextLimit,
+  rank,
+  recentOwnerItems,
+  recentReplyItems,
+  type Reference,
+  referencesIn,
+  replyTextLimit,
+  type RouteCandidate,
+  type RouteInput,
+  type Rule,
+  type Scorer,
+  type Vector,
+} from "@super-agent2/routing";
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 
-const Topic = z.object({ id: z.string(), title: z.string(), repository: z.string().nullable(), board_status: z.string() });
-const Recent = z.object({ kind: z.enum(["owner", "text"]), text: z.string() });
-const Ticket = z.object({ id: z.number().int().positive(), repository: z.string(), title: z.string() });
-const Issue = z.object({ number: z.number().int().positive() });
-const routingWait = 5_000;
+export type ModelLoader = () => Promise<Scorer>;
 
-export function topicRouter({ connection }: HubDatabase, send: (message: HubToBrain) => boolean) {
+export interface RoutingOptions {
+  readonly primary?: ConfigurationName | undefined;
+  readonly model?: ModelLoader | undefined;
+  readonly report?: ((line: string) => void) | undefined;
+}
+
+export interface RoutingMessage {
+  readonly text: string;
+  readonly attachments: readonly Attachment[];
+  readonly scope: TopicScope;
+  readonly at: number;
+}
+
+export interface ConfigurationDecision {
+  readonly configuration: ConfigurationName;
+  readonly rule: Rule;
+  readonly topic: string | null;
+  readonly best: string | null;
+  readonly bestScore: number | null;
+  readonly runnerUpScore: number | null;
+}
+
+export interface Routing {
+  readonly scope: TopicScope["kind"];
+  readonly candidates: number;
+  readonly topic: string | null;
+  readonly possibleMatch: string | undefined;
+  readonly repository: string | null;
+  readonly decided: ConfigurationDecision;
+  readonly shadow: ConfigurationDecision | null;
+  readonly fallback: string | null;
+}
+
+export interface TopicRouter {
+  route(message: RoutingMessage): Promise<Routing>;
+  routeNow(message: RoutingMessage, reason: string): Routing;
+  record(entry: string, placedIn: string, routing: Routing, at: number): void;
+  log(entry: string, placedIn: string, routing: Routing): void;
+  refresh(): void;
+  settled(): Promise<void>;
+  close(): void;
+}
+
+type ModelState =
+  | { readonly kind: "missing" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly scorer: Scorer }
+  | { readonly kind: "failed" };
+
+const fallbackReasons = { missing: "model not configured", loading: "model loading", failed: "model failed to load" } as const;
+
+const TopicRow = z.object({ id: z.string(), repository: z.string().nullable(), activity: z.number().int() });
+const EntryRow = z.object({ id: z.string(), kind: z.string(), body: z.string() });
+const Id = z.object({ id: z.string() });
+const Conversation = z.object({ conversation_id: z.string() });
+const Repository = z.object({ repository: z.string() });
+const Body = z.looseObject({
+  text: z.string().optional(),
+  attachments: z.array(z.looseObject({ name: z.string().optional() })).optional(),
+  questions: z.unknown().optional(),
+  answer: z.unknown().optional(),
+});
+
+interface Item {
+  readonly id: string;
+  readonly text: string;
+}
+
+interface TopicContext {
+  readonly id: string;
+  readonly repository: string | null;
+  readonly idleMs: number;
+  readonly items: readonly Item[];
+}
+
+interface Context {
+  readonly message: RoutingMessage;
+  readonly topics: readonly TopicContext[];
+  readonly input: RouteInput;
+}
+
+function bodyOf(raw: string): z.infer<typeof Body> {
+  try {
+    const parsed = Body.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+function ownerText(body: z.infer<typeof Body>): string {
+  const text = body.text ?? "";
+  return text.trim() === "" ? (body.attachments ?? []).map((item) => item.name ?? "").join(" ") : text;
+}
+
+function entryText(kind: string, body: z.infer<typeof Body>): string {
+  if (kind === "owner") {
+    return ownerText(body);
+  }
+  if (kind === "question") {
+    return JSON.stringify(body.questions ?? []);
+  }
+  return body.text ?? "";
+}
+
+function finite(value: number): number | null {
+  return Number.isFinite(value) ? value : null;
+}
+
+function escaped(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function namedRepository(text: string, known: readonly string[]): string | null {
+  const lowered = text.toLowerCase();
+  const found = new Map<string, string>();
+  for (const repository of known) {
+    const full = repository.toLowerCase();
+    const name = full.slice(full.indexOf("/") + 1);
+    const whole = (value: string) => new RegExp(`(?<![\\w./-])${escaped(value)}(?![\\w/-]|\\.\\w)`).test(lowered);
+    if (whole(full) || whole(name)) {
+      found.set(full, repository);
+    }
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+function format(value: number | null): string {
+  return value === null ? "-" : value.toFixed(3);
+}
+
+function describe(decision: ConfigurationDecision): string {
+  return `${decision.configuration} rule ${decision.rule} topic ${decision.topic ?? "new"} best ${decision.best ?? "-"} ${format(decision.bestScore)} runner-up ${format(decision.runnerUpScore)}`;
+}
+
+export function createTopicRouter(database: HubDatabase, options: RoutingOptions = {}): TopicRouter {
+  const { connection } = database;
+  const primary = options.primary ?? "model";
+  const report = options.report ?? (() => undefined);
   const listTopics = connection.prepare(`
-    SELECT id, title, repository, needs_repository, board_status FROM conversations
-    WHERE topic_state = 'active' AND merged_into IS NULL
+    SELECT id, repository, max(activity_at, created_at) AS activity FROM conversations
+    WHERE topic_state = 'active' AND merged_into IS NULL AND system = 0
+      AND (CASE ? WHEN 'daily' THEN repository IS NULL AND needs_repository = 0
+        WHEN 'code' THEN repository IS NOT NULL OR needs_repository = 1
+        WHEN 'repository' THEN repository = ? COLLATE NOCASE ELSE 1 END)
       AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
-    ORDER BY updated_at DESC, rowid DESC
+    ORDER BY max(activity_at, created_at) DESC, rowid DESC
   `);
-  const recent = connection.prepare(`
-    SELECT kind, substr(json_extract(body, '$.text'), 1, 320) AS text
-    FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text') ORDER BY seq DESC LIMIT 3
+  const activeTopics = connection.prepare(`
+    SELECT id FROM conversations WHERE topic_state = 'active' AND merged_into IS NULL AND system = 0
+    ORDER BY max(activity_at, created_at) DESC, rowid DESC
   `);
-  const openTickets = connection.prepare(`
-    SELECT id, repository, substr(title_zh, 1, 120) AS title FROM tickets
+  const firstOwner = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq LIMIT 1");
+  const recentOwners = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq DESC LIMIT ${recentOwnerItems}`);
+  const recentReplies = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}`);
+  const lastExchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq DESC LIMIT 1");
+  const exchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq");
+  const ticketTopics = connection.prepare("SELECT conversation_id FROM tickets WHERE id = ? AND conversation_id IS NOT NULL");
+  const issueTopics = connection.prepare(`
+    SELECT t.conversation_id FROM ticket_issues i JOIN tickets t ON t.id = i.ticket_id WHERE i.number = ? AND t.conversation_id IS NOT NULL
+    UNION SELECT t.conversation_id FROM ticket_pull_requests p JOIN tickets t ON t.id = p.ticket_id WHERE p.number = ? AND t.conversation_id IS NOT NULL
+    UNION SELECT conversation_id FROM tickets WHERE pull_request = ? AND conversation_id IS NOT NULL
+  `);
+  const openTicketRepositories = connection.prepare(`
+    SELECT DISTINCT repository FROM tickets
     WHERE repository IS NOT NULL AND joined_into IS NULL AND state IN (${openTicketStates.map(() => "?").join(", ")})
-    ORDER BY updated_at DESC, id DESC
   `);
-  const ticketIssues = connection.prepare("SELECT number FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
-  const pending = new Map<string, (choice: RouteChoice | null) => void>();
+  const insertDecision = connection.prepare(`
+    INSERT INTO routing_decisions (
+      entry, decided_at, scope, candidates, configuration, fallback_reason, rule, topic, placed_in, best_topic, best_score, runner_up_score,
+      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
+  let model: ModelState = options.model === undefined ? { kind: "missing" } : { kind: "loading" };
+  let queue: Promise<unknown> = Promise.resolve();
+  let closed = false;
+  let refreshing: Promise<void> | undefined;
+  let dirty = false;
+  let loading: Promise<void> = Promise.resolve();
+
+  const embed = (scorer: Scorer, text: string): Promise<Vector> => {
+    const next = queue.then(() => scorer.represent(text));
+    queue = next.catch(() => undefined);
+    return next;
+  };
+
+  const itemsOf = (topic: string): Item[] => {
+    const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => EntryRow.parse(row));
+    const seen = new Set<string>();
+    const items: Item[] = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) {
+        continue;
+      }
+      seen.add(row.id);
+      const text = entryText(row.kind, bodyOf(row.body));
+      items.push({ id: row.id, text: text.slice(0, row.kind === "owner" ? ownerTextLimit : replyTextLimit) });
+    }
+    return items;
+  };
+
+  const waiting = (topic: string): { readonly open: boolean; readonly openCard: boolean } => {
+    const row = lastExchange.get(topic);
+    if (row === undefined) {
+      return { open: false, openCard: false };
+    }
+    const { kind, body } = EntryRow.parse(row);
+    const parsed = bodyOf(body);
+    if (kind === "question") {
+      const unanswered = parsed.answer === null || parsed.answer === undefined;
+      return { open: unanswered, openCard: unanswered };
+    }
+    return { open: kind === "text" && endsWithQuestion(parsed.text ?? ""), openCard: false };
+  };
+
+  const referencedTopics = (references: readonly Reference[], topics: readonly TopicContext[]): Set<string> => {
+    const byKey = new Map<string, Reference>();
+    for (const reference of references) {
+      const known = byKey.get(reference.key);
+      if (known === undefined || known.kind === "number") {
+        byKey.set(reference.key, reference);
+      }
+    }
+    const candidateIds = new Set(topics.map(({ id }) => id));
+    const textual = new Map<string, Set<string>>();
+    const textReferences = (topic: string): Set<string> => {
+      const cached = textual.get(topic);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const found = new Set<string>();
+      for (const row of exchange.all(topic).map((value) => EntryRow.parse(value))) {
+        for (const key of referencesIn(entryText(row.kind, bodyOf(row.body)), row.kind === "owner")) {
+          found.add(key);
+        }
+      }
+      textual.set(topic, found);
+      return found;
+    };
+    const result = new Set<string>();
+    for (const reference of byKey.values()) {
+      const number = Number(reference.value);
+      const linked = reference.kind === "ticket" ? ticketTopics.all(number)
+        : reference.kind === "issue" ? issueTopics.all(number, number, number) : [];
+      const topicsOfReference = linked.map((row) => Conversation.parse(row).conversation_id);
+      if (topicsOfReference.length > 0) {
+        topicsOfReference.filter((id) => candidateIds.has(id)).forEach((id) => result.add(id));
+        continue;
+      }
+      for (const topic of topics) {
+        if (textReferences(topic.id).has(reference.key)) {
+          result.add(topic.id);
+        }
+      }
+    }
+    return result;
+  };
+
+  const gather = (message: RoutingMessage): Context => {
+    const rows = listTopics.all(message.scope.kind, message.scope.kind === "repository" ? message.scope.repository : null).map((row) => TopicRow.parse(row));
+    const topics = rows.map((row): TopicContext => ({ id: row.id, repository: row.repository, idleMs: Math.max(0, message.at - row.activity), items: itemsOf(row.id) }));
+    const references = namedReferences(message.text, true);
+    const referenced = references.length === 0 ? new Set<string>() : referencedTopics(references, topics);
+    const candidates = topics.map((topic): RouteCandidate => ({ topic: topic.id, idleMs: topic.idleMs, ...waiting(topic.id), referenced: referenced.has(topic.id) }));
+    return {
+      message,
+      topics,
+      input: { length: characterLength(message.text), attachments: message.attachments.length > 0, hasReferences: references.length > 0, candidates },
+    };
+  };
+
+  const scoresOf = (context: Context, messageVector: Vector, vectorOf: (item: Item) => Vector, similarity: (left: Vector, right: Vector) => number): number[] =>
+    context.topics.map((topic) => topic.items.reduce((best, item) => Math.max(best, similarity(messageVector, vectorOf(item))), -Infinity));
+
+  const evaluate = (configuration: Configuration, context: Context, scores: readonly number[]): ConfigurationDecision => {
+    const choice = decide(context.input, configuration.rules, scores);
+    const ranking = rank(context.input.candidates, scores, configuration.rules.time);
+    return {
+      configuration: configuration.name,
+      rule: choice.rule,
+      topic: choice.topic,
+      best: ranking.best,
+      bestScore: finite(ranking.bestScore),
+      runnerUpScore: finite(ranking.runnerUpScore),
+    };
+  };
+
+  const bigramDecision = (context: Context): ConfigurationDecision => {
+    const messageVector = bigramVector(context.message.text.slice(0, ownerTextLimit));
+    return evaluate(bigramConfiguration, context, scoresOf(context, messageVector, (item) => bigramVector(item.text), bigramSimilarity));
+  };
+
+  const modelVector = async (scorer: Scorer, item: Item): Promise<Vector> => {
+    const known = vectors.get(item.id);
+    if (known !== undefined && known.text === item.text) {
+      return known.vector;
+    }
+    const vector = await embed(scorer, item.text);
+    vectors.set(item.id, { text: item.text, vector });
+    return vector;
+  };
+
+  const modelDecision = async (scorer: Scorer, context: Context): Promise<ConfigurationDecision> => {
+    if (context.topics.length === 0) {
+      return evaluate(configurations.model, context, []);
+    }
+    const messageVector = await embed(scorer, context.message.text.slice(0, ownerTextLimit));
+    const itemVectors = new Map<string, Vector>();
+    for (const topic of context.topics) {
+      for (const item of topic.items) {
+        itemVectors.set(item.id, await modelVector(scorer, item));
+      }
+    }
+    return evaluate(configurations.model, context, scoresOf(context, messageVector, (item) => itemVectors.get(item.id)!, scorer.similarity));
+  };
+
+  const repositoryFor = (context: Context): string | null => {
+    const { scope, text } = context.message;
+    if (scope.kind === "repository") {
+      return scope.repository;
+    }
+    if (scope.kind === "daily") {
+      return null;
+    }
+    const known = new Map<string, string>();
+    const names = [
+      ...context.topics.flatMap(({ repository }) => (repository === null ? [] : [repository])),
+      ...openTicketRepositories.all(...openTicketStates).map((row) => Repository.parse(row).repository),
+    ];
+    for (const name of names) {
+      if (!known.has(name.toLowerCase())) {
+        known.set(name.toLowerCase(), name);
+      }
+    }
+    return namedRepository(text, [...known.values()]);
+  };
+
+  const finish = (context: Context, decided: ConfigurationDecision, shadow: ConfigurationDecision | null, fallback: string | null): Routing => ({
+    scope: context.message.scope.kind,
+    candidates: context.topics.length,
+    topic: decided.topic,
+    possibleMatch: decided.topic === null ? (decided.best ?? context.topics[0]?.id) : undefined,
+    repository: decided.topic === null ? repositoryFor(context) : null,
+    decided,
+    shadow,
+    fallback,
+  });
+
+  const allItems = (): Item[] => activeTopics.all().flatMap((row) => itemsOf(Id.parse(row).id));
+
+  const runRefresh = async (scorer: Scorer) => {
+    while (dirty && !closed) {
+      dirty = false;
+      const items = allItems();
+      const keep = new Set(items.map(({ id }) => id));
+      for (const item of items) {
+        if (closed) {
+          return;
+        }
+        try {
+          await modelVector(scorer, item);
+        } catch (error) {
+          report(`Topic routing could not embed a topic text in the background: ${error instanceof Error ? error.name : "unknown error"}`);
+        }
+      }
+      for (const id of vectors.keys()) {
+        if (!keep.has(id)) {
+          vectors.delete(id);
+        }
+      }
+    }
+  };
+
+  const refresh = () => {
+    dirty = true;
+    if (refreshing !== undefined || closed || model.kind !== "ready") {
+      return;
+    }
+    const scorer = model.scorer;
+    refreshing = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(() => runRefresh(scorer))
+      .finally(() => {
+        refreshing = undefined;
+      });
+  };
+
+  if (options.model !== undefined) {
+    const load = options.model;
+    loading = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(() => load())
+      .then(
+        (scorer) => {
+          if (closed) {
+            return;
+          }
+          model = { kind: "ready", scorer };
+          report(`Topic routing model ${scorer.name} loaded in ${Math.round(scorer.loadMs)} ms`);
+          refresh();
+        },
+        (error: unknown) => {
+          model = { kind: "failed" };
+          report(`Topic routing model failed to load; routing uses the ${bigramConfiguration.name} configuration: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      );
+  }
 
   return {
-    route: (request: string, scope: TopicScope, message: string, files: string[]): Promise<RouteChoice | null> => {
-      const topics = listTopics.all().flatMap((row) => {
-        const { board_status: status, ...topic } = Topic.parse(row);
-        if (!topicInScope({ ...topic, needsRepository: row["needs_repository"] === 1 ? true : undefined }, scope)) {
-          return [];
+    route: async (message) => {
+      const context = gather(message);
+      const bigram = bigramDecision(context);
+      let modelResult: ConfigurationDecision | undefined;
+      let reason: string | null = null;
+      const state = model;
+      if (state.kind === "ready") {
+        try {
+          modelResult = await modelDecision(state.scorer, context);
+        } catch (error) {
+          reason = `embedding failed: ${error instanceof Error ? error.name : "unknown error"}`;
         }
-        const messages = (status === "" ? recent.all(topic.id).reverse() : []).map((entry): RouteRequest["topics"][number]["recent"][number] => {
-          const item = Recent.parse(entry);
-          return { speaker: item.kind === "owner" ? "owner" : "assistant", text: item.text };
-        });
-        return [{ ...topic, ...(status === "" ? {} : { status }), recent: messages }];
-      });
-      const repositories = new Map<string, string>();
-      const tickets: RouteRequest["tickets"] = [];
-      if (scope.kind === "code") {
-        for (const row of openTickets.all(...openTicketStates)) {
-          const ticket = Ticket.parse(row);
-          const issues = ticketIssues.all(ticket.id).map((issue) => Issue.parse(issue).number);
-          tickets.push({ ...ticket, issues });
-        }
-        for (const { repository } of [...topics, ...tickets]) {
-          if (repository !== null) {
-            repositories.set(repository.toLowerCase(), repository);
-          }
-        }
+      } else {
+        reason = fallbackReasons[state.kind];
       }
-      const text = message.length <= 8_000 ? message : `${message.slice(0, 6_000)}\n[... clipped for routing ...]\n${message.slice(-2_000)}`;
-      const input: RouteRequest = { type: "route", request, scope, topics, repositories: [...repositories.values()], tickets, text, files };
-      return new Promise((resolve) => {
-        const finish = (choice: RouteChoice | null) => {
-          clearTimeout(timer);
-          pending.delete(request);
-          if (choice !== null && routeFits(input, choice)) {
-            if (choice.kind === "new" && choice.repository != null) {
-              const repository = scope.kind === "repository" ? scope.repository : repositories.get(choice.repository.toLowerCase());
-              resolve({ ...choice, repository });
-            } else {
-              resolve(choice);
-            }
-          } else {
-            resolve(null);
-          }
-        };
-        const timer = setTimeout(() => finish(null), routingWait);
-        pending.set(request, finish);
-        if (!send(input)) {
-          finish(null);
-        }
-      });
+      if (primary === "model") {
+        return modelResult === undefined ? finish(context, bigram, null, reason) : finish(context, modelResult, bigram, null);
+      }
+      return finish(context, bigram, modelResult ?? null, null);
     },
-    answer: (request: string, choice: RouteChoice | null) => pending.get(request)?.(choice),
-    disconnect: () => {
-      for (const finish of pending.values()) {
-        finish(null);
+    routeNow: (message, reason) => {
+      const context = gather(message);
+      return finish(context, bigramDecision(context), null, primary === "bigram" ? null : reason);
+    },
+    record: (entry, placedIn, routing, at) => {
+      const { decided, shadow } = routing;
+      insertDecision.run(
+        entry, at, routing.scope, routing.candidates, decided.configuration, routing.fallback, decided.rule, decided.topic, placedIn,
+        decided.best, decided.bestScore, decided.runnerUpScore,
+        shadow?.configuration ?? null, shadow?.rule ?? null, shadow?.topic ?? null, shadow?.best ?? null, shadow?.bestScore ?? null, shadow?.runnerUpScore ?? null,
+      );
+    },
+    log: (entry, placedIn, routing) => {
+      const parts = [
+        `Topic routing decision ${entry}: ${describe(routing.decided)} placed in ${placedIn}`,
+        `${routing.candidates} candidates in ${routing.scope}`,
+        `shadow ${routing.shadow === null ? "none" : describe(routing.shadow)}`,
+        ...(routing.fallback === null ? [] : [`fallback: ${routing.fallback}`]),
+      ];
+      report(parts.join("; "));
+    },
+    refresh,
+    settled: async () => {
+      await loading;
+      while (refreshing !== undefined) {
+        await refreshing;
       }
+    },
+    close: () => {
+      closed = true;
     },
   };
 }

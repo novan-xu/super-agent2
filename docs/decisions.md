@@ -4310,3 +4310,84 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   established; the evaluator's recommendation was the strict bigram router, and the shadow record exists to settle the
   choice on real use.
 - **Other options:** The strict bigram router alone; the bigram router with weight-2 constants.
+
+## 2026-11-18 — Routing in the hub (#143)
+
+- **Chosen:** The bigram representation, reference extraction, rules a–e, the model scorer and the constants of both
+  configurations live in a new workspace package, `packages/routing` (`@super-agent2/routing`). The hub and
+  `tools/route-eval` both depend on it; the tool keeps only its replay, search and report.
+- **Why:** The hub must not depend on a tool, and the tool must measure the router that ships. `protocol` describes
+  the wire and is also used by the page, which should not carry the model's dependency. Rerun on the owner's copies of
+  both databases, the tool gives the report's numbers with the shared code: 13 wrong joins and 37 wrong splits for
+  `bge-small-zh` with weight-2 constants, 20 and 27 for bigram, and 13/37 and 11/48 for the two shipped configurations.
+- **Other options:** Put the code in `protocol`; keep it in the tool and let the hub import the tool; put it in the hub
+  and let the tool depend on the hub.
+
+- **Chosen:** The constants are the issue's rounded values (0.570, 0.096, 0.048; 0.055, 0.091, 0.18), not the tool's
+  unrounded decays (0.0482 and 0.1822).
+- **Why:** They are the specification, and on the evaluation data they give exactly the same decisions on the test part.
+- **Other options:** Copy the search's values to four digits.
+
+- **Chosen:** Bake the model files into the hub image. A build stage downloads `Xenova/bge-small-zh-v1.5` at revision
+  `75c43b069aac4d136ba6bc1122f995fedcfd2781` (four files, about 95 MB) and checks each against its SHA-256; the hub
+  reads them from `/opt/superagent2/models` with remote loading switched off.
+- **Why:** The hub then starts and routes without the model host and without a deploy step of its own, a rollback brings
+  back the model its version expects, and the NAS build already has network access. A hub test keeps the Dockerfile's
+  revision and checksums equal to those in `packages/routing`.
+- **Other options:** A volume filled by `deploy.sh` at release time, which adds a step that can fail separately and
+  outlives the image; committing the files to the repository.
+
+- **Chosen:** Keep the vectors of topic texts in the hub's memory, computed in the background after the model loads and
+  whenever an entry or turn changes, and dropped when a topic is no longer active. Routing embeds a missing text on the
+  spot, so a message is never refused for want of a vector.
+- **Why:** They are derived data, a few hundred vectors of 512 numbers, rebuilt in seconds after a restart while the
+  bigram configuration covers the gap. A table would add a migration and a cache to keep in step for no gain.
+- **Other options:** Store them in the database, keyed by entry and text.
+
+- **Chosen:** The shadow is whichever configuration is not primary, recorded when it can run. When the model cannot
+  decide, the bigram configuration decides, no shadow is recorded and the reason is. `HUB_ROUTING_PRIMARY=bigram` makes
+  the model the shadow.
+- **Why:** Every decision then carries both opinions whenever both exist, and switching is one setting.
+- **Other options:** Always record the bigram decision as the shadow, even when it is the one that decided.
+
+- **Chosen:** Rule e asks the database first: `工单 n` is the ticket with that number; `#n`, `issue n` and `PR n` are
+  looked up in `ticket_issues`, `ticket_pull_requests` and the ticket's own pull request. A reference the database knows
+  counts only for the topics it names, even when none of them is a candidate; only an unknown reference, a bare 2–4 digit
+  number or a form of the first Super-agent falls back to the text rule.
+- **Why:** The database is certain where the text is a guess, and a ticket in an archived topic should not be matched to
+  another topic that merely quotes its number.
+- **Other options:** Match the text whenever the database finds no candidate.
+
+- **Chosen:** System is not a routing candidate, besides archived topics, merged topics and topics with a merge pending.
+  "Most recently active" uses the topic's last activity (its last entry other than a tool call).
+- **Why:** System holds hub notices; an owner's short reply should not land there because a notice just arrived.
+- **Other options:** Keep System as a candidate, as the large-model router did.
+
+- **Chosen:** Decisions are kept in a new table, `routing_decisions`, keyed by the owner's entry, without foreign keys.
+  It stores the joined topic and the topic the entry was placed in separately; 移到… records `moved_to` and
+  `moved_at` on the decision. Merging topics is not recorded as a correction.
+- **Why:** A record must never stop an entry from being written or moved. A move is the owner's verdict on one message;
+  a merge is a verdict on two topics.
+- **Other options:** Foreign keys to entries and topics; a separate corrections table.
+
+- **Chosen:** An input saved before a restart is routed at startup with the bigram configuration, recorded as
+  "recovered after a restart", instead of always opening a new topic.
+- **Why:** It is routed like any other message, at once and without the model, which is still loading at that point.
+- **Other options:** Keep opening a new topic for it.
+
+- **Chosen:** A fallback caused by an embedding error records only the error's class; the full message of a failure to
+  load the model is logged once.
+- **Why:** Nothing of a message's text may reach the record or the log, and a load error names only files.
+- **Other options:** Log every error message in full.
+
+- **Chosen:** Remove the programs' text-only mode (`textOnly`, the `dsh` text-only plugin and Codex's read-only thread)
+  together with the brain's router, the `route` and `routed` messages, `RouteRequest`, `RouteChoice` and `routeFits`.
+  The protocol version stays 1.
+- **Why:** Nothing else used them. The hub and the brain are built from one commit and deployed together, and the
+  version did not change when these messages were added in #121.
+- **Other options:** Keep the text-only mode for a later use; raise the protocol version.
+
+- **Chosen:** Rule b also needs the message to have no attachment, in the hub and in the tool, which now reads the
+  attachment flag of Super-agent2's messages.
+- **Why:** The issue's rule says so, and the tool has to measure the same rule; it changes none of the report's numbers.
+- **Other options:** Apply it in the hub only.

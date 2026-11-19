@@ -30,7 +30,6 @@ import {
   protocolVersion,
   quoteChunkLimit,
   quoteInlineLimit,
-  type RouteChoice,
   type StreamEntry,
   type StreamPage,
   streamPageSize,
@@ -47,7 +46,7 @@ import type { CommandService } from "./commands.js";
 import type { HubDatabase } from "./database.js";
 import { commandReport } from "./reports.js";
 import type { TicketService } from "./tickets.js";
-import { topicRouter } from "./topic-routing.js";
+import { createTopicRouter, type Routing, type RoutingOptions } from "./topic-routing.js";
 import { createTopicContext, type TopicContext } from "./topic-context.js";
 
 import { createTopicCorrections, defaultTopicArchiveMilliseconds, type TopicEdit } from "./topic-corrections.js";
@@ -98,6 +97,7 @@ export interface ConversationService {
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
   watchBrain(listener: () => void): () => void;
+  routingSettled(): Promise<void>;
   attach(connection: BrainConnection): BrainLink;
   subscribe(listener: ConversationListener): () => void;
   close(): void;
@@ -125,6 +125,7 @@ export interface ConversationServiceOptions {
   readonly memory?: MemoryBriefing;
   readonly archiveMilliseconds?: number | undefined;
   readonly order?: () => readonly Provider[] | undefined;
+  readonly routing?: RoutingOptions;
 }
 
 export interface MemoryBriefing {
@@ -146,6 +147,7 @@ export const brainRestartedReason = text("turn.reason.brainRestarted");
 export const brainAbsentReason = text("turn.reason.brainAbsent");
 
 const titleLength = 80;
+const recoveredReason = "recovered after a restart";
 
 const ConversationRow = z.object({
   id: z.string(),
@@ -357,6 +359,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
+  const router = createTopicRouter(options.database, options.routing);
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
   const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
   const assignPendingRepository = connection.prepare(`
@@ -433,6 +436,9 @@ export function createConversationService(options: ConversationServiceOptions): 
   const markReported = connection.prepare("UPDATE brain_commands SET reported = 1 WHERE command_id = ?");
 
   const emit = (event: ConversationEvent) => {
+    if (event.type === "entry" || event.type === "turn") {
+      router.refresh();
+    }
     for (const listener of listeners) {
       try {
         listener(event);
@@ -612,7 +618,6 @@ export function createConversationService(options: ConversationServiceOptions): 
       return false;
     }
   };
-  const router = topicRouter(options.database, sendToBrain);
 
   const deliver = (row: EntryRow) => {
     if (row.prompt === null || row.taken !== 0 || corrections.blocked(row.conversation_id, row.seq)) {
@@ -713,10 +718,6 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const receive = (message: BrainMessage) => {
     switch (message.type) {
-      case "routed": {
-        router.answer(message.request, message.choice);
-        return;
-      }
       case "providers": {
         brainProviders = message;
         brainChanged();
@@ -1031,34 +1032,36 @@ export function createConversationService(options: ConversationServiceOptions): 
     return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage }));
   };
 
-  const finishRouting = (id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, choice: RouteChoice | null): StreamEntry => {
+  const finishRouting = (id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, routing: Routing): StreamEntry => {
     const candidate = (topic: string | undefined) => {
       const found = topic === undefined ? undefined : rawGet(topic);
       return found?.topicState === "active" && !found.mergePending && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
     };
-    let conversation = candidate(choice?.kind === "existing" ? choice.topic : undefined);
-    const match = choice?.kind === "new" ? candidate(choice.possibleMatch) : undefined;
-    const repository = scope.kind === "repository" ? scope.repository : (choice?.kind === "new" ? choice.repository ?? null : null);
+    let conversation = candidate(routing.topic ?? undefined);
+    const match = conversation === undefined ? candidate(routing.possibleMatch) : undefined;
+    const repository = scope.kind === "repository" ? scope.repository : routing.repository;
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (conversation === undefined) {
-        const title = choice?.kind === "new" ? choice.title : titleOf(message, attachments);
-        const topic = storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null });
+        const topic = storeTopic(options.database, at, titleOf(message, attachments), { repository, needsRepository: scope.kind === "code" && repository === null });
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
+      router.record(id, conversation.id, routing, at);
       deletePending.run(id);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");
       throw error;
     }
+    router.log(id, conversation.id, routing);
     return publishOwner(id);
   };
 
   corrections.finishOfflineMerges();
   for (const row of listPending.all().map((row) => PendingInput.parse(row))) {
-    finishRouting(row.id, row.created_at, PendingBody.parse(JSON.parse(row.body)), null);
+    const body = PendingBody.parse(JSON.parse(row.body));
+    finishRouting(row.id, row.created_at, body, router.routeNow({ text: body.message, attachments: body.attachments, scope: body.scope, at: row.created_at }, recoveredReason));
   }
 
   return {
@@ -1153,8 +1156,8 @@ export function createConversationService(options: ConversationServiceOptions): 
       const at = clock.now();
       const body = { message, attachments: [...attachments], scope };
       savePending.run(id, JSON.stringify(body), at);
-      const choice = await router.route(id, scope, message, attachments.map(({ name }) => name));
-      return closing ? undefined : finishRouting(id, at, body, choice);
+      const routing = await router.route({ text: message, attachments, scope, at });
+      return closing ? undefined : finishRouting(id, at, body, routing);
     },
     readQuote: (conversation, id, offset) => {
       const quote = hasQuote.get(conversation, id) === undefined ? undefined : quoteOf(id);
@@ -1207,6 +1210,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     sendOrder: (order) => {
       sendToBrain({ type: "order", order: [...order] });
     },
+    routingSettled: () => router.settled(),
     watchBrain: (listener) => {
       brainListeners.add(listener);
       return () => {
@@ -1217,7 +1221,6 @@ export function createConversationService(options: ConversationServiceOptions): 
       const previous = link;
       const current = { connection, ready: false };
       link = current;
-      router.disconnect();
       previous?.connection.close();
       if (previous === undefined) {
         emit({ type: "brain", brain: { linked: true } });
@@ -1233,7 +1236,6 @@ export function createConversationService(options: ConversationServiceOptions): 
         detach: () => {
           if (link === current) {
             link = undefined;
-            router.disconnect();
             corrections.finishOfflineMerges();
             brainProviders = undefined;
             emit({ type: "brain", brain: { linked: false } });
@@ -1251,7 +1253,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     close: () => {
       closing = true;
       corrections.close();
-      router.disconnect();
+      router.close();
       unsubscribeCommands();
       link?.connection.close();
       link = undefined;

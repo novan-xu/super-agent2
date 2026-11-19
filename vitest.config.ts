@@ -13,6 +13,7 @@ export default defineConfig({
     projects: [
       { extends: true, test: { name: "catalog", root: "packages/catalog" } },
       { extends: true, test: { name: "protocol", root: "packages/protocol" } },
+      { extends: true, test: { name: "routing", root: "packages/routing" } },
       { extends: true, test: { name: "hub", root: "packages/hub" } },
       { extends: true, test: { name: "programs", root: "packages/programs" } },
       { extends: true, test: { name: "brain", root: "packages/brain" } },

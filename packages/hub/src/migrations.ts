@@ -822,6 +822,34 @@ export const migrations: readonly Migration[] = [
     version: 35,
     sql: `ALTER TABLE machines ADD COLUMN storage TEXT;`,
   },
+  {
+    version: 36,
+    sql: `
+      CREATE TABLE routing_decisions (
+        entry TEXT PRIMARY KEY,
+        decided_at INTEGER NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('daily', 'code', 'repository')),
+        candidates INTEGER NOT NULL,
+        configuration TEXT NOT NULL CHECK (configuration IN ('model', 'bigram')),
+        fallback_reason TEXT,
+        rule TEXT NOT NULL CHECK (rule IN ('a', 'e', 'b', 'c', 'd')),
+        topic TEXT,
+        placed_in TEXT NOT NULL,
+        best_topic TEXT,
+        best_score REAL,
+        runner_up_score REAL,
+        shadow_configuration TEXT CHECK (shadow_configuration IN ('model', 'bigram')),
+        shadow_rule TEXT CHECK (shadow_rule IN ('a', 'e', 'b', 'c', 'd')),
+        shadow_topic TEXT,
+        shadow_best_topic TEXT,
+        shadow_best_score REAL,
+        shadow_runner_up_score REAL,
+        moved_to TEXT,
+        moved_at INTEGER
+      ) STRICT;
+      CREATE INDEX routing_decisions_by_time ON routing_decisions (decided_at);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

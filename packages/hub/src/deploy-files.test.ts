@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readDeploymentFile } from "@super-agent2/protocol";
+import { bgeSmallZh } from "@super-agent2/routing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 function repositoryPath(path: string): string {
@@ -42,6 +43,21 @@ describe("the Compose file", () => {
   it("gives the hub no way to sign in to the NAS host", () => {
     expect(compose).not.toMatch(/NAS_SSH|secrets\/ssh|host\.docker\.internal|host-gateway|SUPERAGENT2_INSTANCE/);
     expect(compose).not.toMatch(/docker\.sock/);
+  });
+});
+
+describe("the image", () => {
+  const dockerfile = repositoryFile("deploy/Dockerfile");
+
+  it("bakes the routing model at the revision and checksums the hub expects and points the hub at it", () => {
+    expect(dockerfile).toContain(`ARG ROUTING_MODEL=${bgeSmallZh.model}`);
+    expect(dockerfile).toContain(`ARG ROUTING_MODEL_REVISION=${bgeSmallZh.revision}`);
+    for (const file of bgeSmallZh.files) {
+      expect(dockerfile).toContain(`"${file.path} ${file.sha256}"`);
+    }
+    expect(dockerfile).toContain("sha256sum --check --strict");
+    expect(dockerfile).toContain("COPY --from=routing-model /models /opt/superagent2/models");
+    expect(dockerfile).toMatch(/^ENV .*HUB_ROUTING_MODELS=\/opt\/superagent2\/models/m);
   });
 });
 

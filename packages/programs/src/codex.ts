@@ -122,26 +122,6 @@ export function codexInput(text: string, images: readonly PromptImage[]): Record
   return [{ type: "text", text, text_elements: [] }, ...images.filter((image) => isNativeImage(image.mediaType)).map((image) => ({ type: "localImage", path: image.path }))];
 }
 
-const textOnlyConfig = {
-  "features.apps": false,
-  "features.code_mode": false,
-  "features.hooks": false,
-  "features.image_generation": false,
-  "features.memories": false,
-  "features.multi_agent": false,
-  "features.multi_agent_v2": false,
-  "features.plugins": false,
-  "features.shell_snapshot": false,
-  "features.shell_tool": false,
-  "features.unified_exec": false,
-  "features.view_image": false,
-  "skills.include_instructions": false,
-  "tools.update_plan.enabled": false,
-  web_search: "disabled",
-  default_permissions: ":read-only",
-};
-const ConfigRead = z.object({ config: z.object({ mcp_servers: z.record(z.string(), z.unknown()).nullish() }) });
-
 export function codexAdapter(settings: ProgramSettings): ProgramAdapter {
   return {
     provider: "gpt",
@@ -295,12 +275,9 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
 
   const onRequest = (method: string): unknown => {
     if (method.endsWith("requestApproval")) {
-      return { decision: options.textOnly === true ? "decline" : "accept" };
+      return { decision: "accept" };
     }
     if (method === "mcpServer/elicitation/request") {
-      if (options.textOnly === true) {
-        return { action: "decline" };
-      }
       return { action: "accept", content: {}, _meta: null };
     }
     throw new Error(`The brain does not answer ${method}`);
@@ -327,25 +304,10 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   const ready = (async () => {
     await client.request("initialize", {
       clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super-agent2 brain", version: "0.0.0" },
-      capabilities: { experimentalApi: options.textOnly === true, optOutNotificationMethods: tools === null ? ["thread/tokenUsage/updated"] : [] },
+      capabilities: { experimentalApi: false, optOutNotificationMethods: tools === null ? ["thread/tokenUsage/updated"] : [] },
     });
     client.notify("initialized");
     const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never", sandbox: "danger-full-access", config };
-    if (options.textOnly === true) {
-      const { config: effective } = ConfigRead.parse(await client.request("config/read", { cwd: options.workspace, includeLayers: false }));
-      const mcpServers = Object.fromEntries(Object.keys(effective.mcp_servers ?? {}).map((name) => [name, { enabled: false }]));
-      const result = ThreadResult.parse(await client.request("thread/start", {
-        ...common,
-        sandbox: "read-only",
-        config: { ...config, ...textOnlyConfig, mcp_servers: mcpServers },
-        ephemeral: true,
-        environments: [],
-        dynamicTools: [],
-        selectedCapabilityRoots: [],
-      }));
-      threadId = result.thread.id;
-      return threadId;
-    }
     const reportModel = (result: z.infer<typeof ThreadResult>) => {
       if (result.model !== undefined) {
         listener({ type: "model", model: result.model, effort: result.reasoningEffort ?? null });
