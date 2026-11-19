@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import {
   canMoveTicket,
   capReached,
@@ -248,6 +249,7 @@ export interface TicketServiceOptions {
   readonly clock: Clock;
   readonly work?: TicketWork;
   readonly topicChanged?: (id: string) => void;
+  readonly entryChanged?: (id: string) => void;
 }
 
 export class TicketError extends Error {}
@@ -590,6 +592,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
      )`,
   );
   const changeTopicHistory = connection.prepare("UPDATE topic_history_revision SET revision = revision + 1");
+  const insertTaskNotice = connection.prepare(`
+    INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
+    VALUES (?, ?, (SELECT coalesce(max(seq), 0) + 1 FROM conversation_entries WHERE conversation_id = ?), 'notice', NULL, NULL, ?, NULL, NULL, ?,
+      (SELECT coalesce(max(stream_seq), 0) + 1 FROM conversation_entries))
+  `);
   const selectTicketTopic = connection.prepare("SELECT c.id FROM tickets AS t JOIN conversations AS c ON c.id = t.conversation_id WHERE t.id = ?");
   const updateTicketTopic = connection.prepare("UPDATE tickets SET conversation_id = ? WHERE id = ?");
   const selectIssues = connection.prepare("SELECT * FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
@@ -911,6 +918,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     }
     const touched = new Set<number>();
     const changedTopics = new Set<string>();
+    const changedEntries: string[] = [];
     const openTopic = (title: string, repository: string | null) => {
       const id = storeTopic(options.database, clock.now(), title, { repository });
       changedTopics.add(id);
@@ -961,6 +969,19 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         now,
       );
       const id = Number(result.lastInsertRowid);
+      if (formOf(request) === "task" && request.repository === null) {
+        const card = `task-card-${id}`;
+        insertTaskNotice.run(card, topic, topic, JSON.stringify({ text: text("notice.taskPending", { title: request.title.zh.trim() }), ticket: id, start: true }), now);
+        changedEntries.push(card);
+        if (request.conversation !== undefined && request.conversation !== topic) {
+          const source = connection.prepare("SELECT id FROM conversations WHERE id = ? AND merged_into IS NULL").get(request.conversation);
+          if (source !== undefined) {
+            const pointer = `task-pointer-${id}`;
+            insertTaskNotice.run(pointer, request.conversation, request.conversation, JSON.stringify({ text: text("notice.taskMoved", { title: request.title.zh.trim() }), destination: topic }), now);
+            changedEntries.push(pointer);
+          }
+        }
+      }
       insertIssues(id, request.issues);
       if (request.task !== undefined) {
         insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0);
@@ -1372,6 +1393,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     for (const topic of changedTopics) {
       options.topicChanged?.(topic);
     }
+    for (const entry of changedEntries) options.entryChanged?.(entry);
     for (const id of [...touched].sort((a, b) => a - b)) {
       const ticket = get(id);
       if (ticket !== undefined) {

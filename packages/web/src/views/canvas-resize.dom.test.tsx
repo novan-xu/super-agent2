@@ -59,6 +59,14 @@ const width = () => host.querySelector<HTMLElement>(".wb-layout")!.style.getProp
 async function render() { await act(async () => root.render(<CanvasWorkbench {...props} />)); }
 
 describe("workbench panel resizing", () => {
+  it("opens the ticket when a start-card link outlives its card", async () => {
+    const selectTicket = vi.fn();
+    const selectRepository = vi.fn();
+    await act(async () => root.render(<CanvasWorkbench {...props} focus="start:1" selectTicket={selectTicket} selectRepository={selectRepository} />));
+    expect(selectTicket).toHaveBeenCalledWith(1);
+    expect(selectRepository).toHaveBeenCalledWith("org/one");
+  });
+
   it("supports pointer and keyboard resizing, persistence, resize clamping and reset", async () => {
     await render();
     expect(width()).toBe("380px");

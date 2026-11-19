@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
   Attachment,
@@ -35,6 +35,7 @@ import {
   type StreamPage,
   type StreamPreview,
   type StreamPreviewRequest,
+  type StoredWorkEvent,
   streamPageSize,
   type TopicHistoryUpdate,
   type TopicMove,
@@ -74,6 +75,8 @@ export interface ConversationService {
   get(id: string): Conversation | undefined;
   list(limit?: number): Conversation[];
   announce(id: string): void;
+  announceEntry(id: string): void;
+  taskProgress(event: StoredWorkEvent): void;
   detail(id: string): ConversationDetail | undefined;
   entries(id: string, after?: number): ConversationEntry[];
   stream(before?: number, limit?: number, repository?: string | null | TopicScope): StreamPage;
@@ -216,6 +219,8 @@ const Body = z.looseObject({
   output: z.string().optional(),
   state: z.string().optional(),
   possibleMatch: z.string().optional(),
+  destination: z.string().optional(),
+  start: z.boolean().optional(),
   questionResponse: z.object({ card: z.string(), answers: QuestionAnswers }).optional(),
 });
 
@@ -286,7 +291,9 @@ function toEntry(row: EntryRow): ConversationEntry {
     case "question":
       return ConversationEntry.parse({ ...base, kind: "question", turn: row.turn_id, questions: body.questions, answer: body.answer ?? null });
     case "notice":
-      return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id });
+      return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id,
+        ...(body.ticket === undefined ? {} : { ticket: body.ticket }), ...(body.destination === undefined ? {} : { destination: body.destination }),
+        ...(body.start === true ? { start: true } : {}) });
     case "delivery":
       return ConversationEntry.parse({
         ...base,
@@ -1079,6 +1086,23 @@ export function createConversationService(options: ConversationServiceOptions): 
       prompt: delivery.prompt,
     });
 
+  const taskProgress = (work: StoredWorkEvent) => {
+    const ticket = tickets.get(work.ticket);
+    if (ticket?.form !== "task" || ticket.repository !== null || ticket.conversation === null) return;
+    const event = work.event;
+    if (event.kind !== "text" && !(event.kind === "phase" && (event.phase === "started" || event.phase === "resumed"))) return;
+    const key = event.kind === "text" ? `text-${event.block}` : `phase-${work.seq}`;
+    const hash = createHash("sha256").update(key).digest("hex").slice(0, 24);
+    const id = `task-work-${work.ticket}-${work.attempt}-${hash}`;
+    const previous = selectEntry.get(id);
+    const old = previous === undefined ? undefined : JSON.parse(EntryRow.parse(previous).body) as { text: string; seq: number };
+    if (old !== undefined && old.seq >= work.seq) return;
+    const value = event.kind === "text" ? (old?.text ?? text("notice.taskProgress", { ticket: work.ticket })) + event.delta : text("notice.taskStarted", { ticket: work.ticket });
+    const body = { text: value, ticket: work.ticket, seq: work.seq };
+    if (previous === undefined) addEntry({ id, conversation: ticket.conversation, kind: "notice", turn: null, body, at: work.at });
+    else { updateBody.run(JSON.stringify(body), id); emitEntry(id); }
+  };
+
   const publishOwner = (id: string): StreamEntry => {
     const row = selectStreamEntry.get(id);
     const item = toStreamEntry(row);
@@ -1173,6 +1197,8 @@ export function createConversationService(options: ConversationServiceOptions): 
     deliver: deliverResult,
     get,
     announce,
+    announceEntry: emitEntry,
+    taskProgress,
     list: (limit = 50) => selectConversations.all(limit).map(withMerge),
     move: corrections.move,
     handover: corrections.handover,

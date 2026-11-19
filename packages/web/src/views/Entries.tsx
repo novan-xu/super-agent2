@@ -1,7 +1,7 @@
 import { QuestionCard } from "./QuestionCard.js";
 import { FileViewer } from "../parts/FileViewer.js";
 import { text } from "@super-agent2/catalog";
-import type { ConversationEntry, DeliveryEntry, NoticeEntry, OwnerEntry, TextEntry, Turn } from "@super-agent2/protocol";
+import { cardAddress, pagePath, ticketAddress, type ConversationEntry, type DeliveryEntry, type NoticeEntry, type OwnerEntry, type TextEntry, type Turn } from "@super-agent2/protocol";
 import { memo, useCallback, useState, type ReactNode } from "react";
 import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
@@ -149,9 +149,11 @@ function Delivery({ entry, topic, action }: { readonly entry: DeliveryEntry; rea
 
 function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
   return (
-    <div className="sysline sysline--note">
+    <div className={`sysline sysline--note${entry.ticket !== undefined && entry.start !== true ? " sysline--progress" : ""}`}>
       <Icon name="swap" />
-      <span>{entry.text}</span>
+      {entry.destination === undefined ? <span>{entry.text}</span> : <a href={pagePath({ view: "conversations", conversation: entry.destination, scope: { kind: "daily" } })}>{entry.text}</a>}
+      {entry.ticket === undefined || entry.start !== true ? null : <a href={ticketAddress(entry.ticket)}>{text("notice.taskOpen")}</a>}
+      {entry.ticket === undefined || entry.start !== true ? null : <a href={cardAddress(`start:${entry.ticket}`)}>{text("notice.taskStart")}</a>}
       {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href="/settings/models">{text("notice.newModelsLink")}</a> : null}
       {topic}
       {action}

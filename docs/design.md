@@ -93,6 +93,10 @@ the hub.
   assign a repository to a daily or pending topic, including another topic at the owner's request; System, merged
   topics, pending merges and conflicting tickets are refused. A repository topic without repository tickets can
   move to 日常. Each move updates the page live.
+- A repository-less task belongs to 日常. A request already in a daily topic keeps that topic, including for
+  later tasks and repairs; a request in code opens a daily topic and leaves one link at its source. The daily
+  conversation keeps a link to its start card and ticket, worker start and text updates, failure notices and
+  its delivered text and files. The ticket detail holds the complete worker log. 工作台's 日常 shows open tasks.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - A topic opened from an owner message starts with the message's first line or attachment name. The hub asks the
