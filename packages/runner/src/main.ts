@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, readSettingsFile, runnerFiles, runnerHome } from "./config.js";
 import { protocolVersion } from "@super-agent2/protocol";
 import { entryFiles, readState } from "./entry.js";
-import { defaultInstallContext, install, isAlive, launchSupervisor, readSupervisorPid, restartCode, supervise, supervisedVariable, uninstall } from "./install.js";
+import { defaultInstallContext, describeAutostart, directFlag, install, isAlive, keepAutostart, launchSupervisor, readSupervisorPid, restartCode, supervise, supervisedVariable, uninstall } from "./install.js";
 import { readAllowances } from "./allowance.js";
 import { probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { startRunnerService } from "./service.js";
@@ -14,8 +14,8 @@ import { runnerVersion } from "./version.js";
 const usage = [
   "Usage: node packages/runner/dist/main.js <command>",
   "  setup        Save the line the hub printed for this machine (asked for on standard input)",
-  "  install      Start the runner at every login and now (Windows and macOS)",
-  "  uninstall    Remove the start at login and stop the runner; --purge also deletes the settings folder",
+  "  install      Start the runner at every login and now, and again whenever it stops (Windows and macOS)",
+  "  uninstall    Remove what install added and stop the runner; --purge also deletes the settings folder",
   "  run          Run the runner in this terminal",
   "  status       Say whether the runner is set up and running",
   "  programs     List the command-line programs found here, with their models and efforts",
@@ -83,7 +83,7 @@ async function main(argv: readonly string[]): Promise<number> {
     case "uninstall":
       return (await uninstall(context, rest.includes("--purge"))) ? 0 : 1;
     case "launch":
-      launchSupervisor(context);
+      launchSupervisor(context, rest.includes(directFlag));
       return 0;
     case "supervise":
       mkdirSync(files.home, { recursive: true });
@@ -92,14 +92,23 @@ async function main(argv: readonly string[]): Promise<number> {
     case "run": {
       let stopping = false;
       let stop: (code: number) => void = () => undefined;
+      const log = (line: string) => process.stdout.write(stamp(line));
+      const supervised = process.env[supervisedVariable] === "1";
+      let autostartKept = !supervised;
       const service = await startRunnerService({
         files,
         environment: process.env,
-        log: (line) => process.stdout.write(stamp(line)),
+        log,
         mainPath,
         ...(version === undefined ? {} : { version }),
-        supervised: process.env[supervisedVariable] === "1",
+        supervised,
         restart: () => stop(restartCode),
+        confirmed: () => {
+          if (!autostartKept) {
+            autostartKept = true;
+            keepAutostart(context, log);
+          }
+        },
       });
       if (service === undefined) {
         return 1;
@@ -130,6 +139,7 @@ async function main(argv: readonly string[]): Promise<number> {
         }
       }
       say(`Supervisor: ${pid !== undefined && isAlive(pid) ? `running as process ${pid}` : "not running"}`);
+      say(`Autostart: ${describeAutostart(context)}`);
       return 0;
     }
     case "programs": {

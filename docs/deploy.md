@@ -300,6 +300,13 @@ service token at Cloudflare, as 撤销 does; it says so if the token could not b
 A runner installed before this scheme starts `main.js` of its checkout directly; run `install` once from a checkout that
 contains #18 to move it to `start.mjs`.
 
+On Windows two things start the runner: the `Run` value `SuperAgent2Runner` at login, and the scheduled task
+`SuperAgent2Runner`, which every 5 minutes starts the supervisor if it is not running. Both go through the task, so the
+supervisor belongs to the Task Scheduler service and not to the terminal or program that ran `install` or `launch`;
+closing or updating that program does not end the runner. `node ~/.superagent2/start.mjs status` prints an `Autostart:`
+line that says which of the two exist. A runner installed before the task existed registers it by itself after it has
+updated and reached the hub; `install` run again does the same at once. `uninstall` removes both.
+
 ## Take over the host name
 
 ```sh
