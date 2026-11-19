@@ -323,7 +323,6 @@ describe("a code pull request", () => {
 
   it.each([
     ["a pending pipeline", "pending", [["check-macos", "pending"], ["check-windows", "pending"]], ["check-macos", "check-windows"], "workflows"],
-    ["a cancelled workflow", "killed", [["check-macos", "success"], ["check-windows", "killed"]], ["check-macos", "check-windows"], "halted"],
     ["a skipped workflow", "success", [["check-macos", "success"], ["check-windows", "skipped"]], ["check-macos", "check-windows"], "halted"],
     ["a declined pipeline", "declined", [], ["check-macos", "check-windows"], "halted"],
     ["a pipeline built without a workflow the head defines", "success", [["check-macos", "success"]], ["check-macos"], "halted"],
@@ -389,6 +388,17 @@ describe("a code pull request", () => {
     expect(mergeCalls()).toEqual([]);
     expect(forge.calledWith(/restart|POST/)).toEqual([]);
     expect(sentBack).toEqual([]);
+  });
+
+  it("follows a newer pipeline for the same head after a killed run", async () => {
+    woodpeckerRepository();
+    const ticket = verifying([37], 14, "bad1", ["src/app.ts"], ["src/app.ts", ...twoWorkflows]);
+    pipeline(7, "bad1", 14, "killed", [["check-macos", "success"], ["check-windows", "killed"]]);
+    await poll();
+    expect(current(ticket.id).verification).toMatchObject({ state: "failed", pipeline: { number: 7 } });
+    pipeline(8, "bad1", 14, "success", [["check-macos", "success"], ["check-windows", "success"]]);
+    await poll();
+    expect(current(ticket.id).state).toBe("merged");
   });
 
   it("re-reads the head immediately before merging and merges only that commit", async () => {
@@ -703,6 +713,20 @@ describe("judging a pipeline", () => {
     expect(judge("abd", ["a"], { ...base, workflows: [flow("a", "success")] }, ["a"]).kind).toBe("waiting");
     expect(judge("abc", ["a"], { ...base, workflows: [] }, ["a"]).kind).toBe("waiting");
     expect(judge("abc", ["a"], { ...base, status: "error", errors: "config not found", workflows: [] }, ["a"])).toMatchObject({ kind: "red", failed: [{ workflow: "", step: "" }] });
+  });
+
+  it("reports killed pipelines, workflows and steps as red", () => {
+    const step = { id: 42, name: "test", state: "killed", exitCode: null };
+    const killed = { ...flow("check-windows", "killed"), steps: [step] };
+    const result = judge("abc", ["check-windows"], { ...base, status: "killed", workflows: [killed] }, ["check-windows"]);
+    expect(result).toMatchObject({ kind: "red", failed: [{ workflow: "check-windows", step: "test", stepId: 42 }], reason: expect.stringContaining("step test was killed") });
+    expect(judge("abc", [], { ...base, status: "killed", workflows: [] }, [])).toMatchObject({ kind: "red", reason: expect.stringContaining("pipeline was killed") });
+    expect(judge("abc", [], { ...base, workflows: [{ ...killed, state: "success" }] }, [])).toMatchObject({ kind: "red", failed: [{ stepId: 42 }] });
+    expect(judge("abc", [], { ...base, workflows: [flow("check", "killed")] }, [])).toMatchObject({ kind: "red", reason: expect.stringContaining("workflow check was killed") });
+  });
+
+  it.each(["declined", "blocked", "skipped"])("keeps %s workflows halted", (state) => {
+    expect(judge("abc", ["check"], { ...base, status: state, workflows: [flow("check", state)] }, ["check"])).toMatchObject({ kind: "waiting", wait: "halted" });
   });
 });
 

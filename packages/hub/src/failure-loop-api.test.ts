@@ -147,7 +147,7 @@ function starts(sent: readonly HubToRunner[], ticket: number): Extract<HubToRunn
   return sent.flatMap((message) => (message.type === "work.start" && message.task.ticket === ticket ? [message] : []));
 }
 
-function pipeline(number: number, commit: string, pull: number, state: "success" | "failure", log: readonly string[] = []): void {
+function pipeline(number: number, commit: string, pull: number, state: "success" | "failure" | "killed", log: readonly string[] = []): void {
   const found = forge.woodpecker.get(repository);
   if (found === undefined) {
     throw new Error("no Woodpecker repository");
@@ -159,7 +159,7 @@ function pipeline(number: number, commit: string, pull: number, state: "success"
     ref: `refs/pull/${pull}/merge`,
     event: "pull_request",
     status: state,
-    workflows: [{ name: "check", state, steps: [{ id: step, name: "test", state, exitCode: state === "failure" ? 1 : 0 }] }],
+    workflows: [{ name: "check", state, steps: [{ id: step, name: "test", state, exitCode: state === "killed" ? null : state === "failure" ? 1 : 0 }] }],
     config: ["check"],
   });
   forge.logs.set(step, [...log]);
@@ -202,6 +202,24 @@ async function failThreeRounds(started: Started, issue: number): Promise<Ticket>
 }
 
 describe("the failure loop, unattended", () => {
+  it("reports a killed step and its log and accepts a guided round", async () => {
+    const { running, runner, conversation } = await start();
+    const ticket = begin(running, conversation, 5);
+    const branch = current(running, ticket.id).branch ?? "";
+    pullAt(12, "abc123", branch);
+    pipeline(1, "abc123", 12, "killed", ["test still running"]);
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    event(runner, ticket.id, 1, { kind: "finished", pullRequest: 12, url: `https://github.com/${repository}/pull/12`, report: { en: "Done", zh: "做完了" } });
+    await settled(running);
+    expect(current(running, ticket.id)).toMatchObject({ state: "verifying", verification: { state: "failed", failures: [{ workflow: "check", step: "test" }] } });
+    const [told] = notices(running, conversation);
+    expect(told?.prompt).toContain("workflow check, step test was killed");
+    expect(told?.prompt).toContain("test still running");
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(1) }, conversation);
+    expect(guided.isError, guided.text).toBe(false);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1 });
+  });
+
   it("fixes a ticket whose pipeline is red in one guided round, and merges it", async () => {
     const { running, runner, sent, conversation } = await start();
     const ticket = begin(running, conversation, 4);

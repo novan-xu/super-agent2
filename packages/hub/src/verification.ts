@@ -95,7 +95,7 @@ export type Evidence =
   | { readonly kind: "red"; readonly workflows: readonly VerifiedWorkflow[]; readonly failed: readonly FailedAt[]; readonly reason: string }
   | { readonly kind: "waiting"; readonly wait: VerificationWait; readonly workflows: readonly VerifiedWorkflow[]; readonly reason: string };
 
-const failedStates = new Set(["failure", "error"]);
+const failedStates = new Set(["failure", "error", "killed"]);
 const runningStates = new Set(["pending", "running", "created"]);
 
 export function workflowName(path: string): string {
@@ -112,7 +112,7 @@ export function judge(head: string, expected: readonly string[], pipeline: Pipel
   if (pipeline.commit !== head) {
     return { kind: "waiting", wait: "pipeline", workflows: [], reason: `Pipeline #${pipeline.number} ran commit ${short(pipeline.commit)}, not the head ${short(head)}` };
   }
-  const failed = pipeline.workflows.filter((workflow) => failedStates.has(workflow.state));
+  const failed = pipeline.workflows.filter((workflow) => failedStates.has(workflow.state) || workflow.steps.some((step) => failedStates.has(step.state)));
   if (failed.length > 0 || failedStates.has(pipeline.status)) {
     const steps = failed.flatMap((workflow): FailedAt[] => {
       const broken = workflow.steps.filter((step) => failedStates.has(step.state));
@@ -121,7 +121,12 @@ export function judge(head: string, expected: readonly string[], pipeline: Pipel
         : broken.map((step) => ({ workflow: workflow.name, step: step.name, exitCode: step.exitCode, stepId: step.id }));
     });
     const listed: FailedAt[] = steps.length === 0 ? [{ workflow: "", step: "", exitCode: null, stepId: null }] : steps;
-    const said = listed.map((step) => (step.workflow === "" ? `the pipeline ${pipeline.status}` : step.step === "" ? `workflow ${step.workflow} ${pipeline.status}` : `workflow ${step.workflow}, step ${step.step}${step.exitCode === null ? "" : ` (exit code ${step.exitCode})`}`));
+    const said = listed.map((step) => {
+      const workflow = failed.find((entry) => entry.name === step.workflow);
+      const state = step.stepId === null ? workflow?.state ?? pipeline.status : workflow?.steps.find((entry) => entry.id === step.stepId)?.state;
+      const name = step.workflow === "" ? "the pipeline" : step.step === "" ? `workflow ${step.workflow}` : `workflow ${step.workflow}, step ${step.step}`;
+      return `${name}${state === "killed" ? " was killed" : step.step === "" ? ` ${state}` : ""}${step.exitCode === null ? "" : ` (exit code ${step.exitCode})`}`;
+    });
     return { kind: "red", workflows, failed: listed, reason: `Pipeline #${pipeline.number} on ${short(head)} failed: ${said.join("; ")}${pipeline.errors === null ? "" : `. Errors: ${pipeline.errors}`}` };
   }
   const missing = expected.filter((name) => !config.includes(name));
@@ -787,7 +792,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     const skipping = row.skip_at !== null;
-    if (!skipping && (row.state === "failed" || row.state === "conflict")) {
+    if (!skipping && ((row.state === "failed" && row.rule !== "workflows") || row.state === "conflict")) {
       return;
     }
     let rule: VerificationRule;
