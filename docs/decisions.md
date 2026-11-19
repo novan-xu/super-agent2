@@ -4416,3 +4416,36 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Why:** Existing routed messages can show the shortcut. Owner moves use the existing correction fields, and a
   topic merge still leaves those fields as they were.
 - **Other options:** Store a separate placement field in the database or keep showing the original placement after a correction.
+
+## 2026-11-18 — Preview a stream message's destination (#145)
+
+- **Chosen:** Request a preview for an empty stream draft immediately and debounce edits to its text and attachment names by 250 ms.
+  Keep the last displayed suggestion while a newer request is pending. Send without a destination when no suggestion has appeared.
+- **Why:** Recency and open questions can provide a starting destination. Draft edits can change the score, and the owner can
+  send to the destination they see even while the hub is working on a later suggestion.
+- **Other options:** Preview on focus or at send time, clear the destination on each edit, or wait for the latest preview before sending.
+
+- **Chosen:** Send preview requests to the owner's authenticated hub over the same connection as sent messages. The preview
+  writes no entry, database record, or decision log. It uses the same router and model fallback as a send without a destination.
+- **Why:** The hub already has the topic context, routing configuration and in-memory model. The request needs only the scope,
+  draft text and attachment names.
+- **Other options:** Run a separate router in the page or preview only after the owner sends.
+
+- **Chosen:** Use a native picker in the existing composer footer with active in-scope routing candidates and the existing
+  new-topic label. Persist the owner's pick and the proposal it changed with the draft. A quote takes precedence while present.
+- **Why:** The native control fits in the footer on a phone and lets the owner pick in one interaction. The draft keeps its
+  destination across edits and reloads, and quoted replies still reach the quoted topic.
+- **Other options:** Add a second row or a custom dialog, reset the selection on reload, or offer destination changes for quotes.
+
+- **Chosen:** Return the routing proposal to the authenticated page and send it back with the explicit destination. Record the
+  proposed topic, existing routing diagnostics, actual topic and whether the destination changed in the routing row on send.
+  Use owner placement for an override and reuse the existing new-topic creation and later move correction.
+- **Why:** The proposal can survive reloads and hub restarts without a server-side draft store. The record keeps the suggestion
+  the owner saw and distinguishes an override before sending from a later move.
+- **Other options:** Cache previews on the hub, store only the destination, or rerun routing on send.
+
+- **Chosen:** Refuse an explicit preview or picker destination that is no longer an active candidate with the existing
+  not-found response. Keep the draft, discard the stale selection, request a fresh preview and require a new send.
+- **Why:** Archived and merged topics can change while the owner writes. The fresh destination has to be visible before the draft
+  can be sent again. Topic views and legacy explicit sends retain their existing direct-send behavior.
+- **Other options:** Reopen or follow the old topic automatically, or reassign the message without showing the new destination.

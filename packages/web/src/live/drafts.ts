@@ -1,9 +1,14 @@
+import { ConversationId, StreamPreview } from "@super-agent2/protocol";
+
 const storageKey = "super-agent2:composer-drafts";
 const maxAge = 30 * 24 * 60 * 60 * 1000;
+const DraftDestination = StreamPreview.extend({ topic: ConversationId.nullable() });
+export type DraftDestination = StreamPreview & { readonly topic: string | null };
 
 export interface ComposerDraft {
   readonly text: string;
   readonly quote?: { readonly id: string; readonly text: string };
+  readonly destination?: DraftDestination | null | undefined;
 }
 
 type DraftMap = Record<string, { readonly updatedAt: number; readonly draft: ComposerDraft }>;
@@ -26,7 +31,9 @@ function readAll(now: number): DraftMap {
       const candidate = entry as { updatedAt?: unknown; draft?: unknown };
       if (typeof candidate.updatedAt !== "number" || now - candidate.updatedAt > maxAge || candidate.updatedAt > now + 60_000) continue;
       if (typeof candidate.draft !== "object" || candidate.draft === null || typeof (candidate.draft as ComposerDraft).text !== "string") continue;
-      valid[key] = { updatedAt: candidate.updatedAt, draft: candidate.draft as ComposerDraft };
+      const { destination, ...draft } = candidate.draft as ComposerDraft;
+      const parsed = DraftDestination.nullable().safeParse(destination);
+      valid[key] = { updatedAt: candidate.updatedAt, draft: { ...draft, ...(parsed.success ? { destination: parsed.data } : {}) } };
     }
     return valid;
   } catch {
@@ -42,7 +49,7 @@ export function saveComposerDraft(key: string, draft: ComposerDraft, now = Date.
   const target = storage();
   if (target === undefined) return;
   const all = readAll(now);
-  if (draft.text === "" && draft.quote === undefined) delete all[key];
+  if (draft.text === "" && draft.quote === undefined && draft.destination === undefined) delete all[key];
   else all[key] = { updatedAt: now, draft };
   try {
     target.setItem(storageKey, JSON.stringify(all));

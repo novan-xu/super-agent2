@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -427,6 +427,95 @@ describe("the topic stream", () => {
     expect(openTicket(running, pending?.topic.id).conversation).not.toBe(pending?.topic.id);
     expect(openTicket(running, daily, "owner/project").conversation).not.toBe(daily);
     expect(running.conversations.get(daily)?.repository).toBeNull();
+  });
+
+  it("previews the fallback route for empty and attachment drafts without changing the database", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const topic = openTicket(running, undefined, "owner/project").conversation!;
+    service.rename(topic, "Project planning");
+    service.create();
+    const scope = { kind: "repository", repository: "OWNER/Project" } as const;
+    const changes = () => running.database.connection.prepare("SELECT total_changes() AS count").get();
+    const before = changes();
+    const preview = async (attachmentNames: string[]) => {
+      const response = await streamRequest(running, "/preview", { scope, text: "", attachmentNames });
+      expect(response.status).toBe(200);
+      return StreamPreview.parse(await response.json());
+    };
+
+    expect(await preview([])).toMatchObject({
+      title: "Project planning", proposal: { candidates: 1, decided: { configuration: "bigram", rule: "b", topic }, fallback: "model not configured" },
+    });
+    expect(await preview(["notes.txt"])).toMatchObject({
+      title: null, proposal: { candidates: 1, decided: { configuration: "bigram", rule: "d", topic: null } },
+    });
+    expect(changes()).toEqual(before);
+    expect((await streamRequest(running, "/preview", { scope, text: "", attachmentNames: [1] })).status).toBe(400);
+  });
+
+  it("sends the shown destination without rerouting and records both kinds of owner override", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const scope = { kind: "repository", repository: "owner/project" } as const;
+    const shown = openTicket(running, undefined, scope.repository).conversation!;
+    const { proposal } = StreamPreview.parse(await (await streamRequest(running, "/preview", { text: "Yes", attachmentNames: [], scope })).json());
+    expect(proposal.decided.topic).toBe(shown);
+    clock.advance(1);
+    const newer = openTicket(running, undefined, scope.repository).conversation!;
+    const send = async (body: object) => {
+      const response = await streamRequest(running, "", { text: "Yes\nNow", scope, ...body });
+      expect(response.status).toBe(202);
+      return StreamEntry.parse(await response.json());
+    };
+    const accepted = await send({ topic: shown, proposal });
+    const changed = await send({ topic: newer, proposal });
+    const opened = await send({ newTopic: true, proposal });
+    const routed = await send({});
+    expect(accepted).toMatchObject({ topic: { id: shown }, entry: { placement: "router-joined" } });
+    expect(changed).toMatchObject({ topic: { id: newer }, entry: { placement: "owner" } });
+    expect(opened).toMatchObject({ topic: { title: "Yes", repository: scope.repository }, entry: { placement: "owner" } });
+    expect(opened.entry).not.toHaveProperty("possibleMatch");
+    expect(routed).toMatchObject({ topic: { id: opened.topic.id }, entry: { placement: "router-joined" } });
+    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed, rule FROM routing_decisions ORDER BY rowid").all()).toEqual([
+      { topic: shown, placed_in: shown, owner_changed: 0, rule: "b" },
+      { topic: shown, placed_in: newer, owner_changed: 1, rule: "b" },
+      { topic: shown, placed_in: opened.topic.id, owner_changed: 1, rule: "b" },
+      { topic: opened.topic.id, placed_in: opened.topic.id, owner_changed: 0, rule: "b" },
+    ]);
+  });
+
+  it("opens a new topic as previewed even when a matching topic becomes available before sending", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const scope = { kind: "code" } as const;
+    const { proposal } = await service.previewStream({ text: "Continue", attachmentNames: [], scope });
+    expect(proposal.decided.topic).toBeNull();
+    const existing = openTicket(running, undefined, "owner/project").conversation!;
+    const response = await streamRequest(running, "", { text: "Continue", newTopic: true, proposal, scope });
+    expect(response.status).toBe(202);
+    const opened = StreamEntry.parse(await response.json());
+    expect(opened.topic.id).not.toBe(existing);
+    expect(opened).toMatchObject({ topic: { title: "Continue", repository: null, needsRepository: true }, entry: { placement: "router-opened" } });
+    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed FROM routing_decisions").get())
+      .toEqual({ topic: null, placed_in: opened.topic.id, owner_changed: 0 });
+  });
+
+  it.each(["archived", "merged"] as const)("refuses a shown destination that was %s without recording or placing the message", async (state) => {
+    const running = await start();
+    const service = running.conversations;
+    const replacement = service.create().id;
+    const shown = service.create().id;
+    const scope = { kind: "daily" } as const;
+    const request = { text: "Yes", attachmentNames: [], scope };
+    const { proposal } = await service.previewStream(request);
+    expect(proposal.decided.topic).toBe(shown);
+    expect(state === "archived" ? service.archive(shown).ok : service.merge(shown, replacement).ok).toBe(true);
+    const response = await streamRequest(running, "", { text: request.text, topic: shown, proposal, scope });
+    expect(response.status).toBe(404);
+    expect(service.stream().entries).toEqual([]);
+    expect(running.database.connection.prepare("SELECT * FROM routing_decisions").all()).toEqual([]);
+    expect((await service.previewStream(request)).proposal.decided.topic).toBe(replacement);
   });
 
   it("recovers a message recorded before routing completed", async () => {

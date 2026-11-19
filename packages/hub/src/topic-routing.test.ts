@@ -305,6 +305,26 @@ describe("routing in the hub", () => {
 
   const decisions = (running: Hub) => running.database.connection.prepare("SELECT * FROM routing_decisions ORDER BY rowid").all();
 
+  it("uses the loaded model for a preview and records its scores at send time without embedding the draft again", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const topic = service.create().id;
+    service.send(topic, "alpha project plan");
+    const text = "tell me more about alpha";
+    const { proposal } = await service.previewStream({ text, scope: { kind: "daily" }, attachmentNames: [] });
+    expect(proposal.decided).toMatchObject({ configuration: "model", rule: "c", topic });
+    expect(proposal.shadow?.configuration).toBe("bigram");
+    expect(decisions(running)).toEqual([]);
+    expect(lines.some((line) => line.startsWith("Topic routing decision "))).toBe(false);
+    const item = (await service.sendToStream(topic, text, [], { proposal }))!;
+    expect(embedded.filter((input) => input === text)).toEqual([text]);
+    expect(decisions(running)).toMatchObject([{
+      entry: item.entry.id, topic, placed_in: topic, owner_changed: 0,
+      configuration: proposal.decided.configuration, best_score: proposal.decided.bestScore,
+      shadow_configuration: proposal.shadow?.configuration, shadow_best_score: proposal.shadow?.bestScore,
+    }]);
+  });
+
   it("routes only messages without a topic, records and logs each decision without its text and keeps a later move as a correction", async () => {
     const running = await start();
     const service = running.conversations;
@@ -325,7 +345,7 @@ describe("routing in the hub", () => {
       entry: routed.entry.id, decided_at: clock.now(), scope: "daily", candidates: 1, configuration: "model", fallback_reason: null,
       rule: "c", topic, placed_in: topic, best_topic: topic, best_score: expect.any(Number), runner_up_score: null,
       shadow_configuration: "bigram", shadow_rule: "c", shadow_topic: topic, shadow_best_topic: topic, shadow_best_score: expect.any(Number), shadow_runner_up_score: null,
-      moved_to: null, moved_at: null,
+      moved_to: null, moved_at: null, owner_changed: 0,
     }]);
     const logged = lines.filter((line) => line.startsWith("Topic routing decision "));
     expect(logged).toEqual([expect.stringContaining(`Topic routing decision ${routed.entry.id}: model rule c topic ${topic}`)]);

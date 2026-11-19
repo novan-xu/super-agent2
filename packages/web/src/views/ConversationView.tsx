@@ -1,11 +1,11 @@
 import { text } from "@super-agent2/catalog";
-import { type Conversation, type ConversationEntry, type StreamEntry as StreamRecord, type TopicScope, topicInScope } from "@super-agent2/protocol";
+import { type Conversation, type ConversationEntry, type ReviewedStreamDestination, type StreamEntry as StreamRecord, type StreamPreview, type StreamPreviewRequest, type TopicScope, topicInScope } from "@super-agent2/protocol";
 import { type KeyboardEvent, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { combinedStreamItems, streamItems } from "../live/stream.js";
 import { topicScopeKey } from "../live/topic-scope.js";
-import { loadComposerDraft, saveComposerDraft } from "../live/drafts.js";
+import { type DraftDestination, loadComposerDraft, saveComposerDraft } from "../live/drafts.js";
 import type { TopicStreamState } from "../live/topic-stream.js";
 import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
@@ -13,9 +13,10 @@ import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { clockOf, dayLabel, StreamEntry } from "./Entries.js";
 
-import { TopicActionButton, TopicActionDialog, type TopicActions, type TopicEdit, titleOf } from "./TopicActions.js";
+import { newTopicOption, TopicActionButton, TopicActionDialog, type TopicActions, type TopicEdit, titleOf } from "./TopicActions.js";
 
 const nearBottom = 48;
+const previewDelay = 250;
 
 function whenOf(at: number, now: number): string {
   const date = new Date(at);
@@ -71,24 +72,64 @@ export function TopicList({ list, current, hrefOf, open, now, showRepository, ed
 interface ComposerProps {
   readonly working: boolean;
   readonly canStop: boolean;
-  readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
+  readonly send: ComposerSend;
   readonly stop: () => void;
   readonly draftKey: string;
   readonly quote: QuotePreview | undefined;
   readonly clearQuote: (id: string) => void;
+  readonly routing?: {
+    readonly scope: TopicScope;
+    readonly topics: readonly Conversation[];
+    readonly status: SocketStatus;
+    readonly preview: PreviewStream;
+  } | undefined;
 }
+
+type ComposerSend = (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination) => Promise<boolean | "stale">;
+type PreviewStream = (request: StreamPreviewRequest) => Promise<StreamPreview | undefined>;
 
 interface QuotePreview {
   readonly id: string;
   readonly text: string;
 }
 
-export function TopicComposer({ working, canStop, send, stop, draftKey, quote, clearQuote }: ComposerProps) {
-  const [draft, setDraft] = useState(() => loadComposerDraft(draftKey).text);
+export function TopicComposer({ working, canStop, send, stop, draftKey, quote, clearQuote, routing }: ComposerProps) {
+  const [saved] = useState(() => loadComposerDraft(draftKey));
+  const [draft, setDraft] = useState(saved.text);
+  const [choice, setChoice] = useState(saved.destination);
+  const [preview, setPreview] = useState<StreamPreview>();
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const attaching = useAttachments(draftKey);
-  const empty = draft.trim() === "" && attaching.items.length === 0;
+  const message = draft.trim();
+  const empty = message === "" && attaching.items.length === 0;
+  const routeDraft = routing !== undefined && quote === undefined;
+  const destination: DraftDestination | undefined = !routeDraft ? undefined : choice ??
+    (preview === undefined ? undefined : { ...preview, topic: preview.proposal.decided.topic });
+  const needsPreview = routeDraft && choice === null && destination === undefined;
+  const targets = routing?.topics.filter((topic) => topic.topicState === "active" && !topic.system && !topic.mergePending) ?? [];
+  const getPreview = routing?.preview;
+  const scope = routing?.scope;
+  const status = routing?.status;
+  const attachmentNames = JSON.stringify(attaching.items.map(({ name }) => name));
+
+  useEffect(() => {
+    if (!routeDraft || scope === undefined || getPreview === undefined || choice != null || sending) return;
+    let current = true;
+    const request = () => {
+      void getPreview({ scope, text: message, attachmentNames: JSON.parse(attachmentNames) as string[] }).then((result) => {
+        if (current && result !== undefined) {
+          setPreview(result);
+          if (choice === null) setChoice(undefined);
+        }
+      });
+    };
+    const timer = setTimeout(request, empty || choice === null ? 0 : previewDelay);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [attachmentNames, choice, empty, getPreview, message, routeDraft, scope, sending, status]);
 
   useLayoutEffect(() => {
     const element = field.current;
@@ -105,27 +146,34 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
   }, [quote]);
 
   useEffect(() => {
-    saveComposerDraft(draftKey, { text: draft, ...(quote === undefined ? {} : { quote }) });
-  }, [draft, draftKey, quote]);
+    saveComposerDraft(draftKey, { text: draft, destination: choice, ...(quote === undefined ? {} : { quote }) });
+  }, [choice, draft, draftKey, quote]);
 
   const submit = useCallback(async () => {
-    const message = draft.trim();
-    if (empty || sending) {
+    if (empty || sending || needsPreview) {
       return;
     }
+    const selected = destination === undefined ? undefined : {
+      ...(destination.topic === null ? { newTopic: true as const } : { topic: destination.topic }), proposal: destination.proposal,
+    };
     setSending(true);
     const attachments = await attaching.settle();
-    const sent = attachments === undefined ? false : await send(message, attachments, quote?.id);
+    const sent = attachments === undefined ? false : await send(message, attachments, quote?.id, selected);
     setSending(false);
-    if (sent) {
+    if (sent === "stale") {
+      setPreview(undefined);
+      setChoice(null);
+    } else if (sent) {
       setDraft("");
+      setChoice(undefined);
+      setPreview(undefined);
       attaching.clear();
       if (quote !== undefined) {
         clearQuote(quote.id);
       }
     }
     field.current?.focus();
-  }, [attaching, clearQuote, draft, draftKey, empty, quote, send, sending]);
+  }, [attaching, clearQuote, destination, empty, message, needsPreview, quote, send, sending]);
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!sendsOnEnter(event)) {
@@ -164,13 +212,32 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
           onChange={(event) => {
             const value = event.target.value;
             setDraft(value);
-            saveComposerDraft(draftKey, { text: value, ...(quote === undefined ? {} : { quote }) });
+            saveComposerDraft(draftKey, { text: value, destination: choice, ...(quote === undefined ? {} : { quote }) });
           }}
           onKeyDown={keyDown}
           onPaste={attaching.paste}
         />
         <div className="composer-foot">
           <AttachButton add={attaching.add} />
+          {routeDraft ? (
+            <select className="field composer-destination" aria-label={text("conversation.destination")}
+              value={destination === undefined ? "" : destination.topic ?? newTopicOption}
+              disabled={destination === undefined || sending} hidden={destination === undefined}
+              onChange={(event) => {
+                if (destination === undefined) return;
+                const value = event.target.value;
+                const target = targets.find(({ id }) => id === value);
+                if (value === newTopicOption) setChoice({ topic: null, title: null, proposal: destination.proposal });
+                else if (target !== undefined) setChoice({ topic: target.id, title: target.title, proposal: destination.proposal });
+              }}>
+              {destination === undefined ? <option value="" /> : null}
+              <option value={newTopicOption}>{text("conversation.newTopic")}</option>
+              {targets.map((topic) => <option key={topic.id} value={topic.id}>{titleOf(topic)}</option>)}
+              {destination?.topic != null && !targets.some(({ id }) => id === destination.topic) ? (
+                <option value={destination.topic} disabled>{titleOf(destination.title === null ? undefined : { title: destination.title })}</option>
+              ) : null}
+            </select>
+          ) : null}
           <span className="od-fill" />
           {working && canStop ? (
             <button className="btn btn-sm" type="button" onClick={stop}>
@@ -178,7 +245,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
               {text("composer.stop")}
             </button>
           ) : null}
-          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={empty || sending}>
+          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={empty || sending || needsPreview}>
             <Icon name="send" />
             {text("composer.send")}
           </button>
@@ -204,7 +271,8 @@ export interface ConversationViewProps {
   readonly navigation?: ReactNode;
   readonly topicActions: TopicActions;
   readonly compact?: boolean;
-  readonly send: (message: string, attachments: readonly string[], quotedMessage?: string) => Promise<boolean>;
+  readonly send: ComposerSend;
+  readonly previewStream?: PreviewStream;
   readonly stop: () => void;
   readonly loadOlder: () => void;
   readonly now: number;
@@ -244,9 +312,9 @@ export function ConversationView(props: ConversationViewProps) {
   }, [draftKey]);
 
   const send = useCallback(
-    async (message: string, attachments: readonly string[], quotedMessage?: string) => {
+    async (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination) => {
       following.current = true;
-      return props.send(message, attachments, quotedMessage);
+      return props.send(message, attachments, quotedMessage, destination);
     },
     [props.send],
   );
@@ -300,7 +368,10 @@ export function ConversationView(props: ConversationViewProps) {
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
-          quote={quotes[draftKey]} clearQuote={clearQuote} />
+          quote={quotes[draftKey]} clearQuote={clearQuote}
+          routing={conversation === null && props.previewStream !== undefined ? {
+            scope, topics: filtered, status: props.status, preview: props.previewStream,
+          } : undefined} />
       </div>
       {props.compact === true ? null : (
         <aside className="rail" aria-label={text("conversation.list")}>

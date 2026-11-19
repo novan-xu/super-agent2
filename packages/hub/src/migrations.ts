@@ -850,6 +850,10 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX routing_decisions_by_time ON routing_decisions (decided_at);
     `,
   },
+  {
+    version: 37,
+    sql: `ALTER TABLE routing_decisions ADD COLUMN owner_changed INTEGER NOT NULL DEFAULT 0 CHECK (owner_changed IN (0, 1));`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

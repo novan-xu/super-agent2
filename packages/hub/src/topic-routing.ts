@@ -1,4 +1,4 @@
-import { type Attachment, openTicketStates, type TopicScope } from "@super-agent2/protocol";
+import { openTicketStates, RoutingProposal, type TopicScope } from "@super-agent2/protocol";
 import {
   bigramConfiguration,
   bigramSimilarity,
@@ -19,7 +19,6 @@ import {
   replyTextLimit,
   type RouteCandidate,
   type RouteInput,
-  type Rule,
   type Scorer,
   type Vector,
 } from "@super-agent2/routing";
@@ -36,37 +35,24 @@ export interface RoutingOptions {
 
 export interface RoutingMessage {
   readonly text: string;
-  readonly attachments: readonly Attachment[];
+  readonly attachments: readonly { readonly name: string }[];
   readonly scope: TopicScope;
   readonly at: number;
 }
 
-export interface ConfigurationDecision {
-  readonly configuration: ConfigurationName;
-  readonly rule: Rule;
-  readonly topic: string | null;
-  readonly best: string | null;
-  readonly bestScore: number | null;
-  readonly runnerUpScore: number | null;
-}
+type ConfigurationDecision = RoutingProposal["decided"];
 
-export interface Routing {
-  readonly scope: TopicScope["kind"];
-  readonly candidates: number;
+export interface Routing extends RoutingProposal {
   readonly topic: string | null;
-  readonly possibleMatch: string | undefined;
   readonly repository: string | null;
-  readonly decided: ConfigurationDecision;
-  readonly shadow: ConfigurationDecision | null;
-  readonly fallback: string | null;
 }
 
 export interface TopicRouter {
   route(message: RoutingMessage): Promise<Routing>;
   routeNow(message: RoutingMessage, reason: string): Routing;
   repositoryFor(text: string, scope: TopicScope): string | null;
-  record(entry: string, placedIn: string, routing: Routing, at: number): void;
-  log(entry: string, placedIn: string, routing: Routing): void;
+  record(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, at: number, ownerChanged: boolean): void;
+  log(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, ownerChanged: boolean): void;
   refresh(): void;
   settled(): Promise<void>;
   close(): void;
@@ -199,8 +185,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const insertDecision = connection.prepare(`
     INSERT INTO routing_decisions (
       entry, decided_at, scope, candidates, configuration, fallback_reason, rule, topic, placed_in, best_topic, best_score, runner_up_score,
-      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score, owner_changed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
@@ -310,7 +296,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     const ranking = rank(context.input.candidates, scores, configuration.rules.time);
     return {
       configuration: configuration.name,
-      rule: choice.rule,
+      rule: RoutingProposal.shape.decided.shape.rule.parse(choice.rule),
       topic: choice.topic,
       best: ranking.best,
       bestScore: finite(ranking.bestScore),
@@ -369,7 +355,6 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   };
 
   const finish = (context: Context, decided: ConfigurationDecision, shadow: ConfigurationDecision | null, fallback: string | null): Routing => ({
-    scope: context.message.scope.kind,
     candidates: context.topics.length,
     topic: decided.topic,
     possibleMatch: decided.topic === null ? (decided.best ?? context.topics[0]?.id) : undefined,
@@ -463,18 +448,20 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       const context = gather(message);
       return finish(context, bigramDecision(context), null, primary === "bigram" ? null : reason);
     },
-    record: (entry, placedIn, routing, at) => {
+    record: (entry, placedIn, scope, routing, at, ownerChanged) => {
       const { decided, shadow } = routing;
       insertDecision.run(
-        entry, at, routing.scope, routing.candidates, decided.configuration, routing.fallback, decided.rule, decided.topic, placedIn,
+        entry, at, scope, routing.candidates, decided.configuration, routing.fallback, decided.rule, decided.topic, placedIn,
         decided.best, decided.bestScore, decided.runnerUpScore,
         shadow?.configuration ?? null, shadow?.rule ?? null, shadow?.topic ?? null, shadow?.best ?? null, shadow?.bestScore ?? null, shadow?.runnerUpScore ?? null,
+        Number(ownerChanged),
       );
     },
-    log: (entry, placedIn, routing) => {
+    log: (entry, placedIn, scope, routing, ownerChanged) => {
       const parts = [
         `Topic routing decision ${entry}: ${describe(routing.decided)} placed in ${placedIn}`,
-        `${routing.candidates} candidates in ${routing.scope}`,
+        `${routing.candidates} candidates in ${scope}`,
+        ...(ownerChanged ? ["destination changed by owner"] : []),
         `shadow ${routing.shadow === null ? "none" : describe(routing.shadow)}`,
         ...(routing.fallback === null ? [] : [`fallback: ${routing.fallback}`]),
       ];

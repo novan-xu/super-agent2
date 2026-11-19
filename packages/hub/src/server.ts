@@ -26,10 +26,13 @@ import {
   QuestionAnswers,
   type StreamEntry,
   StreamMessage,
+  type StreamPreview,
+  StreamPreviewRequest,
   type StreamPage,
   streamLargestPage,
   streamPageSize,
   streamPath,
+  streamPreviewPath,
   topicInScope,
   TopicRename,
   TopicMerge,
@@ -241,6 +244,7 @@ type Body =
   | ConversationDetail
   | StreamEntry
   | StreamPage
+  | StreamPreview
   | EntryResponse
   | WaitingList
   | PushKey
@@ -355,18 +359,6 @@ function parseJson<Schema extends z.ZodType>(text: string | undefined, schema: S
 }
 
 const answerStatus: Readonly<Record<AnswerError, 403 | 404 | 409>> = { forbidden: 403, not_found: 404, conflict: 409 };
-
-function parseOwnerMessage(text: string | undefined): StreamMessage | undefined {
-  if (text === undefined) {
-    return undefined;
-  }
-  try {
-    const parsed = StreamMessage.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function sendRaw(response: ServerResponse, status: number, body?: Readonly<Record<string, unknown>>): void {
   if (body === undefined) {
@@ -610,7 +602,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith(commandsPath) && (await serveCommands(request, response, path, method))) {
       return;
     }
-    if ((path === streamPath || path.startsWith(conversationsPath)) && (await serveConversations(request, response, path, method))) {
+    if ((path === streamPath || path === streamPreviewPath || path.startsWith(conversationsPath)) && (await serveConversations(request, response, path, method))) {
       return;
     }
     if (method === "GET" && path.endsWith("/preview")) {
@@ -1117,6 +1109,17 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return false;
     }
     const url = new URL(request.url ?? "/", "http://hub");
+    if (path === streamPreviewPath && method === "POST") {
+      if (!isJson(request)) {
+        request.resume();
+        sendJson(response, 415, { error: "unsupported_media_type" });
+        return true;
+      }
+      const preview = parseJson(await readBody(request), StreamPreviewRequest);
+      if (preview === undefined) sendJson(response, 400, { error: "bad_request" });
+      else sendJson(response, 200, await conversations.previewStream(preview));
+      return true;
+    }
     if (path === streamPath && method === "GET") {
       const before = integerParameter(url, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
       const limit = integerParameter(url, "limit", streamPageSize, streamLargestPage);
@@ -1179,7 +1182,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 415, { error: "unsupported_media_type" });
         return true;
       }
-      const message = parseOwnerMessage(await readBody(request));
+      const message = parseJson(await readBody(request), StreamMessage);
       if (message === undefined) {
         sendJson(response, 400, { error: "bad_request" });
         return true;

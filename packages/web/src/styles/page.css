@@ -66,6 +66,7 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .message-quote { width: 28px; height: 28px; flex: none; }
 .composer-quote { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); border-left: 2px solid var(--border); padding-left: var(--space-2); }
 .composer-quote span { min-width: 0; flex: 1; font-size: var(--text-sm); }
+select.field.composer-destination { flex: 0 1 16rem; width: 0; min-width: 0; min-height: 32px; padding-block: 0; font-size: var(--text-sm); text-overflow: ellipsis; }
 
 .msg-text > :first-child { margin-top: 0; }
 .msg-text h1, .msg-text h2, .msg-text h3, .msg-text h4 { margin: var(--space-4) 0 var(--space-2); font-family: var(--font-display); font-weight: 700; line-height: 1.4; }
