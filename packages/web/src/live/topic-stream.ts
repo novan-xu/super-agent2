@@ -34,16 +34,17 @@ export function receiveStream(state: TopicStreamState, message: ServerMessage): 
       };
     }
     case "stream.entry": {
-      const { position, topic, entry } = message;
+      const { position, topic, entry, latestOwner } = message;
       if (state.before !== null && position < state.before) {
         return state;
       }
       const index = state.entries.findIndex((item) => item.position >= position);
       const entries = [...state.entries];
+      const item = { position, topic, entry, ...(latestOwner === undefined ? {} : { latestOwner }) };
       if (index === -1) {
-        entries.push({ position, topic, entry });
+        entries.push(item);
       } else {
-        entries.splice(index, entries[index]?.position === position ? 1 : 0, { position, topic, entry });
+        entries.splice(index, entries[index]?.position === position ? 1 : 0, item);
       }
       return { ...state, entries };
     }

@@ -55,6 +55,11 @@ dialog.dlg .conv-list { max-height: 60dvh; overflow-y: auto; margin: 0 calc(var(
 .topic-tone-2 { --topic-tone: var(--warn); }
 .topic-tone-3 { --topic-tone: var(--danger); }
 .topic-repo { color: var(--muted); }
+.msg--me .msg-who { max-width: 100%; }
+.topic-split-slot { flex: none; width: 3.5rem; height: 44px; }
+.topic-split { width: 100%; height: 100%; border: 0; border-radius: var(--radius-sm); background: none; color: var(--accent); font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
+.topic-split:hover { text-decoration: underline; }
+.topic-split:disabled { opacity: .55; cursor: default; }
 .possible-match { max-width: 100%; border: 0; padding: 2px 0; background: none; color: var(--accent); font-size: var(--text-xs); cursor: pointer; }
 .possible-match:hover { text-decoration: underline; }
 .sent-quote { max-width: 86%; padding-left: var(--space-2); border-left: 2px solid var(--border); color: var(--muted); font-size: var(--text-xs); }

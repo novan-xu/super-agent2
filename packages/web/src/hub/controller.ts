@@ -15,6 +15,7 @@ import {
   type Provider,
   type StoredWorkEvent,
   type StuckAnswer,
+  type TopicMove,
   type TopicScope,
   topicInScope,
 } from "@super-agent2/protocol";
@@ -454,7 +455,7 @@ export class PageController {
     return this.editTopic(() => this.options.api.mergeTopic(source, destination));
   }
 
-  moveMessage(source: string, message: string, destination: string): Promise<boolean> {
+  moveMessage(source: string, message: string, destination: TopicMove["destination"]): Promise<boolean> {
     return this.editTopic(() => this.options.api.moveMessage(source, message, destination));
   }
 

@@ -20,6 +20,7 @@ import { failureText } from "./views/HoldCard.js";
 import { ConversationView } from "./views/ConversationView.js";
 import { TransferView } from "./views/TransferView.js";
 import { ConversationTabs } from "./views/ConversationTabs.js";
+import type { TopicActions } from "./views/TopicActions.js";
 import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
@@ -192,11 +193,11 @@ export function App() {
     }
   }, [conversationId, inWorkbench, navigate, page.topicRedirect, preferredScope]);
 
-  const topicActions = useMemo(() => ({
+  const topicActions = useMemo<TopicActions>(() => ({
     rename: (source: string, title: string) => controller.renameTopic(source, title),
     archive: (source: string) => controller.archiveTopic(source),
     merge: (source: string, destination: string) => controller.mergeTopic(source, destination),
-    move: (source: string, message: string, destination: string) => controller.moveMessage(source, message, destination),
+    move: (source, message, destination) => controller.moveMessage(source, message, destination),
   }), [controller]);
 
   const destinationOf = useCallback(

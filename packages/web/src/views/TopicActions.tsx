@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import type { Conversation } from "@super-agent2/protocol";
+import type { Conversation, TopicMove } from "@super-agent2/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../parts/icons.js";
 
@@ -7,8 +7,10 @@ export interface TopicActions {
   rename(source: string, title: string): Promise<boolean>;
   archive(source: string): Promise<boolean>;
   merge(source: string, destination: string): Promise<boolean>;
-  move(source: string, message: string, destination: string): Promise<boolean>;
+  move(source: string, message: string, destination: TopicMove["destination"]): Promise<boolean>;
 }
+
+const newTopicOption = ":new";
 
 export type TopicEdit = { readonly topic: Conversation; readonly message?: never } | { readonly topic?: never; readonly source: string; readonly message: string };
 
@@ -55,7 +57,7 @@ export function TopicActionDialog({ edit, list, actions, done }: {
     const ok = operation === "rename" ? await actions.rename(source, title)
       : operation === "archive" ? await actions.archive(source)
       : operation === "merge" ? await actions.merge(source, destination)
-      : edit.message !== undefined && await actions.move(source, edit.message, destination);
+      : edit.message !== undefined && await actions.move(source, edit.message, destination === newTopicOption ? null : destination);
     if (ok) {
       dialog.current?.close();
     } else {
@@ -92,6 +94,7 @@ export function TopicActionDialog({ edit, list, actions, done }: {
               <select className="field" aria-label={text("conversation.destination")} value={destination} required
                 onChange={(event) => setDestination(event.target.value)}>
                 <option value="">{text("conversation.chooseDestination")}</option>
+                {operation === "move" ? <option value={newTopicOption}>{text("conversation.newTopic")}</option> : null}
                 {targets.map((topic) => <option key={topic.id} value={topic.id}>
                   {topic.repository === null ? titleOf(topic) : `${titleOf(topic)} · ${topic.repository}`}
                 </option>)}

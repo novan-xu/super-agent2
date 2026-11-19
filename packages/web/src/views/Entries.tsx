@@ -28,13 +28,21 @@ export function dayLabel(day: Day, thisYear: number): string {
   return day.year === thisYear ? text("day.date", { month: day.month, day: day.day }) : text("day.dateWithYear", day);
 }
 
-const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, quoted }: {
+const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, quoted, split }: {
   readonly entry: OwnerEntry; readonly topic?: ReactNode; readonly action?: ReactNode; readonly match?: ReactNode; readonly quoted?: ReactNode;
+  readonly split?: (() => Promise<boolean>) | undefined;
 }) {
+  const [splitting, setSplitting] = useState(false);
   return (
     <div className="msg msg--me">
       <div className="msg-who">
         {topic}
+        <span className="topic-split-slot">
+          {split === undefined ? null : <button className="topic-split" type="button" disabled={splitting} onClick={async () => {
+            setSplitting(true);
+            if (!await split()) setSplitting(false);
+          }}>{text("conversation.newTopic")}</button>}
+        </span>
         {entry.taken ? null : (
           <span className="dot dot--mute" role="img" aria-label={text("message.waiting")} title={text("message.waiting")} />
         )}
@@ -162,12 +170,13 @@ function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNod
   );
 }
 
-export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move }: {
+export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move, split }: {
   readonly item: StreamItem;
   readonly thisYear: number;
   readonly topic?: ReactNode;
   readonly quote?: (() => void) | undefined;
   readonly move?: (() => void) | undefined;
+  readonly split?: (() => Promise<boolean>) | undefined;
   readonly match?: ReactNode;
   readonly quoted?: ReactNode;
 }) {
@@ -193,7 +202,7 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move 
             {action}
             {move === undefined ? null : <button className="icon-btn message-quote" type="button" aria-haspopup="dialog"
               aria-label={text("conversation.move")} title={text("conversation.move")} onClick={move}><Icon name="swap" size={16} /></button>}
-          </>} match={match} quoted={quoted} />;
+          </>} match={match} quoted={quoted} split={split} />;
         case "text":
           return <BrainText entry={entry} lead={item.lead} live={item.live} topic={topic} action={action} />;
         case "notice":

@@ -333,7 +333,7 @@ describe("routing in the hub", () => {
 
     const other = service.create().id;
     clock.advance(minute);
-    expect(service.move(routed.entry.id, other)).toEqual({ ok: true, value: routed.entry.id });
+    expect(service.move(routed.entry.id, other)).toEqual({ ok: true, value: other });
     expect(decisions(running)).toMatchObject([{ entry: routed.entry.id, placed_in: topic, moved_to: other, moved_at: clock.now() }]);
   });
 

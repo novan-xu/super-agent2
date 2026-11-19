@@ -1223,7 +1223,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       } else if (!result.ok) {
         sendJson(response, result.error === "not_found" ? 404 : 409, { error: result.error });
       } else {
-        const topic = conversations.get(move?.destination ?? result.value);
+        const topic = conversations.get(result.value);
         if (topic === undefined) {
           return false;
         }

@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -760,6 +760,116 @@ describe("topic corrections and archive policy", () => {
     await expect.poll(() => running.conversations.get(topic)?.topicState, { interval: 10 }).toBe("archived");
   });
 
+  it("moves an idle input to a new topic atomically and rejects a repeated move from the old topic", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const source = openTicket(running, undefined, "owner/project").conversation!;
+    const attachment = { id: "a".repeat(32), name: "Planning.md", size: 1, mediaType: "text/markdown" };
+    const owner = service.send(source, "", [attachment])!;
+    const db = running.database.connection;
+    db.exec("CREATE TEMP TRIGGER reject_move BEFORE UPDATE OF conversation_id ON conversation_entries BEGIN SELECT RAISE(ABORT, 'move failed'); END");
+    expect(() => service.move(owner.id, null, source)).toThrow("move failed");
+    expect(service.list().map(({ id }) => id)).toEqual([source]);
+    expect(service.entries(source).at(-1)).toMatchObject({ id: owner.id });
+    expect(db.prepare("SELECT * FROM topic_transfers").all()).toEqual([]);
+    db.exec("DROP TRIGGER reject_move");
+
+    const request = () => topicRequest(running, source, "/move", { message: owner.id, destination: null });
+    const response = await request();
+    expect(response.status).toBe(200);
+    const { conversation: destination } = ConversationResponse.parse(await response.json());
+    expect(destination).toMatchObject({ title: "Planning.md", repository: "owner/project", topicState: "active" });
+    expect(service.entries(source).some(({ id }) => id === owner.id)).toBe(false);
+    expect(service.entries(destination.id)).toMatchObject([{ id: owner.id, placement: "owner", attachments: [attachment] }]);
+    expect((await request()).status).toBe(409);
+    expect(service.list()).toHaveLength(2);
+    expect(messages).toContainEqual({ type: "input.withdraw", conversation: source, input: owner.id });
+    expect(messages.some((message) => message.type === "input" && message.conversation === destination.id)).toBe(false);
+    link.receive({ type: "input.withdrawn", conversation: source, input: owner.id });
+    expect(messages.at(-1)).toMatchObject({ type: "input", conversation: destination.id, input: { entry: owner.id, attachments: [attachment] } });
+  });
+
+  it("withdraws a running routed input before the new topic can answer and records the correction", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const source = service.create().id;
+    const routed = (await service.sendToStream(undefined, "New work\nNow", []))!;
+    const oldTurn = { conversation: source, turn: "old-turn" };
+    link.receive({ type: "turn.started", ...oldTurn, inputs: [routed.entry.id], provider: "gpt", model: "model" });
+    link.receive({ type: "text", ...oldTurn, block: "old", delta: "Earlier reply" });
+    expect(routed).toMatchObject({ topic: { id: source }, entry: { placement: "router-joined" }, latestOwner: true });
+
+    clock.advance(1);
+    const moved = service.move(routed.entry.id, null, source);
+    expect(moved).toMatchObject({ ok: true });
+    if (!moved.ok) throw new Error("The hub did not move the input.");
+    const destination = moved.value;
+    const db = running.database.connection;
+    expect(service.get(destination)).toMatchObject({ title: "New work", repository: null });
+    expect(service.entries(source)).toMatchObject([{ text: "Earlier reply" }]);
+    expect(service.stream().entries.find(({ entry }) => entry.id === routed.entry.id)).toMatchObject({
+      position: routed.position, topic: { id: destination }, entry: { placement: "owner", taken: false },
+    });
+    expect(db.prepare("SELECT placed_in, moved_to, moved_at FROM routing_decisions WHERE entry = ?").get(routed.entry.id))
+      .toEqual({ placed_in: source, moved_to: destination, moved_at: clock.now() });
+    expect(db.prepare("SELECT ticket_writes_revoked FROM turns WHERE id = ?").get(oldTurn.turn)).toEqual({ ticket_writes_revoked: 1 });
+    expect(messages.at(-1)).toEqual({ type: "input.withdraw", conversation: source, input: routed.entry.id });
+    expect(messages.some((message) => message.type === "input" && message.conversation === destination)).toBe(false);
+
+    link.receive({ type: "turn.finished", ...oldTurn, outcome: "interrupted", reason: null });
+    link.receive({ type: "input.withdrawn", conversation: source, input: routed.entry.id });
+    const delivered = messages.at(-1);
+    expect(delivered).toMatchObject({ type: "input", conversation: destination, input: { entry: routed.entry.id, text: "New work\nNow" } });
+    if (delivered?.type !== "input") throw new Error("The hub did not deliver the input.");
+    expect(delivered.input.id).not.toBe(routed.entry.id);
+    const newTurn = { conversation: destination, turn: "new-turn" };
+    link.receive({ type: "turn.started", ...newTurn, inputs: [delivered.input.id], provider: "gpt", model: "model" });
+    link.receive({ type: "text", ...newTurn, block: "answer", delta: "New topic reply" });
+    link.receive({ type: "turn.finished", ...newTurn, outcome: "completed", reason: null });
+    expect(service.detail(source)?.turns).toMatchObject([{ state: "interrupted" }]);
+    expect(service.detail(destination)).toMatchObject({ turns: [{ state: "completed" }], entries: [{ id: routed.entry.id, taken: true }, { text: "New topic reply" }] });
+  });
+
+  it("uses the original routing scope to choose a repository for a split", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const other = openTicket(running, undefined, "team/other").conversation!;
+    const source = openTicket(running, undefined, "team/alpha").conversation!;
+    const code = { kind: "code" } as const;
+    const repository = { kind: "repository", repository: "team/alpha" } as const;
+    for (const [text, scope, target] of [
+      ["Check other", code, { repository: "team/other" }],
+      ["Review", code, { repository: null, needsRepository: true }],
+      ["Check other", repository, { repository: "team/alpha" }],
+    ] as const) {
+      service.send(source, "Keep the source recent");
+      const routed = (await service.sendToStream(undefined, text, [], { scope }))!;
+      expect(routed).toMatchObject({ topic: { id: source }, entry: { placement: "router-joined" } });
+      const moved = service.move(routed.entry.id, null, source);
+      expect(moved.ok && service.get(moved.value)).toMatchObject(target);
+      clock.advance(1);
+    }
+    expect(service.get(other)?.repository).toBe("team/other");
+  });
+
+  it("marks only the latest joined owner entry in a stream page even when a moved older entry is outside the page", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const first = (await service.sendToStream(undefined, "Open the topic", []))!;
+    expect(first.entry).toMatchObject({ placement: "router-opened" });
+    const other = service.create().id;
+    const older = service.send(other, "Older owner message")!;
+    clock.advance(1);
+    service.send(first.topic.id, "Keep this topic active");
+    const joined = (await service.sendToStream(undefined, "Continue", []))!;
+    expect(joined).toMatchObject({ topic: { id: first.topic.id }, entry: { placement: "router-joined" }, latestOwner: true });
+    expect(service.detail(other)?.entries).toMatchObject([{ placement: "owner" }]);
+    expect(service.move(older.id, first.topic.id).ok).toBe(true);
+    expect(service.stream(Number.MAX_SAFE_INTEGER, 1).entries).toMatchObject([{ entry: { id: joined.entry.id }, latestOwner: false }]);
+  });
+
   it("replays a queued withdrawal after restart and refreshes old history for scoped stream clients", async () => {
     const first = await start();
     const { messages: before } = connect(first);
@@ -767,7 +877,7 @@ describe("topic corrections and archive policy", () => {
     const destination = openTicket(first, undefined, "owner/project").conversation!;
     const entry = first.conversations.send(source, "Move to code")!;
     const position = first.conversations.stream().entries[0]?.position;
-    expect(first.conversations.move(entry.id, destination)).toEqual({ ok: true, value: entry.id });
+    expect(first.conversations.move(entry.id, destination)).toEqual({ ok: true, value: destination });
     first.conversations.send(destination, "Later message");
     expect(before.filter((message) => message.type === "input")).toHaveLength(1);
     await first.close();
