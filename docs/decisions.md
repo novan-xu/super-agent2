@@ -4235,3 +4235,78 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   already hold the pipe, and #140 supervisors do not answer. Compare the process start time with the file's time: also
   needs a lookup and is upset by clock changes. Find the supervisor by scanning all `node.exe` command lines instead
   of trusting the file: depends on the exact path spelling, and a miss starts a second runner.
+
+## 2026-11-18 — Evaluation of routing without a model call (#139)
+
+- **Chosen:** Copy Super-agent2's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts
+  `superagent2-hub-data` read-only, and the first Super-agent's `hub.sqlite` as a byte copy from a one-off container that
+  mounts `superagent-hub-data` read-only. Both containers use the image `superagent2-hub:current`.
+- **Why:** The NAS has no `sqlite3`; the hub image already has Node 24 with `node:sqlite`, so nothing had to be pulled.
+  The first Super-agent's containers are stopped and its database had no WAL, so the file itself is consistent; the
+  live database needs `VACUUM INTO` for a consistent copy.
+- **Other options:** The newest release backup (several hours older); pulling a separate image with `sqlite3`.
+
+- **Chosen:** For the first Super-agent, use every owner message: the stream (`stream_items` of kind `owner`, from the
+  web page, the desktop app and Lark) and the front door (`chat_messages` with direction `in`), not `chat_messages` alone.
+- **Why:** `chat_messages` holds 101 of the 518 owner messages; the issue asks for all of the history.
+- **Other options:** `chat_messages` only, as the issue's table description suggests.
+
+- **Chosen:** Do not count messages the hub would not route: answers sent with a ticket in the first Super-agent and
+  card buttons (`开始：…`, `编排：…`, `全部开始`, `开始所选`). They stay in their topics' history.
+- **Why:** Such messages carry their topic; in Super-agent2 they are sent inside a topic or from a card that belongs to
+  one. Counting them would measure decisions the router never makes.
+- **Other options:** Route every message; the tool also reports that, for comparison.
+
+- **Chosen:** Replay with each message placed into its labelled topic after the decision; candidates are the topics in
+  scope active in the last 24 hours; a message whose topic is idle longer expects a new topic. Tune on the first 60 % of
+  each history by minimising 2 × wrong joins + wrong splits.
+- **Why:** 24 hours is the idle-archive time of #101. Placing each message correctly measures every decision on its
+  own, as if the owner moved misrouted messages. A wrong join pollutes a topic's context and is worse than a wrong split,
+  as the issue says.
+- **Other options:** Let errors cascade; weigh both errors equally; split by data set instead of pooling.
+
+- **Chosen:** Evaluate a reference rule (a message naming a ticket or issue found in exactly one active topic joins it)
+  beside the issue's rules a–d, and recommend it.
+- **Why:** Many of the owner's follow-ups name a ticket or issue number. It is a disentanglement signal without a model
+  and added about 6 points to the rules alone.
+- **Other options:** Evaluate only the rules the issue sketches.
+
+- **Chosen:** Recommend the character-bigram score over the embedding models, taking "a small difference" to mean that
+  the 95 % paired bootstrap interval of the cost difference contains zero.
+- **Why:** The issue asks for the simpler scorer when the difference is small; bigram, `bge-small-zh-v1.5` and `bge-m3`
+  are within that interval of each other on the test part.
+- **Other options:** Pick the lowest test cost (`bge-small-zh-v1.5`, 63 against 67), which has fewer wrong joins.
+
+- **Chosen:** The tool depends on `@huggingface/transformers` 4.3.2; `pnpm-workspace.yaml` denies the install scripts of
+  `onnxruntime-node` and `protobufjs` under `allowBuilds`.
+- **Why:** pnpm refuses to install with unreviewed build scripts. `onnxruntime-node` ships its CPU binaries in the
+  package; its script only downloads CUDA libraries, which nothing here uses.
+- **Other options:** Allow the scripts; keep the models out of the repository's tools and run them from a scratch folder.
+
+## 2026-11-18 — Routing evaluation: constants for few wrong joins (#139)
+
+- **Chosen:** Recommend the bigram router with the constants chosen on the train part when a wrong join counts three
+  times a wrong split: rule b (≤ 12 characters, 30 min) and the score (threshold 0.055, margin 0.091, decay 0.18), without
+  the open-question and reference rules.
+- **Why:** The owner cares more about wrong joins than about wrong splits, since a wrong split has a one-tap move hint
+  and a wrong join pollutes the topic. Weights 3 and 4 choose the same constants; on the test part they make 11 wrong
+  joins instead of 20, for 48 wrong splits instead of 27. At an equal wrong-join rate chosen this way,
+  `bge-small-zh-v1.5` is not better than bigram (10 and 51 against 11 and 48), so the scorer stays bigram.
+- **Other options:** Keep the constants chosen with weight 2, which are right more often (70 % against 62 %); use
+  `bge-small-zh-v1.5` at the threshold that looked best on the test part, which was picked on the test messages.
+
+## 2026-11-18 — Router chosen for #143
+
+- **Chosen:** `bge-small-zh-v1.5` with the constants chosen on the train part with a wrong join counted twice (rules a,
+  e and b; threshold 0.570, margin 0.096, decay 0.048; 13 wrong joins and 37 wrong splits on the test part) as the
+  primary router. The strict bigram router (rule b; threshold 0.055, margin 0.091, decay 0.18) decides when the model is
+  unavailable and otherwise runs as a shadow whose decision is recorded beside the primary's. Every decision is recorded
+  in the database, so the owner's corrections become labels.
+- **Why:** That point has the lowest test-part cost whether a wrong join counts 2×, 3× or 4× (63, 76 and 89, against
+  67, 87 and 107 for bigram with weight-2 constants, 70, 81 and 92 for the strict bigram router, and 71, 81 and 91 for
+  bge-small-zh with weight-3 constants). It makes about as few wrong joins as the strict bigram router with 11 fewer
+  wrong splits, and fragmentation was the owner's original complaint. With only the threshold moved, bge-small-zh leaves
+  fewer wrong splits than bigram at 8–11 % wrong joins on both the train and the test part. This is not statistically
+  established; the evaluator's recommendation was the strict bigram router, and the shadow record exists to settle the
+  choice on real use.
+- **Other options:** The strict bigram router alone; the bigram router with weight-2 constants.

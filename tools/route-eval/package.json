@@ -1,0 +1,17 @@
+{
+  "name": "@super-agent2/route-eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "eval": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2"
+  }
+}

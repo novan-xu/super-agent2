@@ -20,6 +20,7 @@ export default defineConfig({
       { extends: true, plugins: [react()], test: { name: "web", root: "packages/web", css: { include: [/page.css/] } } },
       { extends: true, test: { name: "markup-text", root: "tools/markup-text" } },
       { extends: true, test: { name: "zero-comment", root: "tools/zero-comment" } },
+      { extends: true, test: { name: "route-eval", root: "tools/route-eval" } },
     ],
   },
 });
