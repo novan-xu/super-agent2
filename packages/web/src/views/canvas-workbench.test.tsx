@@ -16,7 +16,7 @@ const props: CanvasWorkbenchProps = {
   tickets: [first, second, third], topics: [topic], waiting: { ...initialWaiting, known: true, cards: [start] },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
-  panel: <div>Repository conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop,
+  panel: <div>Repository conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
 };
 
 describe("workbench canvas", () => {

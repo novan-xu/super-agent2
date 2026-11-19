@@ -28,6 +28,8 @@ export interface CanvasWorkbenchProps {
   readonly focused: () => void;
   readonly push: PushPhase;
   readonly togglePush: () => void;
+  readonly rearrange: () => Promise<boolean>;
+  readonly rearranging: boolean;
 }
 
 function belongs(repository: string | null | undefined, value: string | null): boolean {
@@ -126,7 +128,8 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     </aside>
     <div className="wb-mobile-tabs"><button type="button" aria-pressed={pane === "canvas"} onClick={() => setPane("canvas")}>{text("navigation.workbench")}</button><button type="button" aria-pressed={pane === "panel"} onClick={() => setPane("panel")}>{text("navigation.conversation")}</button></div>
     <main className={`wb-canvas ${pane === "panel" ? "wb-mobile-hidden" : ""}`} onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, textarea, select, .wcard")) props.selectTicket(null); }}>
-      {offersSwitch(props.push) ? <label className="switch-label wb-push"><button className="switch" type="button" role="switch" aria-label={text("push.label")} aria-checked={props.push === "on" || props.push === "working"} disabled={props.push === "blocked" || props.push === "working"} onClick={props.togglePush} />{text("push.label")}</label> : props.push === "install" ? <p className="push-note">{text("push.install")}</p> : null}
+      <div className="wb-toolbar"><button type="button" className="btn" title={text("workbench.rearrangeTip")} disabled={props.rearranging} onClick={() => void props.rearrange().then((opened) => { if (opened) setPane("panel"); })}>{text("workbench.rearrange")}</button>
+      {offersSwitch(props.push) ? <label className="switch-label wb-push"><button className="switch" type="button" role="switch" aria-label={text("push.label")} aria-checked={props.push === "on" || props.push === "working"} disabled={props.push === "blocked" || props.push === "working"} onClick={props.togglePush} />{text("push.label")}</label> : props.push === "install" ? <p className="push-note">{text("push.install")}</p> : null}</div>
       {props.push === "blocked" ? <p className="push-note">{text("push.blocked")}</p> : null}
       {holds.length > 0 && (repository === undefined || repository === null) ? <section className="wb-section"><h2>{text("waiting.title")}</h2><div className="wb-holds">{holds.map((card) => <HoldCard key={card.key} card={card} use={useOf(waiting, card.key)} focused={props.focus === card.key} answer={(verdict) => actions.answer(card.key, verdict)} />)}</div></section> : null}
       {(["waits", "running", "ready", "later"] as const).map((section) => canvas[section].length === 0 ? null : <section key={section} className="wb-section">

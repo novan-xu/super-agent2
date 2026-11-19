@@ -12,7 +12,7 @@ const props: CanvasWorkbenchProps = {
   tickets: [first, second], topics: [], waiting: { ...initialWaiting, known: true },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
-  panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop,
+  panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
 };
 let host: HTMLDivElement;
 let root: Root;
@@ -59,6 +59,16 @@ const width = () => host.querySelector<HTMLElement>(".wb-layout")!.style.getProp
 async function render() { await act(async () => root.render(<CanvasWorkbench {...props} />)); }
 
 describe("workbench panel resizing", () => {
+  it("starts rearrangement and opens the conversation panel after it succeeds", async () => {
+    const rearrange = vi.fn().mockResolvedValue(true);
+    await act(async () => root.render(<CanvasWorkbench {...props} rearrange={rearrange} />));
+    const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === "编排")!;
+    await act(async () => button.click());
+    expect(rearrange).toHaveBeenCalledOnce();
+    expect(host.querySelector(".wb-canvas")?.classList.contains("wb-mobile-hidden")).toBe(true);
+    expect(host.querySelectorAll(".wb-mobile-tabs button")[1]?.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("opens the ticket when a start-card link outlives its card", async () => {
     const selectTicket = vi.fn();
     const selectRepository = vi.fn();
