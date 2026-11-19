@@ -88,6 +88,11 @@ the hub.
 - Each project is one GitHub repository, identified by `owner/name`. Each topic belongs to one project or to 日常.
   A new topic from 代码 may temporarily have no repository while it waits for the owner to name one. It stays in
   代码 while it waits. Confirmed memory, tickets and the topic board are shared across projects.
+- Filing repository work in a daily topic moves that topic and its conversation into the repository, provided all
+  linked tickets belong to that repository. Otherwise the ticket receives a new repository topic. The brain may
+  assign a repository to a daily or pending topic, including another topic at the owner's request; System, merged
+  topics, pending merges and conflicting tickets are refused. A repository topic without repository tickets can
+  move to 日常. Each move updates the page live.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - A topic opened from an owner message starts with the message's first line or attachment name. The hub asks the
@@ -622,8 +627,8 @@ Changed by this design:
   repository. 日常 shows daily topics, including System. 传输 is a separate device-to-device store. Each brain
   answer and each owner message has a small topic label that opens the topic view. The label also shows the
   repository when reading all of 代码.
-- 对话 opens in 日常 at the root and at the unqualified conversation list. Repository selections and all of 代码
-  have shareable addresses. The repository chooser uses repositories the hub knows from tickets and topics.
+- 对话 opens in 代码 at the root and at the unqualified conversation list. 日常, repository selections and all of
+  代码 have shareable addresses. The repository chooser uses repositories the hub knows from tickets and topics.
 - The topic list shows automatically recognised topics. Selecting a topic filters the view and sends input directly
   there. Topics can be renamed, merged or archived from the list or the topic view.
 - 工作台 shows repositories on the left, the selected repository's chains in the centre and its conversation on

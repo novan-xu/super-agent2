@@ -4510,3 +4510,15 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Why:** The topic can keep up with meaningful changes within the conversation, and the effect of using titles
   as a routing input belongs in a future evaluation.
 - **Other options:** Freeze the first brain title or add titles to the router's scoring texts now.
+
+## 2026-11-19 — Keep repository work in code topics (#156)
+
+- **Chosen:** Open the root and unqualified conversation list in all of 代码; give 日常 an explicit address.
+  Claim a daily topic for repository work when none of its tickets conflict, keeping the existing conversation.
+  Let the brain make the same move, including for another topic requested by the owner, and move a repository
+  topic back to 日常 when it has no repository tickets. Refuse direct moves between repositories.
+- **Why:** The conversation and its work stay together without mixing unrelated tickets, and either destination
+  remains directly accessible. The reverse move is safe under the same ticket check; a direct repository change
+  could silently relocate work and can instead be made explicitly in two steps when no tickets conflict.
+- **Other options:** Keep the old daily default, split a conversation from its repository work, allow mixed tickets
+  to move, or omit the reverse move.

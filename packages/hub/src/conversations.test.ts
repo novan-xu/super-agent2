@@ -437,8 +437,8 @@ describe("the topic stream", () => {
     ]);
     expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
     expect(openTicket(running, pending?.topic.id).conversation).not.toBe(pending?.topic.id);
-    expect(openTicket(running, daily, "owner/project").conversation).not.toBe(daily);
-    expect(running.conversations.get(daily)?.repository).toBeNull();
+    expect(openTicket(running, daily, "owner/project").conversation).toBe(daily);
+    expect(running.conversations.get(daily)?.repository).toBe("owner/project");
   });
 
   it("previews the fallback route for empty and attachment drafts without changing the database", async () => {
@@ -928,6 +928,63 @@ describe("topic context", () => {
 });
 
 describe("topic corrections and archive policy", () => {
+  it("claims daily conversations for repository tickets unless existing tickets conflict", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const topic = service.create().id;
+    const entry = service.send(topic, "Repository discussion")!;
+    const conflict = service.create().id;
+    service.send(conflict, "Personal task");
+    openTicket(hub, conflict);
+    const { socket, received } = await pageSocket(hub);
+    const revision = service.historyRevision();
+    const ticket = openTicket(hub, topic, "owner/project");
+    const other = openTicket(hub, conflict, "owner/project");
+    expect(ticket.conversation).toBe(topic);
+    expect(other.conversation).not.toBe(conflict);
+    expect(service.get(conflict)?.repository).toBeNull();
+    expect(service.historyRevision()).toBeGreaterThan(revision);
+    expect(service.stream(undefined, undefined, { kind: "repository", repository: "owner/project" }).entries).toContainEqual(expect.objectContaining({ entry: expect.objectContaining({ id: entry.id }) }));
+    expect(service.stream(undefined, undefined, { kind: "daily" }).entries).not.toContainEqual(expect.objectContaining({ entry: expect.objectContaining({ id: entry.id }) }));
+    await until(() => received.some((message) => message.type === "conversation" && message.conversation.id === topic && message.conversation.repository === "owner/project"), socket);
+  });
+
+  it("moves topics through the brain tool and rejects conflicting and protected topics", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const { link } = connect(hub);
+    const current = service.create().id;
+    const input = service.send(current, "Move these topics")!;
+    link.receive({ type: "turn.started", conversation: current, turn: "move-turn", provider: "gpt", model: "model", inputs: [input.id] });
+    const topic = service.create().id;
+    const entry = service.send(topic, "Project discussion")!;
+    const conflict = service.create().id;
+    openTicket(hub, conflict);
+    const repositoryTopic = openTicket(hub, undefined, "owner/project").conversation!;
+    const merged = service.create().id;
+    hub.database.connection.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?").run(topic, merged);
+    const system = service.tell(null, "System notice", "System prompt");
+    const { socket, received } = await pageSocket(hub);
+    const call = async (target: string, repository: string | null) => {
+      const response = await fetch(`${base(hub)}${brainToolsPath}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${brainToken()}`, "content-type": "application/json", "x-super-agent-conversation": current, "x-super-agent-turn": "move-turn" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "set_topic_repository", arguments: { topic: target, repository } } }),
+      });
+      return (await response.json() as { result: { isError: boolean; content: { text: string }[] } }).result;
+    };
+    expect(await call(topic, "owner/project")).toMatchObject({ isError: false });
+    expect(service.get(topic)?.repository).toBe("owner/project");
+    expect(service.stream(undefined, undefined, { kind: "repository", repository: "owner/project" }).entries).toContainEqual(expect.objectContaining({ entry: expect.objectContaining({ id: entry.id }) }));
+    await until(() => received.some((message) => message.type === "conversation" && message.conversation.id === topic && message.conversation.repository === "owner/project"), socket);
+    expect((await call(conflict, "owner/project")).content[0]?.text).toContain("tickets");
+    expect((await call(merged, "owner/project")).content[0]?.text).toContain("Merged");
+    expect((await call(system, "owner/project")).content[0]?.text).toContain("System");
+    expect((await call(repositoryTopic, null)).content[0]?.text).toContain("tickets");
+    expect(await call(topic, null)).toMatchObject({ isError: false });
+    expect(service.get(topic)?.repository).toBeNull();
+  });
+
   it("archives eligible topics through the brain tool and reports each guarded topic", async () => {
     const hub = await start();
     const service = hub.conversations;

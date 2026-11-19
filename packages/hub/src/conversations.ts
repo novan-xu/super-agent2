@@ -85,7 +85,7 @@ export interface ConversationService {
   previewStream(request: StreamPreviewRequest): Promise<StreamPreview>;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
-  assignRepository(conversation: string, turn: string, repository: string): boolean;
+  assignRepository(conversation: string, turn: string, repository: string | null, topic?: string): string | undefined;
   interrupt(id: string): Conversation | undefined;
   rename(id: string, title: string): TopicEdit<string>;
   proposeTitle(conversation: string, turn: string, title: string): boolean;
@@ -380,12 +380,15 @@ export function createConversationService(options: ConversationServiceOptions): 
   const router = createTopicRouter(options.database, options.routing);
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
   const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
-  const assignPendingRepository = connection.prepare(`
+  const assignTopicRepository = connection.prepare(`
     UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
-    WHERE id = ? AND needs_repository = 1 AND EXISTS (
-      SELECT 1 FROM turns WHERE id = ? AND conversation_id = conversations.id AND state = 'running' AND ticket_writes_revoked = 0
-    )
+    WHERE id = ? AND system = 0 AND merged_into IS NULL
+      AND (repository IS NULL OR ? IS NULL OR repository = ? COLLATE NOCASE)
+      AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE)
+      AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
   `);
+  const assignmentTurn = connection.prepare("SELECT 1 FROM turns WHERE id = ? AND conversation_id = ? AND state = 'running' AND ticket_writes_revoked = 0");
+  const changeTopicHistory = connection.prepare("UPDATE topic_history_revision SET revision = revision + 1");
   const selectConversations = connection.prepare("SELECT * FROM conversations WHERE merged_into IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?");
   const savePending = connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)");
   const listPending = connection.prepare("SELECT * FROM pending_topic_inputs ORDER BY created_at, rowid");
@@ -1285,12 +1288,22 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       return { text: text.slice(offset, end), next: end < text.length ? end : null };
     },
-    assignRepository: (conversation, turn, repository) => {
-      if (link?.ready !== true || assignPendingRepository.run(repository, clock.now(), conversation, turn).changes === 0) {
-        return false;
+    assignRepository: (conversation, turn, repository, target = conversation) => {
+      if (link?.ready !== true || assignmentTurn.get(turn, conversation) === undefined) return "An active topic turn is required.";
+      const topic = rawGet(target);
+      if (topic === undefined) return "Topic not found.";
+      if (topic.system === true) return "System topics cannot be moved.";
+      if (topic.mergedInto !== undefined) return "Merged topics cannot be moved.";
+      if (corrections.pending(target)) return "Topics with a pending merge cannot be moved.";
+      if (topic.repository !== null && repository !== null && topic.repository.toLowerCase() !== repository.toLowerCase()) {
+        return "A repository topic cannot be moved directly to another repository.";
       }
-      announce(conversation);
-      return true;
+      if (assignTopicRepository.run(repository, clock.now(), target, repository, repository, repository).changes === 0) {
+        return "Topic has tickets belonging to a different repository or no repository.";
+      }
+      changeTopicHistory.run();
+      announce(target);
+      return undefined;
     },
     interrupt: (id) => {
       const conversation = get(id);

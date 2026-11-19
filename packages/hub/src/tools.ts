@@ -92,7 +92,7 @@ const HandoverArguments = z.strictObject({
   message: MessageId.describe("An owner message id from this turn. Defaults to the latest owner message in the turn.").optional(),
   ownerRequested: z.literal(true).describe("Set only when the owner explicitly asks to move the message.").optional(),
 });
-const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName });
+const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName.nullable(), topic: ConversationId.optional() });
 const SetTopicTitleArguments = z.strictObject({
   title: z.string().trim().min(1).max(80).describe("A short, single-line title in the owner's language"),
 });
@@ -824,13 +824,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "set_topic_repository",
         title: "Set the repository for this topic",
-        description: "Assign the repository for a code topic waiting for one, after the owner identifies it.",
-        inputSchema: {
-          type: "object",
-          properties: { repository: { type: "string", description: "A GitHub repository in owner/name form" } },
-          required: ["repository"],
-          additionalProperties: false,
-        },
+        description: "Move a daily or pending code topic into its repository, or move a repository topic without repository tickets into daily with null. Supply a topic ID to move another topic at the owner's request. Topics with conflicting tickets cannot move.",
+        inputSchema: z.toJSONSchema(AssignRepositoryArguments, { io: "input" }),
       },
       {
         name: "set_topic_title",
@@ -1341,9 +1336,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       }
       case "set_topic_repository": {
         const args = AssignRepositoryArguments.safeParse(parsed.data.arguments);
-        const assigned = conversation !== undefined && turn !== undefined && !aborted.aborted && args.success
-          && conversations.assignRepository(conversation, turn, args.data.repository);
-        result = assigned ? { text: "Repository assigned to this topic." } : { text: "An active turn in a pending code topic and a repository in owner/name form are required.", isError: true };
+        if (conversation === undefined || turn === undefined || aborted.aborted || !args.success) {
+          result = { text: "An active topic turn and a repository in owner/name form or null are required.", isError: true };
+          break;
+        }
+        const error = conversations.assignRepository(conversation, turn, args.data.repository, args.data.topic);
+        result = error === undefined ? { text: args.data.topic === undefined || args.data.topic === conversation ? "Repository assigned to this topic." : `Repository assigned to topic ${args.data.topic}.` } : { text: error, isError: true };
         break;
       }
       case "set_topic_title": {

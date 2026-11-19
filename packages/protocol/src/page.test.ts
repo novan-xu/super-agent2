@@ -13,6 +13,8 @@ describe("pageRoute", () => {
     expect(pageRoute("/conversations")).toEqual({ view: "conversations", conversation: null });
     expect(pageRoute("/conversations/abc-123")).toEqual({ view: "conversations", conversation: "abc-123" });
     expect(pageRoute("/conversations", "?scope=code")).toEqual({ view: "conversations", conversation: null, scope: { kind: "code" } });
+    expect(pageRoute("/conversations", "?scope=daily")).toEqual({ view: "conversations", conversation: null, scope: { kind: "daily" } });
+    expect(pagePath({ view: "conversations", conversation: null, scope: { kind: "daily" } })).toBe("/conversations?scope=daily");
     const scoped = pageRoute("/conversations/abc-123", "?repository=owner%2Fproject");
     expect(scoped).toEqual({ view: "conversations", conversation: "abc-123", scope: { kind: "repository", repository: "owner/project" } });
     expect(pagePath(scoped!)).toBe("/conversations/abc-123?repository=owner%2Fproject");
