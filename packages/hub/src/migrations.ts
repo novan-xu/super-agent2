@@ -874,6 +874,20 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE turns ADD COLUMN proposed_title TEXT;
     `,
   },
+  {
+    version: 40,
+    sql: `
+      CREATE TABLE repositories (
+        repository TEXT PRIMARY KEY COLLATE NOCASE,
+        account TEXT CHECK (account IN ('novan-xu', 'nuofan-island')),
+        pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+        listed INTEGER NOT NULL DEFAULT 0 CHECK (listed IN (0, 1)),
+        github_archived INTEGER NOT NULL DEFAULT 0 CHECK (github_archived IN (0, 1))
+      ) STRICT;
+      INSERT INTO repositories (repository, pinned)
+        SELECT min(repository), 1 FROM tickets WHERE repository IS NOT NULL GROUP BY lower(repository);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

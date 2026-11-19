@@ -62,6 +62,8 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     setMachineStorage: (name, storage) => answer(`setMachineStorage ${name}`, storage),
     setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
+    setPinned: (repository, pinned) => answer(`setPinned ${repository} ${pinned}`, settingsSnapshot()),
+    refreshRepositories: () => answer("refreshRepositories", {}),
     setTable: (table) => answer("setTable", { table }),
     createAttachment: (name, size, mediaType) => answer(`createAttachment ${name}`, { attachment: { id: "0".repeat(32), name, size, mediaType }, received: 0 }),
     uploadState: (id) => answer(`uploadState ${id}`, { attachment: { id, name: "a", size: 0, mediaType: "text/plain" }, received: 0 }),
@@ -633,6 +635,15 @@ describe("PageController and the history", () => {
     expect(page.store.getState().settings?.brain.order).toEqual(["claude", "gpt", "deepseek"]);
     expect(await page.addMachine("studio", "macos")).toEqual({ name: "studio", system: "macos", command: "run" });
     expect(hub.calls).toContain("addMachine studio macos");
+  });
+
+  it("keeps a newer settings update when an earlier pin response arrives", async () => {
+    const page = controller(api({ setPinned: async () => ({ ok: true, value: settingsSnapshot() }) }));
+    const update = page.setPinned("org/project", true);
+    const current = settingsSnapshot({ repositories: [{ repository: "org/project", account: "nuofan-island", chosen: false, pinned: true }] });
+    page.store.dispatch({ type: "server", message: { type: "settings", settings: current } });
+    expect(await update).toBe(true);
+    expect(page.store.getState().settings).toBe(current);
   });
 
   it("tells a refused table change apart from other failures", async () => {

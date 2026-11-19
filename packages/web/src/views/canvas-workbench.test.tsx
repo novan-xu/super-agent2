@@ -13,17 +13,23 @@ const second = ticket(2, { repository: "org/one", waits: waits(1), waitsFor: [1]
 const third = ticket(3, { repository: null, kind: "writing", form: "task", issues: [] });
 const start = startCard(2, { ticket: second, before: [{ id: 1, zh: "工作 1", state: "working" }] });
 const props: CanvasWorkbenchProps = {
-  tickets: [first, second, third], topics: [topic], waiting: { ...initialWaiting, known: true, cards: [start] },
+  tickets: [first, second, third], topics: [topic], pinnedRepositories: ["org/zzz", "org/empty"], waiting: { ...initialWaiting, known: true, cards: [start] },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
   panel: <div>Repository conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
 };
 
 describe("workbench canvas", () => {
-  it("lists repositories from tickets and topics, with all first and daily last", () => {
+  it("lists only pinned repositories, even without work, and keeps archived tickets under all", () => {
     const html = renderToStaticMarkup(<CanvasWorkbench {...props} />);
-    expect(html.indexOf("全部")).toBeLessThan(html.indexOf("org/one"));
-    expect(html.indexOf("org/with-topic")).toBeLessThan(html.indexOf("日常"));
+    const rail = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    expect(rail).toContain("org/empty");
+    expect(rail).toContain("org/zzz");
+    expect(rail).not.toContain("org/one");
+    expect(rail).not.toContain("org/with-topic");
+    expect(rail.indexOf("全部")).toBeLessThan(rail.indexOf("org/empty"));
+    expect(rail.indexOf("org/empty")).toBeLessThan(rail.indexOf("org/zzz"));
+    expect(rail.indexOf("org/zzz")).toBeLessThan(rail.indexOf("日常"));
     expect(html).toContain("Repository conversation");
     expect(html).toContain("wb-card--pending");
     expect(html).toContain("在 #1 工作 1 之后");

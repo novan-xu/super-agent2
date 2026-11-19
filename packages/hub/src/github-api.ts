@@ -1,4 +1,4 @@
-import { RepositoryName } from "@super-agent2/protocol";
+import { type GitHubAccount, RepositoryName } from "@super-agent2/protocol";
 import { z } from "zod";
 
 export type Fetch = typeof fetch;
@@ -47,6 +47,8 @@ export interface MergeMethods {
 }
 
 export interface GitHubApi {
+  repositories(affiliation: string): Promise<GitHubRepository[]>;
+  hasAuthoredCommits(repository: string, author: GitHubAccount): Promise<boolean>;
   pullRequest(repository: string, number: number): Promise<PullRequestState>;
   files(repository: string, number: number): Promise<ChangedFile[]>;
   changedOn(repository: string, head: string, base: string): Promise<string[]>;
@@ -67,6 +69,7 @@ export interface GitHubApiOptions {
   readonly token: string;
   readonly base?: string;
   readonly timeoutMilliseconds?: number;
+  readonly signal?: AbortSignal;
 }
 
 export const gitHubApiBase = "https://api.github.com";
@@ -100,6 +103,15 @@ const RepositoryJson = z.looseObject({
   allow_merge_commit: z.boolean().optional(),
   allow_rebase_merge: z.boolean().optional(),
 });
+
+const RepositoryListing = z.object({
+  full_name: RepositoryName,
+  owner: z.object({ login: z.string() }),
+  archived: z.boolean(),
+  pushed_at: z.string().nullable(),
+  default_branch: z.string(),
+});
+export type GitHubRepository = z.infer<typeof RepositoryListing>;
 
 const MergeJson = z.looseObject({ sha: z.string() });
 
@@ -158,6 +170,7 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
 
   const send = async (method: string, path: string, body?: unknown): Promise<Response> => {
     try {
+      const deadline = AbortSignal.timeout(timeout);
       return await options.fetch(`${base}${path}`, {
         method,
         headers: {
@@ -168,7 +181,7 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(timeout),
+        signal: options.signal === undefined ? deadline : AbortSignal.any([deadline, options.signal]),
       });
     } catch (error) {
       throw new ForgeError(`GitHub could not be reached for ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`, null);
@@ -189,8 +202,7 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
     return new ForgeError(`GitHub answered ${response.status} to ${method} ${path}${message === "" ? "" : `: ${message}`}`, response.status);
   };
 
-  const read = async <T>(path: string, schema: z.ZodType<T>): Promise<T> => {
-    const response = await send("GET", path);
+  const readResponse = async <T>(path: string, response: Response, schema: z.ZodType<T>): Promise<T> => {
     if (!response.ok) {
       throw await failure("GET", path, response);
     }
@@ -200,10 +212,30 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
     }
     return parsed.data;
   };
+  const read = async <T>(path: string, schema: z.ZodType<T>): Promise<T> => readResponse(path, await send("GET", path), schema);
 
   const repo = (repository: string) => `/repos/${RepositoryName.parse(repository)}`;
 
   return {
+    repositories: async (affiliation) => {
+      const repositories: GitHubRepository[] = [];
+      for (let page = 1; ; page += 1) {
+        const path = `/user/repos?affiliation=${affiliation}&per_page=${pageSize}&sort=full_name&page=${page}`;
+        const response = await send("GET", path);
+        repositories.push(...await readResponse(path, response, z.array(RepositoryListing)));
+        if (!response.headers.get("link")?.includes('rel="next"')) {
+          return repositories;
+        }
+      }
+    },
+    hasAuthoredCommits: async (repository, author) => {
+      const path = `${repo(repository)}/commits?author=${author}&per_page=1`;
+      const response = await send("GET", path);
+      if (response.status === 409) {
+        return false;
+      }
+      return (await readResponse(path, response, z.array(CommitJson))).length > 0;
+    },
     pullRequest: async (repository, number) => {
       const pull = await read(`${repo(repository)}/pulls/${number}`, PullJson);
       return {

@@ -37,6 +37,7 @@ import { createFailureLoop, type FailureLoop } from "./failure-loop.js";
 import { createDecisionReviews, type DecisionReviews } from "./reviews.js";
 import type { AccessServiceTokens } from "./cloudflare.js";
 import { createMachineAdmin, type MachineAdmin } from "./machine-admin.js";
+import { createRepositoryDiscovery } from "./repository-discovery.js";
 import { createRepositoryAccounts, type RepositoryAccounts } from "./repositories.js";
 import { bgeSmallZh, modelScorer } from "@super-agent2/routing";
 import type { ModelLoader } from "./topic-routing.js";
@@ -67,6 +68,7 @@ export interface HubOptions {
 }
 
 const accessCheckMilliseconds = 60 * 60 * 1000;
+const repositoryRefreshMilliseconds = 60 * 60 * 1000;
 
 export function defaultTargets(environment: Environment): Target[] {
   return [localTarget({ environment })];
@@ -161,6 +163,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const files = createTicketFiles(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
   const credentials = options.credentials ?? environmentCredentials(environment);
+  const repositoryDiscovery = createRepositoryDiscovery({
+    repositories,
+    credentials,
+    clock,
+    fetch: options.forgeFetch ?? fetch,
+    ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }),
+    changed: () => settingsChanged(),
+    report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
+  });
   const targets = fixedTargets(options.targets ?? defaultTargets(environment));
   try {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
@@ -344,6 +355,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       settings,
       admin,
       repositories,
+      refreshRepositories: repositoryDiscovery.refresh,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,
       loop: failures,
@@ -395,6 +407,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     warn();
     const accessCheck = setInterval(warn, accessCheckMilliseconds);
     accessCheck.unref();
+    void repositoryDiscovery.refresh();
+    const repositoryRefresh = setInterval(() => void repositoryDiscovery.refresh(), repositoryRefreshMilliseconds);
+    repositoryRefresh.unref();
     return {
       database,
       commands,
@@ -420,6 +435,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       address,
       close: async () => {
         clearInterval(accessCheck);
+        clearInterval(repositoryRefresh);
+        repositoryDiscovery.close();
         settings.close();
         try {
           runners.close();

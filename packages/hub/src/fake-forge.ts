@@ -200,6 +200,7 @@ export function fakeForge(): FakeForge {
   };
 
   const gitHub = (method: string, path: string, url: URL, init: RequestInit | undefined): Response => {
+    if (method === "GET" && path === "/user/repos") return json(200, []);
     if (path === "/graphql" && method === "POST") {
       return closing(init);
     }

@@ -51,6 +51,7 @@ export interface SettingsActions {
   readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
   readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
+  readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
   readonly setTable: (table: SettingsSnapshot["table"]) => Promise<"saved" | "unsupported" | "failed">;
   readonly setAppearance: (change: Partial<Appearance>) => void;
 }
@@ -462,39 +463,57 @@ function ModelsSection({ settings, actions }: { readonly settings: SettingsSnaps
   );
 }
 
-function RepositoriesSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
-  const [sending, setSending] = useState<string | null>(null);
-  if (settings.repositories.length === 0) {
-    return (
-      <div className="empty">
-        <Icon name="repo" />
-        <strong>{text("repositories.empty")}</strong>
-      </div>
-    );
-  }
-  const choose = (repository: string, account: GitHubAccount) => {
-    setSending(repository);
-    void actions.setAccount(repository, account).finally(() => setSending(null));
+function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repositories"][number]; readonly actions: SettingsActions }) {
+  const [sending, setSending] = useState(false);
+  const save = (update: () => Promise<boolean>) => {
+    setSending(true);
+    void update().finally(() => setSending(false));
   };
   return (
-    <div className="rows">
-      {settings.repositories.map((row) => (
-        <div className="srow" key={row.repository}>
-          <div className="srow-text">
-            <span className="srow-title mono od-truncate">{row.repository}</span>
-          </div>
-          <div className="srow-ctl">
-            <div className="seg" role="group" aria-label={text("repositories.account", { repository: row.repository })}>
-              {gitHubAccounts.map((account) => (
-                <button key={account} type="button" className="mono" aria-pressed={row.account === account} disabled={sending === row.repository} onClick={() => (row.account === account ? undefined : choose(row.repository, account))}>
-                  {account}
-                </button>
-              ))}
-            </div>
-          </div>
+    <div className="srow">
+      <div className="srow-text">
+        <span className="srow-title mono od-truncate" title={row.repository}>{row.repository}</span>
+      </div>
+      <div className="srow-ctl repository-actions">
+        <div className="seg" role="group" aria-label={text("repositories.account", { repository: row.repository })}>
+          {gitHubAccounts.map((account) => (
+            <button key={account} type="button" className="mono" aria-pressed={row.account === account} disabled={sending} onClick={() => {
+              if (row.account !== account) save(() => actions.setAccount(row.repository, account));
+            }}>
+              {account}
+            </button>
+          ))}
         </div>
-      ))}
+        <button type="button" className="btn" disabled={sending}
+          aria-label={text(row.pinned ? "repositories.unpinLabel" : "repositories.pinLabel", { repository: row.repository })}
+          onClick={() => save(() => actions.setPinned(row.repository, !row.pinned))}>
+          {text(row.pinned ? "repositories.unpin" : "repositories.pin")}
+        </button>
+      </div>
     </div>
+  );
+}
+
+function RepositoriesSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
+  const [pinned, setPinned] = useState(false);
+  const rows = settings.repositories.filter((row) => row.pinned === pinned);
+  return (
+    <>
+      <div className="seg repository-tabs" role="group" aria-label={text("settings.section.repositories")}>
+        <button type="button" aria-pressed={pinned} onClick={() => setPinned(true)}>{text("repositories.pinned")}</button>
+        <button type="button" aria-pressed={!pinned} onClick={() => setPinned(false)}>{text("repositories.archived")}</button>
+      </div>
+      {rows.length === 0 ? (
+        <div className="empty">
+          <Icon name="repo" />
+          <strong>{text(pinned ? "repositories.emptyPinned" : "repositories.emptyArchived")}</strong>
+        </div>
+      ) : (
+        <div className="rows">
+          {rows.map((row) => <RepositoryRow key={row.repository} row={row} actions={actions} />)}
+        </div>
+      )}
+    </>
   );
 }
 
