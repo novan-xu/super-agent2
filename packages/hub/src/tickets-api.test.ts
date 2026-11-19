@@ -108,6 +108,7 @@ describe("the brain's ticket tools", () => {
       "read_quote",
       "set_topic_repository",
       "set_topic_title",
+      "archive_topics",
       "handover",
       "file_issue",
       "open_ticket",

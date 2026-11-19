@@ -158,7 +158,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "set_topic_title", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "set_topic_title", "archive_topics", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -928,6 +928,45 @@ describe("topic context", () => {
 });
 
 describe("topic corrections and archive policy", () => {
+  it("archives eligible topics through the brain tool and reports each guarded topic", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const { link } = connect(hub);
+    const current = service.create().id;
+    const first = service.create().id;
+    const second = service.create().id;
+    const busy = service.create().id;
+    const waiting = service.create().id;
+    const archived = service.create().id;
+    const merged = service.create().id;
+    const system = service.tell(null, "System notice", "System prompt");
+    const input = service.send(first, "Completed request")!;
+    link.receive({ type: "turn.started", conversation: first, turn: "finished", provider: "gpt", model: "model", inputs: [input.id] });
+    link.receive({ type: "text", conversation: first, turn: "finished", block: "answer", delta: "Saved answer" });
+    link.receive({ type: "turn.finished", conversation: first, turn: "finished", outcome: "completed", reason: null });
+    const busyInput = service.send(busy, "Working")!;
+    link.receive({ type: "turn.started", conversation: busy, turn: "busy", provider: "gpt", model: "model", inputs: [busyInput.id] });
+    service.send(waiting, "Waiting");
+    service.archive(archived);
+    hub.database.connection.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?").run(second, merged);
+    hub.database.connection.prepare("UPDATE turns SET topic_summary = NULL WHERE id = ?").run("finished");
+    const { socket, received } = await pageSocket(hub);
+    const topics = [first, second, current, busy, waiting, "unknown", archived, merged, system];
+    const response = await fetch(`${base(hub)}${brainToolsPath}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${brainToken()}`, "content-type": "application/json", "x-super-agent-conversation": current, "x-super-agent-turn": "current-turn" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "archive_topics", arguments: { topics } } }),
+    });
+    const payload = await response.json() as { result: { content: { text: string }[] } };
+    expect(JSON.parse(payload.result.content[0]!.text)).toEqual(topics.map((topic, index) => ({ topic, result: ["archived", "archived", "current topic", "turn running", "untaken entries", "not found", "already archived", "merged", "system topic"][index] })));
+    expect(service.get(first)?.topicState).toBe("archived");
+    expect(service.get(second)?.topicState).toBe("archived");
+    expect(service.get(busy)?.topicState).toBe("active");
+    expect(service.get(waiting)?.topicState).toBe("active");
+    expect(hub.database.connection.prepare("SELECT topic_summary FROM turns WHERE id = ?").get("finished")?.["topic_summary"]).toContain("Saved answer");
+    await until(() => received.some((message) => JSON.stringify(message).includes(first) && JSON.stringify(message).includes("archived")), socket);
+  });
+
   async function topicRequest(running: Hub, id: string, action = "", body?: object) {
     return fetch(`${base(running)}/api/conversations/${id}${action}`, {
       headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json", origin: base(running) },

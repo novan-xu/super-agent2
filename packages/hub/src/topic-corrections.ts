@@ -307,6 +307,19 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       archive(topic);
       return success(topic);
     },
+    archiveForBrain: (id: string, current: string): string => {
+      const topic = options.topic(id);
+      if (topic === undefined) return "not found";
+      if (topic.mergedInto !== undefined) return "merged";
+      if (topic.system === true) return "system topic";
+      if (id === current) return "current topic";
+      if (topic.topicState === "archived") return "already archived";
+      if (pending(id)) return "merge pending";
+      if (running.get(id) !== undefined) return "turn running";
+      if (queued.get(id) !== undefined) return "untaken entries";
+      archive(id);
+      return "archived";
+    },
     merge: (sourceId: string, destinationId: string): TopicEdit<string> => {
       const source = resolve(sourceId);
       const destination = resolve(destinationId);
