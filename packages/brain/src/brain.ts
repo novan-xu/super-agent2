@@ -468,7 +468,7 @@ export function createBrain(options: BrainOptions): Brain {
 
     let prompt: ReturnType<typeof topicPrompt>;
     try {
-      if (prepared.board !== undefined || prepared.seed !== undefined || turn.inputs.some((input) => input.quote !== undefined || input.routing !== undefined || input.needsRepository === true)) {
+      if (prepared.board !== undefined || prepared.seed !== undefined || prepared.automaticTitle === true || turn.inputs.some((input) => input.quote !== undefined || input.routing !== undefined || input.needsRepository === true)) {
         prompt = preparePrompt(state, provider, turn.inputs, prepared, mode === "continue");
       } else if (mode === "fresh") {
         prompt = { text: turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), images: promptImages(turn.inputs, attachments) };

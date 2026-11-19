@@ -4480,3 +4480,33 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Why:** Brain corrections and owner corrections are different signals for evaluation. Both remain countable
   after the owner moves a message again. Older move records did not distinguish the actor.
 - **Other options:** Overwrite the brain's correction on the next move or add a separate event table for all moves.
+
+## 2026-11-19 — Name a topic in the turn that answers it (#147)
+
+- **Chosen:** Mark message-derived titles automatic, handover titles supplied by the brain as brain titles, and
+  owner renames as owner titles even when the text stays the same. Protect the fixed System title and titles
+  copied from tickets. On upgrade, mark only empty non-System titles automatic and protect all nonempty old titles.
+- **Why:** The old routing record shows how a message was placed, and an owner can rename a topic to the same text
+  as its opening line. The database has no record that would distinguish that rename from an untouched title.
+- **Other options:** Infer a title's origin from its message or routing record, or mark all old topics automatic.
+
+- **Chosen:** Ask once in the context prepared for each turn that starts with an automatic title. Let the brain
+  propose a title for its own topic only, keep the latest proposal on the turn, and apply it when the turn completes
+  with write access and an eligible title. Discard it if the turn fails or is interrupted. Ask again on the next
+  turn while the title is still automatic.
+- **Why:** The brain already answers the message. Preparing the note at turn start keeps queued inputs from
+  carrying a stale request. A title stays provisional through handover, and a rename in the middle of a turn wins.
+- **Other options:** Put the note on each delivered message, publish the tool call immediately, or use a separate model call.
+
+- **Chosen:** Trim the proposed title and require one line with at most 40 units. Each Han character costs two
+  units and each other Unicode code point costs one. Reject oversized titles with instructions to shorten them.
+  Keep the existing limits for the owner's rename and for a titled handover.
+- **Why:** The same budget supports 20 Chinese characters, 40 Latin characters and a mix of both on a phone, while
+  leaving existing naming workflows available.
+- **Other options:** Use one character limit for all scripts or shorten incoming titles automatically.
+
+- **Chosen:** Let the brain use the same tool on a brain title when the subject clearly changes. Keep routing's
+  current scoring texts and use the existing conversation update to show the title on the page.
+- **Why:** The topic can keep up with meaningful changes within the conversation, and the effect of using titles
+  as a routing input belongs in a future evaluation.
+- **Other options:** Freeze the first brain title or add titles to the router's scoring texts now.

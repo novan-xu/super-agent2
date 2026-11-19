@@ -865,6 +865,15 @@ export const migrations: readonly Migration[] = [
       UPDATE routing_decisions SET owner_placed = 1 WHERE owner_changed = 1;
     `,
   },
+  {
+    version: 39,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN title_origin TEXT NOT NULL DEFAULT 'owner'
+        CHECK (title_origin IN ('automatic', 'brain', 'owner'));
+      UPDATE conversations SET title_origin = 'automatic' WHERE title = '' AND system = 0;
+      ALTER TABLE turns ADD COLUMN proposed_title TEXT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

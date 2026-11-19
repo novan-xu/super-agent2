@@ -90,7 +90,12 @@ the hub.
   代码 while it waits. Confirmed memory, tickets and the topic board are shared across projects.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
-- The brain gives each topic a title. The owner can rename, merge and archive topics. A merge combines the histories
+- A topic opened from an owner message starts with the message's first line or attachment name. The hub asks the
+  brain for a short title in the owner's language when it prepares a turn with an automatic title. A proposed
+  title takes effect when that turn completes. Failed and interrupted turns leave the title available for the
+  next turn to name. The brain may update its own title when the subject clearly changes. The owner's rename
+  takes precedence, including over a proposal already made in the running turn.
+- The owner can rename, merge and archive topics. A merge combines the histories
   and ticket ownership in the chosen destination after the affected turns finish. Old topic links resolve to that
   destination, and its next turn gets the combined history through the seed. The destination keeps its repository
   when the owner combines topics across projects. The System topic can receive a merge and keeps its own address.
@@ -123,6 +128,8 @@ the hub.
   | b | Short reply: at most 12 characters, no attachment, and the most recently active candidate was active at most 30 minutes ago. Join it. |
   | c | Score: the best similarity between the message and a topic's texts (its first owner message, its last five owner messages and its last three replies clipped to 320 characters), minus `decay × log2(1 + idle / 10 min)`. Join the best topic if it reaches the threshold and leads the runner-up by the margin. |
   | d | Otherwise open a new topic titled with the message's first line, marked as possibly belonging to the best-scoring candidate when there is one. |
+
+- Routing uses the original message text as specified above. Topic renames do not affect the score.
 
 - Two configurations exist, with their constants together in `packages/routing`. The primary one uses all five steps
   with `bge-small-zh-v1.5` (fp32, CLS pooling, normalised, compared by dot product) as the scorer: threshold 0.570,

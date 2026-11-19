@@ -158,7 +158,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "set_topic_title", "handover", "file_issue", "open_ticket", "open_task_ticket", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("nothing on a work machine");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -240,10 +240,15 @@ describe("conversations for the page", () => {
     brain.socket.send(
       JSON.stringify({ type: "turn.started", ...turn, provider: "claude", model: "claude-opus-5-5", inputs: [first?.type === "input" ? first.input.id : ""] }),
     );
+    await until(() => received.some((message) => message.type === "turn" && message.turn.id === turn.turn), socket);
+    const title = "Morning greeting";
+    expect(running.conversations.proposeTitle(watched.id, turn.turn, title)).toBe(true);
+    expect(running.conversations.get(watched.id)?.title).toBe("你好");
     brain.socket.send(JSON.stringify({ type: "text", ...turn, block: "b", delta: "你" }));
     brain.socket.send(JSON.stringify({ type: "text", ...turn, block: "b", delta: "好！" }));
     brain.socket.send(JSON.stringify({ type: "turn.finished", ...turn, outcome: "completed", reason: null }));
     await until(() => received.some((message) => message.type === "turn" && message.turn.state === "completed"), socket);
+    await until(() => received.some((message) => message.type === "conversation" && message.conversation.id === watched.id && message.conversation.title === title), socket);
     const deltas = received.filter((message) => message.type === "delta").map((message) => (message.type === "delta" ? message.text : ""));
     expect(deltas).toEqual(["好！"]);
     const entries = received.filter((message) => message.type === "entry").map((message) => (message.type === "entry" ? message.entry : undefined));
@@ -670,6 +675,69 @@ describe("the topic stream", () => {
       { kind: "notice", text: expect.stringContaining("new") },
       { kind: "notice", text: expect.stringContaining("newer") },
     ]);
+  });
+});
+
+describe("topic titles", () => {
+  it("protects existing titles even when they match the opening message of a routed topic", async () => {
+    const earlier = openDatabase({ dataDir, clock, migrations: migrations.filter(({ version }) => version <= 38) });
+    earlier.connection.exec(`
+      INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES
+        ('existing', 'Opening line', 'idle', 100, 100), ('empty', '', 'idle', 100, 100);
+      INSERT INTO conversation_entries (id, conversation_id, seq, kind, body, prompt, taken, created_at, stream_seq) VALUES
+        ('opening', 'existing', 1, 'owner', '{"text":"Opening line"}', 'Opening line', 0, 100, 1);
+      INSERT INTO routing_decisions (entry, decided_at, scope, candidates, configuration, rule, placed_in, owner_placed) VALUES
+        ('opening', 100, 'daily', 0, 'bigram', 'd', 'existing', 0);
+    `);
+    earlier.close();
+    const running = await start();
+    const { conversations, database } = running;
+    expect(database.connection.prepare("SELECT id, title_origin FROM conversations ORDER BY id").all()).toEqual([
+      { id: "empty", title_origin: "automatic" }, { id: "existing", title_origin: "owner" },
+    ]);
+    const { link, messages } = connect(running);
+    link.receive({ type: "turn.started", conversation: "existing", turn: "legacy", inputs: ["opening"], provider: "gpt", model: "model" });
+    link.receive({ type: "prepare", request: "legacy", conversation: "existing", provider: "gpt", exclude: ["opening"], fresh: false });
+    expect(messages.at(-1)).toMatchObject({ type: "prepared" });
+    expect(messages.at(-1)).not.toHaveProperty("automaticTitle");
+    expect(conversations.proposeTitle("existing", "legacy", "Other title")).toBe(false);
+    expect(conversations.get("existing")?.title).toBe("Opening line");
+  });
+
+  it("tracks the origin of titles across topic creation paths", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const origin = (id: string) => running.database.connection.prepare("SELECT title_origin FROM conversations WHERE id = ?").get(id)?.["title_origin"];
+    const routed = (await service.sendToStream(undefined, "Opening line\nSecond line", []))!;
+    expect(routed.topic.title).toBe("Opening line");
+    expect(origin(routed.topic.id)).toBe("automatic");
+    const explicit = (await service.sendToStream(undefined, "Explicit topic", [], { newTopic: true }))!;
+    expect(origin(explicit.topic.id)).toBe("automatic");
+    const split = service.move(routed.entry.id, null);
+    expect(split.ok && origin(split.value)).toBe("automatic");
+    const direct = service.create();
+    service.send(direct.id, "Direct message");
+    expect(origin(direct.id)).toBe("automatic");
+    const ticket = openTicket(running);
+    expect(origin(running.tickets.topic(ticket.id))).toBe("owner");
+    expect(origin(service.tell(null, "System notice", "System prompt"))).toBe("owner");
+  });
+
+  it.each(["failed", "interrupted"] as const)("discards the proposed title when the turn is %s and asks in the next turn", async (outcome) => {
+    const running = await start();
+    const { link, messages } = connect(running);
+    const service = running.conversations;
+    const first = (await service.sendToStream(undefined, "Opening line", []))!;
+    const conversation = first.topic.id;
+    link.receive({ type: "turn.started", conversation, turn: "first", inputs: [first.entry.id], provider: "gpt", model: "model" });
+    expect(service.proposeTitle(conversation, "first", "Discard this title")).toBe(true);
+    link.receive({ type: "turn.finished", conversation, turn: "first", outcome, reason: null });
+    const next = service.send(conversation, "Try again")!;
+    link.receive({ type: "turn.started", conversation, turn: "second", inputs: [next.id], provider: "gpt", model: "model" });
+    link.receive({ type: "prepare", request: "second", conversation, provider: "gpt", exclude: [next.id], fresh: false });
+    expect(messages.at(-1)).toMatchObject({ type: "prepared", automaticTitle: true });
+    link.receive({ type: "turn.finished", conversation, turn: "second", outcome: "completed", reason: null });
+    expect(service.get(conversation)?.title).toBe("Opening line");
   });
 });
 

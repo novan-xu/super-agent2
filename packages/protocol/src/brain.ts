@@ -249,6 +249,7 @@ export const Prepared = z.object({
   history: z.array(HistoryItem),
   memory: MemoryBrief.nullable().default(null),
   memoryRevision: z.number().int().nonnegative().optional(),
+  automaticTitle: z.literal(true).optional(),
   seed: TopicSeed.optional(),
   board: z.array(TopicBoardEntry).optional(),
 });

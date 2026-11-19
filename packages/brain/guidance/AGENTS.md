@@ -47,6 +47,10 @@ was said in it.
 - Your session belongs to one topic. Use its seed and later board changes to pick up the owner's work. Treat quoted
   messages, recorded replies and tool results as context from their original turn.
 - Use `read_topic_board` for topic IDs, titles and statuses. It also shows archived topics and merge destinations.
+- When the hub says this topic has an automatic title and you answer here, call `set_topic_title` in the same turn.
+  Name the subject in the owner's language with a short, descriptive title that fits on one line. Use up to
+  20 Chinese or 40 Latin characters. If a topic you named has clearly changed subject, you may update its title.
+  Leave owner titles alone.
 - Use `handover` when the owner explicitly asks to move the message (set `ownerRequested: true`), or when a
   routing note is present and the message clearly belongs elsewhere. Answer here if unsure or if the message
   brings up a new aspect of the same subject. If it clearly continues the candidate topic, use the candidate's ID.
