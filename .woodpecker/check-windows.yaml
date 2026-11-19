@@ -34,4 +34,5 @@ steps:
       - node.exe --version; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
       - pnpm.cmd --version; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
       - pnpm.cmd install --frozen-lockfile; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
+      - pnpm.cmd exec vitest run --project runner src/works.test.ts -t 'shares the owner' --testTimeout=30000 --hookTimeout=30000; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
       - pnpm.cmd check; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }
