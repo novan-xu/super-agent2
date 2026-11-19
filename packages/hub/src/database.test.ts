@@ -74,12 +74,13 @@ describe("applyMigrations", () => {
     }
     applyMigrations(connection, migrations, clock, "America/New_York");
     expect(connection.prepare("SELECT id, code, code_date, branch FROM tickets ORDER BY id").all()).toEqual([
-      { id: 1, code: "aaa", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
-      { id: 2, code: "aaa", code_date: "2026-11-19", branch: "sa2/ticket-1-beef" },
-      { id: 3, code: "aab", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
-      { id: 4, code: "aac", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+      { id: 1, code: "aa", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+      { id: 2, code: "aa", code_date: "2026-11-19", branch: "sa2/ticket-1-beef" },
+      { id: 3, code: "ab", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
+      { id: 4, code: "ac", code_date: "2026-11-18", branch: "sa2/ticket-1-beef" },
     ]);
-    expect(() => connection.exec("UPDATE tickets SET code = 'aaa' WHERE id = 3")).toThrow(/UNIQUE constraint failed/);
+    expect(() => connection.exec("UPDATE tickets SET code = 'aa' WHERE id = 3")).toThrow(/UNIQUE constraint failed/);
+    expect(() => connection.exec("UPDATE tickets SET code = 'abc' WHERE id = 3")).toThrow(/CHECK constraint failed/);
     expect(() => connection.exec("UPDATE tickets SET code = NULL WHERE id = 3")).toThrow(/require a code and creation day/);
   });
 

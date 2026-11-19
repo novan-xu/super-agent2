@@ -344,7 +344,7 @@ describe("the retry cap", () => {
     const { running, sent, conversation } = started;
     const ticket = await failThreeRounds(started, 7);
     expect(ticket).toMatchObject({ state: "stuck", round: 3, stuck: { round: 3, from: "working", failure: { kind: "no-pull-request" }, where: null } });
-    expect(ticket.branch).toMatch(/^sa2\/aaa-2026-11-17-[0-9a-f]{4}$/);
+    expect(ticket.branch).toMatch(/^sa2\/aa-2026-11-17-[0-9a-f]{4}$/);
     expect(sent.filter((message) => message.type === "work.stop")).toEqual([]);
     const told = notices(running, conversation).at(-1);
     expect(told?.text).toBe(`工单 ${ticket.code} 引导 3 轮还没通过，已停下等你决定`);

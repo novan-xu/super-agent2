@@ -896,7 +896,7 @@ export const migrations: readonly Migration[] = [
   {
     version: 43,
     sql: `
-      ALTER TABLE tickets ADD COLUMN code TEXT CHECK (code GLOB '[a-z][a-z][a-z]');
+      ALTER TABLE tickets ADD COLUMN code TEXT CHECK (code GLOB '[a-z][a-z]');
       ALTER TABLE tickets ADD COLUMN code_date TEXT CHECK (code_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]');
       CREATE UNIQUE INDEX ticket_codes_by_date ON tickets (code_date, code);
       CREATE INDEX ticket_codes_by_creation ON tickets (code, created_at DESC, id DESC);

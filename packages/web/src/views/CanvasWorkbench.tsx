@@ -220,7 +220,7 @@ function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, 
       const where = whereOf(ticket);
       const phaseIndex = ticket.state === "waiting" ? 0 : ticket.state === "verifying" ? (ticket.verification?.waiting === "finishing" || ticket.verification?.waiting === "mergeable" ? 3 : 2) : 1;
       const waits = ticket.waits.filter((wait) => !wait.waived && (node.after.includes(wait.ticket) || node.missing.includes(wait.ticket)));
-      const codeOf = (id: number) => related.get(id)?.code ?? waits.find((wait) => wait.ticket === id)?.reference?.slice(0, 3) ?? "?";
+      const codeOf = (id: number) => related.get(id)?.code ?? waits.find((wait) => wait.ticket === id)?.reference?.split("-")[0] ?? "?";
       return <div className="wb-slot" key={ticket.id} data-ticket={ticket.id} style={{ gridColumn: column + 1, gridRow: line + 1 }}>
         {stopped === undefined || node.reference ? <button type="button" className={`wb-card${start === undefined ? "" : " wb-card--pending"}${node.reference ? " wb-card--reference" : ""}`} aria-label={`${chineseOf(ticket.title)} ${ticket.code}`} aria-pressed={selected === ticket.id} onClick={(event) => start !== undefined && !node.reference ? openStart(start, event.currentTarget) : select(ticket.id)}>
           <span className="wb-card-title"><span className={`dot dot--${phaseLooks[phase].tone}`} /><TicketCodeLabel code={ticket.code} /><span>{chineseOf(ticket.title)}</span></span>

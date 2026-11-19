@@ -24,16 +24,17 @@ export function validTicketTimeZone(timeZone: string): boolean {
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz";
 const radix = alphabet.length;
+const dailyCapacity = radix ** 2;
 
 export function ticketCodesExhausted(date: string): string {
-  return `All ${radix ** 3} ticket codes for ${date} have been used; the sequence restarts on the next day.`;
+  return `All ${dailyCapacity} ticket codes for ${date} have been used; the sequence restarts on the next day.`;
 }
 
 export function codeAt(position: number): string | undefined {
-  if (position >= radix ** 3) {
+  if (position >= dailyCapacity) {
     return undefined;
   }
-  return [radix ** 2, radix, 1].map((place) => alphabet[Math.floor(position / place) % radix]).join("");
+  return alphabet.charAt(Math.floor(position / radix)) + alphabet.charAt(position % radix);
 }
 
 export function codeAfter(previous: string | undefined): string | undefined {
@@ -56,8 +57,8 @@ export function ticketReferences(connection: DatabaseSync) {
       return ticketReference({ code, codeDate: code_date });
     },
     resolve(reference: string): number | undefined {
-      const code = reference.slice(0, 3);
-      const row = reference.length === 3 ? newest.get(code) : dated.get(code, reference.slice(4));
+      const separator = reference.indexOf("-");
+      const row = separator === -1 ? newest.get(reference) : dated.get(reference.slice(0, separator), reference.slice(separator + 1));
       return row === undefined ? undefined : IdRow.parse(row).id;
     },
   };

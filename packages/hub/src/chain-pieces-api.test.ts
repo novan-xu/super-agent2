@@ -199,7 +199,7 @@ describe("a chain handed in as several pull requests", () => {
     const { running, runner, sent, conversation } = await start();
     const ticket = begin(running, conversation);
     const first = current(running, ticket.id).branch ?? "";
-    expect(first).toMatch(/^sa2\/[a-z]{3}-2026-11-17-[0-9a-f]{4}$/);
+    expect(first).toMatch(/^sa2\/[a-z]{2}-2026-11-17-[0-9a-f]{4}$/);
     expect(starts(sent, ticket.id)[0]?.task).toMatchObject({ attempt: 1, branch: first, merged: [] });
 
     event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
@@ -223,7 +223,7 @@ describe("a chain handed in as several pull requests", () => {
     const second = continued.branch ?? "";
     expect(continued).toMatchObject({ state: "working", round: 0, freeRetry: false, pullRequest: 21, verification: null, work: { attempt: 3 } });
     expect(second).not.toBe(first);
-    expect(second).toMatch(/^sa2\/[a-z]{3}-2026-11-17-[0-9a-f]{4}$/);
+    expect(second).toMatch(/^sa2\/[a-z]{2}-2026-11-17-[0-9a-f]{4}$/);
     expect(continued.pullRequests).toEqual([
       expect.objectContaining({ number: 21, branch: first, state: "merged", closes: [7, 8], mergeCommit: "merge-of-bbb222" }),
     ]);

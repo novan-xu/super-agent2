@@ -141,7 +141,7 @@ A worker does the same, decided by the hub.
   | Step | Rule |
   | --- | --- |
   | a | Open question: the most recently active candidate is waiting for the owner (an unanswered question card, or its last assistant reply has `?` or `？` in its last line within the last 40 characters) and was active at most 30 minutes ago. Join it. |
-  | e | Reference: the message names a ticket (`ticket aaa` or `工单 aaa`), an issue or a pull request (`#n`, `issue n`, `PR n`) that belongs to exactly one candidate. The hub looks up the ticket's topic first, directly by code or through its issues and pull requests. A reference the database does not know matches the candidates whose messages or replies contain it. Join that topic. |
+  | e | Reference: the message names a ticket (`ticket aa` or `工单 aa`), an issue or a pull request (`#n`, `issue n`, `PR n`) that belongs to exactly one candidate. The hub looks up the ticket's topic first, directly by code or through its issues and pull requests. A reference the database does not know matches the candidates whose messages or replies contain it. Join that topic. |
   | b | Short reply: at most 12 characters, no attachment, and the most recently active candidate was active at most 30 minutes ago. Join it. |
   | c | Score: the best similarity between the message and a topic's texts (its first owner message, its last five owner messages and its last three replies clipped to 320 characters), minus `decay × log2(1 + idle / 10 min)`. Join the best topic if it reaches the threshold and leads the runner-up by the margin. |
   | d | Otherwise open a new topic titled with the message's first line, marked as possibly belonging to the best-scoring candidate when there is one. |
@@ -272,15 +272,15 @@ Two things follow:
 
 ## Ticket codes
 
-Code and task tickets share the same daily sequence of three lowercase letters, starting at `aaa` and ending at `zzz`.
+Code and task tickets share the same daily sequence of two lowercase letters, starting at `aa` and ending at `zz`.
 The hub determines the creation day in `HUB_TICKET_TIME_ZONE`, which defaults to `America/New_York`.
-It saves the unique pair of creation day and code in the transaction that creates the ticket and refuses new tickets if the day's codes run out.
+It saves the unique pair of creation day and code in the transaction that creates the ticket and refuses new tickets when all 676 codes for that day are used.
 The migration assigns codes by local creation day, then by creation time and internal key, while preserving existing ticket relationships and branches.
 The page displays the letters alone as the ticket identifier.
-Brain tools accept a bare code for the newest match or a dated reference such as `aaa-2026-11-19` for one exact ticket.
+Brain tools accept a bare code for the newest match or a dated reference such as `aa-2026-11-19` for one exact ticket.
 In an arrangement, a chain name in the same call takes precedence over a matching code.
 Hub reports and worker briefs name tickets with dated references so they remain clear after midnight.
-New code branches use `sa2/aaa-2026-11-19-<suffix>`.
+New code branches use `sa2/aa-2026-11-19-<suffix>`.
 The database, page routes, runner messages and folder paths use the stable internal key to keep existing links, worktrees and running workers connected.
 
 ## Ticket flow

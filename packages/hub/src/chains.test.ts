@@ -186,7 +186,7 @@ describe("arranging", () => {
     const open = tickets.list({ open: true });
     expect(open.map((ticket) => ticket.id).sort()).toEqual([1, 3]);
     expect(tickets.get(1)).toMatchObject({ title: pairTitle.title, issues: [{ number: 1 }, { number: 2 }], state: "pending" });
-    expect(tickets.get(2)).toMatchObject({ state: "stopped", joinedInto: 1, stopReason: { en: "Joined into ticket aaa-2026-11-17 by an arrangement", zh: "按新的安排并入了工单 aaa" } });
+    expect(tickets.get(2)).toMatchObject({ state: "stopped", joinedInto: 1, stopReason: { en: "Joined into ticket aa-2026-11-17 by an arrangement", zh: "按新的安排并入了工单 aa" } });
     expect(tickets.history().tickets.map((ticket) => ticket.id)).toEqual([]);
     expect(tickets.get(3)).toMatchObject({ issues: [{ number: 3 }], title: { zh: "问题 3" } });
     expect(chains.cards().map((entry) => [entry.ticket.id, entry.before.length, entry.startable])).toEqual([
@@ -220,7 +220,7 @@ describe("arranging", () => {
     file(tickets, 9, other);
     const outcome = chains.arranger.arrange([chain("first", [1]), { name: "second", repository: other, issues: [9], after: ["first"] }]);
     expect(outcome.ok).toBe(true);
-    expect(tickets.get(2)?.waits).toEqual([{ ticket: 1, reference: "aaa-2026-11-17", deployment: false, waived: false }]);
+    expect(tickets.get(2)?.waits).toEqual([{ ticket: 1, reference: "aa-2026-11-17", deployment: false, waived: false }]);
     expect(card(chains, 2)).toMatchObject({ before: [{ id: 1, state: "pending" }], startable: false });
     expect(card(chains, 1)).toMatchObject({ before: [], startable: true });
   });
@@ -289,7 +289,7 @@ describe("arranging", () => {
     file(tickets, 2);
     await startOf(chains, 1);
     const outcome = chains.arranger.arrange([chain("a", [1, 2], pairTitle)]);
-    expect(outcome.ok ? "" : outcome.reason).toMatch(/on ticket aaa-2026-11-17, which is working. A started chain is closed/);
+    expect(outcome.ok ? "" : outcome.reason).toMatch(/on ticket aa-2026-11-17, which is working. A started chain is closed/);
     expect(tickets.get(1)?.issues.map((issue) => issue.number)).toEqual([1]);
     expect(chains.arranger.arrange([chain("later", [2], { after: [1] })]).ok).toBe(true);
     expect(card(chains, 2)).toMatchObject({ before: [{ id: 1, state: "working" }], startable: true });
@@ -479,8 +479,8 @@ describe("a ticket that does not begin", () => {
     await chains.idle();
     expect(tickets.get(1)).toMatchObject({ state: "working", beginFailure: "No machine can take it" });
     expect(told).toHaveLength(1);
-    expect(told[0]).toMatchObject({ ticket: 1, notice: "工单 aaa 没能开始，大脑会决定怎么处理" });
-    expect(told[0]?.prompt).toMatch(/^\[hub\] The owner started ticket aaa-2026-11-17 \(Issue 1\), but its work could not begin: No machine can take it/);
+    expect(told[0]).toMatchObject({ ticket: 1, notice: "工单 aa 没能开始，大脑会决定怎么处理" });
+    expect(told[0]?.prompt).toMatch(/^\[hub\] The owner started ticket aa-2026-11-17 \(Issue 1\), but its work could not begin: No machine can take it/);
   });
 
   it("is begun again after a restart that came between the start and the beginning", async () => {
@@ -511,12 +511,12 @@ describe("when a ticket before a waiting one stops", () => {
     expect(chains.arranger.proceed(3)).toMatchObject({ ok: false });
     tickets.stop(1, { en: "Not needed", zh: "不需要了" });
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe("工单 aaa 停止了，排在它后面的工单 aac 由大脑决定是否继续");
+    expect(told[0]?.notice).toBe("工单 aa 停止了，排在它后面的工单 ac 由大脑决定是否继续");
     expect(told[0]?.prompt).toContain("proceed_ticket");
     expect(chains.arranger.proceed(3)).toMatchObject({ ok: true, began: [] });
     expect(tickets.get(3)?.waits).toEqual([
-      { ticket: 1, reference: "aaa-2026-11-17", deployment: false, waived: true },
-      { ticket: 2, reference: "aab-2026-11-17", deployment: false, waived: false },
+      { ticket: 1, reference: "aa-2026-11-17", deployment: false, waived: true },
+      { ticket: 2, reference: "ab-2026-11-17", deployment: false, waived: false },
     ]);
     tickets.move(2, "verifying");
     tickets.move(2, "merged");

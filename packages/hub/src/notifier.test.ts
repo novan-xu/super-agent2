@@ -8,7 +8,7 @@ function ticket(id: number): Ticket {
   const repository = "novan-xu/super-agent-sandbox";
   return {
     id,
-    code: "aaa",
+    code: "aa",
     codeDate: "2026-11-19",
     form: "code",
     repository,

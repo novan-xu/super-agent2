@@ -328,7 +328,7 @@ describe("opening a task ticket", () => {
       [{ ...base, deploy: true }, "needs the repository"],
       [{ ...base, commit: "main" }, "needs the repository"],
       [{ ...base, repository, commit: "merged" }, "name that chain's ticket in after"],
-      [{ ...base, repository, after: ["zzz"] }, "There is no ticket zzz"],
+      [{ ...base, repository, after: ["zz"] }, "There is no ticket zz"],
       [{ ...base, kind: "writing", repository, deploy: true }, "a deployment is an operation"],
       [{ ...base, kind: "fix" }, "not valid"],
     ] as const;

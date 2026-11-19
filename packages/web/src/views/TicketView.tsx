@@ -761,12 +761,12 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
           <RepairChip ticket={ticket} />
           {ticket.repairs === null ? null : (
             <a className="chip chip--mono" href={ticketHref(ticket.repairs)} onClick={(event) => followLink(event, () => openTicket(ticket.repairs ?? 0))}>
-              {text("ticket.repairs", { ticket: ticket.repairsReference?.slice(0, 3) ?? known.get(ticket.repairs)?.code ?? "?" })}
+              {text("ticket.repairs", { ticket: ticket.repairsReference?.split("-")[0] ?? known.get(ticket.repairs)?.code ?? "?" })}
             </a>
           )}
           {ticket.repairedBy === null ? null : (
             <a className="chip chip--mono" href={ticketHref(ticket.repairedBy)} onClick={(event) => followLink(event, () => openTicket(ticket.repairedBy ?? 0))}>
-              {text("ticket.repairedBy", { ticket: ticket.repairedByReference?.slice(0, 3) ?? known.get(ticket.repairedBy)?.code ?? "?" })}
+              {text("ticket.repairedBy", { ticket: ticket.repairedByReference?.split("-")[0] ?? known.get(ticket.repairedBy)?.code ?? "?" })}
             </a>
           )}
         </div>

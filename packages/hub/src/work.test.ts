@@ -112,7 +112,7 @@ describe("work for a started ticket", () => {
   it("queues the first attempt, starts it on the chosen machine with the owner's token, and begins only once", () => {
     const ticket = working([21, 22]);
     work.begin(ticket);
-    expect(current(ticket.id)).toMatchObject({ branch: "sa2/aaa-2026-11-17-beef", work: { attempt: 1, state: "queued", machine: "pc" } });
+    expect(current(ticket.id)).toMatchObject({ branch: "sa2/aa-2026-11-17-beef", work: { attempt: 1, state: "queued", machine: "pc" } });
     expect(runners.sent).toEqual([]);
     runners.connect("pc", 2);
     const [start] = runners.of("work.start", "pc");
@@ -121,7 +121,7 @@ describe("work for a started ticket", () => {
       attempt: 1,
       repository,
       account: "novan-xu",
-      branch: "sa2/aaa-2026-11-17-beef",
+      branch: "sa2/aa-2026-11-17-beef",
       issues: [
         { number: 21, title: "Issue 21" },
         { number: 22, title: "Issue 22" },
@@ -315,7 +315,7 @@ describe("reassigning and trying again", () => {
     work.reassign(current(ticket.id));
     const starts = runners.of("work.start");
     expect(starts).toHaveLength(2);
-    expect(starts[1]?.task).toMatchObject({ attempt: 2, model: "gpt-6.1-sol", effort: "high", session: "thread-1", branch: "sa2/aaa-2026-11-17-beef" });
+    expect(starts[1]?.task).toMatchObject({ attempt: 2, model: "gpt-6.1-sol", effort: "high", session: "thread-1", branch: "sa2/aa-2026-11-17-beef" });
     expect(starts[1]?.task.note).toContain("reassigned");
     expect(current(ticket.id).work).toMatchObject({ attempt: 2, state: "preparing" });
   });
@@ -332,7 +332,7 @@ describe("reassigning and trying again", () => {
     expect(runners.of("work.start", "mac")).toEqual([]);
     emit("pc", ticket.id, 1, 2, { kind: "stopped", saved: true, detail: "Pushed the branch" });
     const [start] = runners.of("work.start", "mac");
-    expect(start?.task).toMatchObject({ attempt: 2, engine: "claude", session: null, branch: "sa2/aaa-2026-11-17-beef" });
+    expect(start?.task).toMatchObject({ attempt: 2, engine: "claude", session: null, branch: "sa2/aa-2026-11-17-beef" });
     expect(start?.task.note).toContain("moved this ticket here from pc");
   });
 
@@ -394,7 +394,7 @@ describe("work for a task ticket", () => {
         type: "work.task",
         task: {
           ticket: ticket.id,
-          ticketReference: "aaa-2026-11-17",
+          ticketReference: "aa-2026-11-17",
           attempt: 1,
           title: "Translate a notice",
           task: "Translate input/notice.txt into English.",

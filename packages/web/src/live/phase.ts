@@ -104,7 +104,7 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
     case "waiting": {
       const before = unmetWaits(ticket, known).map((wait) => {
         const found = known.get(wait.ticket);
-        return { id: wait.ticket, code: found?.code ?? wait.reference?.slice(0, 3) ?? null, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
+        return { id: wait.ticket, code: found?.code ?? wait.reference?.split("-")[0] ?? null, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
       });
       return { kind: "waits", before };
     }

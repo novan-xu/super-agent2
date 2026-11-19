@@ -221,7 +221,7 @@ describe("decisions made on the owner's behalf", () => {
     expect(recorded.text).toContain("Chosen: Chose one chain");
     const again = await callBrainTool(running, "record_decision", { ticket: ticket.code, chosen: decision("one chain").chosen, why: decision("one chain").why, other_options: decision("one chain").otherOptions }, conversation);
     expect(again.text).toContain("already has this decision recorded");
-    expect((await callBrainTool(running, "record_decision", { ticket: "zzz", ...decision("x"), other_options: decision("x").otherOptions })).isError).toBe(true);
+    expect((await callBrainTool(running, "record_decision", { ticket: "zz", ...decision("x"), other_options: decision("x").otherOptions })).isError).toBe(true);
 
     const first = current(running, ticket.id).branch ?? "";
     event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });

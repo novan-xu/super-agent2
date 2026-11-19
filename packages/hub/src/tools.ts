@@ -197,7 +197,7 @@ const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) })
 const ticketCodeSchema = (what: string) => ({
   type: "string",
   pattern: ticketReferencePattern,
-  description: `${what}. Use a code such as aaa for the newest match or aaa-2026-11-19 for an exact ticket.`,
+  description: `${what}. Use a code such as aa for the newest match or aa-2026-11-19 for an exact ticket.`,
 });
 
 const generatedSchema = (what: string) => ({
@@ -457,7 +457,7 @@ function chainDefinitions() {
                 after: {
                   type: "array",
                   items: { type: "string" },
-                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as aaa or aaa-2026-11-19",
+                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as aa or aa-2026-11-19",
                 },
                 after_deployment: { type: "boolean", description: "Also wait until the earlier work is deployed: a task ticket that deploys it is done, or you record it with report_deployment" },
                 title: generatedSchema("chain title"),

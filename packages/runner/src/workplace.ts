@@ -336,7 +336,7 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
           throw new Error(`git ${switching.join(" ")} failed in ${paths.worktree}${aside === null ? "" : `; the uncommitted work is kept on the local branch ${aside.branch}`}: ${`${switched.stderr}${switched.stdout}`.trim()}`);
         }
         const leftover = aside === null ? null : { ...aside, carried: await carryOver(git, paths.worktree, aside.commit) };
-        if (/^sa2\/(?:ticket-|[a-z]{3}-\d{4}-\d{2}-\d{2}-)/.test(current) && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/${tracking}/${current}`, paths.clone))) {
+        if (/^sa2\/(?:ticket-|[a-z]{2}-\d{4}-\d{2}-\d{2}-)/.test(current) && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/${tracking}/${current}`, paths.clone))) {
           await deleteBranch(git, paths, current);
         }
         return { base, created: false, switched: true, from, leftover };

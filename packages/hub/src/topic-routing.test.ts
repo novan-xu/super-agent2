@@ -83,7 +83,7 @@ function ticket(id: number, conversation: string | null, repository = "owner/pro
   database.connection
     .prepare(`INSERT INTO tickets (id, repository, kind, title_en, title_zh, summary_en, summary_zh, state, conversation_id, created_at, updated_at, code, code_date)
       VALUES (?, ?, 'feature', 'Title', '标题', 'Summary', '摘要', 'working', ?, 0, 0, ?, '1969-12-31')`)
-    .run(id, repository, conversation, String.fromCharCode(97 + Math.floor(id / 676), 97 + Math.floor(id / 26) % 26, 97 + id % 26));
+    .run(id, repository, conversation, String.fromCharCode(97 + Math.floor(id / 26), 97 + id % 26));
 }
 
 function message(text: string, scope: TopicScope = { kind: "daily" }, attachments = 0): RoutingMessage {
@@ -137,8 +137,8 @@ describe("topic routing rules", () => {
     replied(first, "工单 7 was mentioned here as well", 60);
     const routing = await router();
     expect((await routing.route(message("how is 工单 7 going today"))).decided).toMatchObject({ rule: "e", topic: second });
-    expect((await routing.route(message("how is ticket aah going today"))).decided).toMatchObject({ rule: "e", topic: second });
-    expect((await routing.route(message("工单 aai-1969-12-31 怎么样"))).decided).toMatchObject({ rule: "e", topic: first });
+    expect((await routing.route(message("how is ticket ah going today"))).decided).toMatchObject({ rule: "e", topic: second });
+    expect((await routing.route(message("工单 ai-1969-12-31 怎么样"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("did issue #42 get fixed"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("is PR 55 merged by now"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("PR 99 should be merged"))).decided).toMatchObject({ rule: "e", topic: second });

@@ -560,7 +560,7 @@ describe("repairing a stopped ticket in conversation", () => {
     expect(notices(running, conversation).map((entry) => entry.text)).toContain(`你停止了工单 ${chain.code}，已合并的部分保留`);
     expect(notices(running, conversation).map((entry) => entry.text)).toContain(`工单 ${chain.code} 停止了，排在它后面的工单 ${waits.code} 由大脑决定是否继续`);
 
-    const missing = await callBrainTool(running, "open_repair_ticket", { ticket: "zzz" }, conversation);
+    const missing = await callBrainTool(running, "open_repair_ticket", { ticket: "zz" }, conversation);
     expect(missing).toMatchObject({ isError: true });
     const working = await callBrainTool(running, "open_repair_ticket", { ticket: waits.code }, conversation);
     expect(working.isError).toBe(true);

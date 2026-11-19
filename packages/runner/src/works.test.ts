@@ -609,7 +609,7 @@ describe("a worker on the runner", () => {
 
   it("hands in a pull request for part of the chain, and continues the next piece in the same folder on a new branch", async () => {
     const works = start();
-    const ticketReference = "aai-2026-11-19";
+    const ticketReference = "ai-2026-11-19";
     const branch = `sa2/${ticketReference}-abcd`;
     const nextBranch = `sa2/${ticketReference}-beef`;
     works.receive({ type: "work.start", task: task(9, { ticketReference, branch }) });
@@ -895,7 +895,7 @@ describe("a task worker on the runner", () => {
 
   it("makes a scratch folder with the material, briefs the program without any repository, and delivers the text and files", async () => {
     const works = start();
-    works.receive({ type: "work.task", task: writingTask(20, { ticketReference: "aat-2026-11-19" }) });
+    works.receive({ type: "work.task", task: writingTask(20, { ticketReference: "at-2026-11-19" }) });
     const handle = await programs.prompted(1);
     const paths = taskPaths(home, 20);
     expect(handle.engine).toBe("antigravity");
@@ -911,7 +911,7 @@ describe("a task worker on the runner", () => {
     expect(existsSync(join(paths.worktree, "output"))).toBe(true);
     const prompt = handle.prompts[0] ?? "";
     expect(prompt).toContain("# Guidance for a task worker");
-    expect(prompt).toContain("You are working on ticket aat-2026-11-19.");
+    expect(prompt).toContain("You are working on ticket at-2026-11-19.");
     expect(prompt).toContain("Translate the notice in input/notice.txt into English.");
     expect(prompt).toContain("- input/notice.txt, from pasted by the owner in the conversation");
     expect(prompt).toContain("- Not a file: get it yourself from https://example.com/glossary (named glossary)");

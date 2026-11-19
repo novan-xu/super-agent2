@@ -4,7 +4,7 @@ import { Ticket } from "./tickets.js";
 
 const base = Ticket.parse({
   id: 1,
-  code: "aaa",
+  code: "aa",
   codeDate: "2026-11-19",
   repository: "novan-xu/garden-notes",
   issues: [

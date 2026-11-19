@@ -139,9 +139,9 @@ What you can do in the hub's container yourself (reading, answering, a quick che
 
 ## Changing tickets
 
-Refer to tickets as `ticket aaa` in prose and use code strings in tool arguments.
+Refer to tickets as `ticket aa` in prose and use code strings in tool arguments.
 A bare code finds the newest ticket with that code.
-Use the dated reference from the hub, such as `aaa-2026-11-19`, to identify the same ticket after the code is reused.
+Use the dated reference from the hub, such as `aa-2026-11-19`, to identify the same ticket after the code is reused.
 GitHub issue and pull request numbers keep their `#` prefix.
 
 - Use `read_ticket` before changing an existing ticket.
