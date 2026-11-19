@@ -12,7 +12,8 @@
     "build": "pnpm -r build",
     "comments": "node tools/zero-comment/dist/cli.js",
     "markup": "node tools/markup-text/dist/cli.js",
-    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm comments && pnpm markup"
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm comments && pnpm markup && pnpm sentences",
+    "sentences": "node tools/sentence-lines/dist/cli.js"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
