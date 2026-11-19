@@ -4391,3 +4391,28 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   attachment flag of Super-agent2's messages.
 - **Why:** The issue's rule says so, and the tool has to measure the same rule; it changes none of the report's numbers.
 - **Other options:** Apply it in the hub only.
+
+## 2026-11-18 — Move a message to a new topic (#144)
+
+- **Chosen:** Offer the shortcut on the latest owner message in a topic when it was joined there by the router.
+  Use the topic's owner-message order and reserve the same space in each message header for the touch target.
+- **Why:** Later owner input supersedes the shortcut. Brain replies leave it available, and changes to eligibility
+  keep the message header steady on a phone.
+- **Other options:** Keep every routed shortcut visible or expire them on a timer.
+
+- **Chosen:** Use the existing move dialog to move a split message back.
+- **Why:** The dialog can already move the message back to its source. Earlier replies stay where they were written.
+- **Other options:** Add a separate undo button or toast action.
+
+- **Chosen:** On the first move of a routed message, use its original routing scope for a new topic. For an owner
+  placement, use the source topic's scope. In all of Code, resolve the repository from the message against the
+  current routing candidates and open tickets.
+- **Why:** A wrong join in all of Code can also be a wrong repository assignment. A repository-scoped send and an
+  owner placement in a repository topic already name the intended repository.
+- **Other options:** Always inherit the source repository or let the move request choose a new scope.
+
+- **Chosen:** Derive the placement from the routing record and the entry's current topic. After a move or a merge
+  that relocates the message, its placement is owner-selected.
+- **Why:** Existing routed messages can show the shortcut. Owner moves use the existing correction fields, and a
+  topic merge still leaves those fields as they were.
+- **Other options:** Store a separate placement field in the database or keep showing the original placement after a correction.

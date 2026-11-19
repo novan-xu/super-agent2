@@ -357,16 +357,26 @@ interface TopicStreamProps {
 export function TopicStream({ state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const current = state?.conversation;
   const topics = useMemo(() => {
     const found = new Map(stream?.entries.map(({ topic }) => [topic.id, topic]));
     for (const topic of list) {
       found.set(topic.id, topic);
     }
+    if (current !== undefined) found.set(current.id, current);
     return found;
-  }, [stream, list]);
+  }, [stream, list, current]);
   const entries = useMemo(() => stream === null ? state?.entries ?? [] : stream.entries.flatMap(({ entry, topic }) =>
     topicInScope(topics.get(topic.id) ?? topic, scope) ? [entry] : []), [state, stream, topics, scope]);
   const previews = useMemo(() => new Map(entries.flatMap((entry) => entry.kind === "tool" ? [] : [[entry.id, entry] as const])), [entries]);
+  const latestOwner = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.kind === "owner" && entry.seq > (latest.get(entry.conversation) ?? 0)) latest.set(entry.conversation, entry.seq);
+    }
+    return latest;
+  }, [entries]);
+  const olderOwners = useMemo(() => new Set(stream?.entries.flatMap(({ entry, latestOwner }) => latestOwner === false ? [entry.id] : [])), [stream]);
   const items = useMemo(() => {
     if (stream === null) {
       return state === null ? [] : streamItems(state, now);
@@ -436,13 +446,17 @@ export function TopicStream({ state, stream, scope, list, online, now, following
           }}>{text("conversation.older")}</button>
         ) : null}
         {items.map((item) => {
-          const id = item.kind === "ended" && stream !== null ? item.turn.conversation : "topic" in item ? item.topic : undefined;
           const entry = item.kind === "entry" ? item.entry : undefined;
+          const joined = entry?.kind === "owner" && entry.placement === "router-joined";
+          const id = item.kind === "ended" && stream !== null ? item.turn.conversation
+            : "topic" in item ? item.topic : joined ? entry.conversation : undefined;
+          const canSplit = joined && entry.seq === latestOwner.get(entry.conversation) && !olderOwners.has(entry.id);
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
           return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
             quote={entry === undefined || entry.kind === "question" ? undefined : () => selectQuote(entry)}
             move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
+            split={canSplit ? () => move(entry.conversation, entry.id, null) : undefined}
             quoted={entry?.kind === "owner" && entry.quotedMessage !== undefined ? (
               <div className="sent-quote od-truncate">{source === undefined ? text("conversation.quote") : previewOf(source)}</div>
             ) : undefined}

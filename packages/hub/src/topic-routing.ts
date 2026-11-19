@@ -64,6 +64,7 @@ export interface Routing {
 export interface TopicRouter {
   route(message: RoutingMessage): Promise<Routing>;
   routeNow(message: RoutingMessage, reason: string): Routing;
+  repositoryFor(text: string, scope: TopicScope): string | null;
   record(entry: string, placedIn: string, routing: Routing, at: number): void;
   log(entry: string, placedIn: string, routing: Routing): void;
   refresh(): void;
@@ -346,8 +347,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return evaluate(configurations.model, context, scoresOf(context, messageVector, (item) => itemVectors.get(item.id)!, scorer.similarity));
   };
 
-  const repositoryFor = (context: Context): string | null => {
-    const { scope, text } = context.message;
+  const repositoryFor = (text: string, scope: TopicScope, topics?: readonly { readonly repository: string | null }[]): string | null => {
     if (scope.kind === "repository") {
       return scope.repository;
     }
@@ -356,7 +356,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     }
     const known = new Map<string, string>();
     const names = [
-      ...context.topics.flatMap(({ repository }) => (repository === null ? [] : [repository])),
+      ...(topics ?? listTopics.all(scope.kind, null).map((row) => TopicRow.parse(row)))
+        .flatMap(({ repository }) => (repository === null ? [] : [repository])),
       ...openTicketRepositories.all(...openTicketStates).map((row) => Repository.parse(row).repository),
     ];
     for (const name of names) {
@@ -372,7 +373,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     candidates: context.topics.length,
     topic: decided.topic,
     possibleMatch: decided.topic === null ? (decided.best ?? context.topics[0]?.id) : undefined,
-    repository: decided.topic === null ? repositoryFor(context) : null,
+    repository: decided.topic === null ? repositoryFor(context.message.text, context.message.scope, context.topics) : null,
     decided,
     shadow,
     fallback,
@@ -437,6 +438,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   }
 
   return {
+    repositoryFor,
     route: async (message) => {
       const context = gather(message);
       const bigram = bigramDecision(context);

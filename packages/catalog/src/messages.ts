@@ -121,6 +121,7 @@ export const messages = {
   "conversation.merge": "合并",
   "conversation.merging": "等待当前回合结束后合并",
   "conversation.move": "移到…",
+  "conversation.newTopic": "新话题",
   "conversation.topicName": "话题名称",
   "conversation.destination": "目标话题",
   "conversation.chooseDestination": "选择话题",

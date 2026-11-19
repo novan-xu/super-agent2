@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Conversation, HubToBrain } from "@super-agent2/protocol";
+import type { Conversation, HubToBrain, TopicMove } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
@@ -27,6 +27,7 @@ interface TopicCorrectionsOptions {
   readonly ready: () => boolean;
   readonly send: (message: HubToBrain) => boolean;
   readonly topic: (id: string) => Conversation | undefined;
+  readonly createMoveDestination: (entry: string, at: number) => string;
   readonly announce: (id: string) => void;
   readonly historyChanged: (topics: string[]) => void;
   readonly ticketsChanged: (ids: number[]) => void;
@@ -175,40 +176,41 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
   };
 
-  const move = (id: string, destinationId: string, expectedSource?: string): TopicEdit<string> => {
+  const move = (id: string, destinationId: TopicMove["destination"], expectedSource?: string): TopicEdit<string> => {
     const row = selectOwner.get(id);
-    const destination = resolve(destinationId);
+    const destination = destinationId === null ? null : resolve(destinationId);
     if (row === undefined || destination === undefined) {
       return missing;
     }
     const owner = Movable.parse(row);
     const source = owner.conversation_id;
     if (source === destination) {
-      return success(id);
+      return success(destination);
     }
     if (expectedSource !== undefined && resolve(expectedSource) !== source) {
       return conflict;
     }
     const now = clock.now();
-    const transfer = transaction(() => {
+    const moved = transaction(() => {
+      const target = destination ?? options.createMoveDestination(id, now);
       saveTransfer.run(id, source, owner.delivery_id ?? id, Number(owner.turn_id !== null));
-      moveEntry.run(destination, destination, randomUUID(), id);
-      correctRouting.run(destination, now, id);
+      moveEntry.run(target, target, randomUUID(), id);
+      correctRouting.run(target, now, id);
       if (owner.turn_id !== null) {
         revoke.run(owner.turn_id, source);
         if (clearSummary.run(owner.turn_id).changes > 0) {
           options.saveSummary(source);
         }
       }
-      activate.run(now, now, destination);
+      activate.run(now, now, target);
       incrementRevision.run();
-      return Transfer.parse(transferOf.get(id));
+      return { target, transfer: Transfer.parse(transferOf.get(id)) };
     });
-    options.announce(destination);
-    options.historyChanged([source, destination]);
-    withdraw(transfer);
+    options.announce(moved.target);
+    options.historyChanged([source, moved.target]);
+    withdraw(moved.transfer);
     options.deliverTopic(source);
-    return success(id);
+    return success(moved.target);
   };
 
   const archive = (id: string) => {
@@ -270,7 +272,12 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
         return conflict;
       }
       const input = selectInput.get(turn, source, message ?? null, message ?? null);
-      return input === undefined ? conflict : move(Id.parse(input).id, destination);
+      if (input === undefined) {
+        return conflict;
+      }
+      const { id } = Id.parse(input);
+      const moved = move(id, destination);
+      return moved.ok ? success(id) : moved;
     },
     rename: (id: string, title: string): TopicEdit<string> => {
       const topic = resolve(id);

@@ -83,6 +83,7 @@ export const OwnerEntry = z.object({
   taken: z.boolean(),
   quotedMessage: MessageId.optional(),
   possibleMatch: ConversationId.optional(),
+  placement: z.enum(["router-joined", "router-opened", "owner"]).optional(),
 });
 export type OwnerEntry = z.infer<typeof OwnerEntry>;
 
@@ -167,6 +168,7 @@ export const StreamEntry = z.object({
   position: z.number().int().positive(),
   topic: Conversation.pick({ id: true, title: true, repository: true, needsRepository: true }),
   entry: ConversationEntry,
+  latestOwner: z.boolean().optional(),
 });
 export type StreamEntry = z.infer<typeof StreamEntry>;
 
@@ -210,7 +212,8 @@ export type TopicHistoryUpdate = z.infer<typeof TopicHistoryUpdate>;
 
 export const TopicRename = z.strictObject({ title: z.string().trim().min(1).max(120) });
 export const TopicMerge = z.strictObject({ destination: ConversationId });
-export const TopicMove = TopicMerge.extend({ message: MessageId });
+export const TopicMove = TopicMerge.extend({ message: MessageId, destination: ConversationId.nullable() });
+export type TopicMove = z.infer<typeof TopicMove>;
 
 export const TurnUpdate = z.object({
   type: z.literal("turn"),

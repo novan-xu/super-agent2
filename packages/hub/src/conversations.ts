@@ -22,7 +22,7 @@ import {
   type HistoryItem,
   type HubToBrain,
   type MemoryBrief,
-  type OwnerEntry,
+  OwnerEntry,
   type Question,
   type QuestionAnswer,
   QuestionAnswers,
@@ -34,6 +34,7 @@ import {
   type StreamPage,
   streamPageSize,
   type TopicHistoryUpdate,
+  type TopicMove,
   TopicScope,
   topicInScope,
   Turn,
@@ -87,7 +88,7 @@ export interface ConversationService {
   archive(id: string): TopicEdit<string>;
   archiveIdle(): void;
   historyRevision(): number;
-  move(message: string, destination: string, source?: string): TopicEdit<string>;
+  move(message: string, destination: TopicMove["destination"], source?: string): TopicEdit<string>;
   handover(source: string, turn: string, destination: string, message?: string): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
@@ -187,6 +188,7 @@ const EntryRow = z.object({
   quote_id: z.string().nullable(),
   delivery_id: z.string().nullable(),
   created_at: z.number().int(),
+  placement: OwnerEntry.shape.placement,
 });
 type EntryRow = z.infer<typeof EntryRow>;
 
@@ -213,7 +215,7 @@ const SessionRow = z.object({ session: z.string().nullable(), through: z.number(
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int() });
-const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable(), needs_repository: z.number().int() });
+const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable(), needs_repository: z.number().int(), latest_owner: z.number().nullable() });
 
 function toConversation(row: unknown): Conversation {
   const value = ConversationRow.parse(row);
@@ -238,7 +240,10 @@ function toStreamEntry(row: unknown): StreamEntry {
     id: value.conversation_id, title: value.topic_title, repository: value.repository,
     ...(value.needs_repository === 1 ? { needsRepository: true as const } : {}),
   };
-  return { position: value.stream_seq, topic, entry: toEntry(value) };
+  return {
+    position: value.stream_seq, topic, entry: toEntry(value),
+    ...(value.latest_owner === null ? {} : { latestOwner: value.latest_owner === 1 }),
+  };
 }
 
 function toTurn(row: unknown): Turn {
@@ -262,6 +267,7 @@ function toEntry(row: EntryRow): ConversationEntry {
     case "owner":
       return ConversationEntry.parse({
         ...base, kind: "owner", text: body.text, attachments: body.attachments ?? [], taken: row.taken === 1,
+        placement: row.placement ?? "owner",
         ...(row.quote_id === null ? {} : { quotedMessage: row.quote_id }),
         ...(body.possibleMatch === undefined ? {} : { possibleMatch: body.possibleMatch }),
       });
@@ -384,12 +390,19 @@ export function createConversationService(options: ConversationServiceOptions): 
   const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1 WHERE id = ?");
   const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
-  const selectEntry = connection.prepare("SELECT * FROM conversation_entries WHERE id = ?");
+  const joinedByRouter = "r.moved_at IS NULL AND r.topic = r.placed_in AND e.conversation_id = r.placed_in";
+  const placement = `CASE WHEN ${joinedByRouter} THEN 'router-joined'
+    WHEN r.entry IS NOT NULL AND r.moved_at IS NULL AND e.conversation_id = r.placed_in THEN 'router-opened'
+    ELSE 'owner' END AS placement`;
+  const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
+  const selectEntry = connection.prepare(`SELECT e.*, ${placement} FROM ${entrySource} WHERE e.id = ?`);
+  const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
   `);
   const selectEntries = connection.prepare(
-    "SELECT * FROM conversation_entries WHERE conversation_id = ? AND (seq > ? OR turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY seq",
+    `SELECT e.*, ${placement} FROM ${entrySource}
+     WHERE e.conversation_id = ? AND (e.seq > ? OR e.turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY e.seq`,
   );
   const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND (? OR taken IS NOT 0) ORDER BY seq");
   const selectWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE taken = 0 ORDER BY created_at, rowid");
@@ -399,7 +412,11 @@ export function createConversationService(options: ConversationServiceOptions): 
     `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, stream_seq)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
-  const streamSelect = "SELECT e.*, c.title AS topic_title, c.repository, c.needs_repository FROM conversation_entries AS e JOIN conversations AS c ON c.id = e.conversation_id";
+  const streamSelect = `SELECT e.*, ${placement}, c.title AS topic_title, c.repository, c.needs_repository,
+    CASE WHEN ${joinedByRouter} THEN NOT EXISTS (
+      SELECT 1 FROM conversation_entries AS later WHERE later.conversation_id = e.conversation_id AND later.seq > e.seq AND later.kind = 'owner'
+    ) END AS latest_owner
+    FROM ${entrySource} JOIN conversations AS c ON c.id = e.conversation_id`;
   const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
   const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
   const scopeFilter = `AND CASE ?
@@ -646,6 +663,22 @@ export function createConversationService(options: ConversationServiceOptions): 
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
+  const createOwnerTopic = (at: number, message: string, attachments: readonly Attachment[], scope: TopicScope, repository: string | null) =>
+    storeTopic(options.database, at, titleOf(message, attachments), { repository, needsRepository: scope.kind === "code" && repository === null });
+
+  const createMoveDestination = (id: string, at: number): string => {
+    const row = EntryRow.parse(selectEntry.get(id));
+    const owner = OwnerEntry.parse(toEntry(row));
+    const source = toConversation(selectConversation.get(row.conversation_id));
+    const original = selectOriginalRoute.get(id);
+    const repository = original?.["scope"] === "repository" ? rawGet(z.string().parse(original["placed_in"]))?.repository ?? source.repository : source.repository;
+    const scope: TopicScope = original?.["scope"] === "daily" ? { kind: "daily" }
+      : original?.["scope"] === "code" ? { kind: "code" }
+      : repository !== null ? { kind: "repository", repository }
+      : source.needsRepository === true ? { kind: "code" } : { kind: "daily" };
+    return createOwnerTopic(at, owner.text, owner.attachments, scope, router.repositoryFor(owner.text, scope));
+  };
+
   const corrections = createTopicCorrections({
     database: options.database,
     clock,
@@ -653,6 +686,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     ready: () => link?.ready === true,
     send: sendToBrain,
     topic: rawGet,
+    createMoveDestination,
     announce,
     historyChanged: (topics) => emit({ type: "topic.history", topics }),
     ticketsChanged: tickets.announce,
@@ -1043,7 +1077,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (conversation === undefined) {
-        const topic = storeTopic(options.database, at, titleOf(message, attachments), { repository, needsRepository: scope.kind === "code" && repository === null });
+        const topic = createOwnerTopic(at, message, attachments, scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });

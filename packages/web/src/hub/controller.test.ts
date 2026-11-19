@@ -77,6 +77,13 @@ function controller(hub: HubApi, failures: Failure[] = []): PageController {
 }
 
 describe("PageController", () => {
+  it("sends a new-topic move using the selected message and its source", async () => {
+    const hub = api();
+    const page = controller(hub);
+    expect(await page.moveMessage("source", "entry", null)).toBe(true);
+    expect(hub.calls).toEqual(["move source entry null"]);
+  });
+
   it("sends to the stream without opening a topic", async () => {
     const hub = api();
     const page = controller(hub);
