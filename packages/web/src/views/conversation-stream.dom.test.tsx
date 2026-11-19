@@ -140,11 +140,11 @@ describe("switching conversation streams", () => {
     await selectTab(text("conversation.code"));
     const nextCode = lastWatch();
     await act(async () => {
-      showPage(personal.subscription, [daily], { resumed: true });
-      showPage(code.subscription, [record(topics[1]!, 12, "Stale code reply")]);
       showPage(nextCode.subscription, [first, second]);
       showPage(nextCode.subscription, [{ ...first, position: 20 }], { resumed: true });
       TestSocket.current.deliver({ ...second, position: 21, type: "stream.entry", subscription: nextCode.subscription });
+      showPage(personal.subscription, [daily], { resumed: true });
+      showPage(code.subscription, [record(topics[1]!, 12, "Stale code reply")]);
     });
     expect(replies()).toEqual(["First repository reply", "Second repository reply"]);
     expect(log().parentElement).toBe(scroller);
@@ -157,9 +157,9 @@ describe("switching conversation streams", () => {
     await selectRepository(repositories[1]!);
     const two = lastWatch();
     await act(async () => {
+      showPage(two.subscription, [second]);
       TestSocket.current.deliver({ ...first, type: "stream.entry", subscription: one.subscription });
       showPage(nextCode.subscription, [record(topics[2]!, 22, "Stale repository reply")], { resumed: true });
-      showPage(two.subscription, [second]);
     });
     expect(replies()).toEqual(["Second repository reply"]);
     expect(log().parentElement).toBe(scroller);
