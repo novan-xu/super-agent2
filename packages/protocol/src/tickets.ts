@@ -42,7 +42,7 @@ export type Platform = z.infer<typeof Platform>;
 export const ticketMoves: Readonly<Record<TicketState, readonly TicketState[]>> = {
   pending: ["waiting", "working", "stopped"],
   waiting: ["working", "stopped"],
-  working: ["verifying", "delivered", "stuck", "stopped"],
+  working: ["verifying", "merged", "delivered", "stuck", "stopped"],
   verifying: ["working", "merged", "stuck", "stopped"],
   stuck: ["working", "verifying", "stopped"],
   merged: [],
@@ -149,9 +149,17 @@ export const TicketPullRequest = z.object({
 });
 export type TicketPullRequest = z.infer<typeof TicketPullRequest>;
 
+export const ClosedChainIssue = z.object({
+  number: IssueNumber,
+  stateReason: z.string().nullable(),
+  comment: z.string().nullable(),
+});
+export type ClosedChainIssue = z.infer<typeof ClosedChainIssue>;
+
 export interface ChainProgress {
   readonly issues: readonly Pick<TicketIssue, "number">[];
   readonly pullRequests: readonly Pick<TicketPullRequest, "state" | "closes">[];
+  readonly closedOutside?: readonly Pick<ClosedChainIssue, "number">[];
 }
 
 export function mergedIssueNumbers(ticket: ChainProgress): number[] {
@@ -160,8 +168,8 @@ export function mergedIssueNumbers(ticket: ChainProgress): number[] {
 }
 
 export function openIssueNumbers(ticket: ChainProgress): number[] {
-  const merged = new Set(mergedIssueNumbers(ticket));
-  return ticket.issues.filter((issue) => !merged.has(issue.number)).map((issue) => issue.number);
+  const settled = new Set([...mergedIssueNumbers(ticket), ...(ticket.closedOutside ?? []).map((issue) => issue.number)]);
+  return ticket.issues.filter((issue) => !settled.has(issue.number)).map((issue) => issue.number);
 }
 
 export function openPullRequest<T extends Pick<TicketPullRequest, "state">>(pullRequests: readonly T[]): T | undefined {
@@ -216,6 +224,7 @@ export const Ticket = z.object({
   branch: z.string().nullable(),
   pullRequest: IssueNumber.nullable(),
   pullRequests: z.array(TicketPullRequest),
+  closedOutside: z.array(ClosedChainIssue).optional(),
   decisions: z.array(TicketDecision).default([]),
   report: GeneratedText.nullable(),
   work: WorkStatus.nullable(),

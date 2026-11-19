@@ -98,7 +98,8 @@ export function repairLines(ticket: Ticket, get: (id: number) => Ticket | undefi
 export function ticketLine(ticket: Ticket): string {
   const where = ticket.repository === null ? "no repository" : ticket.repository;
   const merged = new Set(mergedIssueNumbers(ticket));
-  const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : ""}`).join(", ");
+  const closedOutside = new Set(ticket.closedOutside?.map((issue) => issue.number));
+  const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : closedOutside.has(issue.number) ? " closed on GitHub" : ""}`).join(", ");
   const pulls = ticket.pullRequests.map((pull) => `#${pull.number} ${pull.state}`).join(", ");
   const task = ticket.form === "task" ? ` task${ticket.deploys ? " deploying" : ""}${ticket.commit === null ? (ticket.commitRef === null ? "" : ` at ${ticket.commitRef}`) : ` at ${ticket.commit.slice(0, 12)}`}` : "";
   const repair = repairWords(ticket);
@@ -210,9 +211,10 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   ];
   if (ticket.issues.length > 0) {
     const merged = new Set(mergedIssueNumbers(ticket));
+    const closedOutside = new Set(ticket.closedOutside?.map((issue) => issue.number));
     lines.push("Issues in working order:");
     for (const issue of ticket.issues) {
-      lines.push(`  ${issue.repository}#${issue.number} ${issue.title.en} (${issue.url})${merged.has(issue.number) ? ", closed by a merged pull request" : ""}`);
+      lines.push(`  ${issue.repository}#${issue.number} ${issue.title.en} (${issue.url})${merged.has(issue.number) ? ", closed by a merged pull request" : closedOutside.has(issue.number) ? ", closed on GitHub without a pull request of this chain" : ""}`);
     }
   }
   if (ticket.pullRequests.length > 0) {

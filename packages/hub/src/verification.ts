@@ -2,9 +2,11 @@ import type { GitHubAccount } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
   changeLevel,
+  type ClosedChainIssue,
   deploymentFile,
   type FailedStep,
   type GeneratedText,
+  mergedIssueNumbers,
   openIssueNumbers,
   type Ticket,
   VerificationRule,
@@ -52,6 +54,7 @@ export interface VerificationOptions {
   readonly gitHubBase?: string;
   readonly sendBack?: SendBack;
   readonly onward?: Onward;
+  readonly resumeOpenIssues?: (ticket: number, note: string) => AgainOutcome;
   readonly tell?: Tell;
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
@@ -228,9 +231,20 @@ export function createVerification(options: VerificationOptions): VerificationSe
   let closed = false;
 
   const selectRow = connection.prepare("SELECT * FROM ticket_verifications WHERE ticket_id = ?");
+  const deleteRow = connection.prepare("DELETE FROM ticket_verifications WHERE ticket_id = ?");
   const insertRow = connection.prepare("INSERT OR IGNORE INTO ticket_verifications (ticket_id, state) VALUES (?, 'checking')");
   const updateRow = connection.prepare(`UPDATE ticket_verifications SET ${columns.map((column) => `${column} = ?`).join(", ")} WHERE ticket_id = ?`);
   const selectVerifying = connection.prepare("SELECT id AS ticket_id FROM tickets WHERE state = 'verifying' ORDER BY id");
+  const selectSettling = connection.prepare(`
+    SELECT t.id AS ticket_id FROM tickets t
+    JOIN ticket_attempts a ON a.ticket_id = t.id AND a.attempt = (SELECT MAX(attempt) FROM ticket_attempts WHERE ticket_id = t.id)
+    JOIN ticket_work_events e ON e.ticket_id = a.ticket_id AND e.attempt = a.attempt AND e.seq = a.last_seq
+    WHERE t.form = 'code' AND t.state = 'working' AND a.state = 'finished' AND json_extract(e.event, '$.kind') = 'settled'
+    ORDER BY t.id
+  `);
+  const settlingAttempt = connection.prepare(`
+    SELECT 1 FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? AND seq = ? AND json_extract(event, '$.kind') = 'settled'
+  `);
   const selectUnreported = connection.prepare(
     "SELECT v.ticket_id FROM ticket_verifications v JOIN tickets t ON t.id = v.ticket_id WHERE t.state = 'merged' AND v.merged_at IS NOT NULL AND v.reported_at IS NULL ORDER BY v.ticket_id",
   );
@@ -502,24 +516,52 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
   };
 
+  const outstanding = (ticket: Ticket): number[] => {
+    const merged = new Set(mergedIssueNumbers(ticket));
+    return ticket.issues.filter((issue) => !merged.has(issue.number)).map((issue) => issue.number);
+  };
+
+  const readIssues = async (gitHub: GitHubApi, repository: string, numbers: readonly number[]) =>
+    new Map(await Promise.all(numbers.map(async (number) => [number, await gitHub.issue(repository, number)] as const)));
+
+  const readClosures = async (
+    gitHub: GitHubApi,
+    repository: string,
+    issues: Awaited<ReturnType<typeof readIssues>>,
+  ): Promise<ClosedChainIssue[]> => {
+    const entries = [...issues].flatMap(([number, issue]) => issue?.state === "closed" ? [{ number, issue }] : []);
+    return Promise.all(entries.map(async ({ number, issue }) => ({
+      number,
+      stateReason: issue.stateReason,
+      comment: issue.comments === 0 ? null : await gitHub.closingComment(repository, number),
+    })));
+  };
+
+  const closureLines = (ticket: Ticket) => (ticket.closedOutside ?? []).map((issue) =>
+    `Issue #${issue.number} was closed on GitHub without a pull request of this chain (stateReason: ${issue.stateReason ?? "unavailable"}).${issue.comment === null ? "" : ` Closing comment: ${JSON.stringify(issue.comment)}`}`);
+
+  const mergedPullsOf = (ticket: Ticket) =>
+    [...tickets.lineage(ticket.id), ticket].flatMap((piece) => piece.pullRequests.filter((pull) => pull.state === "merged"));
+
   const report = (id: number) => {
     const ticket = tickets.get(id);
     const row = rowOf(id);
     if (closed || ticket === undefined || row === undefined || ticket.state !== "merged" || row.reported_at !== null) {
       return;
     }
-    const rule = VerificationRule.catch("outside").parse(row.rule ?? "outside");
-    const issues = ticket.issues.map((issue) => `#${issue.number}`).join(", ");
+    const rule = VerificationRule.nullable().catch(null).parse(row.rule);
+    const issues = (tickets.lineage(id)[0] ?? ticket).issues.map((issue) => `#${issue.number}`).join(", ");
     const deployed = row.deployment === 1;
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
     const deploying = tickets.waitingFor(id).filter((after) => after.form === "task" && after.deploys && after.waits.some((entry) => entry.ticket === id && !entry.waived) && (after.state === "waiting" || after.state === "working"));
-    const merged = ticket.pullRequests.filter((pull) => pull.state === "merged");
+    const merged = mergedPullsOf(ticket);
     const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
     const lines = [
-      `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: every issue of its chain is closed by its merged pull requests.`,
+      `[hub] Ticket ${ticket.id} (${ticket.title.en}) is merged: every issue of its chain is settled.`,
       `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
-      `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}. That is the final merge commit; it contains every earlier one.`,
+      `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}${rule === null ? "" : `, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}`}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
+      ...closureLines(ticket),
       deployed
         ? deploying.length > 0
           ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${after.id}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
@@ -535,12 +577,65 @@ export function createVerification(options: VerificationOptions): VerificationSe
     tell(ticket.id, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: id }), lines.join("\n"));
   };
 
+  const isSettling = (ticket: Ticket): boolean =>
+    ticket.state === "working" && ticket.work?.state === "finished" && settlingAttempt.get(ticket.id, ticket.work.attempt, ticket.work.last) !== undefined;
+
+  const settle = async (ticket: Ticket, gitHub: GitHubApi, repository: string): Promise<boolean> => {
+    const numbers = outstanding(ticket);
+    const issues = await readIssues(gitHub, repository, numbers);
+    if ([...issues.values()].some((issue) => issue === null)) {
+      return false;
+    }
+    const closures = await readClosures(gitHub, repository, issues);
+    const current = tickets.get(ticket.id);
+    if (closed || current === undefined || current.state !== ticket.state || current.work?.attempt !== ticket.work?.attempt || current.pullRequest !== ticket.pullRequest) {
+      return true;
+    }
+    const remaining = openIssueNumbers({ ...current, closedOutside: closures });
+    const last = mergedPullsOf(current).at(-1);
+    const reason = { en: "Every issue was closed on GitHub without a pull request", zh: text("notice.chainClosedReason") };
+    tickets.change((writes) => {
+      writes.setClosedOutside(ticket.id, closures);
+      if (remaining.length > 0) {
+        return;
+      }
+      if (ticket.state === "verifying" && ticket.pullRequest !== null) {
+        writes.pullRequestClosed(ticket.id, ticket.pullRequest);
+      }
+      if (last === undefined) {
+        writes.move(ticket.id, "stopped", reason);
+        return;
+      }
+      deleteRow.run(ticket.id);
+      write(ticket.id, { state: "merged", merge_commit: last.mergeCommit, merged_at: last.mergedAt ?? clock.now(), deployment: last.deployment === null ? null : last.deployment ? 1 : 0 });
+      writes.setFinalPullRequest(ticket.id, last.number);
+      writes.move(ticket.id, "merged", { en: "Every remaining issue was closed on GitHub", zh: text("verification.chainClosed") });
+    });
+    if (remaining.length > 0) {
+      if (ticket.state === "working") {
+        options.resumeOpenIssues?.(ticket.id, `GitHub still shows work to do on ${remaining.map((number) => `#${number}`).join(", ")}. Check the current issue state and continue on the same branch.`);
+      }
+      return false;
+    } else if (last === undefined) {
+      tell(ticket.id, text("notice.chainClosed", { ticket: ticket.id }), [
+        `[hub] Ticket ${ticket.id} (${ticket.title.en}) stopped. ${reason.en}.`,
+        ...closureLines({ ...ticket, closedOutside: closures }),
+        "Tell the owner in Chinese.",
+        ...decisionReport(ticket),
+      ].join("\n"));
+    } else {
+      report(ticket.id);
+    }
+    return true;
+  };
+
   const finish = async (ticket: Ticket, gitHub: GitHubApi, pull: PullRequestState, rule: VerificationRule): Promise<void> => {
     const repository = ticket.repository ?? "";
     const before = rowOf(ticket.id);
     const commit = pull.mergeCommit ?? before?.merge_commit ?? null;
     save(ticket.id, { rule, state: "merging", waiting: null, reason: null, merge_commit: commit, merged_at: before?.merged_at ?? clock.now(), head: pull.head });
     let closing: number[];
+    let closures: ClosedChainIssue[];
     try {
       const current = rowOf(ticket.id);
       const read = current === undefined ? null : closesOf(current);
@@ -548,26 +643,37 @@ export function createVerification(options: VerificationOptions): VerificationSe
       if (read === null) {
         save(ticket.id, { closes: JSON.stringify(closes) });
       }
-      const chain = ticket.issues.filter((issue) => issue.repository.toLowerCase() === repository.toLowerCase());
-      closing = chain.filter((issue) => closes.includes(issue.number)).map((issue) => issue.number);
+      const numbers = outstanding(ticket);
+      const recorded = ticket.pullRequests.find((entry) => entry.number === pull.number && entry.state === "merged");
+      closing = [...(recorded?.closes ?? [])];
       const done = new Set(current === undefined ? [] : closedIssuesOf(current));
-      for (const issue of chain) {
-        if (done.has(issue.number) || !closing.includes(issue.number)) {
+      for (const number of numbers.filter((issue) => closes.includes(issue))) {
+        if (done.has(number)) {
+          closing.push(number);
           continue;
         }
-        const open = await gitHub.issueOpen(repository, issue.number);
-        if (open === true) {
+        const issue = await gitHub.issue(repository, number);
+        if (issue?.state === "closed" && (
+          issue.stateReason === "NOT_PLANNED" || issue.stateReason === "DUPLICATE"
+          || (issue.closedAt !== null && pull.mergedAt !== null && Date.parse(issue.closedAt) < Date.parse(pull.mergedAt))
+        )) {
+          continue;
+        }
+        if (issue?.state === "open") {
           try {
-            await gitHub.closeIssue(repository, issue.number);
+            await gitHub.closeIssue(repository, number);
           } catch (error) {
-            if ((await gitHub.issueOpen(repository, issue.number)) === true) {
+            if ((await gitHub.issue(repository, number))?.state === "open") {
               throw error;
             }
           }
         }
-        done.add(issue.number);
+        closing.push(number);
+        done.add(number);
         save(ticket.id, { closed_issues: JSON.stringify([...done]) });
       }
+      const issues = await readIssues(gitHub, repository, numbers.filter((number) => !closing.includes(number)));
+      closures = await readClosures(gitHub, repository, issues);
       const row = rowOf(ticket.id);
       if (row !== undefined && row.branch_done === 0) {
         if (ticket.branch !== null && pull.headRef === ticket.branch && (pull.headRepository === null || pull.headRepository.toLowerCase() === repository.toLowerCase())) {
@@ -593,6 +699,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         return;
       }
       writes.pullRequestMerged(ticket.id, { number: pull.number, closes: closing, mergeCommit: commit, deployment: deployment === null ? null : deployment === 1 });
+      writes.setClosedOutside(ticket.id, closures);
       const now = writes.get(ticket.id);
       remaining = now === undefined ? [] : openIssueNumbers(now);
       write(ticket.id, { state: "merged", waiting: null, reason: null });
@@ -684,7 +791,12 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     const method = methodOf(await gitHub.mergeMethods(repository));
-    const closes = await gitHub.closingIssues(repository, number);
+    const references = await gitHub.closingIssues(repository, number);
+    const candidates = outstanding(ticket).filter((issue) => references.includes(issue));
+    const closes = (await Promise.all(candidates.map(async (number) => {
+      const issue = await gitHub.issue(repository, number).catch(() => null);
+      return issue?.state === "closed" ? [] : [number];
+    }))).flat();
     save(ticket.id, { rule, state: "merging", waiting: null, reason: null, merging_head: head, merging_rule: rule, closes: JSON.stringify(closes) });
     const answer = await gitHub.merge(repository, number, head, method);
     if (closed) {
@@ -726,6 +838,15 @@ export function createVerification(options: VerificationOptions): VerificationSe
       report(id);
       return;
     }
+    if (ticket.state === "working") {
+      if (isSettling(ticket) && ticket.repository !== null) {
+        const gitHub = gitHubFor(ticket.repository);
+        if (typeof gitHub !== "string") {
+          await settle(ticket, gitHub, ticket.repository);
+        }
+      }
+      return;
+    }
     if (ticket.state !== "verifying") {
       return;
     }
@@ -759,6 +880,9 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     if (!pull.open) {
+      if (await settle(ticket, gitHub, repository)) {
+        return;
+      }
       wait(id, "closed", `The pull request #${number} was closed without merging`);
       tellOnce(
         ticket,
@@ -916,7 +1040,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     if (closed) {
       return;
     }
-    const ids = [...selectVerifying.all(), ...selectUnreported.all()].map((row) => IdRow.parse(row).ticket_id);
+    const ids = [...selectVerifying.all(), ...selectUnreported.all(), ...selectSettling.all()].map((row) => IdRow.parse(row).ticket_id);
     await Promise.all([...new Set(ids)].map((id) => check(id)));
   };
 
@@ -927,7 +1051,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     } else {
       states.delete(ticket.id);
     }
-    if (ticket.state === "verifying" && before !== "verifying" && !closed) {
+    if (!closed && ((ticket.state === "verifying" && before !== "verifying") || isSettling(ticket))) {
       void check(ticket.id);
     }
   });

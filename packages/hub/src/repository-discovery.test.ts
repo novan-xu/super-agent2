@@ -39,6 +39,13 @@ function addTicket(database: HubDatabase, repository: string, number: number) {
   });
 }
 
+function addHistoricalTicket(database: HubDatabase, repository: string) {
+  database.connection.prepare(`
+    INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, state, created_at, updated_at)
+    VALUES (?, 'feature', 'Example work', '示例工单', 'Example work', '示例工单', 'pending', ?, ?)
+  `).run(repository, clock.now(), clock.now());
+}
+
 function githubRepo(full_name: string, archived = false, pushed_at: string | null = "2026-11-19T00:00:00Z") {
   return { full_name, owner: { login: full_name.split("/")[0] }, archived, pushed_at, default_branch: "main" };
 }
@@ -170,9 +177,9 @@ describe("repository discovery", () => {
 });
 
 it("migrates existing ticket repositories once and leaves later repositories archived", () => {
-  const previous = open(migrations.slice(0, -2));
-  addTicket(previous, "novan-xu/Existing", 1);
-  addTicket(previous, "novan-xu/existing", 2);
+  const previous = open(migrations.filter((migration) => migration.version < 40));
+  addHistoricalTicket(previous, "novan-xu/Existing");
+  addHistoricalTicket(previous, "novan-xu/existing");
   const database = open();
   addTicket(database, "novan-xu/Later", 3);
   const repositories = createRepositoryAccounts(database, clock);
@@ -185,8 +192,8 @@ it("migrates existing ticket repositories once and leaves later repositories arc
 
 
 it("migrates and persists repository aliases independently of pins and discovery", () => {
-  const previous = open(migrations.slice(0, -1));
-  addTicket(previous, "Org/Project", 1);
+  const previous = open(migrations.filter((migration) => migration.version < 41));
+  addHistoricalTicket(previous, "Org/Project");
   const repositories = createRepositoryAccounts(open(), clock);
   expect(repositories.setAlias("ORG/PROJECT", "  Project  ")).toBe(true);
   expect(repositories.setAlias("org/missing", "Missing")).toBe(false);

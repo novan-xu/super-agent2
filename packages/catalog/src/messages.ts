@@ -253,6 +253,8 @@ export const messages = {
   "notice.workerFailed": "工单 {ticket} 的执行没有完成，大脑会决定怎么处理",
   "notice.waitingForProvider": "工单 {ticket} 在等可用的供应商，到时会自己再试",
   "notice.ticketBeforeStopped": "工单 {before} 停止了，排在它后面的工单 {ticket} 由大脑决定是否继续",
+  "notice.chainClosed": "工单 {ticket} 的问题已全部在 GitHub 关闭，工单已停止",
+  "notice.chainClosedReason": "所有问题均已在 GitHub 关闭，本工单没有合并拉取请求",
 
   "tickets.tasks": "任务",
   "ticket.number": "工单 {ticket}",
@@ -352,6 +354,7 @@ export const messages = {
   "verification.merged.none": "仓库没有 Woodpecker 工作流，直接合并",
   "verification.merged.skipped": "跳过验证规则合并",
   "verification.merged.outside": "在 GitHub 上被合并",
+  "verification.chainClosed": "剩余问题均已在 GitHub 关闭",
   "verification.conflictReturned": "和 {base} 有冲突，交回工作者解决",
   "verification.wait.github": "暂时读不到 GitHub",
   "verification.wait.woodpecker": "读不到 Woodpecker 的结果",

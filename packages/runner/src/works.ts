@@ -52,7 +52,7 @@ import {
 } from "./brief.js";
 import { createGit, type Git, type ProcessRunner, runProcess } from "./git.js";
 import { type Identity, readIdentity, shimFolder, withoutCredentials, workerEnvironment, writeGhShims } from "./identity.js";
-import { checkHandback, type PullRequestReader, readPullRequestWith } from "./handback.js";
+import { type BranchPullReader, checkHandback, type ClosedIssueReader, type PullRequestReader, readBranchPullWith, readClosedIssuesWith, readPullRequestWith } from "./handback.js";
 import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
@@ -98,6 +98,8 @@ export interface WorksOptions {
   readonly run?: ProcessRunner;
   readonly remote?: RemoteUrl;
   readonly readPullRequest?: PullRequestReader;
+  readonly readClosedIssues?: ClosedIssueReader;
+  readonly readBranchPull?: BranchPullReader;
   readonly ledger?: Ledger;
   readonly log?: (line: string) => void;
   readonly changed?: () => void;
@@ -223,6 +225,8 @@ export function createWorks(options: WorksOptions): Works {
     log(`Could not write the gh shim in ${shims}: ${messageOf(error)}`);
   }
   const readPullRequest = options.readPullRequest ?? readPullRequestWith(run, gh);
+  const readClosedIssues = options.readClosedIssues ?? readClosedIssuesWith(run, gh);
+  const readBranchPull = options.readBranchPull ?? readBranchPullWith(run, gh);
   const works = new Map<number, Work>();
   const asked = new Map<string, Asked>();
   const tasks = new Set<Promise<void>>();
@@ -435,6 +439,46 @@ export function createWorks(options: WorksOptions): Works {
 
   type Checked = { readonly ok: true; readonly event: WorkEvent } | { readonly ok: false; readonly problem: string };
 
+  const issueContext = (work: Work, task: WorkTask) => ({
+    repository: task.repository,
+    environment: environmentOf(task, work.paths.shared),
+    cwd: work.paths.worktree,
+    outstanding: task.issues.filter((issue) => !task.merged?.includes(issue.number)).map((issue) => issue.number),
+  });
+
+  const checkCode = async (work: Work, task: WorkTask, closedOutside?: readonly number[]): Promise<Checked> => {
+    const context = issueContext(work, task);
+    try {
+      const outcome = await checkHandback({
+        ...context,
+        path: work.paths.handback,
+        branch: task.branch,
+        closedOutside: closedOutside ?? await readClosedIssues(context, context.outstanding),
+        read: readPullRequest,
+        readBranchPull,
+      });
+      if (!outcome.ok) {
+        return outcome;
+      }
+      if (outcome.outcome === "settled") {
+        return { ok: true, event: { kind: "settled" } };
+      }
+      return {
+        ok: true,
+        event: {
+          kind: "finished",
+          pullRequest: outcome.pullRequest,
+          url: outcome.url,
+          closes: [...outcome.closes],
+          report: outcome.report,
+          ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
+        },
+      };
+    } catch (error) {
+      return { ok: false, problem: `The current state of the chain on GitHub could not be checked: ${messageOf(error)}. Check GitHub and hand back again.` };
+    }
+  };
+
   const checked = async (work: Work): Promise<Checked | undefined> => {
     if (work.assignment !== undefined) {
       const outcome = checkTaskHandback({ paths: work.paths });
@@ -454,33 +498,7 @@ export function createWorks(options: WorksOptions): Works {
         },
       };
     }
-    const task = work.task;
-    if (task === undefined) {
-      return undefined;
-    }
-    const outcome = await checkHandback({
-      path: work.paths.handback,
-      repository: work.record.repository,
-      branch: work.record.branch,
-      issues: work.record.issues.map((issue) => issue.number),
-      merged: task.merged ?? [],
-      environment: environmentOf(task, work.paths.shared),
-      cwd: work.paths.worktree,
-      read: readPullRequest,
-    });
-    return outcome.ok
-      ? {
-          ok: true,
-          event: {
-            kind: "finished",
-            pullRequest: outcome.pullRequest,
-            url: outcome.url,
-            closes: [...outcome.closes],
-            report: outcome.report,
-            ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
-          },
-        }
-      : outcome;
+    return work.task === undefined ? undefined : checkCode(work, work.task);
   };
 
   const check = async (work: Work) => {
@@ -641,6 +659,33 @@ export function createWorks(options: WorksOptions): Works {
             }`
           : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`, checkoutMatchNote(work.paths), artifactsNote(work)].filter(Boolean).join(". "),
     });
+    const context = issueContext(work, task);
+    let closedOutside: number[];
+    try {
+      closedOutside = await readClosedIssues(context, context.outstanding);
+    } catch (error) {
+      if (!work.stopping) {
+        await end(work, { kind: "failed", failure: "prepare", reason: `Could not check the chain's issues on GitHub: ${messageOf(error)}` });
+      }
+      return;
+    }
+    if (work.stopping) {
+      return;
+    }
+    let handbackNote = "";
+    if (context.outstanding.every((number) => closedOutside.includes(number))) {
+      const outcome = await checkCode(work, task, closedOutside);
+      if (work.stopping) {
+        return;
+      }
+      if (outcome.ok) {
+        await end(work, outcome.event);
+        return;
+      }
+      handbackNote = `[hub] ${outcome.problem}`;
+    }
+    const currentTask = { ...task, closedOutside };
+    work.task = currentTask;
     const session = task.session ?? work.record.session;
     try {
       openProgram(work, task, session);
@@ -652,20 +697,20 @@ export function createWorks(options: WorksOptions): Works {
     const waiting = work.queue.splice(0);
     const leftover = prepared.leftover === null ? [] : [leftoverText({ ...prepared.leftover, into: task.branch, base: prepared.base })];
     const state = task.takeover ? [takeoverText(await folderState(git, work.paths.worktree, prepared.base, trackingRemote(work.paths)), task.branch, prepared.base)] : [];
-    if (work.task !== task || work.stopping) {
+    if (work.task !== currentTask || work.stopping) {
       return;
     }
     const withWaiting = (prompt: string) => {
-      const next = joined(waiting, [prompt, ...leftover, ...state].join("\n\n"));
+      const next = joined(waiting, [prompt, ...leftover, ...state, handbackNote].filter(Boolean).join("\n\n"));
       startTurn(work, next.text, next.images);
     };
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
-      withWaiting(brief(task, where));
+      withWaiting(brief(currentTask, where));
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    withWaiting(task.note === null ? resumeText(task, where) : continueText(task, where, task.note));
+    withWaiting(task.note === null ? resumeText(currentTask, where) : continueText(currentTask, where, task.note));
   };
 
   const beginTask = async (work: Work, task: TaskAssignment) => {

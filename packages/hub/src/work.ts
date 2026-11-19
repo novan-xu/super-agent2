@@ -356,6 +356,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       title: ticket.title.en,
       issues: ticket.issues.map((issue) => ({ number: issue.number, title: issue.title.en, url: issue.url })),
       merged: mergedIssueNumbers(ticket),
+      ...(ticket.closedOutside === undefined ? {} : { closedOutside: ticket.closedOutside.map((issue) => issue.number) }),
       engine: attempt.engine,
       model: attempt.model,
       effort: attempt.effort,
@@ -858,6 +859,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           writes.touched(attempt.ticket_id);
           return;
         }
+        case "settled":
+          if (live && current && writes.get(attempt.ticket_id)?.form === "code") {
+            end(attempt.ticket_id, attempt.attempt, "finished", null, null);
+            writes.touched(attempt.ticket_id);
+          }
+          return;
         case "delivered": {
           const ticket = writes.get(attempt.ticket_id);
           const accepted = current && ticket !== undefined && ticket.form === "task" && ticket.state === "working";
@@ -958,7 +965,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         failed(ticket, now, told.failure, told.reason);
       }
     }
-    if (handedOver || event.kind === "finished" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped" || event.kind === "unavailable" || recoveredMark) {
+    if (handedOver || event.kind === "finished" || event.kind === "settled" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped" || event.kind === "unavailable" || recoveredMark) {
       dispatch();
     }
   };
@@ -1531,7 +1538,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const open = new Set(openIssueNumbers(ticket));
       const remaining = ticket.issues.filter((issue) => open.has(issue.number));
       if (remaining.length === 0) {
-        return { ok: false, reason: `Every issue of ticket ${id} is closed by a merged pull request` };
+        return { ok: false, reason: `Every issue of ticket ${id} is settled` };
       }
       const branch = branchFor(id, suffix());
       const done = ticket.issues.filter((issue) => !open.has(issue.number));

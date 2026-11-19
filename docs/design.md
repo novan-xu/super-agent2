@@ -287,6 +287,7 @@ Two things follow:
    One start starts the whole arrangement.
 5. **Work.**
    The runner creates a git worktree on a new branch and starts a worker in full-access mode.
+   Before starting or resuming a code worker, the runner checks the issue state on GitHub and marks any issue already closed as requiring no work.
    The worker works through the chain's issues in order, runs the tests itself, and resolves conflicts with the default branch itself.
    It decides how many pull requests to open: whenever a piece of the chain is ready, it opens a pull request that closes at least one of the chain's open issues, hands it in, and waits.
 6. **Verification.**
@@ -300,8 +301,12 @@ Two things follow:
    When issues of the chain are still open, the hub resumes the same worker, in the same session and the same folder, on a new branch from the updated default branch, and tells it what merged and what remains.
    The brain is not part of this.
 9. **Report.**
-   The ticket is merged when every issue of its chain is closed by one of its merged pull requests.
+   The ticket is merged when every issue of its chain is settled and at least one of its pull requests merged.
+   An issue is settled when a merged pull request of the chain closed it or GitHub shows it as closed for any other reason.
+   The hub independently checks GitHub after a merge and when the runner reports that nothing is left to hand in.
    It reports to its topic once, with the pull requests merged, the final merge commit, whether the change needs deploying, and every decision recorded on the owner's behalf.
+   The report names issues closed outside its pull requests and includes their GitHub state reasons and any closing comments found in the issue timeline.
+   A chain whose issues are all closed without any merged pull request is stopped and reported to its topic.
 10. **Failure.**
     At any step, the hub hands the failing output to the ticket's topic.
     The brain writes guidance and the worker tries again.
@@ -343,6 +348,8 @@ The issue is what the owner manages; the brain decides how issues are arranged i
 - Starting starts everything arranged: tickets with nothing before them begin, and each waiting ticket begins by itself when the tickets before it have merged, that is when every issue of them is closed.
 - A started chain is closed.
   Later work is a new ticket after it.
+  To drop an issue, close it on GitHub as not planned with a comment and record the decision.
+  If an externally closed issue reopens while the chain is still active, it becomes work again when the issue state is next checked.
 
 ## Repair tickets
 

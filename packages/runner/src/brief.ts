@@ -31,6 +31,18 @@ function artifactLines(artifacts: ArtifactFolder | undefined): string[] {
   ];
 }
 
+function issueLines(task: WorkTask): string[] {
+  return [
+    "Issues, in working order:",
+    ...task.issues.map((issue, index) => {
+      const status = task.merged?.includes(issue.number)
+        ? ", already closed by a merged pull request"
+        : task.closedOutside?.includes(issue.number) ? ", closed on GitHub without a pull request of this chain; nothing to do" : "";
+      return `${index + 1}. #${issue.number} ${issue.title} (${issue.url})${status}`;
+    }),
+  ];
+}
+
 export function taskText(task: WorkTask, place: BriefPlace): string {
   return [
     "# Your task",
@@ -42,8 +54,7 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     `Branch: ${task.branch}, made from ${place.base}, which is the default branch`,
     `Chain: ${task.title}`,
     "",
-    "Issues, in working order:",
-    ...task.issues.map((issue, index) => `${index + 1}. #${issue.number} ${issue.title} (${issue.url})${(task.merged ?? []).includes(issue.number) ? ", already closed by a merged pull request" : ""}`),
+    ...issueLines(task),
     "",
     `Hand in each pull request by writing the JSON file at: ${place.handback}`,
   ].join("\n");
@@ -64,13 +75,15 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
     `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
     ...artifactLines(place.artifacts),
     task.note === null ? "" : `\n${task.note}`,
+    "",
+    ...issueLines(task),
   ]
     .join("\n")
     .trim();
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, ...artifactLines(place.artifacts)].join("\n");
+  return [`[hub] ${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export interface LeftoverPlace {

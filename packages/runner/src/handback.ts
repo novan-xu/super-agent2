@@ -13,13 +13,24 @@ export interface PullRequestState {
 
 export type PullRequestReader = (repository: string, number: number, environment: Readonly<Record<string, string>>, cwd: string) => Promise<PullRequestState | string>;
 
+type GitHubContext = { readonly repository: string; readonly environment: Readonly<Record<string, string>>; readonly cwd: string };
+
+export type ClosedIssueReader = (context: GitHubContext, numbers: readonly number[]) => Promise<number[]>;
+export type BranchPullReader = (context: GitHubContext, branch: string, issues: readonly number[]) => Promise<number | null>;
+
+const ClosingReferences = z.array(z.looseObject({ number: z.number().int(), url: z.string().optional() })).default([]);
 const PullRequestJson = z.looseObject({
   number: z.number().int(),
   url: z.string(),
   state: z.string(),
   headRefName: z.string(),
-  closingIssuesReferences: z.array(z.looseObject({ number: z.number().int() })).default([]),
+  closingIssuesReferences: ClosingReferences,
 });
+
+function closingNumbers(references: z.output<typeof ClosingReferences>, repository: string): number[] {
+  const prefix = `https://github.com/${repository.toLowerCase()}/issues/`;
+  return references.filter((issue) => issue.url === undefined || issue.url.toLowerCase().startsWith(prefix)).map((issue) => issue.number);
+}
 
 export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequestReader {
   return async (repository, number, environment, cwd) => {
@@ -37,7 +48,7 @@ export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequest
         url: parsed.url,
         state: parsed.state,
         head: parsed.headRefName,
-        closes: parsed.closingIssuesReferences.map((issue) => issue.number),
+        closes: closingNumbers(parsed.closingIssuesReferences, repository),
       };
     } catch (error) {
       return `gh pr view ${number} gave an answer that could not be read: ${error instanceof Error ? error.message : String(error)}`;
@@ -45,19 +56,54 @@ export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequest
   };
 }
 
+const IssueState = z.object({ state: z.enum(["OPEN", "CLOSED"]) });
+const BranchPulls = z.array(z.object({
+  number: z.number().int().positive(),
+  headRepositoryOwner: z.object({ login: z.string() }).nullable(),
+  closingIssuesReferences: ClosingReferences,
+}));
+
+async function readGitHub(run: ProcessRunner, gh: string, context: GitHubContext, args: string[]): Promise<unknown> {
+  const result = await run(gh, [...args, "--repo", context.repository], { cwd: context.cwd, env: context.environment });
+  if (result.code !== 0) {
+    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${`${result.stderr}${result.stdout}`.trim()}`);
+  }
+  return JSON.parse(result.stdout);
+}
+
+export function readClosedIssuesWith(run: ProcessRunner, gh: string): ClosedIssueReader {
+  return async (context, numbers) => {
+    const states = await Promise.all(numbers.map(async (number) => {
+      const issue = IssueState.parse(await readGitHub(run, gh, context, ["issue", "view", String(number), "--json", "state"]));
+      return issue.state === "CLOSED" ? [number] : [];
+    }));
+    return states.flat();
+  };
+}
+
+export function readBranchPullWith(run: ProcessRunner, gh: string): BranchPullReader {
+  return async (context, branch, issues) => {
+    const pulls = BranchPulls.parse(await readGitHub(run, gh, context, [
+      "pr", "list", "--state", "open", "--head", branch, "--limit", "100", "--json", "number,headRepositoryOwner,closingIssuesReferences",
+    ]));
+    const owner = context.repository.split("/")[0]?.toLowerCase();
+    return pulls.find((pull) => pull.headRepositoryOwner?.login.toLowerCase() === owner
+      && closingNumbers(pull.closingIssuesReferences, context.repository).some((number) => issues.includes(number)))?.number ?? null;
+  };
+}
+
 export type HandbackOutcome =
-  | { readonly ok: true; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
+  | { readonly ok: true; readonly outcome: "finished"; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
+  | { readonly ok: true; readonly outcome: "settled" }
   | { readonly ok: false; readonly problem: string };
 
-export interface HandbackCheck {
+export interface HandbackCheck extends GitHubContext {
   readonly path: string;
-  readonly repository: string;
   readonly branch: string;
-  readonly issues: readonly number[];
-  readonly merged: readonly number[];
-  readonly environment: Readonly<Record<string, string>>;
-  readonly cwd: string;
+  readonly outstanding: readonly number[];
+  readonly closedOutside: readonly number[];
   readonly read: PullRequestReader;
+  readonly readBranchPull: BranchPullReader;
 }
 
 function listed(numbers: readonly number[]): string {
@@ -65,14 +111,25 @@ function listed(numbers: readonly number[]): string {
 }
 
 export async function checkHandback(check: HandbackCheck): Promise<HandbackOutcome> {
-  const open = check.issues.filter((issue) => !check.merged.includes(issue));
+  const open = check.outstanding.filter((issue) => !check.closedOutside.includes(issue));
+  const outcome = await checkPullHandback(check, open);
+  if (outcome.ok || open.length > 0) {
+    return outcome;
+  }
+  const pull = check.outstanding.length === 0 ? null : await check.readBranchPull(check, check.branch, check.outstanding);
+  return pull === null
+    ? { ok: true, outcome: "settled" }
+    : { ok: false, problem: `Every issue is settled, and pull request #${pull} is still open from this branch with a closing reference to the chain. Hand in #${pull} by writing the JSON file at ${check.path}.` };
+}
+
+async function checkPullHandback(check: HandbackCheck, open: readonly number[]): Promise<HandbackOutcome> {
   let text: string;
   try {
     text = readFileSync(check.path, "utf8").replace(/^﻿/, "");
   } catch {
     return {
       ok: false,
-      problem: `You have not handed in a pull request: there is no file at ${check.path}. The chain is done only when every issue is closed by a merged pull request, and ${listed(open)} ${open.length === 1 ? "is" : "are"} still open. Open a pull request from your branch that closes at least one of them, then write that file as described in your task.`,
+      problem: `You have not handed in a pull request: there is no file at ${check.path}. ${listed(open)} ${open.length === 1 ? "is" : "are"} still open. Open a pull request from your branch that closes at least one of them, then write that file as described in your task.`,
     };
   }
   let raw: unknown;
@@ -99,12 +156,13 @@ export async function checkHandback(check: HandbackCheck): Promise<HandbackOutco
   if (state.state !== "OPEN" && state.state !== "MERGED") {
     return { ok: false, problem: `Pull request #${handback.pullRequest} is ${state.state.toLowerCase()}. Reopen it or open a new one from ${check.branch}, and hand back its number.` };
   }
-  const closing = open.filter((issue) => state.closes.includes(issue));
+  const eligible = state.state === "MERGED" || open.length === 0 ? check.outstanding : open;
+  const closing = eligible.filter((issue) => state.closes.includes(issue));
   if (closing.length === 0) {
     return {
       ok: false,
       problem: `Pull request #${handback.pullRequest} closes none of the open issues of the chain (${listed(open)}). Edit its body so that it has a line "Closes #<number>" for each open issue it resolves (gh pr edit ${handback.pullRequest} --body-file <file>), then write the hand-back file again.`,
     };
   }
-  return { ok: true, pullRequest: state.number, url: state.url, closes: closing, report: handback.summary, decisions: handback.decisions };
+  return { ok: true, outcome: "finished", pullRequest: state.number, url: state.url, closes: closing, report: handback.summary, decisions: handback.decisions };
 }

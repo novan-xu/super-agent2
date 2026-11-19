@@ -137,7 +137,7 @@ function foldItems(items: readonly LogItem[], stored: StoredWorkEvent): readonly
   }
 }
 
-const endings = new Set(["finished", "delivered", "failed", "stopped"]);
+const endings = new Set(["finished", "delivered", "failed", "stopped", "settled"]);
 
 function fold(attempts: readonly AttemptLog[], stored: StoredWorkEvent): readonly AttemptLog[] {
   const position = attempts.findIndex((entry) => entry.attempt === stored.attempt);

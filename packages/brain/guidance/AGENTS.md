@@ -153,7 +153,8 @@ What you can do in the hub's container yourself (reading, answering, a quick che
 
 Work is scheduled as chains.
 A chain is one ticket: its issues, in working order, handed once to one worker, which works through them and decides how many pull requests to open for them.
-The hub merges each pull request as it is handed in and gives the same worker the rest; the chain is merged when every issue of it is closed by a merged pull request.
+The hub merges each pull request as it is handed in and gives the same worker the rest.
+The chain is merged when every issue is closed and at least one of its pull requests merged.
 You arrange the chains; you are not part of the hand-over between its pull requests.
 
 - Arrange by default, as you file: once the issues for a need are filed, call `arrange_chains` over them, without being asked.
@@ -167,6 +168,7 @@ You arrange the chains; you are not part of the hand-over between its pull reque
 - When the owner asks in words for the work to be arranged differently, call `arrange_chains` again with the new arrangement.
   Only chains that have not started can be rearranged.
   A started chain is closed: later work is a new issue in a new chain whose `after` names the started ticket.
+  To drop an issue from a started chain, close it on GitHub as not planned with a comment explaining why, and record the decision.
 - An arrangement with a cycle, or one that names an issue or a ticket that does not exist, is refused and nothing changes.
   Read the reason, fix the arrangement and call it again.
 - You never start a chain.

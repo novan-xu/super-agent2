@@ -77,13 +77,14 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     report: GeneratedText,
     decisions: z.array(Decision).optional(),
   }),
+  z.object({ kind: z.literal("settled") }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
   z.object({ kind: z.literal("unavailable"), reason: z.string(), until: z.number().int().nullable(), unsent: z.array(z.string()).default([]) }),
 ]);
 export type WorkEvent = z.infer<typeof WorkEvent>;
 
-export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "delivered", "failed", "stopped", "unavailable"];
+export const endingWorkEvents: readonly WorkEvent["kind"][] = ["finished", "delivered", "failed", "stopped", "unavailable", "settled"];
 
 export function endsWork(event: WorkEvent): boolean {
   return endingWorkEvents.includes(event.kind);
@@ -129,6 +130,7 @@ export const WorkTask = z.object({
   title: z.string().min(1),
   issues: z.array(WorkIssue).min(1),
   merged: z.array(z.number().int().positive()).optional(),
+  closedOutside: z.array(z.number().int().positive()).optional(),
   engine: WorkEngine,
   model: z.string().min(1),
   effort: z.string().min(1),

@@ -889,6 +889,7 @@ export const migrations: readonly Migration[] = [
     `,
   },
   { version: 41, sql: `ALTER TABLE repositories ADD COLUMN alias TEXT;` },
+  { version: 42, sql: `ALTER TABLE tickets ADD COLUMN closed_outside TEXT NOT NULL DEFAULT '[]';` },
 ];
 
 function ticketVersionTriggers(table: string): string {

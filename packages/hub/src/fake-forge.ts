@@ -18,6 +18,7 @@ export interface FakePull {
 export interface FakeRepository {
   readonly pulls: Map<number, FakePull>;
   readonly issues: Map<number, "open" | "closed">;
+  readonly issueClosures: Map<number, { readonly reason: string; readonly at: string; readonly timeline: readonly object[] }>;
   readonly trees: Map<string, string[]>;
   readonly texts: Map<string, string>;
   readonly mainline: string[];
@@ -110,7 +111,7 @@ export function fakeForge(): FakeForge {
     if (found !== undefined) {
       return found;
     }
-    const created: FakeRepository = { pulls: new Map(), issues: new Map(), trees: new Map(), texts: new Map(), mainline: [], branches: new Set(), squash: true };
+    const created: FakeRepository = { pulls: new Map(), issues: new Map(), issueClosures: new Map(), trees: new Map(), texts: new Map(), mainline: [], branches: new Set(), squash: true };
     github.set(name, created);
     return created;
   };
@@ -292,10 +293,11 @@ export function fakeForge(): FakeForge {
       const sha = repository.trees.has(ref) ? ref : ref === "main" || ref === "HEAD" ? repository.mainline.at(-1) : undefined;
       return sha === undefined ? json(422, { message: `No commit found for SHA: ${ref}` }) : json(200, { sha });
     }
-    const issueMatch = /^issues\/(\d+)$/.exec(rest);
+    const issueMatch = /^issues\/(\d+)(\/timeline)?$/.exec(rest);
     if (issueMatch !== null) {
       const number = Number(issueMatch[1]);
       const state = repository.issues.get(number);
+      const closure = repository.issueClosures.get(number);
       if (state === undefined) {
         return json(404, { message: "Not Found" });
       }
@@ -304,7 +306,10 @@ export function fakeForge(): FakeForge {
         repository.issues.set(number, "closed");
         return raced ? json(422, { message: "Validation Failed" }) : json(200, { number, state: "closed" });
       }
-      return json(200, { number, state });
+      if (issueMatch[2] === "/timeline") {
+        return json(200, closure?.timeline ?? []);
+      }
+      return json(200, { number, state, state_reason: state === "closed" ? closure?.reason : null, closed_at: state === "closed" ? closure?.at : null, comments: closure?.timeline.length });
     }
     const refMatch = /^git\/refs\/heads\/(.+)$/.exec(rest);
     if (refMatch !== null && method === "DELETE") {
