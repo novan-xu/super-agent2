@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { protocolVersion, type TopicScope } from "@super-agent2/protocol";
+import { type BrainInput, protocolVersion, type TopicScope } from "@super-agent2/protocol";
 import { dot, minute, type Scorer } from "@super-agent2/routing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type HubDatabase, openDatabase } from "./database.js";
@@ -319,7 +319,7 @@ describe("routing in the hub", () => {
     const item = (await service.sendToStream(topic, text, [], { proposal }))!;
     expect(embedded.filter((input) => input === text)).toEqual([text]);
     expect(decisions(running)).toMatchObject([{
-      entry: item.entry.id, topic, placed_in: topic, owner_changed: 0,
+      entry: item.entry.id, topic, placed_in: topic, owner_changed: 0, owner_placed: 1,
       configuration: proposal.decided.configuration, best_score: proposal.decided.bestScore,
       shadow_configuration: proposal.shadow?.configuration, shadow_best_score: proposal.shadow?.bestScore,
     }]);
@@ -330,22 +330,29 @@ describe("routing in the hub", () => {
     const service = running.conversations;
     const topic = service.create().id;
     const first = service.send(topic, "alpha project plan")!;
-    await service.sendToStream(topic, "beta inside the topic", []);
-    await service.sendToStream(undefined, "a quoted gamma reply", [], { quotedMessage: first.id });
-    const brain = service.attach({ send: () => undefined, close: () => undefined });
+    const direct = (await service.sendToStream(topic, "beta inside the topic", []))!;
+    const quoted = (await service.sendToStream(undefined, "a quoted gamma reply", [], { quotedMessage: first.id }))!;
+    const inputs: BrainInput[] = [];
+    const brain = service.attach({ send: (message) => { if (message.type === "input") inputs.push(message.input); }, close: () => undefined });
     brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
     brain.receive({ type: "turn.started", conversation: topic, turn: "t", provider: "gpt", model: "test", inputs: [] });
     const card = service.askOwner(topic, "t", [{ id: "scope", prompt: "选择范围", required: true, multiple: false, options: [{ id: "a", label: "甲" }, { id: "b", label: "乙" }] }])!;
-    expect(service.answerQuestions(topic, card, [{ question: "scope", options: ["a"], text: "" }])).toBeDefined();
+    const answer = service.answerQuestions(topic, card, [{ question: "scope", options: ["a"], text: "" }])!;
+    expect(inputs.map(({ id }) => id)).toContain(answer.id);
+    expect(inputs.filter(({ id }) => id !== answer.id).map(({ id }) => id)).toEqual([first.id, direct.entry.id, quoted.entry.id]);
+    expect(inputs.find(({ id }) => id === quoted.entry.id)?.quote?.id).toBe(first.id);
+    expect(inputs.find(({ id }) => id === answer.id)?.questionResponse?.card).toBe(card);
+    for (const input of inputs) expect(input).not.toHaveProperty("routing");
     expect(decisions(running)).toEqual([]);
 
     const routed = (await service.sendToStream(undefined, "tell me more about alpha", []))!;
     expect(routed.topic.id).toBe(topic);
+    expect(inputs.at(-1)).toMatchObject({ id: routed.entry.id, routing: { placement: "existing", rule: "c" } });
     expect(decisions(running)).toEqual([{
       entry: routed.entry.id, decided_at: clock.now(), scope: "daily", candidates: 1, configuration: "model", fallback_reason: null,
       rule: "c", topic, placed_in: topic, best_topic: topic, best_score: expect.any(Number), runner_up_score: null,
       shadow_configuration: "bigram", shadow_rule: "c", shadow_topic: topic, shadow_best_topic: topic, shadow_best_score: expect.any(Number), shadow_runner_up_score: null,
-      moved_to: null, moved_at: null, owner_changed: 0,
+      moved_to: null, moved_at: null, owner_changed: 0, owner_placed: 0, brain_moved_to: null, brain_moved_at: null, brain_overridden: 0,
     }]);
     const logged = lines.filter((line) => line.startsWith("Topic routing decision "));
     expect(logged).toEqual([expect.stringContaining(`Topic routing decision ${routed.entry.id}: model rule c topic ${topic}`)]);

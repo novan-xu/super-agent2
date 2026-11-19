@@ -110,8 +110,9 @@ the hub.
 - A message sent in a topic view goes straight to that topic. A quoted reply goes to the quoted message's topic and
   gives the session the quoted message. The topic view offers quotes from its own messages, and the main stream can
   quote across topics. Answers to a question card stay in the card's topic. None of these is routed.
-- Every other message in the main stream is routed by the hub, with rules and a score and without a large-model call
-  (#143; the evaluation behind it is [routing-evaluation.md](routing-evaluation.md)). The candidates are the active
+- In the main stream the hub suggests a destination while the owner writes. Sending to the displayed or selected
+  destination counts as owner placement. When the send has no destination, the hub routes it with rules and a score
+  without a large-model call (#143, see [routing-evaluation.md](routing-evaluation.md)). The candidates are the active
   topics in the composer's scope, except System, merged topics and topics with a merge pending, most recently active
   first. In this order:
 
@@ -137,13 +138,18 @@ the hub.
   number of candidates, configuration, any fallback reason, rule, joined topic, the topic the entry was placed in, the
   best topic with the best and runner-up scores, and the shadow configuration's rule, topic and scores. Moving the entry
   later with 移到… records the destination and time beside the decision, so the owner's corrections become labels for
-  the next evaluation. The hub also logs one line per decision with the same fields.
+  the next evaluation. Brain handovers record their own destination and time. A later owner move flags that the owner
+  corrected the handover and preserves both destinations. The hub also logs one line for each initial decision.
 - In 日常 a new topic has no repository; in a repository composer it takes that repository. In all of 代码 it takes a
   repository only when the message names exactly one of the known repositories (those of the candidates and of open
   tickets, case-insensitive, as a whole word or as `owner/name`); otherwise it asks the owner which repository it
   belongs to and assigns it when the owner names it.
-- The owner can move a message to another topic with 移到…, and use a possible match in one tap. A topic session can
-  also hand a message over to another topic.
+- The owner can move a message to another topic with 移到… and use a possible match in one tap. A message the hub
+  routed carries a line naming the rule and whether it joined or opened a topic. A new topic also gets its possible
+  match's ID, title and up to 320 characters of the match's summary when there is a candidate.
+- The brain can hand a routed message over to an existing topic or open one with a title in the owner's language.
+  It does so only when the destination is clear and answers in the current topic when unsure. Owner-placed messages
+  require an explicit owner request. The hub allows each message one brain handover and omits the routing note after it.
 - The hub keeps an input in `pending_topic_inputs` while it routes it. If the hub restarts before routing completes,
   the input is routed at startup with the bigram configuration and the decision records that it was recovered.
 - A move or handover changes where the original message belongs and queues it at the destination. Pending work on that

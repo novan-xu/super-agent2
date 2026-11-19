@@ -46,6 +46,23 @@ describe("the topic seed", () => {
     expect(result.endsWith(input.text)).toBe(true);
   });
 
+  it.each([false, true])("puts the routing and candidate notes with their input (continuing: %s)", (continuing) => {
+    const routed: BrainInput = {
+      id: "routed", text: "Resume the launch", source: "owner", attachments: [],
+      routing: { placement: "new", rule: "d", candidate: { id: "launch", title: "Release", summary: "The checklist is ready." } },
+    };
+    const { text } = topicPrompt({
+      conversation: "topic", inputs: [input, routed], prepared: context,
+      capacity: 12_000, softShare: 0.15, provider: "gpt", attachments: "/tmp/attachments", continuing,
+    });
+    const note = "[hub] Message routed was routed here (no confident match, new topic). Hand over only if it clearly belongs elsewhere. If unsure, answer here.";
+    expect(text.endsWith([
+      `${continuing ? "Owner: " : ""}${input.text}\n`, note,
+      '[hub] Candidate launch "Release" — The checklist is ready.',
+      `${continuing ? "Owner: " : ""}${routed.text}`,
+    ].join("\n"))).toBe(true);
+  });
+
   it("uses the model's soft share to omit statuses, older turns, other tickets and memory in order", () => {
     const withoutStatus = build(5_500);
     expect(withoutStatus).toContain("1 topic board status line(s) omitted. Use read_topic_board");

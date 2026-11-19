@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Attachment } from "./attachments.js";
-import { ConversationId, MessageId, Provider } from "./conversations.js";
+import { ConversationId, MessageId, Provider, RoutingProposal } from "./conversations.js";
 import { QuestionAnswers } from "./questions.js";
 import { MemoryBrief } from "./memory.js";
 import { ProtocolVersion } from "./version.js";
@@ -30,6 +30,14 @@ const BrainQuote = z.object({
   attachments: z.array(BrainAttachment).optional(),
 });
 
+const BrainRouting = z.discriminatedUnion("placement", [
+  z.object({ placement: z.literal("existing"), rule: RoutingProposal.shape.decided.shape.rule }),
+  z.object({
+    placement: z.literal("new"), rule: RoutingProposal.shape.decided.shape.rule,
+    candidate: z.object({ id: ConversationId, title: z.string(), summary: z.string() }).optional(),
+  }),
+]);
+
 export const BrainInput = z.object({
   id: z.string().min(1),
   entry: MessageId.optional(),
@@ -37,6 +45,7 @@ export const BrainInput = z.object({
   text: z.string(),
   attachments: z.array(BrainAttachment).default([]),
   quote: BrainQuote.optional(),
+  routing: BrainRouting.optional(),
   questionResponse: z.object({ card: MessageId, answers: QuestionAnswers }).optional(),
   needsRepository: z.literal(true).optional(),
 });

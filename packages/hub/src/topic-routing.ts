@@ -51,7 +51,7 @@ export interface TopicRouter {
   route(message: RoutingMessage): Promise<Routing>;
   routeNow(message: RoutingMessage, reason: string): Routing;
   repositoryFor(text: string, scope: TopicScope): string | null;
-  record(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, at: number, ownerChanged: boolean): void;
+  record(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, at: number, owner: { ownerChanged: boolean; ownerPlaced: boolean }): void;
   log(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, ownerChanged: boolean): void;
   refresh(): void;
   settled(): Promise<void>;
@@ -185,8 +185,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const insertDecision = connection.prepare(`
     INSERT INTO routing_decisions (
       entry, decided_at, scope, candidates, configuration, fallback_reason, rule, topic, placed_in, best_topic, best_score, runner_up_score,
-      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score, owner_changed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score, owner_changed, owner_placed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
@@ -448,13 +448,13 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       const context = gather(message);
       return finish(context, bigramDecision(context), null, primary === "bigram" ? null : reason);
     },
-    record: (entry, placedIn, scope, routing, at, ownerChanged) => {
+    record: (entry, placedIn, scope, routing, at, { ownerChanged, ownerPlaced }) => {
       const { decided, shadow } = routing;
       insertDecision.run(
         entry, at, scope, routing.candidates, decided.configuration, routing.fallback, decided.rule, decided.topic, placedIn,
         decided.best, decided.bestScore, decided.runnerUpScore,
         shadow?.configuration ?? null, shadow?.rule ?? null, shadow?.topic ?? null, shadow?.best ?? null, shadow?.bestScore ?? null, shadow?.runnerUpScore ?? null,
-        Number(ownerChanged),
+        Number(ownerChanged), Number(ownerPlaced),
       );
     },
     log: (entry, placedIn, scope, routing, ownerChanged) => {

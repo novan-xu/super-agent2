@@ -4449,3 +4449,34 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Why:** Archived and merged topics can change while the owner writes. The fresh destination has to be visible before the draft
   can be sent again. Topic views and legacy explicit sends retain their existing direct-send behavior.
 - **Other options:** Reopen or follow the old topic automatically, or reassign the message without showing the new destination.
+
+## 2026-11-19 — Let the brain correct automatic routing (#146)
+
+- **Chosen:** Send one routing line per automatically placed input. For a new topic with a candidate, add its ID,
+  title and the first 320 Unicode characters of its existing summary, including the ellipsis if clipped. Keep the
+  protocol at version 1 and make the field optional.
+- **Why:** A short note is enough to compare the request to the current topic and the candidate. The summary
+  starts with the candidate's original context, and the hub and brain are released together.
+- **Other options:** Send complete candidate history, send only the board status, or raise the protocol version.
+
+- **Chosen:** Record preview sends as owner placements even when they agree with the preview. Keep
+  `owner_changed` for changes to the proposal. For existing rows, backfill owner placement where
+  `owner_changed` is set. Keep the previous display for rows with unknown placement and offer automatic
+  brain handover only when the original placement is known.
+- **Why:** The owner has seen the destination before sending. Older records marked only changes to the proposal,
+  so an accepted preview and an automatic decision are indistinguishable in those rows.
+- **Other options:** Continue treating ambiguous old records as automatic for brain handover, or display every older route as owner-placed.
+
+- **Chosen:** Keep the existing topic ID argument for `handover` and accept a destination object with a title
+  subject to the existing topic title limits. Require `ownerRequested: true` for an explicit owner request.
+  Require a routed message for automatic handover and enforce one brain handover per message in the hub.
+- **Why:** A new topic uses the same move and withdrawal path as an owner split. A durable guard prevents a
+  second handover after delivery, an owner move or a restart. When uncertain, the brain answers in place.
+- **Other options:** Add a separate new-topic tool, rely on the prompt to enforce the guard, or request a separate routing check.
+
+- **Chosen:** Record the brain destination and time separately when the message has a routing row. Keep the owner's destination
+  and time in the existing move fields and flag a later owner correction of the brain, including in the same
+  clock tick. Leave the actor of preexisting move records as originally stored.
+- **Why:** Brain corrections and owner corrections are different signals for evaluation. Both remain countable
+  after the owner moves a message again. Older move records did not distinguish the actor.
+- **Other options:** Overwrite the brain's correction on the next move or add a separate event table for all moves.

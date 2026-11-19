@@ -914,9 +914,11 @@ describe("topic corrections across the brain link", () => {
     hub.conversations.archive(destination.id);
     const request = await sayInStream({ topic: source.id, text: "Please pass my message to planning" });
     const started = await programs.gpt.next();
+    expect(started.text).not.toContain("was routed here");
     const falseTurn = { ...started.handle.options, tools: { ...started.handle.options.tools!, turn: "unrelated-turn" } };
-    expect(await callTool(falseTurn, "handover", { destination: destination.id })).toContain("An active turn");
-    expect(await callTool(started.handle.options, "handover", { destination: destination.id })).toContain(request.entry.id);
+    expect(await callTool(falseTurn, "handover", { destination: destination.id, ownerRequested: true })).toContain("An active turn");
+    expect(await callTool(started.handle.options, "handover", { destination: destination.id })).toContain("eligible for handover");
+    expect(await callTool(started.handle.options, "handover", { destination: destination.id, ownerRequested: true })).toContain(request.entry.id);
     await programs.gpt.next("interrupt");
     expect(detail(destination.id).conversation.topicState).toBe("active");
     started.handle.finish();
@@ -925,6 +927,55 @@ describe("topic corrections across the brain link", () => {
     expect(relayed.text).toContain("Please pass my message to planning");
     expect(detail(destination.id).entries[0]?.id).toBe(request.entry.id);
     expect(detail(source.id).entries).toHaveLength(0);
+  });
+
+  it("hands a routed input over to a titled new topic once and keeps the owner's later correction", async () => {
+    const hub = await startHub();
+    startBrain();
+    const source = await newConversation();
+    const request = await sayInStream({ text: "Plan travel" });
+    expect(request.topic.id).toBe(source.id);
+    const started = await programs.gpt.next();
+    expect(started.text).toContain(`Message ${request.entry.id} was routed here (short reply, existing topic)`);
+    expect(started.text).toContain("If unsure, answer here.");
+    expect(await callTool(started.handle.options, "handover", { destination: { title: " " } })).toContain("valid destination");
+
+    const title = "旅行计划";
+    clock.advance(1);
+    const handedOverAt = clock.now();
+    expect(await callTool(started.handle.options, "handover", { destination: { title: `  ${title}  ` } })).toContain(request.entry.id);
+    await programs.gpt.next("interrupt");
+    const destination = hub.conversations.list().find((topic) => topic.title === title)!;
+    expect(destination).toMatchObject({ title, repository: null });
+    expect(detail(destination.id).turns).toEqual([]);
+    started.handle.finish();
+
+    const delivered = await programs.gpt.next();
+    expect(delivered.handle.options.tools?.conversation).toBe(destination.id);
+    expect(delivered.text).toContain("Plan travel");
+    expect(delivered.text).not.toContain("was routed here");
+    expect(detail(source.id).turns).toMatchObject([{ state: "interrupted" }]);
+    expect(detail(destination.id).entries).toMatchObject([{ id: request.entry.id, taken: true }]);
+    expect(await callTool(delivered.handle.options, "handover", { destination: source.id, message: request.entry.id })).toContain("eligible for handover");
+    expect(await callTool(delivered.handle.options, "handover", { destination: { title: "Another topic" }, ownerRequested: true })).toContain("eligible for handover");
+
+    const record = () => hub.database.connection.prepare(
+      "SELECT placed_in, brain_moved_to, brain_moved_at, moved_to, moved_at, brain_overridden FROM routing_decisions WHERE entry = ?",
+    ).get(request.entry.id);
+    expect(record()).toEqual({ placed_in: source.id, brain_moved_to: destination.id, brain_moved_at: handedOverAt, moved_to: null, moved_at: null, brain_overridden: 0 });
+    const restored = await owner(`/api/conversations/${destination.id}/move`, {
+      method: "POST", body: JSON.stringify({ message: request.entry.id, destination: source.id }),
+    });
+    expect(restored.status).toBe(200);
+    await programs.gpt.next("interrupt");
+    delivered.handle.finish();
+    const returned = await programs.gpt.next();
+    expect(returned.handle.options.tools?.conversation).toBe(source.id);
+    expect(returned.text).not.toContain("was routed here");
+    expect(await callTool(returned.handle.options, "handover", { destination: destination.id, ownerRequested: true })).toContain("eligible for handover");
+    expect(record()).toEqual({
+      placed_in: source.id, brain_moved_to: destination.id, brain_moved_at: handedOverAt, moved_to: source.id, moved_at: clock.now(), brain_overridden: 1,
+    });
   });
 
   it("finishes both active turns before merging and seeds the queued turn with the combined history", async () => {
