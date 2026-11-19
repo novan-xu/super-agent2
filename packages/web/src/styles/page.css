@@ -247,6 +247,8 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .srow-ctl--wide .field { flex: 1 1 auto; }
 .srow-ctl .field { width: auto; max-width: 100%; }
 .srow-facts { color: var(--fg-2); font-size: var(--text-sm); gap: var(--space-3); }
+.repository-tabs { justify-self: start; }
+.repository-actions { flex-wrap: wrap; }
 .chip--bad { color: var(--danger); border-color: transparent; background: var(--danger-soft); }
 .accent-opt--amber { --sw: #f2b705; }
 .accent-opt--teal { --sw: #3fb68b; }

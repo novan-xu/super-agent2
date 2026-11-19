@@ -247,8 +247,9 @@ export class PageController {
   }
 
   async loadSettings(): Promise<void> {
+    const before = this.store.getState().settings;
     const answer = await this.options.api.settings();
-    if (answer.ok) {
+    if (answer.ok && this.store.getState().settings === before) {
       this.store.dispatch({ type: "settings", settings: answer.value });
     }
   }
@@ -286,23 +287,28 @@ export class PageController {
     return true;
   }
 
-  async setOrder(order: readonly Provider[]): Promise<boolean> {
-    const answer = await this.options.api.setOrder(order);
-    if (!answer.ok) {
-      this.options.onFailure(answer.error);
-      return false;
-    }
-    this.store.dispatch({ type: "settings", settings: answer.value });
-    return true;
+  setOrder(order: readonly Provider[]): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setOrder(order));
   }
 
-  async setAccount(repository: string, account: GitHubAccount): Promise<boolean> {
-    const answer = await this.options.api.setAccount(repository, account);
+  setAccount(repository: string, account: GitHubAccount): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setAccount(repository, account));
+  }
+
+  setPinned(repository: string, pinned: boolean): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setPinned(repository, pinned));
+  }
+
+  private async changeSettings(update: HubApi["settings"]): Promise<boolean> {
+    const before = this.store.getState().settings;
+    const answer = await update();
     if (!answer.ok) {
       this.options.onFailure(answer.error);
       return false;
     }
-    this.store.dispatch({ type: "settings", settings: answer.value });
+    if (this.store.getState().settings === before) {
+      this.store.dispatch({ type: "settings", settings: answer.value });
+    }
     return true;
   }
 

@@ -138,7 +138,13 @@ export function App() {
   const [rearranging, setRearranging] = useState(false);
   const rearrangeInFlight = useRef(false);
   const [workTicket, setWorkTicket] = useState<number | null>(null);
+  const pinnedRepositories = useMemo(() => page.settings?.repositories.filter((row) => row.pinned).map((row) => row.repository) ?? [], [page.settings?.repositories]);
   const selectWorkRepository = useCallback((repository: string | null | undefined) => { setWorkRepository(repository); setWorkTopic(null); }, []);
+  useEffect(() => {
+    if (typeof workRepository !== "string" || page.settings === null) return;
+    const current = pinnedRepositories.find((name) => name.toLowerCase() === workRepository.toLowerCase());
+    if (current !== workRepository) selectWorkRepository(current);
+  }, [page.settings, pinnedRepositories, selectWorkRepository, workRepository]);
   const workScope = useMemo(() => workbenchScope(workRepository), [workRepository]);
   const inWorkbench = route.view === "workbench";
   const conversationId = inWorkbench ? workTopic : route.view === "conversations" ? route.conversation : null;
@@ -175,6 +181,11 @@ export function App() {
       void controller.loadSettings();
     }
   }, [controller, route.view, page.settings, page.status]);
+
+  const inRepositories = route.view === "settings" && "section" in route && route.section === "repositories";
+  useEffect(() => {
+    if (inRepositories && page.status === "open") void hubApi.refreshRepositories();
+  }, [inRepositories, page.status]);
 
   useEffect(() => {
     if (route.view === "history") {
@@ -295,6 +306,7 @@ export function App() {
       setMachineStorage: (name, storage) => controller.setMachineStorage(name, storage),
       setOrder: (order) => controller.setOrder(order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
+      setPinned: (repository, pinned) => controller.setPinned(repository, pinned),
       setTable: (table) => controller.setTable(table),
       setAppearance: (change) => {
         writeAppearance(storageOf(), change);
@@ -362,6 +374,7 @@ export function App() {
         <CanvasWorkbench
           tickets={page.tickets.open}
           topics={page.list}
+          pinnedRepositories={pinnedRepositories}
           waiting={page.waiting}
           actions={cardActions}
           repository={workRepository}

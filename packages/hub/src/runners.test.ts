@@ -264,6 +264,7 @@ describe("the runner's path at the front door", () => {
     const asked: { url: string; authorization: string | null }[] = [];
     let answer = 200;
     const forgeFetch: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname === "/user/repos") return Response.json([]);
       asked.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") });
       return answer === 200 ? new Response(new Uint8Array([31, 139, 8, 0, 1, 2, 3]), { status: 200 }) : new Response("no", { status: answer });
     };

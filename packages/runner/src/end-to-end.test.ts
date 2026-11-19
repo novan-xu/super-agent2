@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Hub, type HubOptions, startHub } from "@super-agent2/hub";
-import { assertion, keySet, serviceClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "@super-agent2/hub/testing";
+import { assertion, emptyRepositoryForge, keySet, serviceClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "@super-agent2/hub/testing";
 import { testCredentials } from "@super-agent2/hub/testing";
 import { startTestHub } from "@super-agent2/hub/testing";
 import type { OpenOptions, ProgramEvent, ProgramHandle, ProgramListener, SteerResult, WorkerAdapter } from "@super-agent2/programs";
@@ -144,6 +144,7 @@ function hubOptions(port: number, version: string): HubOptions {
     clock,
     targets: [],
     credentials: testCredentials,
+    forgeFetch: emptyRepositoryForge,
     machinePollMilliseconds: 10,
   };
 }

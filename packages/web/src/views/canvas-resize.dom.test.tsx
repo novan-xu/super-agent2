@@ -9,7 +9,7 @@ const noop = () => undefined;
 const first = ticket(1, { repository: "org/one", state: "working", work: workStatus() });
 const second = ticket(2, { repository: "org/one", waits: [{ ticket: 1, deployment: false, waived: false }], waitsFor: [1] });
 const props: CanvasWorkbenchProps = {
-  tickets: [first, second], topics: [], waiting: { ...initialWaiting, known: true },
+  tickets: [first, second], topics: [], pinnedRepositories: ["org/one"], waiting: { ...initialWaiting, known: true },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
   panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
@@ -75,6 +75,14 @@ describe("workbench panel resizing", () => {
     await act(async () => root.render(<CanvasWorkbench {...props} focus="start:1" selectTicket={selectTicket} selectRepository={selectRepository} />));
     expect(selectTicket).toHaveBeenCalledWith(1);
     expect(selectRepository).toHaveBeenCalledWith("org/one");
+  });
+
+  it("opens a linked ticket in all when its repository is archived", async () => {
+    const selectTicket = vi.fn();
+    const selectRepository = vi.fn();
+    await act(async () => root.render(<CanvasWorkbench {...props} pinnedRepositories={[]} focus="start:1" selectTicket={selectTicket} selectRepository={selectRepository} />));
+    expect(selectTicket).toHaveBeenCalledWith(1);
+    expect(selectRepository).toHaveBeenCalledWith(undefined);
   });
 
   it("supports pointer and keyboard resizing, persistence, resize clamping and reset", async () => {

@@ -4,6 +4,7 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App.js";
+import { settingsSnapshot } from "../live/fixtures.js";
 
 const at = Date.UTC(2026, 10, 19);
 const repositories = ["owner/one", "owner/two"];
@@ -79,7 +80,12 @@ afterEach(async () => {
 async function open(path: string) {
   window.history.replaceState(null, "", path);
   await act(async () => root.render(<StrictMode><App /></StrictMode>));
-  await act(async () => TestSocket.current.open());
+  await act(async () => {
+    TestSocket.current.open();
+    TestSocket.current.deliver({ type: "settings", settings: settingsSnapshot({
+      repositories: repositories.map((repository) => ({ repository, account: "novan-xu", chosen: false, pinned: true })),
+    }) });
+  });
 }
 
 function lastWatch() {
@@ -196,4 +202,54 @@ describe("switching conversation streams", () => {
     }
     expect(errors).not.toHaveBeenCalled();
   });
+});
+
+it("starts on archived repositories and updates the workbench rail after pinning and unpinning", async () => {
+  const archived = "owner/empty";
+  let snapshot = settingsSnapshot({
+    repositories: [
+      { repository: "owner/one", account: "novan-xu", chosen: false, pinned: true },
+      { repository: archived, account: "nuofan-island", chosen: false, pinned: false },
+    ],
+  });
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/repositories/pin") {
+      const { repository, pinned } = JSON.parse(String(init?.body));
+      snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, pinned } : row) };
+      return Response.json(snapshot);
+    }
+    if (path === "/api/settings") return Response.json(snapshot);
+    if (path === "/api/repositories/refresh") return Response.json({}, { status: 202 });
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  window.history.replaceState(null, "", "/settings/repositories");
+  await act(async () => root.render(<App />));
+  await act(async () => {
+    TestSocket.current.open();
+    TestSocket.current.deliver({ type: "settings", settings: snapshot });
+  });
+
+  const visit = async (path: string) => act(async () => host.querySelector<HTMLAnchorElement>(`a[href="${path}"]`)!.click());
+  const toggle = async (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label} ${archived}"]`)!.click());
+  const titles = () => [...host.querySelectorAll(".srow-title")].map((row) => row.textContent);
+  const rail = () => [...host.querySelectorAll(".wb-repos .od-truncate")].map((row) => row.textContent);
+  const archivedTab = () => host.querySelector(".repository-tabs button:last-child");
+  expect(fetcher).toHaveBeenCalledWith("/api/repositories/refresh", expect.objectContaining({ method: "POST" }));
+  expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
+  expect(titles()).toEqual([archived]);
+  await toggle("置顶");
+  expect(titles()).toEqual([]);
+  await visit("/workbench");
+  expect(rail()).toContain(archived);
+
+  await visit("/settings");
+  await visit("/settings/repositories");
+  expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => host.querySelector<HTMLButtonElement>(".repository-tabs button:first-child")!.click());
+  expect(titles()).toEqual(["owner/one", archived]);
+  await toggle("取消置顶");
+  expect(titles()).toEqual(["owner/one"]);
+  await visit("/workbench");
+  expect(rail()).not.toContain(archived);
 });

@@ -81,7 +81,7 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function start(options: { tokens?: AccessServiceTokens; release?: boolean } = {}): Promise<Hub> {
+async function start(options: { tokens?: AccessServiceTokens; release?: boolean; forgeFetch?: typeof fetch } = {}): Promise<Hub> {
   hub = await startTestHub({
     config: { ...testConfig(dataDir), accessRunnerAudience: runnerAudience, ...(options.release === false ? {} : { version, sourceRepository: "novan-xu/super-agent2" }) },
     keySource: staticKeySource(keySet(key)),
@@ -91,6 +91,7 @@ async function start(options: { tokens?: AccessServiceTokens; release?: boolean 
     gate: () => ({ kind: "allow" as const }),
     machinePollMilliseconds: 10,
     report: () => undefined,
+    ...(options.forgeFetch === undefined ? {} : { forgeFetch: options.forgeFetch }),
     ...(options.tokens === undefined ? {} : { serviceTokens: options.tokens }),
   });
   return hub;
@@ -469,7 +470,7 @@ describe("the other settings", () => {
       { account: "nuofan-island", configured: true },
     ]);
     expect(snapshot.brain).toEqual({ linked: false, order: ["claude", "gpt", "deepseek"], providers: [] });
-    expect(snapshot.repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false }]);
+    expect(snapshot.repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false, pinned: false }]);
     expect((await fetch(`${base(running)}/api/settings`)).status).toBe(403);
   });
 
@@ -513,10 +514,55 @@ describe("the other settings", () => {
   it("corrects a repository's account, and forgets the correction when it matches the owner", async () => {
     const running = await start();
     const response = await owner(running, "/api/repositories/account", "PUT", { repository: "novan-xu/super-agent2", account: "nuofan-island" });
-    expect(SettingsSnapshot.parse(await response.json()).repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "nuofan-island", chosen: true }]);
+    expect(SettingsSnapshot.parse(await response.json()).repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "nuofan-island", chosen: true, pinned: false }]);
     expect(running.repositories.accountOf("Novan-Xu/Super-Agent2")).toBe("nuofan-island");
     await owner(running, "/api/repositories/account", "PUT", { repository: "novan-xu/super-agent2", account: "novan-xu" });
-    expect(running.repositories.list()).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false }]);
+    expect(running.repositories.list()).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false, pinned: false }]);
     expect((await owner(running, "/api/repositories/account", "PUT", { repository: "x", account: "novan-xu" })).status).toBe(400);
+  });
+
+  it("authenticates, validates, publishes and persists repository pins", async () => {
+    const running = await start();
+    const path = "/api/repositories/pin";
+    const request = { repository: "Novan-Xu/Super-Agent2", pinned: true };
+    expect((await fetch(`${base(running)}${path}`, { method: "POST" })).status).toBe(403);
+    expect((await owner(running, path, "POST", request, { origin: "https://elsewhere.example" })).status).toBe(403);
+    expect((await owner(running, path, "POST", { ...request, pinned: "true" })).status).toBe(400);
+    expect((await owner(running, path, "POST", { ...request, repository: "org/unknown" })).status).toBe(404);
+
+    const updates: SettingsSnapshot[] = [];
+    const unsubscribe = running.settings.subscribe((snapshot) => updates.push(snapshot));
+    const saved = await owner(running, path, "POST", request);
+    expect(saved.status).toBe(200);
+    expect(SettingsSnapshot.parse(await saved.json()).repositories[0]?.pinned).toBe(true);
+    expect(updates.at(-1)?.repositories[0]?.pinned).toBe(true);
+    unsubscribe();
+    await running.close();
+    hub = undefined;
+
+    const restarted = await start();
+    expect(restarted.settings.snapshot().repositories[0]?.pinned).toBe(true);
+    const removed = await owner(restarted, path, "POST", { ...request, pinned: false });
+    expect(SettingsSnapshot.parse(await removed.json()).repositories[0]?.pinned).toBe(false);
+  });
+
+  it("discovers repositories on start and refreshes the catalog for an owner request", async () => {
+    const path = "/api/repositories/refresh";
+    let name = "novan-xu/First";
+    const running = await start({
+      forgeFetch: async (input) => {
+        const affiliation = new URL(String(input)).searchParams.get("affiliation");
+        return Response.json(affiliation === "owner"
+          ? [{ full_name: name, owner: { login: "novan-xu" }, archived: false, pushed_at: null, default_branch: "main" }]
+          : []);
+      },
+    });
+    const names = () => running.settings.snapshot().repositories.map((row) => row.repository);
+    await expect.poll(names).toContain("novan-xu/First");
+    name = "novan-xu/Second";
+    clock.advance(60_000);
+    expect((await fetch(`${base(running)}${path}`, { method: "POST" })).status).toBe(403);
+    expect((await owner(running, path, "POST", {})).status).toBe(202);
+    await expect.poll(names).toEqual(["novan-xu/Second", "novan-xu/super-agent2"]);
   });
 });

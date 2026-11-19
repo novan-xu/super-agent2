@@ -16,6 +16,7 @@ import type { CardActions } from "./WorkbenchView.js";
 export interface CanvasWorkbenchProps {
   readonly tickets: readonly Ticket[];
   readonly topics: readonly Conversation[];
+  readonly pinnedRepositories: readonly string[];
   readonly waiting: WaitingState;
   readonly actions: CardActions;
   readonly repository: string | null | undefined;
@@ -76,27 +77,29 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     for (const card of waiting.cards) if (card.kind !== "hold") map.set(card.ticket.id, card.ticket);
     return [...map.values()];
   }, [tickets, waiting.cards]);
-  const repositories = useMemo(() => [...new Map([...all, ...topics].flatMap(({ repository: name }) => name === null ? [] : [[name.toLowerCase(), name] as const])).values()].sort((a, b) => a.localeCompare(b)), [all, topics]);
+  const repositories = useMemo(() => [...props.pinnedRepositories].sort((a, b) => a.localeCompare(b)), [props.pinnedRepositories]);
   const canvas = useMemo(() => canvasOf(all, repository, new Set(stuck.keys()), new Map([...starts].map(([id, card]) => [id, card.before.map((before) => before.id)]))), [all, repository, stuck, starts]);
   useEffect(() => {
     if (props.focus === null || !waiting.known) return;
+    const scopeFor = (name: string | null | undefined) =>
+      name == null ? name : repositories.find((pinned) => pinned.toLowerCase() === name.toLowerCase());
     const card = waiting.cards.find((entry) => entry.key === props.focus);
     if (card?.kind === "hold") {
       props.selectRepository(undefined);
       window.setTimeout(() => document.getElementById(`card-${card.key}`)?.scrollIntoView({ block: "center" }), 0);
     } else if (card !== undefined) {
-      props.selectRepository(card.ticket.repository);
+      props.selectRepository(scopeFor(card.ticket.repository));
       if (card.kind === "start") setPopup(card.ticket.id);
       else { props.selectTicket(card.ticket.id); setPane("panel"); }
     } else if (/^start:[1-9][0-9]*$/.test(props.focus)) {
       const id = Number(props.focus.slice(6));
-      props.selectRepository(tickets.find((ticket) => ticket.id === id)?.repository ?? null);
+      props.selectRepository(scopeFor(tickets.find((ticket) => ticket.id === id)?.repository));
       props.selectTicket(id);
       setPane("panel");
     }
     const timer = window.setTimeout(props.focused, 1000);
     return () => window.clearTimeout(timer);
-  }, [props.focus, props.focused, props.selectRepository, props.selectTicket, tickets, waiting]);
+  }, [props.focus, props.focused, props.selectRepository, props.selectTicket, repositories, tickets, waiting]);
   const holds = waiting.cards.filter((card) => card.kind === "hold");
   const activeStart = popup === null ? undefined : starts.get(popup);
   const close = () => { dialog.current?.close(); setPopup(null); source.current?.focus(); };
