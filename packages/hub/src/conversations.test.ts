@@ -437,7 +437,7 @@ describe("the topic stream", () => {
       { scope: "code", candidates: 2, rule: "d", topic: null, placed_in: pending?.topic.id },
     ]);
     expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
-    expect(openTicket(running, pending?.topic.id).conversation).not.toBe(pending?.topic.id);
+    expect(openTicket(running, pending?.topic.id).conversation).toBe(pending?.topic.id);
     expect(openTicket(running, daily, "owner/project").conversation).toBe(daily);
     expect(running.conversations.get(daily)?.repository).toBe("owner/project");
   });
@@ -638,8 +638,12 @@ describe("the topic stream", () => {
     const unrelated = running.conversations.create();
     const conflicting = openTicket(running, topic.id, "owner/other");
     expect(original.conversation).toBe(topic.id);
-    expect(conflicting.conversation).not.toBe(topic.id);
-    expect(running.conversations.get(conflicting.conversation ?? "")?.repository).toBe("owner/other");
+    expect(conflicting).toMatchObject({ conversation: topic.id, repository: "owner/other" });
+    expect(running.conversations.get(topic.id)?.repository).toBe("owner/project");
+    running.conversations.tell(conflicting.id, "Cross-repository notice", "[hub] Cross-repository notice");
+    const stream = (repository: string) => running.conversations.stream(undefined, undefined, repository).entries;
+    expect(stream("owner/project")).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: topic.id }), entry: expect.objectContaining({ text: "Cross-repository notice" }) }));
+    expect(stream("owner/other")).toEqual([]);
     expect(running.conversations.tell(original.id, "Ticket notice", "[hub] Ticket notice")).toBe(topic.id);
     expect(running.conversations.entries(unrelated.id)).toEqual([]);
 
@@ -929,7 +933,7 @@ describe("topic context", () => {
 });
 
 describe("topic corrections and archive policy", () => {
-  it("keeps repository-less tasks together in daily, including repairs and work requested in unassigned code", async () => {
+  it("keeps repository-less tasks and their repairs in the filing topic", async () => {
     const hub = await start();
     const daily = hub.conversations.create().id;
     const first = openTicket(hub, daily);
@@ -941,9 +945,10 @@ describe("topic corrections and archive policy", () => {
     expect(repair).toMatchObject({ ok: true, ticket: { conversation: daily, repository: null } });
     const pending = (await hub.conversations.sendToStream(undefined, "A code request", [], { scope: { kind: "code" }, newTopic: true }))!.topic.id;
     const task = openTicket(hub, pending);
-    expect(task.conversation).not.toBe(pending);
-    expect(hub.conversations.get(task.conversation!)?.repository).toBeNull();
-    expect(hub.conversations.entries(pending).filter((entry) => entry.kind === "notice" && entry.destination === task.conversation)).toHaveLength(1);
+    expect(task.conversation).toBe(pending);
+    expect(hub.conversations.get(pending)).toMatchObject({ repository: null, needsRepository: true });
+    expect(hub.conversations.entries(pending).filter((entry) => entry.kind === "notice"))
+      .toMatchObject([{ ticket: task.id, start: true }]);
     const project = hub.conversations.create().id;
     const repositoryTask = openTicket(hub, project, "owner/project");
     expect(repositoryTask.conversation).toBe(project);
@@ -963,7 +968,7 @@ describe("topic corrections and archive policy", () => {
     const ticket = openTicket(hub, topic, "owner/project");
     const other = openTicket(hub, conflict, "owner/project");
     expect(ticket.conversation).toBe(topic);
-    expect(other.conversation).not.toBe(conflict);
+    expect(other.conversation).toBe(conflict);
     expect(service.get(conflict)?.repository).toBeNull();
     expect(service.historyRevision()).toBeGreaterThan(revision);
     expect(service.stream(undefined, undefined, { kind: "repository", repository: "owner/project" }).entries).toContainEqual(expect.objectContaining({ entry: expect.objectContaining({ id: entry.id }) }));

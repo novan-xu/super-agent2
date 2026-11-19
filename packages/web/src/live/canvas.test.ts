@@ -27,6 +27,17 @@ describe("the workbench canvas", () => {
     expect(scoped.find((node) => node.ticket.id === 2)?.reference).toBe(true);
   });
 
+  it("lists tickets by their own repository even when they share a filing topic", () => {
+    const conversation = "filing-topic";
+    const code = ticket(1, { repository: "a/one", conversation });
+    const other = ticket(2, { repository: "b/two", conversation });
+    const daily = ticket(3, { repository: null, conversation });
+    for (const current of [code, other, daily]) {
+      const canvas = canvasOf([code, other, daily], current.repository);
+      expect(canvas.ready.flat().map(({ ticket: entry }) => entry.id)).toEqual([current.id]);
+    }
+  });
+
   it("puts a chain that asks the owner in 等你 and excludes waived edges", () => {
     const first = ticket(1, { state: "working" });
     const second = ticket(2, { waitsFor: [1], waits: [{ ticket: 1, deployment: false, waived: true }] });

@@ -38,15 +38,20 @@ interface TopicCorrectionsOptions {
   readonly saveSummary: (id: string) => void;
 }
 
-export function createTopicCorrections(options: TopicCorrectionsOptions) {
-  const { connection } = options.database;
-  const { clock } = options;
-  const canonical = connection.prepare(`
+export function createTopicResolver(database: HubDatabase): (id: string) => string | undefined {
+  const canonical = database.connection.prepare(`
     WITH RECURSIVE chain(id, target) AS (
       SELECT id, merged_into FROM conversations WHERE id = ?
       UNION ALL SELECT c.id, c.merged_into FROM conversations c JOIN chain ON c.id = chain.target
     ) SELECT id FROM chain WHERE target IS NULL
   `);
+  return (id) => Id.safeParse(canonical.get(id)).data?.id;
+}
+
+export function createTopicCorrections(options: TopicCorrectionsOptions) {
+  const { connection } = options.database;
+  const { clock } = options;
+  const resolve = createTopicResolver(options.database);
   const listAliases = connection.prepare("SELECT id AS source, merged_into AS destination FROM conversations WHERE merged_into IS NOT NULL");
   const selectOwner = connection.prepare("SELECT id, conversation_id, turn_id, delivery_id FROM conversation_entries WHERE id = ? AND kind = 'owner'");
   const selectInput = connection.prepare(`
@@ -130,7 +135,6 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
   }
 
-  const resolve = (id: string): string | undefined => Id.safeParse(canonical.get(id)).data?.id;
   const pending = (topic: string) => mergeOf.get(topic, topic) !== undefined;
   const withdraw = ({ source, input }: z.infer<typeof Transfer>) => options.send({ type: "input.withdraw", conversation: source, input });
   const gates = () => {

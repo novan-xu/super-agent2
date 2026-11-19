@@ -46,6 +46,8 @@ function request(number = 7, overrides: Partial<TicketToOpen> = {}): TicketToOpe
   };
 }
 
+const writing: Partial<TicketToOpen> = { kind: "writing", repository: null, issues: [] };
+
 describe("tickets", () => {
   it("opens a pending ticket with its issue, records that it was filed, and announces it", () => {
     const database = open();
@@ -77,6 +79,51 @@ describe("tickets", () => {
     expect(ticket.issues.map((issue) => issue.number)).toEqual([7]);
     expect(tickets.moves(ticket.id)).toEqual([{ ticket: ticket.id, seq: 1, from: null, to: "pending", reason: null, at: clock.now() }]);
     expect(seen).toEqual([ticket]);
+  });
+
+  it.each([
+    { name: "its repository topic", topicRepository: repository, finalRepository: repository },
+    { name: "a claimable daily topic", topicRepository: null, finalRepository: repository },
+    { name: "a daily topic with repository-free work", topicRepository: null, finalRepository: null, existingTask: true },
+    { name: "a topic for another repository", topicRepository: "owner/other", finalRepository: "owner/other" },
+    { name: "a code topic filing repository-free work", topicRepository: repository, finalRepository: repository, repositoryFree: true },
+  ])("keeps a new ticket in $name", ({ topicRepository, finalRepository, existingTask, repositoryFree }) => {
+    const database = open();
+    const conversation = storeTopic(database, clock.now(), "Filing topic", { repository: topicRepository });
+    const tickets = createTicketService({ database, clock });
+    if (existingTask === true) tickets.open(request(1, { ...writing, conversation }));
+
+    const ticket = tickets.open(request(2, { ...(repositoryFree === true ? writing : {}), conversation }));
+
+    expect(ticket).toMatchObject({ conversation, repository: repositoryFree === true ? null : repository });
+    expect(database.connection.prepare("SELECT id, repository FROM conversations").all()).toEqual([{ id: conversation, repository: finalRepository }]);
+  });
+
+  it("follows a merged filing topic to the final destination", () => {
+    const database = open();
+    const source = storeTopic(database, clock.now(), "Source");
+    const intermediate = storeTopic(database, clock.now(), "Intermediate");
+    const destination = storeTopic(database, clock.now(), "Destination", { repository: "owner/other" });
+    const merge = database.connection.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?");
+    merge.run(intermediate, source);
+    merge.run(destination, intermediate);
+    const tickets = createTicketService({ database, clock });
+
+    expect(tickets.open(request(1, { conversation: source }))).toMatchObject({ conversation: destination, repository });
+    expect(database.connection.prepare("SELECT count(*) AS count FROM conversations").get()).toEqual({ count: 3 });
+  });
+
+  it("uses a predecessor's topic for a legacy ticket without one", () => {
+    const database = open();
+    const conversation = storeTopic(database, clock.now(), "Code", { repository });
+    const tickets = createTicketService({ database, clock });
+    const first = tickets.open(request(1, { conversation }));
+    const later = tickets.open(request(2, { conversation, waitsFor: [first.id] }));
+    database.connection.prepare("UPDATE tickets SET conversation_id = NULL WHERE id = ?").run(later.id);
+
+    expect(tickets.topic(later.id)).toBe(conversation);
+    expect(tickets.get(later.id)?.conversation).toBe(conversation);
+    expect(database.connection.prepare("SELECT id FROM conversations").all()).toEqual([{ id: conversation }]);
   });
 
   it("keeps a chain's issues in working order and the tickets it waits for", () => {
