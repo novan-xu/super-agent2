@@ -287,7 +287,9 @@ describe("start cards in 工作台", () => {
         }),
       ),
     );
-    expect(html).toContain('<p class="card-title">翻译一则通知</p>');
+    expect(html).toContain('<span class="mono wb-ticket-number">#1</span>');
+    expect(html).toContain('<!-- -->翻译一则通知</p>');
+    expect(html).toContain('aria-label="翻译一则通知 #1"');
     expect(html).toContain("把通知译成英文");
     expect(html).toContain("写作");
     expect(html).not.toContain("chip--mono");

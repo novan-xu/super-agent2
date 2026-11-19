@@ -32,6 +32,8 @@ describe("workbench canvas", () => {
     expect(rail.indexOf("org/zzz")).toBeLessThan(rail.indexOf("日常"));
     expect(html).toContain("Repository conversation");
     expect(html).toContain("wb-card--pending");
+    expect(html).toContain('aria-label="工作 1 #1"');
+    expect(html).toContain('<span class="mono wb-ticket-number">#2</span>');
     expect(html).toContain("在 #1 工作 1 之后");
   });
 
@@ -61,5 +63,11 @@ describe("workbench canvas", () => {
     expect(html).toContain("已排队");
     expect(html).toContain("等 #1 合并");
     expect(html).not.toContain("wb-card--pending");
+  });
+  it("shows ticket numbers on reference cards too", () => {
+    const predecessor = ticket(1, { repository: "org/other", state: "working", work: workStatus() });
+    const html = renderToStaticMarkup(<CanvasWorkbench {...props} tickets={[predecessor, second]} repository="org/one" waiting={{ ...initialWaiting, known: true }} />);
+    expect(html).toContain('class="wb-card wb-card--reference" aria-label="工作 1 #1"');
+    expect(html).toContain('<span class="mono wb-ticket-number">#1</span>');
   });
 });
