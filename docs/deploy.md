@@ -72,7 +72,7 @@ It runs in the foreground, prints each step and ends with its result. It needs n
 3. stops hub and brain, and backs up the hub's database into the release's folder with SQLite's `VACUUM INTO`;
 4. switches: the old images become `previous`, the new ones `current`, `src` becomes `src.previous`, and the release's
    `deploy.sh` and `compose.yaml` are installed;
-5. starts the hub and waits until `/health` answers with the new commit, then starts the brain and waits until it is
+5. starts the target release’s other default Compose services, then the hub and waits until `/health` answers with the new commit; starts the brain and waits until it is
    linked;
 6. on failure goes back: stops both, restores the database from the backup when the new hub left it at a higher
    migration than the previous hub knows (the replaced files are kept), puts back the previous images, source and deploy
@@ -87,6 +87,8 @@ bash /share/Container/superagent2/deploy.sh rollback
 It finds the release that switched the running version in, restores the database backed up then if the running hub
 added migrations since, and starts the previous images and source. To only start or stop what is there:
 `deploy.sh up`, `deploy.sh stop`, and `deploy.sh health` to check.
+
+Release and rollback invoke the installed version’s internal `start-services <commit>` entry point after switching deploy files. Keep that entry point compatible in future versions. For older versions without it, the invoking script starts the default Compose services itself. Startup fails if any default service is not running. An already installed script from before this mechanism cannot use it until a release has installed this version; that first release still uses the old script’s startup logic.
 
 To release a commit that is not on GitHub, upload its archive first. From a clone, with `C` the commit:
 

@@ -262,10 +262,12 @@ healthy() {
 }
 
 start_services() {
-  local expected=$1
-  if compose config --services | grep -qx converter; then
-    compose up -d --no-deps converter || return 1
-  fi
+  local expected=$1 services service running
+  services=$(compose config --services) || return 1
+  for service in $services; do
+    case "$service" in hub | brain) continue ;; esac
+    compose up -d --no-deps "$service" || return 1
+  done
   compose up -d --no-deps hub || return 1
   if ! wait_for_hub "$expected"; then
     say "the hub on 127.0.0.1:$hub_port did not answer its health check${expected:+ as $expected}"
@@ -278,6 +280,23 @@ start_services() {
     return 1
   fi
   say "the brain is linked to the hub"
+  running=$(compose ps --services --status running) || return 1
+  for service in $services; do
+    if ! printf '%s\n' "$running" | grep -qxF -- "$service"; then
+      say "the service $service is not running"
+      return 1
+    fi
+  done
+}
+
+start_installed_services() {
+  local expected=$1
+  if grep -qE '^[[:space:]]*start-services\)' "$root/deploy.sh"; then
+    bash "$root/deploy.sh" start-services "$expected"
+  else
+    say "the installed deploy.sh has no start-services entry point; using this script to start it"
+    start_services "$expected"
+  fi
 }
 
 record_set() {
@@ -413,7 +432,7 @@ go_back() {
     remove_tree "$root/src.failed"
   fi
   restore_deploy_files
-  if start_services "$previous"; then
+  if start_installed_services "$previous"; then
     finish "$dir" rolled-back "$why The previous version ${previous:+($previous) }was started again and answers its health check, and the brain is linked. $database"
   else
     finish "$dir" unrecovered "$why Going back did not help: the previous version ${previous:+($previous) }does not answer its health check with its brain linked. $database"
@@ -474,11 +493,11 @@ release() {
   install_deploy_files "$root/src"
   say "starting $project-hub and $project-brain at $commit"
   record_set "$dir" step health
-  if start_services "$commit"; then
+  if start_installed_services "$commit"; then
     finish "$dir" succeeded "The hub at $commit answers its health check on 127.0.0.1:$hub_port and the brain is linked to it. The hub's database was backed up at migration $level before the switch."
     return 0
   fi
-  go_back "$dir" "$commit" "$previous" "The new version $commit did not come up: its hub did not answer its health check with its brain linked."
+  go_back "$dir" "$commit" "$previous" "The new version $commit did not come up with all its services running and its hub and brain healthy."
 }
 
 run_release() {
@@ -738,6 +757,8 @@ a release, run on the NAS by a person or by a worker over their own sign-in:
 first deployment and upkeep:
   secrets, codex-login, up, health, stop, takeover, giveback
   deauthorize              remove the key an earlier version let the hub sign in to the NAS host with
+internal:
+  start-services <commit>  start and check the installed release (keep this entry point compatible)
 USAGE
   exit 2
 }
@@ -750,6 +771,7 @@ main() {
     rollback) step_rollback ;;
     status) step_status ;;
     run-release) run_release "$@" ;;
+    start-services) [ "$#" -eq 1 ] || fail "start-services takes an expected commit"; start_services "$1" ;;
     secrets) step_secrets ;;
     codex-login) step_codex_login ;;
     up) step_up ;;

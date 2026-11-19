@@ -109,3 +109,81 @@ describe.skipIf(process.platform === "win32")("deauthorize, run by bash", () => 
     expect(run(step).code).toBe(2);
   });
 });
+
+describe.skipIf(process.platform === "win32")("release startup, run by bash", () => {
+  let home: string;
+  let root: string;
+  let log: string;
+  const commit = "a".repeat(40);
+  const previous = "b".repeat(40);
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "deploy-release-"));
+    root = join(home, "superagent2-test");
+    log = join(home, "docker.log");
+    for (const dir of [root, join(root, "src"), join(root, "incoming"), join(home, "bin"), join(home, "target", "deploy")]) {
+      mkdirSync(dir, { recursive: true });
+    }
+    writeFileSync(join(root, "instance.env"), "HUB_PORT=18999\n");
+    writeFileSync(join(root, "src", ".revision"), `${previous}\n`);
+    writeFileSync(join(root, "deploy.sh"), repositoryFile("deploy/deploy.sh"));
+    writeFileSync(join(root, "compose.yaml"), "SUPERAGENT2_PROJECT old\n");
+    writeFileSync(join(home, "target", "deploy", "Dockerfile"), "fixture\n");
+    writeFileSync(join(home, "target", "deploy", "compose.yaml"), "SUPERAGENT2_PROJECT new\n");
+    const targetScript = repositoryFile("deploy/deploy.sh").replace(
+      "  local expected=$1 services service running",
+      '  printf "target startup\\n" >> "$TEST_LOG"\n  local expected=$1 services service running',
+    );
+    writeFileSync(join(home, "target", "deploy", "deploy.sh"), targetScript);
+    const tar = spawnSync("tar", ["-cf", join(root, "incoming", `${commit}.tar`), "-C", join(home, "target"), "."]);
+    expect(tar.status).toBe(0);
+    writeFileSync(join(home, "bin", "docker"), `#!/bin/bash
+printf '%s\\n' "$*" >> "$TEST_LOG"
+case " $* " in
+  *' config --services '*) printf 'hub\\nbrain\\n'; if grep -q new "$SUPERAGENT2_ROOT/compose.yaml"; then printf 'converter\\n'; fi ;;
+  *' ps --services --status running '*) printf 'hub\\nbrain\\n'; if grep -q new "$SUPERAGENT2_ROOT/compose.yaml" && [ "\${MISSING_SERVICE:-}" != yes ]; then printf 'converter\\n'; fi ;;
+  *' volume inspect '*) exit 1 ;;
+  *' inspect -f '*) echo started ;;
+  *' logs --since '*) echo 'Linked to the hub' ;;
+esac
+`, { mode: 0o755 });
+    writeFileSync(join(home, "bin", "curl"), '#!/bin/bash\nprintf \'{"status":"ok"}\\n\'\n', { mode: 0o755 });
+  });
+
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  function release(missing = false) {
+    return spawnSync("bash", [join(root, "deploy.sh"), "release", commit], {
+      env: { ...process.env, PATH: `${join(home, "bin")}:${process.env["PATH"] ?? ""}`, SUPERAGENT2_ROOT: root, DOCKER: join(home, "bin", "docker"), TEST_LOG: log, MISSING_SERVICE: missing ? "yes" : "" },
+      encoding: "utf8",
+    });
+  }
+
+  it("runs the target script and starts a service added by its Compose file", () => {
+    const result = release();
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(log, "utf8");
+    expect(calls).toContain("target startup");
+    expect(calls).toContain("up -d --no-deps converter");
+    expect(calls.indexOf("up -d --no-deps converter")).toBeLessThan(calls.indexOf("up -d --no-deps hub"));
+  });
+
+  it("uses the generic startup when the target predates the internal entry point", () => {
+    const path = join(home, "target", "deploy", "deploy.sh");
+    writeFileSync(path, readFileSync(path, "utf8").replace(/^    start-services\).*\n/m, ""));
+    expect(spawnSync("tar", ["-cf", join(root, "incoming", `${commit}.tar`), "-C", join(home, "target"), "."]).status).toBe(0);
+    const result = release();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("has no start-services entry point");
+    expect(readFileSync(log, "utf8")).toContain("up -d --no-deps converter");
+  });
+
+  it("rolls back when a default service is missing and starts the restored version", () => {
+    const result = release(true);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("the service converter is not running");
+    expect(result.stderr).toContain("ended rolled-back");
+    expect(readFileSync(join(root, "src", ".revision"), "utf8").trim()).toBe(previous);
+    expect(readFileSync(log, "utf8").match(/target startup/g)).toHaveLength(1);
+  });
+});
