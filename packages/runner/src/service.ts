@@ -25,6 +25,7 @@ export interface RunnerServiceOptions {
   readonly version?: string;
   readonly supervised?: boolean;
   readonly restart?: () => void;
+  readonly confirmed?: () => void;
   readonly updateSteps?: UpdateSteps;
   readonly programUpdateSteps?: ProgramUpdateSteps;
 }
@@ -124,6 +125,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
       log(describe(event));
       if (event.type === "connected") {
         updater?.confirmed();
+        options.confirmed?.();
         updater?.announced(event.version);
       }
     },

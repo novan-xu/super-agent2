@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { homeVariable, loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { ensureEntry, entryFiles, installEntry } from "./entry.js";
 import { type Execute, executeQuietly } from "./secret-file.js";
@@ -9,6 +11,9 @@ import { killTree } from "./shell.js";
 
 export const windowsRunKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 export const windowsRunValue = "SuperAgent2Runner";
+export const windowsTaskName = "SuperAgent2Runner";
+export const windowsTaskMinutes = 5;
+export const directFlag = "--direct";
 export const macosLabel = "com.superagent2.runner";
 export const supervisedVariable = "SUPERAGENT2_RUNNER_SUPERVISED";
 export const restartCode = 75;
@@ -24,7 +29,7 @@ export interface InstallContext {
   readonly say: (line: string) => void;
   readonly launchAgents?: string;
   readonly uid?: number;
-  readonly startNow?: (context: InstallContext) => void;
+  readonly spawnSupervisor?: (context: InstallContext) => void;
 }
 
 export function defaultInstallContext(files: RunnerFiles, mainPath: string, say: (line: string) => void, version?: string): InstallContext {
@@ -54,6 +59,63 @@ export function windowsRunCommand(context: Pick<InstallContext, "nodePath" | "fi
 
 function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+export function windowsTaskCommand(context: Pick<InstallContext, "nodePath" | "files" | "environment">): { readonly command: string; readonly arguments: string } {
+  const root = context.environment["SystemRoot"] ?? context.environment["SYSTEMROOT"] ?? "C:\\Windows";
+  return {
+    command: win32.join(root, "System32", "conhost.exe"),
+    arguments: `--headless ${quote(context.nodePath)} ${quote(entryPath(context))} launch ${directFlag}`,
+  };
+}
+
+export function windowsTaskXml(context: Pick<InstallContext, "nodePath" | "files" | "environment">): string {
+  const action = windowsTaskCommand(context);
+  return [
+    '<?xml version="1.0" encoding="UTF-16"?>',
+    '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+    "  <RegistrationInfo>",
+    "    <Description>Starts the Super-agent2 runner whenever it is not running.</Description>",
+    "  </RegistrationInfo>",
+    "  <Triggers>",
+    "    <TimeTrigger>",
+    "      <Repetition>",
+    `        <Interval>PT${windowsTaskMinutes}M</Interval>`,
+    "        <StopAtDurationEnd>false</StopAtDurationEnd>",
+    "      </Repetition>",
+    "      <StartBoundary>2026-01-01T00:00:00</StartBoundary>",
+    "      <Enabled>true</Enabled>",
+    "    </TimeTrigger>",
+    "  </Triggers>",
+    "  <Principals>",
+    '    <Principal id="Author">',
+    "      <LogonType>InteractiveToken</LogonType>",
+    "      <RunLevel>LeastPrivilege</RunLevel>",
+    "    </Principal>",
+    "  </Principals>",
+    "  <Settings>",
+    "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+    "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+    "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+    "    <StartWhenAvailable>false</StartWhenAvailable>",
+    "    <AllowStartOnDemand>true</AllowStartOnDemand>",
+    "    <Enabled>true</Enabled>",
+    "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+    "    <Priority>4</Priority>",
+    "  </Settings>",
+    '  <Actions Context="Author">',
+    "    <Exec>",
+    `      <Command>${escapeXml(action.command)}</Command>`,
+    `      <Arguments>${escapeXml(action.arguments)}</Arguments>`,
+    "    </Exec>",
+    "  </Actions>",
+    "</Task>",
+    "",
+  ].join("\r\n");
+}
+
+export function windowsTaskFile(context: Pick<InstallContext, "files">): string {
+  return join(context.files.home, "autostart.xml");
 }
 
 export function launchAgentPlist(context: Pick<InstallContext, "nodePath" | "files" | "environment">): string {
@@ -157,13 +219,7 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-export function launchSupervisor(context: InstallContext): boolean {
-  const pid = readSupervisorPid(context.files);
-  if (pid !== undefined && isAlive(pid)) {
-    return false;
-  }
-  mkdirSync(context.files.home, { recursive: true });
-  ensureEntry(context.files.home, context.mainPath, context.version);
+function spawnSupervisor(context: InstallContext): void {
   const child = spawn(context.nodePath, [entryPath(context), "supervise"], {
     detached: true,
     stdio: "ignore",
@@ -171,7 +227,85 @@ export function launchSupervisor(context: InstallContext): boolean {
     env: { ...context.environment },
   });
   child.unref();
-  return true;
+}
+
+function usesOwnHome(context: InstallContext): boolean {
+  const home = context.environment[homeVariable];
+  return home === undefined || home === "";
+}
+
+export function registerWindowsTask(context: InstallContext): boolean {
+  const file = windowsTaskFile(context);
+  mkdirSync(context.files.home, { recursive: true });
+  writeFileSync(file, `﻿${windowsTaskXml(context)}`, "utf16le");
+  try {
+    return tryExecute(context, "schtasks", ["/create", "/tn", windowsTaskName, "/xml", file, "/f"]);
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+export type Launched = "already" | "task" | "direct";
+
+export function launchSupervisor(context: InstallContext, direct = false): Launched {
+  const pid = readSupervisorPid(context.files);
+  if (pid !== undefined && isAlive(pid)) {
+    return "already";
+  }
+  mkdirSync(context.files.home, { recursive: true });
+  ensureEntry(context.files.home, context.mainPath, context.version);
+  if (!direct && context.platform === "win32" && usesOwnHome(context) && tryExecute(context, "schtasks", ["/run", "/tn", windowsTaskName])) {
+    return "task";
+  }
+  (context.spawnSupervisor ?? spawnSupervisor)(context);
+  return "direct";
+}
+
+export type AutostartCheck = "present" | "registered" | "failed" | "not installed";
+
+export function ensureWindowsTask(context: InstallContext): AutostartCheck {
+  if (context.platform !== "win32" || !usesOwnHome(context)) {
+    return "not installed";
+  }
+  if (tryExecute(context, "schtasks", ["/query", "/tn", windowsTaskName])) {
+    return "present";
+  }
+  if (!tryExecute(context, "reg", ["query", windowsRunKey, "/v", windowsRunValue])) {
+    return "not installed";
+  }
+  return registerWindowsTask(context) ? "registered" : "failed";
+}
+
+const withoutTask = "nothing starts the runner again if it stops before the next login";
+
+export function keepAutostart(context: InstallContext, log: (line: string) => void): void {
+  const check = ensureWindowsTask(context);
+  if (check === "registered") {
+    log(`Registered the scheduled task ${windowsTaskName}: it starts the runner again within ${windowsTaskMinutes} minutes whenever it is not running`);
+  } else if (check === "failed") {
+    log(`The scheduled task ${windowsTaskName} could not be registered, so ${withoutTask}`);
+  }
+}
+
+export function describeAutostart(context: InstallContext): string {
+  if (context.platform === "win32") {
+    const login = tryExecute(context, "reg", ["query", windowsRunKey, "/v", windowsRunValue]);
+    const task = tryExecute(context, "schtasks", ["/query", "/tn", windowsTaskName]);
+    const atLogin = `at every login (${windowsRunKey}\\${windowsRunValue})`;
+    const byTask = `within ${windowsTaskMinutes} minutes whenever it is not running (scheduled task ${windowsTaskName})`;
+    if (login && task) {
+      return `${atLogin} and ${byTask}`;
+    }
+    if (login) {
+      return `${atLogin} only; the scheduled task ${windowsTaskName} is missing, so ${withoutTask}`;
+    }
+    return task ? `${byTask}; the start at login is missing` : "none";
+  }
+  if (context.platform === "darwin") {
+    const plist = launchAgentPath(context);
+    return existsSync(plist) ? `at every login and whenever it stops (${plist})` : "none";
+  }
+  return "none";
 }
 
 export function install(context: InstallContext): boolean {
@@ -183,8 +317,13 @@ export function install(context: InstallContext): boolean {
   }
   if (context.platform === "win32") {
     context.execute("reg", ["add", windowsRunKey, "/v", windowsRunValue, "/t", "REG_SZ", "/d", windowsRunCommand(context), "/f"]);
-    (context.startNow ?? launchSupervisor)(context);
-    context.say(`Installed: the runner starts at every login (${windowsRunKey}\\${windowsRunValue}) and is running now.`);
+    const registered = registerWindowsTask(context);
+    const now = launchSupervisor(context) === "already" ? "it is running now" : "it is starting now";
+    context.say(
+      registered
+        ? `Installed: the runner starts at every login (${windowsRunKey}\\${windowsRunValue}), the scheduled task ${windowsTaskName} starts it again within ${windowsTaskMinutes} minutes whenever it is not running, and ${now}.`
+        : `Installed: the runner starts at every login (${windowsRunKey}\\${windowsRunValue}) and ${now}. The scheduled task ${windowsTaskName} could not be registered, so ${withoutTask}.`,
+    );
     return true;
   }
   if (context.platform === "darwin") {
@@ -211,6 +350,7 @@ export async function stopSupervisor(context: InstallContext): Promise<void> {
 
 export async function uninstall(context: InstallContext, purge: boolean): Promise<boolean> {
   if (context.platform === "win32") {
+    tryExecute(context, "schtasks", ["/delete", "/tn", windowsTaskName, "/f"]);
     tryExecute(context, "reg", ["delete", windowsRunKey, "/v", windowsRunValue, "/f"]);
     await stopSupervisor(context);
   } else if (context.platform === "darwin") {
@@ -220,11 +360,12 @@ export async function uninstall(context: InstallContext, purge: boolean): Promis
     context.say("The runner installs itself on Windows and macOS only.");
     return false;
   }
+  const removed = context.platform === "win32" ? `the start at login and the scheduled task ${windowsTaskName}` : "the start at login";
   if (purge) {
     rmSync(context.files.home, { recursive: true, force: true });
-    context.say(`Removed the start at login, stopped the runner and deleted ${context.files.home}.`);
+    context.say(`Removed ${removed}, stopped the runner and deleted ${context.files.home}.`);
   } else {
-    context.say(`Removed the start at login and stopped the runner. The settings stay in ${context.files.settings}.`);
+    context.say(`Removed ${removed} and stopped the runner. The settings stay in ${context.files.settings}.`);
   }
   return true;
 }
@@ -247,10 +388,21 @@ function rotateLog(path: string): void {
   }
 }
 
+export function supervisorPipe(home: string): string {
+  return `\\\\.\\pipe\\superagent2-runner-${createHash("sha256").update(home.toLowerCase()).digest("hex").slice(0, 16)}`;
+}
+
+export function claimSupervisor(path: string): Promise<Server | "taken" | undefined> {
+  return new Promise((resolve) => {
+    const server = createServer((socket) => socket.destroy());
+    server.once("error", (error) => resolve((error as NodeJS.ErrnoException).code === "EADDRINUSE" ? "taken" : undefined));
+    server.listen(path, () => resolve(server));
+  });
+}
+
 export function supervise(options: SupervisorOptions): void {
   const { context } = options;
   mkdirSync(context.files.home, { recursive: true });
-  writeFileSync(context.files.supervisor, `${process.pid}\n`);
   let child: ReturnType<typeof spawn> | undefined;
   let stopping = false;
   let quickExits = 0;
@@ -294,5 +446,19 @@ export function supervise(options: SupervisorOptions): void {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
-  start();
+  const begin = () => {
+    writeFileSync(context.files.supervisor, `${process.pid}\n`);
+    start();
+  };
+  if (context.platform !== "win32") {
+    begin();
+    return;
+  }
+  void claimSupervisor(supervisorPipe(context.files.home)).then((claim) => {
+    if (claim === "taken") {
+      options.log("Another supervisor already runs here; this one stops");
+      process.exit(0);
+    }
+    begin();
+  });
 }
