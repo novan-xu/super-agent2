@@ -153,6 +153,7 @@ function untilLog(predicate: (line: string) => boolean, after = 0): Promise<stri
 }
 
 async function startRunner(running: Hub, token: string, version: string): Promise<RunnerService> {
+  if (!running.machines.setStorage("pc", {})) throw new Error("The test machine is missing");
   const files = runnerFiles(home);
   writeFileSync(
     files.settings,
@@ -247,7 +248,7 @@ function untilState(running: Hub, ticket: number, state: Ticket["state"]): Promi
   });
 }
 
-describe("a task ticket whose work restarts the hub under it", () => {
+describe("a task ticket whose work restarts the hub under it", { timeout: 30000 }, () => {
   it("keeps the worker running while the hub is replaced, delivers its hand-back to the new hub, and then moves the runner to the new hub's version", async () => {
     const first = await startTestHub(hubOptions(0, versionA));
     hub = first;

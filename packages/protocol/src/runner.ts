@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AllowanceReading } from "./allowance.js";
 import { TargetName } from "./commands.js";
 import { ProtocolVersion } from "./version.js";
+import { SetRunnerStorage, StorageReport, StorageSettings } from "./storage.js";
 import { AttachmentPart, FetchAttachment, FetchFile, FilePart, MessageWork, RunnerWorkEvent, StartTask, StartWork, StopWork, SyncWork, WorkHeld } from "./work.js";
 
 export const runnerLinkPath = "/runner/link";
@@ -61,6 +62,7 @@ export const MachineReport = z.object({
   slots: z.object({ total: z.number().int().nonnegative(), free: z.number().int().nonnegative() }),
   programs: z.array(ProgramReport),
   allowances: z.array(AllowanceReading).default([]),
+  storage: StorageReport.optional(),
   version: Revision.optional(),
 });
 export type MachineReport = z.infer<typeof MachineReport>;
@@ -92,7 +94,7 @@ export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 
 export const RefreshAllowance = z.object({ type: z.literal("allowance.refresh") });
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {
@@ -152,6 +154,7 @@ export const MachineStatus = z.object({
   report: MachineReport.nullable(),
   system: MachineSystem.optional(),
   accessExpiresAt: z.number().int().optional(),
+  storage: StorageSettings.optional(),
 });
 export type MachineStatus = z.infer<typeof MachineStatus>;
 

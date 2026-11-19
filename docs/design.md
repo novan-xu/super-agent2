@@ -218,7 +218,7 @@ Two things follow:
    firm wording is kept for what the owner explicitly required, marked as such.
 3. **Arrangement.** As it files them, the brain arranges the issues into chains and chooses each chain's start defaults.
 4. **Start.** The owner presses 开始 on a chain's card. One start starts the whole arrangement.
-5. **Work.** The hub creates a git worktree on a new branch and starts a worker in full-access mode. The worker works
+5. **Work.** The runner creates a git worktree on a new branch and starts a worker in full-access mode. The worker works
    through the chain's issues in order, runs the tests itself, and resolves conflicts with the default branch itself. It
    decides how many pull requests to open: whenever a piece of the chain is ready, it opens a pull request that closes at
    least one of the chain's open issues, hands it in, and waits.
@@ -515,6 +515,26 @@ memory. Each omission states its count and the hub tool that reads the omitted m
 input keep priority over everything else. If the quote, current input and recent turns alone exceed the soft line, keep
 them while they fit; drop older turns only as needed to stay within the provider's hard input capacity. That capacity
 is the only hard limit. Omitted items remain available through the hub tools.
+
+## Worker storage
+
+Each machine has a projects folder and an artifacts folder in Settings → Machines. The hub saves the owner's paths
+and sends them before dispatching work on each new runner connection and again when the owner saves a change.
+The runner checks paths on its own platform and reports the folders in use and the availability of shared storage.
+Cleared settings let the corresponding `runner.env` values take effect.
+
+Within a projects folder, the runner reuses a first-level checkout whose `origin` names the repository, regardless of
+the checkout's folder name or remote URL form. It makes one checkout under the repository name when a match is
+absent. Code tickets get separate branches and worktrees at `_agent/<checkout folder>/t<ticket>`. Tasks with a
+repository get a detached worktree, and tasks without one get `_agent/_tasks/t<ticket>`. Preparation is serialized
+per repository. The runner fetches into Git refs and works in the ticket's own worktree. The owner's branch, index,
+files, and repository config stay intact. Git identity and credentials are scoped to the worker session.
+
+The worker's brief and `SUPERAGENT2_ARTIFACTS_DIR` identify the directory for build outputs, test reports, and other
+large generated files. It is `<artifacts folder>/<repository name>/tickets/t<ticket>`, with `_tasks` for tasks without
+a repository. A missing or unwritable shared folder falls back to `artifacts` under the runner's state directory and
+is recorded in the ticket. A later session checks the shared folder again. Ticket cleanup removes its worktree and
+keeps its artifacts. Task hand-back files continue to use the task's delivery folder.
 
 ## Decisions
 

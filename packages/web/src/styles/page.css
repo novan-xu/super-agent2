@@ -219,6 +219,9 @@ a.back:hover { text-decoration: none; }
 .top-sub { font-size: var(--text-lg); }
 .set-body > .set-title { margin-bottom: calc(var(--space-4) * -1); }
 .mcard--armed { background: var(--danger-soft); }
+.machine-storage, .machine-storage-field { display: grid; gap: var(--space-2); min-width: 0; }
+.machine-storage-field .field { min-width: 0; }
+.machine-storage > button { justify-self: start; }
 .slot-bar { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
 .add-machine .seg button { min-height: 36px; }
 ol.rows { margin: 0; padding: 0; list-style: none; }

@@ -239,6 +239,30 @@ that stops three times before reaching the hub is replaced by the previous one a
 fails leaves the running runner as it is and is tried again after an hour. Only a runner started by its supervisor or
 launch agent updates itself; one started by hand with `run` says that an update is available.
 
+### Storage folders
+
+Edit each machine's projects and artifacts paths in Settings → Machines. The initial paths for the owner's machines
+are:
+
+| Machine | Projects folder | Artifacts folder |
+| --- | --- | --- |
+| `pc` | `C:\01_Projects` | `M:\Zdir\Super-agent` |
+| `mac-mini` | `/Users/novan/Novan/Code Projects` | `/Volumes/NAS/Zdir/Super-agent` |
+
+Paths are local to the runner. The projects folder must already exist. The shared artifacts folder must be mounted
+and writable by the account that runs the runner. A Windows drive mapping must be available to that account.
+The machine card displays the folders in use as placeholders and reports path and mount problems beneath the affected
+field. Changes saved while a runner is offline are sent on reconnect. The hub does not need the share mounted.
+
+To use `PROJECTS_DIR` or `ARTIFACTS_DIR` from `~/.superagent2/runner.env`, clear the respective setting on the machine
+card. Windows paths must include a drive and root or a UNC server and share. Without a projects folder, the runner
+uses its state directory for clones, worktrees, and scratch folders. Already allocated worktrees and scratch folders
+stay in place when settings change. Workers that start afterwards get the newly selected artifacts path.
+
+When a share fails or times out at session start, the ticket records the local path under `~/.superagent2/artifacts`.
+Files written there stay local. Once the share returns, subsequent sessions can write to the NAS. Ending a ticket
+leaves its artifacts in place.
+
 ### Adding or revoking a machine by hand on the NAS
 
 添加机器 in 设置 needs the owner's sign-in. The same thing can be done on the NAS, as `novanxu`, by the hub's own command

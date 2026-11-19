@@ -818,6 +818,10 @@ export const migrations: readonly Migration[] = [
       CREATE TABLE transfer_entry_files (entry INTEGER NOT NULL REFERENCES transfer_entries(seq) ON DELETE CASCADE, file TEXT NOT NULL UNIQUE REFERENCES transfer_files(id), PRIMARY KEY(entry, file)) STRICT;
     `,
   },
+  {
+    version: 35,
+    sql: `ALTER TABLE machines ADD COLUMN storage TEXT;`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -80,6 +80,7 @@ import {
   MachineName,
   ProviderOrderChange,
   RepositoryAccountChange,
+  StorageSettings,
   type SettingsSnapshot,
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -133,6 +134,7 @@ export const brainOrderPath = "/api/brain/order";
 export const repositoryAccountPath = "/api/repositories/account";
 
 const revokeRoute = /^\/api\/machines\/([^/]{1,63})\/revoke$/;
+const storageRoute = /^\/api\/machines\/([^/]{1,63})\/storage$/;
 
 const memoryRoute = /^\/api\/memories\/([1-9][0-9]{0,15})$/;
 
@@ -226,6 +228,7 @@ function pathOf(request: IncomingMessage): string {
 }
 
 type Body =
+  | StorageSettings
   | Health
   | Refusal
   | Session
@@ -565,6 +568,22 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if ((path === machinesPath && method === "POST") || (revokeRoute.test(path) && method === "POST")) {
       await serveMachineChange(request, response, path);
+      return;
+    }
+    const storageMachine = storageRoute.exec(path)?.[1];
+    if (storageMachine !== undefined && method === "PUT" && options.runners !== undefined) {
+      if (!ownerAction(request, response)) {
+        return;
+      }
+      const name = MachineName.safeParse(storageMachine);
+      const storage = parseJson(await readBody(request), StorageSettings);
+      if (!name.success || storage === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+      } else if (!options.runners.setStorage(name.data, storage)) {
+        sendJson(response, 404, { error: "not_found" });
+      } else {
+        sendJson(response, 200, storage);
+      }
       return;
     }
     if ((path === brainOrderPath || path === repositoryAccountPath) && method === "PUT") {

@@ -57,6 +57,8 @@ chain, and you carry on what remained. Your issues are only the ones still open;
   failures you did not cause but that block your change. The repository's own conventions and instructions (`AGENTS.md`,
   `CLAUDE.md`, `CONTRIBUTING.md`, its scripts and its CI configuration) are usually the best guide to how things are done
   there.
+- Use the artifacts folder in the brief for build outputs, test reports and other large generated files. Point tools that
+  support changing their output directory at `SUPERAGENT2_ARTIFACTS_DIR`.
 - Commit as you go, with clear messages in English. Push the branch to `origin`.
 - Before handing a pull request in, it is best to bring the branch up to date with the default branch and resolve any
   conflict yourself, then run the tests again.

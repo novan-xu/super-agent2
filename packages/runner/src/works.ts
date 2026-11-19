@@ -57,7 +57,8 @@ import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
-import { folderState, gitHubRemote, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, type WorkPaths, workPaths } from "./workplace.js";
+import { artifactsVariable, type StorageSelection, ticketArtifacts } from "./storage.js";
+import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, withRepository, type WorkPaths, workPaths } from "./workplace.js";
 import { checkTaskHandback, clearOutput, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
@@ -101,6 +102,7 @@ export interface WorksOptions {
   readonly log?: (line: string) => void;
   readonly changed?: () => void;
   readonly machine?: string;
+  readonly storage?: () => StorageSelection;
 }
 
 export interface Works {
@@ -110,6 +112,25 @@ export interface Works {
   disconnected(): void;
   idle(): Promise<void>;
   close(): Promise<void>;
+}
+
+const WorkspaceLocation = z.object({ clone: z.string().min(1), worktree: z.string().min(1), scratch: z.string().min(1).optional(), shared: z.literal(true).optional() });
+type WorkspaceLocation = z.infer<typeof WorkspaceLocation>;
+
+function locationOf(paths: WorkPaths): WorkspaceLocation {
+  const { clone, worktree, scratch, shared } = paths;
+  return { clone, worktree, scratch, shared };
+}
+
+function useLocation(paths: WorkPaths, workspace: WorkspaceLocation | null | undefined): WorkPaths {
+  if (workspace === undefined || workspace === null) return paths;
+  return {
+    ...paths,
+    clone: workspace.clone,
+    worktree: workspace.worktree,
+    ...(workspace.scratch === undefined ? {} : { scratch: workspace.scratch }),
+    ...(workspace.shared === undefined ? {} : { shared: workspace.shared }),
+  };
 }
 
 const WorkRecord = z.object({
@@ -130,6 +151,7 @@ const WorkRecord = z.object({
   base: z.string().nullable(),
   commit: z.string().nullable().default(null),
   folder: z.number().int().positive().nullable().default(null),
+  workspace: WorkspaceLocation.nullable().optional(),
   ended: z.boolean(),
 });
 type WorkRecord = z.output<typeof WorkRecord>;
@@ -161,7 +183,8 @@ interface Asked {
 
 interface Work {
   record: WorkRecord;
-  readonly paths: WorkPaths;
+  paths: WorkPaths;
+  preparing: Promise<unknown> | undefined;
   seq: number;
   live: boolean;
   task: WorkTask | undefined;
@@ -263,7 +286,8 @@ export function createWorks(options: WorksOptions): Works {
       try {
         const record = WorkRecord.parse(JSON.parse(readFileSync(join(folder, name, "work.json"), "utf8")));
         const folderOf = record.folder ?? record.ticket;
-        const paths = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository, folderOf) : workPaths(options.home, record.repository, record.ticket, folderOf);
+        const fallback = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository, folderOf) : workPaths(options.home, record.repository, record.ticket, folderOf);
+        const paths = useLocation(fallback, record.workspace);
         works.set(record.ticket, blank(record, paths));
       } catch {
         continue;
@@ -274,6 +298,7 @@ export function createWorks(options: WorksOptions): Works {
   const blank = (record: WorkRecord, paths: WorkPaths): Work => ({
     record,
     paths,
+    preparing: undefined,
     seq: lastSeq(paths, record.attempt),
     live: false,
     task: undefined,
@@ -313,8 +338,8 @@ export function createWorks(options: WorksOptions): Works {
 
   const tokenOf = (task: Credentialed): string => task.environment["GH_TOKEN"] ?? task.environment["GITHUB_TOKEN"] ?? "";
 
-  const environmentOf = (task: Credentialed): Record<string, string> =>
-    mergeEnvironment(clean, { ...task.environment, ...workerEnvironment(options.environment, tokenOf(task), shims, identities.get(task.account)) });
+  const environmentOf = (task: Credentialed, shared = false): Record<string, string> =>
+    mergeEnvironment(clean, { ...task.environment, ...workerEnvironment(options.environment, tokenOf(task), shims, identities.get(task.account), process.platform, shared) });
 
   const credentialedOf = (assignment: TaskAssignment): Credentialed | undefined =>
     assignment.checkout === null ? undefined : { environment: assignment.environment, account: assignment.checkout.account };
@@ -326,11 +351,32 @@ export function createWorks(options: WorksOptions): Works {
     identities.set(task.account, await readIdentity(run, gh, environmentOf(task), options.home));
   };
 
-  const gitFor = (task: Credentialed): Git => createGit(run, environmentOf(task), find("git") ?? "git");
+  const gitFor = (task: Credentialed, shared = false): Git => createGit(run, environmentOf(task, shared), find("git") ?? "git");
 
   const placeOf = (work: Work, assignment: TaskAssignment) => taskPlace(work.paths, assignment.checkout, work.record.commit, options.machine);
 
-  const place = (work: Work): BriefPlace => ({ worktree: work.paths.worktree, base: work.record.base ?? "the default branch", handback: work.paths.handback });
+  const place = (work: Work): BriefPlace => ({
+    worktree: work.paths.worktree,
+    base: work.record.base ?? "the default branch",
+    handback: work.paths.handback,
+    ...(work.paths.shared ? { shared: true } : {}),
+    ...(work.paths.artifacts === undefined ? {} : { artifacts: work.paths.artifacts }),
+  });
+
+  const preparing = async <T>(work: Work, action: () => Promise<T>): Promise<T> => {
+    const pending = withRepository(work.record.repository, action);
+    work.preparing = pending;
+    try {
+      return await pending;
+    } finally {
+      work.preparing = undefined;
+    }
+  };
+
+  const artifactsNote = (work: Work): string => {
+    const artifacts = work.paths.artifacts;
+    return artifacts === undefined || artifacts.unavailable === null ? "" : `The shared artifacts folder ${artifacts.unavailable} is unavailable. Outputs go to ${artifacts.path} on this machine.`;
+  };
 
   const closeHandle = async (work: Work) => {
     const handle = work.handle;
@@ -413,7 +459,7 @@ export function createWorks(options: WorksOptions): Works {
       branch: work.record.branch,
       issues: work.record.issues.map((issue) => issue.number),
       merged: task.merged ?? [],
-      environment: environmentOf(task),
+      environment: environmentOf(task, work.paths.shared),
       cwd: work.paths.worktree,
       read: readPullRequest,
     });
@@ -456,7 +502,9 @@ export function createWorks(options: WorksOptions): Works {
 
   const openProgram = (work: Work, task: WorkTask | TaskAssignment, session: string | null): void => {
     const credentialed = "repository" in task ? task : credentialedOf(task);
-    const environment = credentialed === undefined ? mergeEnvironment(clean, {}) : environmentOf(credentialed);
+    const environment = credentialed === undefined ? mergeEnvironment(clean, {}) : environmentOf(credentialed, work.paths.shared);
+    if (work.paths.shared) environment.GH_REPO = work.record.repository;
+    if (work.paths.artifacts !== undefined) environment[artifactsVariable] = work.paths.artifacts.path;
     const program = find(engineExecutables[task.engine]);
     if (program === undefined) {
       throw new Error(`${engineExecutables[task.engine]} is not installed on this machine`);
@@ -559,10 +607,11 @@ export function createWorks(options: WorksOptions): Works {
   const begin = async (work: Work, task: WorkTask) => {
     emit(work, { kind: "phase", phase: "preparing", detail: `Preparing ${task.repository} on branch ${task.branch}` });
     await learnIdentity(task).catch(() => undefined);
-    const git = gitFor(task);
+    if (work.stopping) return;
+    const git = gitFor(task, work.paths.shared);
     let prepared;
     try {
-      prepared = await prepareWorktree(git, remote, task.repository, task.branch, work.paths);
+      prepared = await preparing(work, () => prepareWorktree(git, remote, task.repository, task.branch, work.paths));
     } catch (error) {
       await end(work, { kind: "failed", failure: "prepare", reason: messageOf(error) });
       return;
@@ -575,7 +624,7 @@ export function createWorks(options: WorksOptions): Works {
     emit(work, {
       kind: "phase",
       phase: "prepared",
-      detail: prepared.created
+      detail: [prepared.created
         ? `Created the worktree ${work.paths.worktree} on ${task.branch} from ${prepared.from}`
         : prepared.switched
           ? `Switched the worktree ${work.paths.worktree} to the new branch ${task.branch} from ${prepared.from}${
@@ -585,7 +634,7 @@ export function createWorks(options: WorksOptions): Works {
                   ? `, carrying over the uncommitted changes found there (a copy is on ${prepared.leftover.branch})`
                   : `; the uncommitted changes found there did not apply cleanly and are kept on ${prepared.leftover.branch}`
             }`
-          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`,
+          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`, artifactsNote(work)].filter(Boolean).join(". "),
     });
     const session = task.session ?? work.record.session;
     try {
@@ -632,7 +681,9 @@ export function createWorks(options: WorksOptions): Works {
       const credentialed = credentialedOf(task);
       if (task.checkout !== null && credentialed !== undefined) {
         await learnIdentity(credentialed).catch(() => undefined);
-        const checkout = await prepareCheckout(gitFor(credentialed), remote, task.checkout, work.paths);
+        if (work.stopping) return;
+        const wanted = task.checkout;
+        const checkout = await preparing(work, () => prepareCheckout(gitFor(credentialed, work.paths.shared), remote, wanted, work.paths));
         if (work.assignment !== task || work.stopping) {
           return;
         }
@@ -654,6 +705,8 @@ export function createWorks(options: WorksOptions): Works {
     if (work.assignment !== task || work.stopping) {
       return;
     }
+    const note = artifactsNote(work);
+    if (note !== "") details.push(note);
     emit(work, { kind: "phase", phase: "prepared", detail: details.join("; ") });
     const session = task.session ?? work.record.session;
     try {
@@ -665,7 +718,7 @@ export function createWorks(options: WorksOptions): Works {
     const where = placeOf(work, task);
     const waiting = work.queue.splice(0);
     const credentialedNow = credentialedOf(task);
-    const checkoutState = task.takeover && task.checkout !== null && credentialedNow !== undefined ? await folderState(gitFor(credentialedNow), work.paths.worktree, null) : null;
+    const checkoutState = task.takeover && task.checkout !== null && credentialedNow !== undefined ? await folderState(gitFor(credentialedNow, work.paths.shared), work.paths.worktree, null) : null;
     const state = task.takeover ? [takeoverTaskText(listOutput(work.paths), checkoutState, where)] : [];
     if (work.assignment !== task || work.stopping) {
       return;
@@ -693,10 +746,16 @@ export function createWorks(options: WorksOptions): Works {
       existing.stopping = true;
       existing.generation += 1;
       await closeHandle(existing);
+      await existing.preparing?.catch(() => undefined);
       existing.live = false;
     }
     const folderOf = task.folder ?? task.ticket;
-    const paths = "code" in given ? workPaths(options.home, given.code.repository, task.ticket, folderOf) : taskPaths(options.home, task.ticket, given.assignment.checkout?.repository ?? null, folderOf);
+    const repository = "code" in given ? given.code.repository : (given.assignment.checkout?.repository ?? "");
+    const fallback = "code" in given ? workPaths(options.home, repository, task.ticket, folderOf) : taskPaths(options.home, task.ticket, repository, folderOf);
+    const prior = existing ?? works.get(folderOf);
+    const workspace = prior === undefined || prior.record.workspace === null ? null : locationOf(prior.paths);
+    const paths = useLocation(fallback, workspace);
+    const storage = options.storage?.() ?? {};
     const sameAttempt = existing !== undefined && existing.record.attempt === task.attempt;
     if (existing !== undefined && !sameAttempt) {
       for (const name of existsSync(paths.folder) ? readdirSync(paths.folder) : []) {
@@ -705,15 +764,12 @@ export function createWorks(options: WorksOptions): Works {
         }
       }
       rmSync(paths.handback, { force: true });
-      if ("assignment" in given && !given.assignment.takeover) {
-        clearOutput(paths);
-      }
     }
     const record: WorkRecord = {
       kind: "code" in given ? "code" : "task",
       ticket: task.ticket,
       attempt: task.attempt,
-      repository: "code" in given ? given.code.repository : (given.assignment.checkout?.repository ?? ""),
+      repository,
       branch: "code" in given ? given.code.branch : "",
       title: task.title,
       issues: "code" in given ? given.code.issues : [],
@@ -724,6 +780,7 @@ export function createWorks(options: WorksOptions): Works {
       base: sameAttempt ? existing.record.base : null,
       commit: existing === undefined ? null : existing.record.commit,
       folder: task.folder ?? null,
+      workspace,
       ended: false,
     };
     const work = blank(record, paths);
@@ -736,6 +793,34 @@ export function createWorks(options: WorksOptions): Works {
     works.set(task.ticket, work);
     save(work);
     changed();
+    try {
+      const projects = storage.projectsDir;
+      if (workspace === null && projects !== undefined) {
+        await preparing(work, async () => {
+          if (work.stopping) return;
+          const credentialed = "code" in given ? given.code : credentialedOf(given.assignment);
+          if (credentialed === undefined) {
+            const scratch = taskFolderInProjects(projects, folderOf);
+            work.paths = { ...paths, worktree: scratch, scratch };
+          } else {
+            work.paths = await pathsInProjects(gitFor(credentialed, true), remote, projects, repository, folderOf, paths);
+          }
+          work.record = { ...work.record, workspace: locationOf(work.paths) };
+          save(work);
+        });
+      } else if (workspace === null) {
+        work.record = { ...work.record, workspace: locationOf(paths) };
+        save(work);
+      }
+      if (work.stopping) return;
+      if (existing !== undefined && !sameAttempt && "assignment" in given && !given.assignment.takeover) clearOutput(work.paths);
+      const artifacts = await ticketArtifacts(options.home, storage.artifactsDir, repository || null, task.ticket);
+      if (work.stopping) return;
+      work.paths = { ...work.paths, artifacts };
+    } catch (error) {
+      if (!work.stopping) await end(work, { kind: "failed", failure: "prepare", reason: messageOf(error) });
+      return;
+    }
     if ("code" in given) {
       await begin(work, given.code);
     } else {
@@ -905,12 +990,14 @@ export function createWorks(options: WorksOptions): Works {
     work.stopping = true;
     work.generation += 1;
     await closeHandle(work);
+    await work.preparing?.catch(() => undefined);
     work.live = false;
     changed();
     let saved = { saved: false, detail: "Stopped" };
     if (keep && task !== undefined) {
       emit(work, { kind: "phase", phase: "saving", detail: "Saving the work on the branch" });
-      saved = await saveWork(gitFor(task), ticket, work.record.branch, work.paths).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
+      const pushTo = work.paths.shared ? remote(task.repository) : "origin";
+      saved = await saveWork(gitFor(task, work.paths.shared), ticket, work.record.branch, work.paths, pushTo).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
     }
     if (open || (keep && task !== undefined)) {
       if (open) {
@@ -920,8 +1007,13 @@ export function createWorks(options: WorksOptions): Works {
       emit(work, { kind: "stopped", saved: saved.saved, detail: saved.detail });
     }
     if (remove) {
-      const git = task === undefined ? createGit(run, mergeEnvironment(clean, {}), find("git") ?? "git") : gitFor(task);
-      await removeWorktree(git, work.record.branch, work.paths).catch((error: unknown) => log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`));
+      const git = task === undefined ? createGit(run, mergeEnvironment(clean, {}), find("git") ?? "git") : gitFor(task, work.paths.shared);
+      try {
+        await removeWorktree(git, work.record.branch, work.paths);
+      } catch (error) {
+        log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`);
+        return;
+      }
       emit(work, {
         kind: "phase",
         phase: "removed",
