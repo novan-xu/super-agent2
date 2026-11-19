@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, readSettingsFile, runnerFiles, runnerHome } from "./config.js";
 import { protocolVersion } from "@super-agent2/protocol";
 import { entryFiles, readState } from "./entry.js";
-import { defaultInstallContext, describeAutostart, directFlag, install, isAlive, keepAutostart, launchSupervisor, readSupervisorPid, restartCode, supervise, supervisedVariable, uninstall } from "./install.js";
+import { defaultInstallContext, describeAutostart, directFlag, install, keepAutostart, launchSupervisor, restartCode, supervise, supervisedVariable, supervisorState, uninstall } from "./install.js";
 import { readAllowances } from "./allowance.js";
 import { probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { startRunnerService } from "./service.js";
@@ -79,11 +79,11 @@ async function main(argv: readonly string[]): Promise<number> {
       }
     }
     case "install":
-      return install(context) ? 0 : 1;
+      return (await install(context)) ? 0 : 1;
     case "uninstall":
       return (await uninstall(context, rest.includes("--purge"))) ? 0 : 1;
     case "launch":
-      launchSupervisor(context, rest.includes(directFlag));
+      await launchSupervisor(context, rest.includes(directFlag));
       return 0;
     case "supervise":
       mkdirSync(files.home, { recursive: true });
@@ -128,7 +128,7 @@ async function main(argv: readonly string[]): Promise<number> {
       say(JSON.stringify({ version: version ?? null, protocol: protocolVersion }));
       return 0;
     case "status": {
-      const pid = readSupervisorPid(files);
+      const supervisor = await supervisorState(context);
       say(`Settings: ${files.settings}`);
       const state = readState(entryFiles(files.home));
       say(`Version: ${version ?? "unknown"} (${mainPath})`);
@@ -138,7 +138,7 @@ async function main(argv: readonly string[]): Promise<number> {
           say(`Last failed update: ${state.failed.version} at ${new Date(state.failed.at).toISOString()}: ${state.failed.reason}`);
         }
       }
-      say(`Supervisor: ${pid !== undefined && isAlive(pid) ? `running as process ${pid}` : "not running"}`);
+      say(`Supervisor: ${supervisor.running ? (supervisor.pid === undefined ? "running" : `running as process ${supervisor.pid}`) : "not running"}`);
       say(`Autostart: ${describeAutostart(context)}`);
       return 0;
     }

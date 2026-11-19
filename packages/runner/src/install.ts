@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server } from "node:net";
 import { homedir, userInfo } from "node:os";
 import { join, win32 } from "node:path";
 import { homeVariable, loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
@@ -30,6 +30,18 @@ export interface InstallContext {
   readonly launchAgents?: string;
   readonly uid?: number;
   readonly spawnSupervisor?: (context: InstallContext) => void;
+  readonly pipeHeld?: (path: string) => Promise<boolean>;
+  readonly lookUpProcess?: (pid: number) => ProcessLook;
+  readonly stopProcess?: (pid: number) => Promise<void>;
+}
+
+export type ProcessLook = { readonly kind: "none" } | { readonly kind: "unknown" } | { readonly kind: "line"; readonly line: string };
+
+export type ProcessIdentity = "supervisor" | "other" | "none" | "unknown";
+
+export interface SupervisorState {
+  readonly running: boolean;
+  readonly pid?: number;
 }
 
 export function defaultInstallContext(files: RunnerFiles, mainPath: string, say: (line: string) => void, version?: string): InstallContext {
@@ -219,6 +231,79 @@ export function isAlive(pid: number): boolean {
   }
 }
 
+export function pipeHeld(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(path);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", (error) => resolve((error as NodeJS.ErrnoException).code !== "ENOENT"));
+  });
+}
+
+export function processLookScript(pid: number): string {
+  return [
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+    `$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'`,
+    "if ($null -eq $p) { 'none' } elseif ($null -eq $p.CommandLine) { 'unknown' } else { 'line ' + $p.CommandLine }",
+  ].join("; ");
+}
+
+export function readProcessLook(output: string): ProcessLook {
+  const text = output.trim();
+  if (text === "none") {
+    return { kind: "none" };
+  }
+  return text.startsWith("line ") ? { kind: "line", line: text.slice(5) } : { kind: "unknown" };
+}
+
+function lookUpProcess(context: InstallContext, pid: number): ProcessLook {
+  if (context.lookUpProcess !== undefined) {
+    return context.lookUpProcess(pid);
+  }
+  const root = context.environment["SystemRoot"] ?? context.environment["SYSTEMROOT"] ?? "C:\\Windows";
+  const shell = win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  try {
+    const output = execFileSync(shell, ["-NoProfile", "-NonInteractive", "-Command", processLookScript(pid)], { encoding: "utf8", windowsHide: true, timeout: 60000, stdio: ["ignore", "pipe", "ignore"] });
+    return readProcessLook(output);
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+export function isSupervisorLine(line: string, entry: string): boolean {
+  const normal = (value: string) => value.replaceAll("/", "\\").toLowerCase();
+  return normal(line).includes(normal(entry)) && /\s"?supervise"?\s*$/.test(line);
+}
+
+export function identifySupervisor(context: InstallContext, pid: number): ProcessIdentity {
+  if (!isAlive(pid)) {
+    return "none";
+  }
+  if (context.platform !== "win32") {
+    return "supervisor";
+  }
+  const look = lookUpProcess(context, pid);
+  if (look.kind !== "line") {
+    return look.kind;
+  }
+  return isSupervisorLine(look.line, entryPath(context)) ? "supervisor" : "other";
+}
+
+export async function supervisorState(context: InstallContext): Promise<SupervisorState> {
+  const pid = readSupervisorPid(context.files);
+  const held = context.platform === "win32" && (await (context.pipeHeld ?? pipeHeld)(supervisorPipe(context.files.home)));
+  const identity = pid === undefined || held ? undefined : identifySupervisor(context, pid);
+  if (identity === "supervisor" || identity === "unknown") {
+    return { running: true, ...(pid === undefined ? {} : { pid }) };
+  }
+  if (held) {
+    return { running: true, ...(pid !== undefined && isAlive(pid) ? { pid } : {}) };
+  }
+  return { running: false };
+}
+
 function spawnSupervisor(context: InstallContext): void {
   const child = spawn(context.nodePath, [entryPath(context), "supervise"], {
     detached: true,
@@ -247,9 +332,8 @@ export function registerWindowsTask(context: InstallContext): boolean {
 
 export type Launched = "already" | "task" | "direct";
 
-export function launchSupervisor(context: InstallContext, direct = false): Launched {
-  const pid = readSupervisorPid(context.files);
-  if (pid !== undefined && isAlive(pid)) {
+export async function launchSupervisor(context: InstallContext, direct = false): Promise<Launched> {
+  if ((await supervisorState(context)).running) {
     return "already";
   }
   mkdirSync(context.files.home, { recursive: true });
@@ -308,7 +392,7 @@ export function describeAutostart(context: InstallContext): string {
   return "none";
 }
 
-export function install(context: InstallContext): boolean {
+export async function install(context: InstallContext): Promise<boolean> {
   if (!settingsReady(context)) {
     return false;
   }
@@ -318,7 +402,7 @@ export function install(context: InstallContext): boolean {
   if (context.platform === "win32") {
     context.execute("reg", ["add", windowsRunKey, "/v", windowsRunValue, "/t", "REG_SZ", "/d", windowsRunCommand(context), "/f"]);
     const registered = registerWindowsTask(context);
-    const now = launchSupervisor(context) === "already" ? "it is running now" : "it is starting now";
+    const now = (await launchSupervisor(context)) === "already" ? "it is running now" : "it is starting now";
     context.say(
       registered
         ? `Installed: the runner starts at every login (${windowsRunKey}\\${windowsRunValue}), the scheduled task ${windowsTaskName} starts it again within ${windowsTaskMinutes} minutes whenever it is not running, and ${now}.`
@@ -340,19 +424,35 @@ export function install(context: InstallContext): boolean {
   return false;
 }
 
-export async function stopSupervisor(context: InstallContext): Promise<void> {
+export type Stopped = "stopped" | "none" | "unconfirmed" | "elsewhere";
+
+export async function stopSupervisor(context: InstallContext): Promise<Stopped> {
   const pid = readSupervisorPid(context.files);
-  if (pid !== undefined && isAlive(pid)) {
-    await killTree(pid, context.platform);
+  const identity = pid === undefined ? "none" : identifySupervisor(context, pid);
+  if (identity === "unknown") {
+    return "unconfirmed";
+  }
+  if (identity === "supervisor" && pid !== undefined) {
+    await (context.stopProcess ?? ((target: number) => killTree(target, context.platform)))(pid);
   }
   rmSync(context.files.supervisor, { force: true });
+  if (identity === "supervisor") {
+    return "stopped";
+  }
+  return context.platform === "win32" && (await (context.pipeHeld ?? pipeHeld)(supervisorPipe(context.files.home))) ? "elsewhere" : "none";
 }
 
 export async function uninstall(context: InstallContext, purge: boolean): Promise<boolean> {
   if (context.platform === "win32") {
     tryExecute(context, "schtasks", ["/delete", "/tn", windowsTaskName, "/f"]);
     tryExecute(context, "reg", ["delete", windowsRunKey, "/v", windowsRunValue, "/f"]);
-    await stopSupervisor(context);
+    const stopped = await stopSupervisor(context);
+    if (stopped === "unconfirmed" || stopped === "elsewhere") {
+      const pid = readSupervisorPid(context.files);
+      const which = stopped === "unconfirmed" && pid !== undefined ? `process ${pid}, named in ${context.files.supervisor}, could not be confirmed to be the supervisor` : "a supervisor still holds this folder but its process is not known";
+      context.say(`Removed the start at login and the scheduled task ${windowsTaskName}, but did not stop the runner: ${which}. End it from Task Manager${purge ? ` and run uninstall --purge again to delete ${context.files.home}` : ""}.`);
+      return false;
+    }
   } else if (context.platform === "darwin") {
     tryExecute(context, "launchctl", ["bootout", `gui/${uidOf(context)}/${macosLabel}`]);
     rmSync(launchAgentPath(context), { force: true });

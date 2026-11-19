@@ -4208,6 +4208,34 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Not done:** `launch` still takes any live process with the number in `supervisor.pid` for the supervisor, so a
   number that Windows gave to another process keeps the task from starting one.
 
+## 2026-11-18 — How the Windows runner tells whether its supervisor runs
+
+- **Chosen:** On Windows, `launch`, `status` and `uninstall` first try to connect to the supervisor's named pipe
+  (`supervisorPipe`). If it answers, a supervisor runs. If not, they read `supervisor.pid`; a number with no live
+  process means none runs, and a live one is looked up with `Get-CimInstance Win32_Process` through
+  `powershell.exe`: it is the supervisor only when its command line names this folder's `start.mjs` and ends in
+  `supervise`. When Windows does not say which program a live number is (the lookup fails, or the process belongs to
+  an elevated or other account), `launch` and `status` take it for the supervisor and `uninstall` stops nothing,
+  keeps the folder, and says which process to end by hand. `uninstall` only ever stops a process whose command line
+  says it is the supervisor, and also says so when the pipe is held but no such process is known. `launch` and
+  `install` became asynchronous for the pipe. Supervisors keep writing `supervisor.pid`. macOS and other systems keep
+  the plain process number check. This settles the "Not done" of the entry "The Windows runner outlives what started
+  it and comes back by itself".
+- **Why:** A supervisor killed or ended by a reboot leaves `supervisor.pid` behind; once Windows gives that number to
+  another process, `launch` did nothing for as long as that process lived, so the scheduled task never brought the
+  runner back, and `uninstall` would have killed the other process and its children. The pipe has no stale state but
+  is held only by supervisors started since #140; a supervisor started earlier stays alive across runner updates, and
+  on the owner's PC one was running when this was written (checked: the lookup names it, and names the test process
+  as another program). Without the command line check `launch` would start a second supervisor and runner beside it.
+  Supervisors still write the file because a runner that falls back to the version before this one only knows the
+  file. The lookup costs about half a second and runs only when the pipe is not held and the number is alive.
+  Taking an unreadable process for the supervisor keeps the old behaviour in that rare case rather than risk two
+  runners.
+- **Other options:** Let the pipe answer with the supervisor's process number: saves a lookup only for supervisors that
+  already hold the pipe, and #140 supervisors do not answer. Compare the process start time with the file's time: also
+  needs a lookup and is upset by clock changes. Find the supervisor by scanning all `node.exe` command lines instead
+  of trusting the file: depends on the exact path spelling, and a miss starts a second runner.
+
 ## 2026-11-18 — Evaluation of routing without a model call (#139)
 
 - **Chosen:** Copy Super-agent2's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts
