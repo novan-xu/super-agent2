@@ -1,6 +1,6 @@
 import type { AllowanceReport } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
-import { compactValue, percentTone, providersOf } from "./allowance.js";
+import { compactValue, usageTone, providersOf } from "./allowance.js";
 
 const report: AllowanceReport = {
   subscriptions: [
@@ -14,13 +14,13 @@ const report: AllowanceReport = {
 describe("provider allowance display", () => {
   it("shows GPT weekly and both Claude windows, with compact values", () => {
     const [gpt, claude, deepseek] = providersOf(report);
-    expect(gpt?.windows).toMatchObject([{ name: "week", remaining: 85 }]);
-    expect(claude?.windows).toMatchObject([{ name: "fiveHours", remaining: 51 }, { name: "sevenDays", remaining: 19 }]);
-    expect([gpt, claude, deepseek].map((provider) => provider && compactValue(provider))).toEqual(["85%", "19%", "¥29.99"]);
+    expect(gpt?.windows).toMatchObject([{ name: "week", used: 15 }]);
+    expect(claude?.windows).toMatchObject([{ name: "fiveHours", used: 49 }, { name: "week", used: 81 }]);
+    expect([gpt, claude, deepseek].map((provider) => provider && compactValue(provider))).toEqual(["15%", "81%", "¥29.99"]);
     expect(deepseek?.tone).toBe("warn");
   });
   it("uses state hues at boundaries and distinguishes unknown and unavailable", () => {
-    expect([percentTone(null), percentTone(0), percentTone(19.9), percentTone(20)]).toEqual(["unknown", "bad", "warn", "ok"]);
+    expect([usageTone(null), usageTone(0), usageTone(74.9), usageTone(75), usageTone(89.9), usageTone(90)]).toEqual(["unknown", "ok", "ok", "warn", "warn", "bad"]);
     expect(providersOf(null).map((item) => item.tone)).toEqual(["unknown", "unknown", "unknown"]);
     const marked = providersOf({ ...report, unavailable: [{ program: "claude", reason: "limit", since: 1, until: 100, given: true }] });
     expect(marked[1]).toMatchObject({ tone: "bad", unavailableUntil: 100 });

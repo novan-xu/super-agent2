@@ -1,8 +1,8 @@
 import type { AllowanceReport, AllowanceWindow, Subscription } from "@super-agent2/protocol";
 
 export type Tone = "ok" | "warn" | "bad" | "unknown";
-export type WindowName = "week" | "fiveHours" | "sevenDays";
-export interface WindowView { readonly name: WindowName; readonly remaining: number | null; readonly resetsAt: number | null; readonly tone: Tone }
+export type WindowName = "week" | "fiveHours";
+export interface WindowView { readonly name: WindowName; readonly used: number | null; readonly resetsAt: number | null; readonly tone: Tone }
 export interface ProviderView {
   readonly id: "codex" | "claude" | "dsh";
   readonly name: string;
@@ -11,17 +11,15 @@ export interface ProviderView {
   readonly amount: string | null;
   readonly tone: Tone;
   readonly unavailableUntil: number | null | undefined;
-  readonly readAt: number | null;
-  readonly machine: string | null;
 }
 
-export function percentTone(value: number | null): Tone {
-  return value === null ? "unknown" : value <= 0 ? "bad" : value < 20 ? "warn" : "ok";
+export function usageTone(value: number | null): Tone {
+  return value === null ? "unknown" : value < 75 ? "ok" : value < 90 ? "warn" : "bad";
 }
 
 function windowView(name: WindowName, item: AllowanceWindow | undefined): WindowView {
-  const remaining = item === undefined ? null : Math.max(0, Math.min(100, 100 - item.usedPercent));
-  return { name, remaining, resetsAt: item?.resetsAt ?? null, tone: percentTone(remaining) };
+  const used = item === undefined ? null : Math.max(0, Math.min(100, item.usedPercent));
+  return { name, used, resetsAt: item?.resetsAt ?? null, tone: usageTone(used) };
 }
 
 function weekly(windows: readonly AllowanceWindow[]): AllowanceWindow | undefined {
@@ -31,7 +29,7 @@ function weekly(windows: readonly AllowanceWindow[]): AllowanceWindow | undefine
 function windowsOf(id: "codex" | "claude", subscription: Subscription | undefined): WindowView[] {
   const windows = subscription?.state === "unknown" ? [] : subscription?.windows ?? [];
   if (id === "codex") return [windowView("week", weekly(windows))];
-  return [windowView("fiveHours", windows.find((item) => item.name === "five_hour" || item.name === "session")), windowView("sevenDays", windows.find((item) => item.name === "seven_day" || item.name === "weekly_all"))];
+  return [windowView("fiveHours", windows.find((item) => item.name === "five_hour" || item.name === "session")), windowView("week", windows.find((item) => item.name === "seven_day" || item.name === "weekly_all"))];
 }
 
 function currency(currency: string, total: number): string {
@@ -46,17 +44,17 @@ export function providersOf(report: AllowanceReport | null, now = 0): ProviderVi
     const mark = report?.unavailable.find((item) => item.program === id && (item.until === null || item.until > now));
     const tones = windows.map((item) => item.tone);
     const tone: Tone = mark || subscription?.state === "exhausted" || tones.includes("bad") ? "bad" : tones.includes("warn") ? "warn" : tones.includes("ok") ? "ok" : "unknown";
-    return { id, name: id === "codex" ? "GPT" : "Claude", compactName: id === "codex" ? "GPT" : "Claude", windows, amount: null, tone, unavailableUntil: mark === undefined ? undefined : mark.until, readAt: subscription?.readAt ?? null, machine: subscription?.machine ?? null };
+    return { id, name: id === "codex" ? "GPT" : "Claude", compactName: id === "codex" ? "GPT" : "Claude", windows, amount: null, tone, unavailableUntil: mark === undefined ? undefined : mark.until };
   });
   const balance = report?.balance;
   const mark = report?.unavailable.find((item) => item.program === "dsh" && (item.until === null || item.until > now));
-  result.push({ id: "dsh", name: "DeepSeek", compactName: "DS", windows: [], amount: balance?.state === "unknown" || !balance ? null : balance.wallets.map((wallet) => currency(wallet.currency, wallet.total)).join(" · "), tone: mark || balance?.state === "empty" ? "bad" : balance?.state === "low" ? "warn" : balance?.state === "ok" ? "ok" : "unknown", unavailableUntil: mark === undefined ? undefined : mark.until, readAt: balance?.machine ? balance.readAt : null, machine: balance?.machine ?? null });
+  result.push({ id: "dsh", name: "DeepSeek", compactName: "DS", windows: [], amount: balance?.state === "unknown" || !balance ? null : balance.wallets.map((wallet) => currency(wallet.currency, wallet.total)).join(" · "), tone: mark || balance?.state === "empty" ? "bad" : balance?.state === "low" ? "warn" : balance?.state === "ok" ? "ok" : "unknown", unavailableUntil: mark === undefined ? undefined : mark.until });
   return result;
 }
 
 export function compactValue(provider: ProviderView): string | null {
   if (provider.unavailableUntil !== undefined) return null;
   if (provider.id === "dsh") return provider.amount;
-  const values = provider.windows.flatMap((item) => item.remaining === null ? [] : [item.remaining]);
-  return values.length === 0 ? null : `${Math.round(Math.min(...values))}%`;
+  const values = provider.windows.flatMap((item) => item.used === null ? [] : [item.used]);
+  return values.length === 0 ? null : `${Math.round(Math.max(...values))}%`;
 }

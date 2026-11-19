@@ -619,7 +619,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
                   ? text("connections.exhausted")
                   : subscription.remainingPercent === null
                     ? text("connections.unknown")
-                    : text("connections.left", { percent: Math.round(subscription.remainingPercent) });
+                    : text("connections.used", { percent: Math.round(Math.max(0, Math.min(100, 100 - subscription.remainingPercent))) });
             return (
               <div className="srow" key={row.provider}>
                 <span className={`dot ${available === undefined ? "dot--mute" : available ? "dot--ok" : "dot--warn"}`} />
