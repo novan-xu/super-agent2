@@ -364,7 +364,7 @@ export function ConversationView(props: ConversationViewProps) {
             </span>
           </div>
         </div>
-        <TopicStream key={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
+        <TopicStream streamKey={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
@@ -410,6 +410,7 @@ function toneOf(id: string): number {
 }
 
 interface TopicStreamProps {
+  readonly streamKey: string;
   readonly state: ConversationState | null;
   readonly stream: TopicStreamState | null;
   readonly scope: TopicScope;
@@ -425,7 +426,7 @@ interface TopicStreamProps {
   readonly openEdit: (topic: TopicEdit) => void;
 }
 
-export function TopicStream({ state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
+export function TopicStream({ streamKey, state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const current = state?.conversation;
@@ -462,7 +463,8 @@ export function TopicStream({ state, stream, scope, list, online, now, following
 
   useLayoutEffect(() => {
     following.current = true;
-  }, [following]);
+    older.current = null;
+  }, [following, streamKey]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element === null) {
@@ -474,7 +476,7 @@ export function TopicStream({ state, stream, scope, list, online, now, following
     } else if (following.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [items, stream?.loading, following]);
+  }, [items, stream?.loading, following, streamKey]);
 
   useEffect(() => {
     const element = scroller.current;
