@@ -4254,3 +4254,15 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
 - **Why:** pnpm refuses to install with unreviewed build scripts. `onnxruntime-node` ships its CPU binaries in the
   package; its script only downloads CUDA libraries, which nothing here uses.
 - **Other options:** Allow the scripts; keep the models out of the repository's tools and run them from a scratch folder.
+
+## 2026-11-18 — Routing evaluation: constants for few wrong joins (#139)
+
+- **Chosen:** Recommend the bigram router with the constants chosen on the train part when a wrong join counts three
+  times a wrong split: rule b (≤ 12 characters, 30 min) and the score (threshold 0.055, margin 0.091, decay 0.18), without
+  the open-question and reference rules.
+- **Why:** The owner cares more about wrong joins than about wrong splits, since a wrong split has a one-tap move hint
+  and a wrong join pollutes the topic. Weights 3 and 4 choose the same constants; on the test part they make 11 wrong
+  joins instead of 20, for 48 wrong splits instead of 27. At an equal wrong-join rate chosen this way,
+  `bge-small-zh-v1.5` is not better than bigram (10 and 51 against 11 and 48), so the scorer stays bigram.
+- **Other options:** Keep the constants chosen with weight 2, which are right more often (70 % against 62 %); use
+  `bge-small-zh-v1.5` at the threshold that looked best on the test part, which was picked on the test messages.

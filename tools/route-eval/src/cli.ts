@@ -199,18 +199,19 @@ const rulesOnly = ruleConfigs();
 const noRules: RuleGrid = { ...ruleGrid, question: ["off"], references: [false], shortLengths: [0] };
 const withoutReferences: RuleGrid = { ...ruleGrid, references: [false] };
 
-function tune(set: readonly ScoredDecision[], score: string | null, space: ScoreSpace = fullSpace, rules: readonly Config[] = rulesOnly): Config {
-  let current = best(set, rules).config;
+function tune(set: readonly ScoredDecision[], score: string | null, space: ScoreSpace = fullSpace, rules: readonly Config[] = rulesOnly, weight: number = wrongJoinWeight): Config {
+  let current = best(set, rules, weight).config;
   if (score === null) {
     return current;
   }
   const { sd, sorted } = spreadOf(set, score);
   for (let round = 0; round < 3; round += 1) {
-    current = best(set, scoreConfigs(current, score, sd, sorted, space)).config;
+    current = best(set, scoreConfigs(current, score, sd, sorted, space), weight).config;
     const base = current;
     current = best(
       set,
       rules.map((rule) => ({ ...base, question: rule.question, questionWindowMs: rule.questionWindowMs, references: rule.references, shortLength: rule.shortLength, shortWindowMs: rule.shortWindowMs })),
+      weight,
     ).config;
   }
   return current;
@@ -393,6 +394,141 @@ say("|---|---|---|---|---|---|");
   }
 }
 say();
+
+say("## Wrong joins against wrong splits (test part, both data sets)");
+say();
+{
+  const set = test(decisions);
+  const names = ["bigram", "bge-small-zh", "bge-m3"].filter((name) => chosen.has(name));
+  const counts = (config: Config, outcome: "wrongJoin" | "wrongSplit") => set.map((decision) => (outcomeOf(decision, decide(decision, config)) === outcome ? 1 : 0));
+  let seed = 142;
+  const random = () => {
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+    return seed / 4294967296;
+  };
+  const samples = Array.from({ length: 10_000 }, () => Array.from({ length: set.length }, () => Math.floor(random() * set.length)));
+  const paired = (mine: readonly number[], theirs: readonly number[]) => {
+    const differences = samples.map((sample) => sample.reduce((sum, index) => sum + mine[index]! - theirs[index]!, 0)).sort((left, right) => left - right);
+    return { low: quantile(differences, 0.025), high: quantile(differences, 0.975), better: differences.filter((value) => value < 0).length / differences.length };
+  };
+  const curves = new Map<string, Array<{ config: Config; tally: Tally }>>();
+  for (const name of names) {
+    const config = chosen.get(name)!;
+    const key = config.score!;
+    const values = set.flatMap((decision) => decision.scores[key]!.filter((value) => Number.isFinite(value)));
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const thresholds = [...Array.from({ length: 801 }, (_, index) => low + ((high - low) * index) / 800), Infinity];
+    curves.set(name, thresholds.map((threshold) => ({ config: { ...config, threshold }, tally: tallyOf(set, { ...config, threshold }) })));
+  }
+  const at = (name: string, limit: number) => {
+    let chosenPoint: { config: Config; tally: Tally } | undefined;
+    for (const point of curves.get(name)!) {
+      if (point.tally.wrongJoin <= limit && (chosenPoint === undefined || point.tally.wrongSplit < chosenPoint.tally.wrongSplit)) {
+        chosenPoint = point;
+      }
+    }
+    return chosenPoint;
+  };
+  say("Rules a, e and b, the decay and the margin are kept as chosen for each scorer; only the absolute threshold moves. Each cell is the fewest wrong splits reachable with at most that many wrong joins (actual wrong joins in brackets). The floor is the threshold at infinity: the rules alone.");
+  say();
+  say(`| Wrong joins at most | ${names.join(" | ")} |`);
+  say(`|---|${names.map(() => "---").join("|")}|`);
+  const floor = new Map(names.map((name) => [name, curves.get(name)!.at(-1)!.tally] as const));
+  say(`| floor (rules only) | ${names.map((name) => `${floor.get(name)!.wrongSplit} (${floor.get(name)!.wrongJoin})`).join(" | ")} |`);
+  const smallest = Math.min(...names.map((name) => floor.get(name)!.wrongJoin));
+  for (let limit = smallest; limit <= 22; limit += 1) {
+    say(`| ${limit} | ${names.map((name) => {
+      const point = at(name, limit);
+      return point === undefined ? "-" : `${point.tally.wrongSplit} (${point.tally.wrongJoin})`;
+    }).join(" | ")} |`);
+  }
+  say();
+  {
+    const part = train(decisions);
+    say("The same curve on the train part (234 messages), where the constants were chosen:");
+    say();
+    say(`| Wrong joins at most | ${names.join(" | ")} |`);
+    say(`|---|${names.map(() => "---").join("|")}|`);
+    const trainCurves = new Map(names.map((name) => {
+      const config = chosen.get(name)!;
+      const thresholds = curves.get(name)!.map((point) => point.config.threshold);
+      return [name, thresholds.map((threshold) => tallyOf(part, { ...config, threshold }))] as const;
+    }));
+    const trainFloor = Math.min(...names.map((name) => trainCurves.get(name)!.at(-1)!.wrongJoin));
+    for (let limit = trainFloor; limit <= 32; limit += 1) {
+      say(`| ${limit} | ${names.map((name) => {
+        const reachable = trainCurves.get(name)!.filter((tally) => tally.wrongJoin <= limit);
+        if (reachable.length === 0) {
+          return "-";
+        }
+        const fewest = reachable.reduce((left, right) => (right.wrongSplit < left.wrongSplit ? right : left));
+        return `${fewest.wrongSplit} (${fewest.wrongJoin})`;
+      }).join(" | ")} |`);
+    }
+    say();
+  }
+  say("Wrong joins by rule at the matched points:");
+  say();
+  say("| Wrong joins at most | Scorer | Threshold | a | e | b | c | Wrong splits |");
+  say("|---|---|---|---|---|---|---|---|");
+  for (const limit of [13, 10, 7]) {
+    for (const name of names) {
+      const point = at(name, limit);
+      if (point === undefined) {
+        say(`| ${limit} | ${name} | not reachable | | | | | |`);
+        continue;
+      }
+      const rules = ruleTallies(set, point.config);
+      say(`| ${limit} | ${name} | ${Number.isFinite(point.config.threshold) ? point.config.threshold.toFixed(3) : "none"} | ${rules.a.wrongJoin} | ${rules.e.wrongJoin} | ${rules.b.wrongJoin} | ${rules.c.wrongJoin} | ${point.tally.wrongSplit} |`);
+    }
+  }
+  say();
+  say("Constants chosen on the train part with a heavier weight on wrong joins, measured on the test part:");
+  say();
+  tableHead.forEach((line) => say(line));
+  const weighted = new Map<string, Config>();
+  for (const weight of [3, 4]) {
+    for (const name of names) {
+      const options = variants.map((variant) => tune(train(decisions), scoreKey(name, variant), fullSpace, rulesOnly, weight));
+      const config = options.reduce((left, right) => (cost(tallyOf(train(decisions), right), weight) < cost(tallyOf(train(decisions), left), weight) ? right : left));
+      weighted.set(`${name}/${weight}`, config);
+      say(row(`${name}, weight ${weight}`, tallyOf(set, config)));
+      const byRule = ruleTallies(set, config);
+      say(`|   ${describe(config)}; wrong joins by rule a ${byRule.a.wrongJoin}, e ${byRule.e.wrongJoin}, b ${byRule.b.wrongJoin}, c ${byRule.c.wrongJoin}; decided by c ${byRule.c.total} | | | | | |`);
+    }
+  }
+  say();
+  say("Paired bootstrap, bge-small-zh minus bigram (10 000 resamples of the test messages; negative favours bge-small-zh):");
+  say();
+  say("| Comparison | bge-small-zh | bigram | Difference, 95% interval | Share of resamples where bge-small-zh is better |");
+  say("|---|---|---|---|---|");
+  if (names.includes("bge-small-zh")) {
+    const comparisons: Array<[string, Config, Config, "wrongJoin" | "wrongSplit"]> = [
+      ["wrong joins, constants chosen with weight 2", chosen.get("bge-small-zh")!, chosen.get("bigram")!, "wrongJoin"],
+      ["wrong splits, constants chosen with weight 2", chosen.get("bge-small-zh")!, chosen.get("bigram")!, "wrongSplit"],
+    ];
+    for (const weight of [3, 4]) {
+      comparisons.push([`wrong joins, constants chosen with weight ${weight}`, weighted.get(`bge-small-zh/${weight}`)!, weighted.get(`bigram/${weight}`)!, "wrongJoin"]);
+      comparisons.push([`wrong splits, constants chosen with weight ${weight}`, weighted.get(`bge-small-zh/${weight}`)!, weighted.get(`bigram/${weight}`)!, "wrongSplit"]);
+    }
+    for (const limit of [13, 10, 7]) {
+      const mine = at("bge-small-zh", limit);
+      const theirs = at("bigram", limit);
+      if (mine !== undefined && theirs !== undefined) {
+        comparisons.push([`wrong splits at most ${limit} wrong joins`, mine.config, theirs.config, "wrongSplit"]);
+      }
+    }
+    for (const [label, mine, theirs, outcome] of comparisons) {
+      const left = counts(mine, outcome);
+      const right = counts(theirs, outcome);
+      const result = paired(left, right);
+      const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+      say(`| ${label} | ${sum(left)} | ${sum(right)} | ${result.low} to ${result.high} | ${(100 * result.better).toFixed(0)}% |`);
+    }
+  }
+  say();
+}
 
 say("## Time per decision on this machine (one message embedded alone; reported, not asserted)");
 say();

@@ -15,8 +15,8 @@ export function add(tally: Tally, outcome: Outcome): Tally {
 
 export const wrongJoinWeight = 2;
 
-export function cost(tally: Tally): number {
-  return wrongJoinWeight * tally.wrongJoin + tally.wrongSplit;
+export function cost(tally: Tally, weight: number = wrongJoinWeight): number {
+  return weight * tally.wrongJoin + tally.wrongSplit;
 }
 
 export function tallyOf(decisions: readonly ScoredDecision[], config: Config, filter: (decision: Decision) => boolean = () => true): Tally {
@@ -165,11 +165,11 @@ export function scoreConfigs(base: Config, score: string, sd: number, sorted: re
   return configs;
 }
 
-export function best(decisions: readonly ScoredDecision[], configs: readonly Config[]): { readonly config: Config; readonly tally: Tally } {
+export function best(decisions: readonly ScoredDecision[], configs: readonly Config[], weight: number = wrongJoinWeight): { readonly config: Config; readonly tally: Tally } {
   let chosen: { config: Config; tally: Tally } | undefined;
   for (const config of configs) {
     const tally = tallyOf(decisions, config);
-    if (chosen === undefined || cost(tally) < cost(chosen.tally) || (cost(tally) === cost(chosen.tally) && tally.wrongJoin < chosen.tally.wrongJoin)) {
+    if (chosen === undefined || cost(tally, weight) < cost(chosen.tally, weight) || (cost(tally, weight) === cost(chosen.tally, weight) && tally.wrongJoin < chosen.tally.wrongJoin)) {
       chosen = { config, tally };
     }
   }

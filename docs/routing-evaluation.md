@@ -5,15 +5,15 @@ per-message listing of every decision stay on the owner's PC in `C:\Users\nuofa\
 
 ## Recommendation
 
-Route in the hub with rules a, e and b followed by a **character-bigram score** (no model). In this order, among the
-in-scope topics active in the last 24 hours:
+Route in the hub with a **character-bigram score** (no model), tuned for few wrong joins. A wrong split leaves the
+owner a one-tap "move to" hint; a wrong join leaves none and pollutes the topic's context, so the constants below are
+the ones chosen on the train part with a wrong join counted **three times** as bad as a wrong split (weights 3 and 4
+choose the same constants). In this order, among the in-scope topics active in the last 24 hours:
 
 | Step | Rule | Constant |
 |---|---|---|
-| a | The most recently active topic's last assistant reply ends with a question (`?` or `？` in its last line, within its last 40 characters) and that topic was active at most **30 min** ago: join it. | 30 min |
-| e | The message names a ticket or issue (`tkt_…`, `T-n`, `#n`, `工单 n`, `PR n`, or a bare 2–4 digit number that is not a time, percentage or quantity) that appears in exactly **one** active topic's messages or replies: join that topic. | — |
 | b | The message has at most **12 characters** and the most recently active topic was active at most **30 min** ago: join it. | 12 characters, 30 min |
-| c | Score every active topic: the best bigram cosine between the message and the topic's text (its first message, its last 5 owner messages and its last 3 replies, each reply clipped to 320 characters), minus **0.18 × log2(1 + idle / 10 min)**. Join the best topic if its score is at least **0.055** and leads the runner-up by at least **0.023**. | 0.055, 0.023, 0.18 |
+| c | Score every active topic: the best bigram cosine between the message and the topic's text (its first message, its last 5 owner messages and its last 3 replies, each reply clipped to 320 characters), minus **0.18 × log2(1 + idle / 10 min)**. Join the best topic if its score is at least **0.055** and leads the runner-up by at least **0.091**. | 0.055, 0.091, 0.18 |
 | d | Otherwise open a new topic, with a hint naming the best-scoring topic. | — |
 
 The bigram representation: NFKC, lower case; each run of `[a-z0-9_.#-]` of two or more characters is one unit; in the
@@ -21,27 +21,45 @@ rest, after dropping punctuation, symbols and spaces, every pair of adjacent cha
 `1 + ln(count)`; the vector is normalised and two texts are compared by cosine. The owner's message is clipped to its
 first 1 000 characters.
 
-Expected on new messages (the later 40 % of both histories, 154 messages that would reach the router): **about 70 %
-right, 13 % wrong joins and 18 % wrong splits** (error rate 24–38 % at 95 %), against 79 % wrong splits today. Of the
-20 wrong joins, 15 put the message into another active topic and 5 should have opened a new one; of the 27 wrong
-splits, 14 belonged to the most recent topic and 13 to an older active one.
+Expected on new messages (the later 40 % of both histories, 154 messages that would reach the router): **about 62 %
+right, 7 % wrong joins and 31 % wrong splits** (11, 48 and 95 of 154; error rate 31–46 % at 95 %), against 79 % wrong
+splits today. Of the 11 wrong joins, 6 come from rule b and 5 from the score.
 
-**Why bigram and not a model.** On the test part the bigram router, `bge-small-zh-v1.5` and `bge-m3` are tied: their
-costs (2 × wrong joins + wrong splits) are 67, 63 and 66, and the paired bootstrap interval of each model's difference
-to bigram contains zero (bge-small-zh −16 to +7, bge-m3 −17 to +15). The issue asked for the simpler scorer when the
-difference is small; "small" was taken to mean that the 95 % interval of the paired cost difference contains zero. The
-bigram router also held its accuracy from the train part (69.2 %) to the test part (69.5 %), so its constants are the
-least overfitted. `bge-small-zh-v1.5` is the fallback if wrong joins prove too frequent in use: it made 13 wrong joins
-against bigram's 20 (but 37 wrong splits against 27), costs about 2 ms per message here and 41 ms on the NAS, and runs
-on the NAS (see below).
+With wrong joins counted twice instead of three times, the train part chooses two more rules before b (a reply ending
+with a question, and references to tickets and issues; both defined below) and a smaller margin. That router is right
+more often but makes almost twice the wrong joins:
+
+| Step | Rule | Constant |
+|---|---|---|
+| a | The most recently active topic's last assistant reply ends with a question (`?` or `？` in its last line, within its last 40 characters) and that topic was active at most **30 min** ago: join it. | 30 min |
+| e | The message names a ticket or issue (`tkt_…`, `T-n`, `#n`, `工单 n`, `PR n`, or a bare 2–4 digit number that is not a time, percentage or quantity) that appears in exactly **one** active topic's messages or replies: join that topic. | — |
+| b | As above. | 12 characters, 30 min |
+| c | As above, with a margin of **0.023**. | 0.055, 0.023, 0.18 |
+
+It is **about 70 % right, 13 % wrong joins and 18 % wrong splits** (107, 20 and 27 of 154; error 24–38 %). Of its 20
+wrong joins, 15 put the message into another active topic and 5 should have opened a new one; of its 27 wrong splits, 14
+belonged to the most recent topic and 13 to an older active one. Rules a and e are right about three times in four
+(13 of 17 and 12 of 15 on the test part). That is close to the break-even once a wrong join costs three wrong splits
+(a join then pays only if it is right more than three times in four), and on the train part they did not pay.
+
+**Why bigram and not a model.** With wrong joins counted twice, the bigram router, `bge-small-zh-v1.5` and `bge-m3` are
+tied: their costs (2 × wrong joins + wrong splits) are 67, 63 and 66 on the test part, and the paired bootstrap
+interval of each model's difference to bigram contains zero (bge-small-zh −16 to +7, bge-m3 −17 to +15). With wrong
+joins counted three or four times, bigram and bge-small-zh are tied again (11 against 10 wrong joins, 48 against 51
+wrong splits; see "At the same wrong-join rate" below). The issue asked for the simpler scorer when the difference is
+small; "small" was taken to mean that the 95 % interval of the paired difference contains zero. The bigram router also
+held its accuracy from the train part to the test part, so its constants are the least overfitted.
+`bge-small-zh-v1.5` remains the fallback: about 2 ms per message here and 41 ms on the NAS, and it runs on the NAS (see
+below).
 
 **What I would not do.**
 
 - Do not use `multilingual-e5-small`: it was the weakest scorer (cost 77, 62 % right on the test part).
 - Do not use `bge-m3`: no better than bigram, 560 MB of model files, 0.7 s per message on the NAS.
 - Do not use a hard recency window for the score: with a window instead of the decay every scorer lost 5–16 points.
-- Do not rely on a margin alone: margin without an absolute threshold lost 1–12 points, depending on the scorer. The margin adds
-  little on top of the threshold; it may be kept small or dropped.
+- Do not rely on a margin alone: margin without an absolute threshold lost 1–12 points, depending on the scorer. With
+  wrong joins counted twice the margin adds little on top of the threshold; with three times it is what keeps the
+  score from joining near ties.
 - Do not score short messages. For messages of at most 10 characters every scorer ranks the true topic first only
   19–26 % of the time, against 81 % for "the most recently active topic". Rule b handles them, and the score changes
   none of their outcomes.
@@ -112,7 +130,7 @@ a new topic), and different rules would move the numbers by several points.
   topics' history. The same routers counted over all 225 test messages are in the last section of the tool's output.
 - The first 60 % of each data set (by time) is the train part, the rest the test part. All constants are chosen on the
   pooled train part by minimising 2 × wrong joins + wrong splits (a wrong join is counted twice as bad, since it pollutes
-  a topic), and every number below comes from the test part unless it says otherwise.
+  a topic; 3× and 4× in "At the same wrong-join rate"), and every number below comes from the test part unless it says otherwise.
 - Constants searched: rule a on reply text or question cards only, idle ≤ 30 min, 2 h or 24 h; rule e on or off; rule b
   length ≤ 4, 8, 12 or 20 and idle ≤ 10 min, 30 min or 2 h; for the score, hard windows of 30 min to 24 h or a decay of
   0.25–2 standard deviations of the score per doubling of idle time, 29 absolute thresholds (score quantiles) and margins
@@ -160,7 +178,78 @@ Chosen constants per scorer (decay per doubling of idle time beyond 10 min; T ab
 | bge-small-zh-v1.5 | a (text, 30 min), e, b (≤ 12, 30 min) | 0.570 | 0.096 | 0.048 |
 | bge-m3 | a (text, 30 min), b (≤ 12, 30 min) | 0.573 | 0.042 | 0.042 |
 
-### What each rule contributes (test part, recommended router)
+### At the same wrong-join rate
+
+At the constants chosen with wrong joins counted twice, `bge-small-zh-v1.5` made 13 wrong joins and 37 wrong splits,
+bigram 20 and 27: two different operating points. To compare the scorers at the same wrong-join rate:
+
+**Moving only the threshold, on the test part.** Rules a, e and b, the decay and the margin stay as chosen for each
+scorer; each cell is the fewest wrong splits reachable with at most that many wrong joins of 154 (actual wrong joins in
+brackets). The floor is the rules alone (threshold at infinity).
+
+| Wrong joins at most | Bigram | bge-small-zh-v1.5 | bge-m3 |
+|---|---|---|---|
+| Floor (rules only) | 69 (11) | 69 (11) | 80 (9) |
+| 10 | not reachable | not reachable | 70 (10) |
+| 12 | 57 (12) | 64 (12) | 53 (12) |
+| 13 | 57 (13) | 36 (13) | 53 (13) |
+| 15 | 51 (15) | 34 (15) | 39 (15) |
+| 17 | 41 (17) | 34 (17) | 35 (17) |
+| 18 | 32 (18) | 34 (18) | 31 (18) |
+| 20 | 26 (20) | 34 (18) | 27 (20) |
+| 22 | 25 (22) | 34 (18) | 26 (22) |
+
+Wrong joins by rule at about 13 wrong joins: bigram a 4, e 3, b 4, score 2; bge-small-zh a 4, e 3, b 4, score 2; bge-m3
+(which was chosen without rule e) a 4, b 5, score 4. About 10 and 7 wrong joins are below the floor of rules a + e + b
+(11 wrong joins: a 4, e 3, b 4): no threshold reaches them, because the score can only remove its own wrong joins.
+
+The same curve on the train part, where the constants were chosen (234 messages):
+
+| Wrong joins at most | Bigram | bge-small-zh-v1.5 | bge-m3 |
+|---|---|---|---|
+| 15 | 90 (15) | 91 (15) | 88 (15) |
+| 17 | 80 (17) | 90 (17) | 75 (17) |
+| 19 | 79 (19) | 79 (19) | 62 (19) |
+| 21 | 74 (21) | 65 (21) | 56 (21) |
+| 23 | 63 (23) | 50 (23) | 52 (22) |
+| 25 | 61 (25) | 50 (25) | 49 (25) |
+| 27 | 53 (27) | 39 (27) | 45 (27) |
+| 29 | 43 (29) | 39 (29) | 36 (29) |
+
+**Constants chosen on the train part with wrong joins weighted 3× and 4×,** measured on the test part (weights 3 and 4
+choose the same constants for bigram and bge-small-zh):
+
+| Scorer | Weight | Right | Wrong joins | Wrong splits | Error, 95 % | Rules chosen | Wrong joins by rule |
+|---|---|---|---|---|---|---|---|
+| Bigram | 3 and 4 | 61.7 % | 11 (7.1 %) | 48 (31.2 %) | 31–46 % | b ≤ 12, 30 min; T 0.055, M 0.091, decay 0.18 | b 6, score 5 |
+| bge-small-zh-v1.5 | 3 and 4 | 60.4 % | 10 (6.5 %) | 51 (33.1 %) | 32–47 % | b ≤ 12, 10 min; T 0.600, M 0.096, decay 0.19 | b 6, score 4 |
+| bge-m3 | 3 | 53.9 % | 14 (9.1 %) | 57 (37.0 %) | 38–54 % | a, b ≤ 12, 30 min; window 2 h | a 4, b 5, score 5 |
+| bge-m3 | 4 | 55.2 % | 12 (7.8 %) | 57 (37.0 %) | 37–53 % | b ≤ 12, 10 min; decay | b 6, score 6 |
+
+**Paired bootstrap, bge-small-zh minus bigram** (10 000 resamples of the 154 test messages; negative favours
+bge-small-zh):
+
+| Comparison | bge-small-zh | Bigram | Difference, 95 % | bge-small-zh better in |
+|---|---|---|---|---|
+| Wrong joins, constants chosen with weight 2 | 13 | 20 | −13 to −1 | 99 % |
+| Wrong splits, constants chosen with weight 2 | 37 | 27 | +2 to +19 | 1 % |
+| Wrong joins, constants chosen with weight 3 or 4 | 10 | 11 | −4 to +2 | 61 % |
+| Wrong splits, constants chosen with weight 3 or 4 | 51 | 48 | −7 to +13 | 24 % |
+| Wrong splits at most 13 wrong joins (threshold picked on the test part) | 36 | 57 | −31 to −12 | 100 % |
+
+**What this says.** On the test part, with the rules kept and only the threshold moved, bge-small-zh leaves clearly
+fewer wrong splits than bigram between 13 and 17 wrong joins (36 against 57 at 13). That point is picked on the test
+messages, and the advantage does not hold elsewhere: on the test part bigram is level or better from 18 wrong joins up,
+and on the train part bigram is level or better up to 19 wrong joins, the low-join end that matters here. When the
+constants are chosen on the train part with wrong joins weighted 3× or 4× and then measured on the test part, both
+scorers land on the same point (10–11 wrong joins, 48–51 wrong splits) and the bootstrap intervals contain zero. A
+stricter bigram threshold alone does not get there: with rules a and e kept, bigram needs 57 wrong splits for 13 wrong
+joins. What gets there is dropping rules a and e (7 of the 11 wrong joins at the floor) and raising the margin. So at an
+equal wrong-join rate, bge-small-zh does not leave fewer wrong splits than bigram in a way these data can confirm. The
+recommended scorer stays bigram; the recommended constants change to the weight-3 ones, because of the owner's
+preference for fewer wrong joins.
+
+### What each rule contributes (test part, router with wrong joins counted twice)
 
 | Rule | Decisions | Right | Wrong joins | Wrong splits |
 |---|---|---|---|---|
