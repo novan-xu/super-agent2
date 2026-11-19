@@ -54,18 +54,17 @@ export interface ShellProps {
   readonly toast: string | null;
   readonly waiting: number;
   readonly suggestions?: number;
-  readonly reviews?: number;
   readonly allowance?: ReactNode;
   readonly children?: ReactNode;
 }
 
-export function countOf(view: PageView, waiting: number, suggestions = 0, reviews = 0): number {
-  return view === "workbench" ? waiting : view === "memory" ? suggestions : view === "history" ? reviews : 0;
+export function countOf(view: PageView, waiting: number, suggestions = 0): number {
+  return view === "workbench" ? waiting : view === "memory" ? suggestions : 0;
 }
 
 export function Shell(props: ShellProps) {
   const current = viewOf(props.route, props.ticketFrom);
-  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions, props.reviews);
+  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
     <a
       key={destination.view}

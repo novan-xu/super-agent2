@@ -33,10 +33,6 @@ function withReview(reviews: readonly TicketReviewCount[], ticket: Ticket): read
   return count === 0 ? rest : [...rest, { ticket: ticket.id, count }].sort((a, b) => a.ticket - b.ticket);
 }
 
-export function reviewCount(state: TicketsState): number {
-  return state.reviews.reduce((sum, entry) => sum + entry.count, 0);
-}
-
 export function receiveTickets(tickets: readonly Ticket[], reviews: readonly TicketReviewCount[] = []): TicketsState {
   return { known: true, open: ordered(tickets), reviews };
 }

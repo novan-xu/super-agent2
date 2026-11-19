@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ticket } from "./fixtures.js";
 import { pageReducer, initialPage } from "./page.js";
-import { initialTickets, receiveTicket, receiveTickets, reviewCount, toReview } from "./tickets.js";
+import { initialTickets, receiveTicket, receiveTickets, toReview } from "./tickets.js";
 
 const ids = (state: { readonly open: readonly { readonly id: number }[] }) => state.open.map((entry) => entry.id);
 
@@ -64,9 +64,9 @@ describe("the decisions to review", () => {
     expect(toReview(ticket(1, { state: "working", decisions: [decision(1)] }))).toBe(0);
     expect(toReview(ticket(1, { state: "merged", endedAt: 9, decisions: [decision(1), decision(2, "ok")] }))).toBe(1);
     let state = receiveTickets([], [{ ticket: 5, count: 2 }]);
-    expect(reviewCount(state)).toBe(2);
+    expect(state.reviews).toEqual([{ ticket: 5, count: 2 }]);
     state = receiveTicket(state, ticket(6, { state: "merged", endedAt: 9, decisions: [decision(3), decision(4), decision(5)] }));
-    expect(reviewCount(state)).toBe(5);
+    expect(state.reviews).toEqual([{ ticket: 5, count: 2 }, { ticket: 6, count: 3 }]);
     state = receiveTicket(state, ticket(5, { state: "merged", endedAt: 9, decisions: [decision(1, "ok"), decision(2, "opinion")] }));
     expect(state.reviews).toEqual([{ ticket: 6, count: 3 }]);
     const same = receiveTicket(state, ticket(6, { state: "merged", endedAt: 9, decisions: [decision(3), decision(4), decision(5)] }));
@@ -75,6 +75,6 @@ describe("the decisions to review", () => {
 
   it("reach the page state from the socket", () => {
     const state = pageReducer(initialPage, { type: "server", message: { type: "tickets", tickets: [], reviews: [{ ticket: 3, count: 4 }] } });
-    expect(reviewCount(state.tickets)).toBe(4);
+    expect(state.tickets.reviews).toEqual([{ ticket: 3, count: 4 }]);
   });
 });

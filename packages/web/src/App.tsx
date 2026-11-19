@@ -8,7 +8,6 @@ import { PushController } from "./hub/push.js";
 import { browserSocket } from "./hub/socket.js";
 import { destinationOfMessage } from "./live/address.js";
 import { initialPage } from "./live/page.js";
-import { reviewCount } from "./live/tickets.js";
 import { conversationRepositories, scopeOfTopic, topicScopeKey, workbenchScope } from "./live/topic-scope.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
@@ -302,7 +301,6 @@ export function App() {
       toast={toast}
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
-      reviews={reviewCount(page.tickets)}
       allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
       actions={
         route.view === "memory" ? (
