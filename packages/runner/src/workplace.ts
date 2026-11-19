@@ -185,12 +185,33 @@ async function worktrees(git: Git, clone: string): Promise<string[][]> {
 }
 
 function samePath(a: string, b: string): boolean {
-  return process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+  if (process.platform !== "win32") return resolve(a) === resolve(b);
+  return resolve(a).toLowerCase() === resolve(b).toLowerCase() || windowsPath(a) === windowsPath(b);
 }
 
-async function registeredWorktree(git: Git, paths: WorkPaths): Promise<boolean> {
+function windowsPath(path: string): string {
+  let folder = resolve(path);
+  const missing: string[] = [];
+  while (true) {
+    try {
+      return join(realpathSync.native(folder), ...missing).toLowerCase();
+    } catch (error) {
+      const parent = dirname(folder);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === folder) return resolve(path).toLowerCase();
+      missing.unshift(basename(folder));
+      folder = parent;
+    }
+  }
+}
+
+async function registeredWorktree(git: Git, paths: WorkPaths): Promise<string | undefined> {
   const registrations = await worktrees(git, paths.clone);
-  return registrations.slice(1).some(([entry]) => entry?.startsWith("worktree ") && samePath(entry.slice("worktree ".length), paths.worktree));
+  for (const [entry] of registrations.slice(1)) {
+    if (!entry?.startsWith("worktree ")) continue;
+    const path = entry.slice("worktree ".length);
+    if (samePath(path, paths.worktree)) return path;
+  }
+  return undefined;
 }
 
 function existsAt(path: string): boolean {
@@ -211,9 +232,9 @@ async function checkSharedWorktree(git: Git, paths: WorkPaths, registered: boole
 export async function discardWorktree(git: Git, paths: WorkPaths): Promise<void> {
   if (paths.shared) {
     const registered = await registeredWorktree(git, paths);
-    if (registered) {
-      await checkSharedWorktree(git, paths, registered);
-      await git.must(["worktree", "remove", "--force", paths.worktree], paths.clone);
+    if (registered !== undefined) {
+      await checkSharedWorktree(git, paths, true);
+      await git.must(["worktree", "remove", "--force", registered], paths.clone);
     }
     return;
   }
@@ -238,8 +259,8 @@ export async function checkWorktreePath(git: Git, paths: WorkPaths): Promise<voi
     await git.run(["worktree", "prune"], paths.clone);
   } else {
     const registered = await registeredWorktree(git, paths);
-    await checkSharedWorktree(git, paths, registered);
-    if (registered && !existsAt(paths.worktree)) await git.must(["worktree", "remove", "--force", paths.worktree], paths.clone);
+    await checkSharedWorktree(git, paths, registered !== undefined);
+    if (registered !== undefined && !existsAt(paths.worktree)) await git.must(["worktree", "remove", "--force", registered], paths.clone);
   }
 }
 
