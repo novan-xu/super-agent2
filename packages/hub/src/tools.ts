@@ -96,6 +96,7 @@ const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName })
 const SetTopicTitleArguments = z.strictObject({
   title: z.string().trim().min(1).max(80).describe("A short, single-line title in the owner's language"),
 });
+const ArchiveTopicsArguments = z.strictObject({ topics: z.array(z.string().min(1)).min(1).max(100) });
 
 const CodeKind = z.enum(codeKinds);
 
@@ -838,6 +839,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         inputSchema: z.toJSONSchema(SetTopicTitleArguments, { io: "input" }),
       },
       {
+        name: "archive_topics",
+        title: "Archive topics",
+        description: "Archive the specified topics only when the owner asks. Current, system, merged, busy and already archived topics are skipped with a reason.",
+        inputSchema: z.toJSONSchema(ArchiveTopicsArguments, { io: "input" }),
+      },
+      {
         name: "handover",
         title: "Hand over an owner message",
         description: "Move a message when the owner asks or its automatic routing is clearly wrong. If unsure or it is a new aspect of the same subject, answer here. The current turn stops and the destination answers.",
@@ -1313,6 +1320,15 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const args = z.object({ questions: Questions }).safeParse(parsed.data.arguments);
         const id = conversation !== undefined && turn !== undefined && !aborted.aborted && args.success ? conversations.askOwner(conversation, turn, args.data.questions) : undefined;
         result = id === undefined ? { text: "An active topic turn and valid questions are required.", isError: true } : { text: `Question card ${id} shown. The answer will arrive as the owner's next input in this topic.` };
+        break;
+      }
+      case "archive_topics": {
+        const args = ArchiveTopicsArguments.safeParse(parsed.data.arguments);
+        if (!args.success || conversation === undefined || turn === undefined || aborted.aborted) {
+          result = { text: "An active topic turn and 1 to 100 topic IDs are required.", isError: true };
+          break;
+        }
+        result = { text: JSON.stringify(args.data.topics.map((topic) => ({ topic, result: conversations.archiveForBrain(topic, conversation) }))) };
         break;
       }
       case "handover": {

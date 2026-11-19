@@ -91,6 +91,7 @@ export interface ConversationService {
   proposeTitle(conversation: string, turn: string, title: string): boolean;
   merge(source: string, destination: string): TopicEdit<string>;
   archive(id: string): TopicEdit<string>;
+  archiveForBrain(id: string, current: string): string;
   archiveIdle(): void;
   historyRevision(): number;
   move(message: string, destination: TopicMove["destination"], source?: string): TopicEdit<string>;
@@ -1176,6 +1177,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     proposeTitle: (conversation, turn, title) => link?.ready === true && proposeTitle.run(title, turn, conversation).changes > 0,
     merge: corrections.merge,
     archive: corrections.archive,
+    archiveForBrain: corrections.archiveForBrain,
     archiveIdle: corrections.archiveIdle,
     historyRevision: corrections.revision,
     detail: (id) => {
