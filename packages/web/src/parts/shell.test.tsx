@@ -72,11 +72,16 @@ describe("Shell", () => {
     expect(html.match(/count count--hot/g)).toHaveLength(2);
   });
 
-  it("shows how many decisions of finished tickets wait for the owner's review on 历史", () => {
-    const html = render({ waiting: 0, reviews: 5 });
-    expect(html).toContain('aria-label="历史 5"');
-    expect(html).toContain('<span class="tab-badge">5</span>');
-    expect(html.match(/count count--hot/g)).toHaveLength(1);
+  it("keeps History free of badges in both navigation areas", () => {
+    const html = render({ waiting: 2, suggestions: 4 });
+    const historyLinks = [...html.matchAll(/<a class="(?:nav-btn|tab)" href="\/history" aria-label="([^"]+)"[^>]*>(.*?)<\/a>/g)];
+    expect(historyLinks).toHaveLength(2);
+    for (const link of historyLinks) {
+      expect(link[1]).toBe("历史");
+      expect(link[2]).not.toMatch(/count--hot|tab-badge/);
+    }
+    expect(html.match(/count count--hot/g)).toHaveLength(2);
+    expect(html.match(/tab-badge/g)).toHaveLength(2);
   });
 
   it("shows no count when nothing waits", () => {

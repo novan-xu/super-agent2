@@ -29,7 +29,7 @@ a.tab { color: var(--muted); }
   .conv-navigation { gap: var(--space-1); }
   .conv-tabs { flex: 1 0 auto; }
   .conv-tabs a { flex: 1; min-height: 32px; }
-  .conv-repository { width: 100%; min-height: 36px; font-size: var(--text-base); }
+  .conv-repository { display: none; }
   .conv-pick { min-height: 36px; }
   .conv-current .icon-btn { width: 36px; height: 36px; }
   .conv-toolbar .brain-chip .mono { display: none; }
