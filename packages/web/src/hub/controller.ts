@@ -1,4 +1,6 @@
 import {
+  type ReviewedStreamDestination,
+  type StreamPreviewRequest,
   type ChoiceChange,
   type ConversationResponse,
   type Conversation,
@@ -426,11 +428,17 @@ export class PageController {
     }
   }
 
-  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened, scope = this.scope): Promise<boolean> {
+  async previewStream(request: StreamPreviewRequest) {
+    const preview = await this.options.api.previewStream(request);
+    return preview.ok ? preview.value : undefined;
+  }
+
+  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened, scope = this.scope, destination?: ReviewedStreamDestination): Promise<boolean | "stale"> {
     if (conversation === null) {
-      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage, scope);
+      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage, scope, destination);
       if (!sent.ok) {
         this.options.onFailure(sent.error);
+        if (sent.error === "not_found" && destination?.topic !== undefined) return "stale";
       }
       return sent.ok;
     }

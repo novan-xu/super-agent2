@@ -15,9 +15,13 @@ import {
   type PushSubscriptionRequest,
   PushState,
   Refusal,
+  type ReviewedStreamDestination,
   type StuckAnswerRequest,
   StreamEntry,
   streamPath,
+  StreamPreview,
+  streamPreviewPath,
+  type StreamPreviewRequest,
   type TopicMove,
   type TopicScope,
   type QuestionAnswer,
@@ -98,8 +102,9 @@ export const hubApi = {
   send: (id: string, text: string, attachments: readonly string[] = [], quotedMessage?: string) =>
     call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments, quotedMessage }),
   answerQuestions: (conversation: string, id: string, answers: readonly QuestionAnswer[]) => call(`${conversationPath(conversation)}/questions`, EntryResponse, { id, answers }),
-  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope) =>
-    call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope }),
+  previewStream: (request: StreamPreviewRequest) => call(streamPreviewPath, StreamPreview, request),
+  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope, destination?: ReviewedStreamDestination) =>
+    call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope, ...destination }),
   renameTopic: (source: string, title: string) => call(`${conversationPath(source)}/rename`, ConversationResponse, { title }),
   archiveTopic: (source: string) => call(`${conversationPath(source)}/archive`, ConversationResponse, {}),
   mergeTopic: (source: string, destination: string) => call(`${conversationPath(source)}/merge`, ConversationResponse, { destination }),

@@ -30,8 +30,11 @@ import {
   protocolVersion,
   quoteChunkLimit,
   quoteInlineLimit,
+  RoutingProposal,
   type StreamEntry,
   type StreamPage,
+  type StreamPreview,
+  type StreamPreviewRequest,
   streamPageSize,
   type TopicHistoryUpdate,
   type TopicMove,
@@ -79,6 +82,7 @@ export interface ConversationService {
   askOwner(conversation: string, turn: string, questions: readonly Question[]): string | undefined;
   answerQuestions(conversation: string, id: string, answers: readonly QuestionAnswer[]): OwnerEntry | undefined;
   readonly topics: TopicContext;
+  previewStream(request: StreamPreviewRequest): Promise<StreamPreview>;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
   assignRepository(conversation: string, turn: string, repository: string): boolean;
@@ -107,6 +111,8 @@ export interface ConversationService {
 interface StreamSendOptions {
   readonly quotedMessage?: string | undefined;
   readonly scope?: TopicScope | undefined;
+  readonly newTopic?: true | undefined;
+  readonly proposal?: RoutingProposal | undefined;
 }
 
 export interface Delivery {
@@ -390,9 +396,10 @@ export function createConversationService(options: ConversationServiceOptions): 
   const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1 WHERE id = ?");
   const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
-  const joinedByRouter = "r.moved_at IS NULL AND r.topic = r.placed_in AND e.conversation_id = r.placed_in";
+  const placedByRouter = "r.owner_changed = 0 AND r.moved_at IS NULL AND e.conversation_id = r.placed_in";
+  const joinedByRouter = `${placedByRouter} AND r.topic = r.placed_in`;
   const placement = `CASE WHEN ${joinedByRouter} THEN 'router-joined'
-    WHEN r.entry IS NOT NULL AND r.moved_at IS NULL AND e.conversation_id = r.placed_in THEN 'router-opened'
+    WHEN ${placedByRouter} THEN 'router-opened'
     ELSE 'owner' END AS placement`;
   const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
   const selectEntry = connection.prepare(`SELECT e.*, ${placement} FROM ${entrySource} WHERE e.id = ?`);
@@ -1066,14 +1073,18 @@ export function createConversationService(options: ConversationServiceOptions): 
     return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage }));
   };
 
-  const finishRouting = (id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, routing: Routing): StreamEntry => {
-    const candidate = (topic: string | undefined) => {
-      const found = topic === undefined ? undefined : rawGet(topic);
-      return found?.topicState === "active" && !found.mergePending && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
-    };
-    let conversation = candidate(routing.topic ?? undefined);
-    const match = conversation === undefined ? candidate(routing.possibleMatch) : undefined;
-    const repository = scope.kind === "repository" ? scope.repository : routing.repository;
+  const routingCandidate = (topic: string | undefined, scope: TopicScope): Conversation | undefined => {
+    const found = topic === undefined ? undefined : rawGet(topic);
+    return found?.topicState === "active" && !found.system && !found.mergePending && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
+  };
+
+  const placeOwner = (
+    id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
+    { repository, proposal, ownerChanged = false, pending = false }: {
+      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: boolean;
+    },
+  ): StreamEntry => {
+    const match = conversation === undefined && !ownerChanged ? routingCandidate(proposal?.possibleMatch, scope) : undefined;
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (conversation === undefined) {
@@ -1081,16 +1092,21 @@ export function createConversationService(options: ConversationServiceOptions): 
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
-      router.record(id, conversation.id, routing, at);
-      deletePending.run(id);
+      if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, ownerChanged);
+      if (pending) deletePending.run(id);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");
       throw error;
     }
-    router.log(id, conversation.id, routing);
+    if (proposal !== undefined) router.log(id, conversation.id, scope.kind, proposal, ownerChanged);
     return publishOwner(id);
   };
+
+  const finishRouting = (id: string, at: number, body: z.infer<typeof PendingBody>, routing: Routing): StreamEntry =>
+    placeOwner(id, at, body, routingCandidate(routing.topic ?? undefined, body.scope), {
+      repository: body.scope.kind === "repository" ? body.scope.repository : routing.repository, proposal: routing, pending: true,
+    });
 
   corrections.finishOfflineMerges();
   for (const row of listPending.all().map((row) => PendingInput.parse(row))) {
@@ -1182,13 +1198,25 @@ export function createConversationService(options: ConversationServiceOptions): 
       const item = sendDirect(topic, message, attachments, quotedMessage);
       return item?.entry.kind === "owner" ? item.entry : undefined;
     },
-    sendToStream: async (topic, message, attachments, { quotedMessage, scope = { kind: "daily" } as const } = {}) => {
-      if (topic !== undefined || quotedMessage !== undefined) {
+    previewStream: async ({ text, attachmentNames, scope }) => {
+      const routing = await router.route({ text, attachments: attachmentNames.map((name) => ({ name })), scope, at: clock.now() });
+      return { proposal: RoutingProposal.parse(routing), title: routing.topic === null || closing ? null : rawGet(routing.topic)?.title ?? null };
+    },
+    sendToStream: async (topic, message, attachments, { quotedMessage, scope = { kind: "daily" } as const, newTopic, proposal } = {}) => {
+      if (!newTopic && proposal === undefined && (topic !== undefined || quotedMessage !== undefined)) {
         return sendDirect(topic, message, attachments, quotedMessage);
       }
       const id = randomUUID();
       const at = clock.now();
       const body = { message, attachments: [...attachments], scope };
+      if (newTopic || proposal !== undefined) {
+        const destination = newTopic ? undefined : routingCandidate(topic, scope);
+        if (!newTopic && destination === undefined) return undefined;
+        return placeOwner(id, at, body, destination, {
+          repository: newTopic ? router.repositoryFor(message, scope) : null,
+          proposal, ownerChanged: proposal !== undefined && proposal.decided.topic !== (destination?.id ?? null),
+        });
+      }
       savePending.run(id, JSON.stringify(body), at);
       const routing = await router.route({ text: message, attachments, scope, at });
       return closing ? undefined : finishRouting(id, at, body, routing);

@@ -180,7 +180,7 @@ importers:
         version: 8.3.8(@types/node@24.19.2)(yaml@2.9.1)
       vitest:
         specifier: 5.1.0
-        version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1))
+        version: 5.1.0(@types/node@24.19.2)(happy-dom@21.0.4)(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1))
 
   packages/brain:
     dependencies:
@@ -347,6 +347,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.3.0
         version: 6.3.0(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1))
+      happy-dom:
+        specifier: 21.0.4
+        version: 21.0.4
       vite:
         specifier: 8.3.8
         version: 8.3.8(@types/node@24.19.2)(yaml@2.9.1)
@@ -955,6 +958,9 @@ packages:
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
 
+  '@types/whatwg-mimetype@3.0.2':
+    resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
+
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
@@ -1122,6 +1128,10 @@ packages:
   bail@2.0.2:
     resolution: {integrity: sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==}
 
+  buffer-image-size@0.6.4:
+    resolution: {integrity: sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ==}
+    engines: {node: '>=4.0'}
+
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
 
@@ -1180,6 +1190,10 @@ packages:
 
   dockerfile-ast@0.7.1:
     resolution: {integrity: sha512-oX/A4I0EhSkGqrFv0YuvPkBUSYp1XiY8O8zAKc8Djglx8ocz+JfOr8gP0ryRMC2myqvDLagmnZaU9ot1vG2ijw==}
+
+  entities@7.0.1:
+    resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
+    engines: {node: '>=0.12'}
 
   entities@9.0.0:
     resolution: {integrity: sha512-oJFNDJg3kTPwAD1cNn2+WmUq4wFoo09npc3Ydf1D7ED4smRiWrsKnaLxykrTWgyGEcusc87P5dxlAleol9kpkg==}
@@ -1248,6 +1262,10 @@ packages:
 
   guid-typescript@1.0.9:
     resolution: {integrity: sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ==}
+
+  happy-dom@21.0.4:
+    resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
+    engines: {node: '>=20.0.0'}
 
   has-property-descriptors@1.0.2:
     resolution: {integrity: sha512-55JNKuIW+vq4Ke1BjOTjM2YctQIvCT7GFzHwmfZPGo5wnrgkid0YQtnAleFSqumZm4az3n2BS+erby5ipJdgrg==}
@@ -1799,6 +1817,10 @@ packages:
   vscode-languageserver-types@3.18.5:
     resolution: {integrity: sha512-kPd6+JQNz3HMJvjKlqUxERSlZHAntl/aGpsk7ImwIh0ewDKDcjgAEyVSYciPiOJD3ftbK9IrfiqUeTZLSbCizw==}
 
+  whatwg-mimetype@3.0.0:
+    resolution: {integrity: sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q==}
+    engines: {node: '>=12'}
+
   why-is-node-running@3.2.1:
     resolution: {integrity: sha512-Tb2FUhB4vUsGQlfSquQLYkApkuPAFQXGFzxWKHHumVz2dK+X1RUm/HnID4+TfIGYJ1kTcwOaCk/buYCEJr6YjQ==}
     engines: {node: '>=20.11'}
@@ -2214,6 +2236,8 @@ snapshots:
 
   '@types/unist@3.0.3': {}
 
+  '@types/whatwg-mimetype@3.0.2': {}
+
   '@types/ws@8.18.2':
     dependencies:
       '@types/node': 24.19.2
@@ -2302,6 +2326,10 @@ snapshots:
 
   bail@2.0.2: {}
 
+  buffer-image-size@0.6.4:
+    dependencies:
+      '@types/node': 24.19.2
+
   ccount@2.0.1: {}
 
   chai@6.3.0: {}
@@ -2351,6 +2379,8 @@ snapshots:
       vscode-languageserver-textdocument: 1.0.16
       vscode-languageserver-types: 3.18.5
 
+  entities@7.0.1: {}
+
   entities@9.0.0: {}
 
   es-define-property@1.0.1: {}
@@ -2397,6 +2427,19 @@ snapshots:
   gopd@1.2.0: {}
 
   guid-typescript@1.0.9: {}
+
+  happy-dom@21.0.4:
+    dependencies:
+      '@types/node': 24.19.2
+      '@types/whatwg-mimetype': 3.0.2
+      '@types/ws': 8.18.2
+      buffer-image-size: 0.6.4
+      entities: 7.0.1
+      whatwg-mimetype: 3.0.0
+      ws: 8.23.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   has-property-descriptors@1.0.2:
     dependencies:
@@ -3182,7 +3225,7 @@ snapshots:
       fsevents: 2.3.3
       yaml: 2.9.1
 
-  vitest@5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1)):
+  vitest@5.1.0(@types/node@24.19.2)(happy-dom@21.0.4)(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.1.0(vite@8.3.8(@types/node@24.19.2)(yaml@2.9.1))
@@ -3200,12 +3243,15 @@ snapshots:
       why-is-node-running: 3.2.1
     optionalDependencies:
       '@types/node': 24.19.2
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - msw
 
   vscode-languageserver-textdocument@1.0.16: {}
 
   vscode-languageserver-types@3.18.5: {}
+
+  whatwg-mimetype@3.0.0: {}
 
   why-is-node-running@3.2.1: {}
 

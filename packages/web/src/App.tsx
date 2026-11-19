@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { cardParameter, type ChoiceChange, type PageRoute, type PageView, pagePath, type StuckAnswer } from "@super-agent2/protocol";
+import { cardParameter, type ChoiceChange, type PageRoute, type PageView, pagePath, type ReviewedStreamDestination, type StreamPreviewRequest, type StuckAnswer } from "@super-agent2/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type Failure, hubApi } from "./hub/api.js";
 import { PageController } from "./hub/controller.js";
@@ -212,9 +212,11 @@ export function App() {
   const openConversation = useCallback((conversation: string) => { if (inWorkbench) setWorkTopic(conversation); else navigate(topicRoute(conversation)); }, [inWorkbench, navigate, topicRoute]);
   const openStream = useCallback(() => { if (inWorkbench) setWorkTopic(null); else navigate(streamRoute); }, [inWorkbench, navigate, streamRoute]);
   const send = useCallback(
-    (message: string, attachments: readonly string[] = [], quotedMessage?: string) => controller.send(message, attachments, quotedMessage, conversationId, scope),
+    (message: string, attachments: readonly string[] = [], quotedMessage?: string, destination?: ReviewedStreamDestination) =>
+      controller.send(message, attachments, quotedMessage, conversationId, scope, destination),
     [controller, conversationId, scope],
   );
+  const previewStream = useCallback((request: StreamPreviewRequest) => controller.previewStream(request), [controller]);
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(
     () => ({
@@ -327,6 +329,7 @@ export function App() {
           openStream={openStream}
           navigation={conversationTabs}
           send={send}
+          previewStream={previewStream}
           stop={stop}
           topicActions={topicActions}
           loadOlder={() => controller.loadOlderStream()}
@@ -354,7 +357,7 @@ export function App() {
             stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
             list={page.list} status={page.status} linked={page.linked} model={model}
             hrefOf={conversationHref} open={openConversation} streamHref={pagePath(streamRoute)} openStream={openStream}
-            send={send} stop={stop} topicActions={topicActions} loadOlder={() => controller.loadOlderStream()} now={now}
+            send={send} previewStream={previewStream} stop={stop} topicActions={topicActions} loadOlder={() => controller.loadOlderStream()} now={now}
           /> : <TicketView detail={page.detail} known={known} actions={ticketActions} origin="workbench"
             backHref={pagePath({ view: "workbench" })} back={() => setWorkTicket(null)} ticketHref={ticketHref}
             openTicket={setWorkTicket} now={now} />}

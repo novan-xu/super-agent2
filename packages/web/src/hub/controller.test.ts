@@ -26,6 +26,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
     answerQuestions: (id) => answer(`questions ${id}`, { entry }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
+    previewStream: () => Promise.resolve({ ok: false, error: "network" }),
     sendToStream: (text) => answer(`stream ${text}`, { entry, topic: conversation, position: 1 }),
     renameTopic: (id, title) => answer(`rename ${id} ${title}`, { conversation }),
     archiveTopic: (id) => answer(`archive ${id}`, { conversation }),
@@ -110,7 +111,7 @@ describe("PageController", () => {
     expect(await page.send("回复", [], "source")).toBe(true);
     page.open("c8");
     expect(await page.send("继续", [], "source", "c9")).toBe(true);
-    expect(sent).toEqual([["回复", [], "source", scope], ["c9", "继续", [], "source"]]);
+    expect(sent).toEqual([["回复", [], "source", scope, undefined], ["c9", "继续", [], "source"]]);
   });
 
   it("opens an existing topic and sends directly to it", async () => {

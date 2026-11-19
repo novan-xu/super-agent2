@@ -161,8 +161,44 @@ export const OwnerMessage = z
   .refine((message) => message.text !== "" || message.attachments.length > 0, { message: "needs text or an attachment" });
 export type OwnerMessage = z.infer<typeof OwnerMessage>;
 
-export const StreamMessage = OwnerMessage.safeExtend({ topic: ConversationId.optional(), scope: TopicScope.optional() });
+const RoutingDecision = z.object({
+  configuration: z.enum(["model", "bigram"]),
+  rule: z.enum(["a", "e", "b", "c", "d"]),
+  topic: ConversationId.nullable(),
+  best: ConversationId.nullable(),
+  bestScore: z.number().nullable(),
+  runnerUpScore: z.number().nullable(),
+});
+
+export const RoutingProposal = z.object({
+  candidates: z.number().int().nonnegative(),
+  decided: RoutingDecision,
+  shadow: RoutingDecision.nullable(),
+  fallback: z.string().max(256).nullable(),
+  possibleMatch: ConversationId.optional(),
+});
+export type RoutingProposal = z.infer<typeof RoutingProposal>;
+
+export const StreamPreviewRequest = z.strictObject({
+  scope: TopicScope,
+  text: z.string().trim(),
+  attachmentNames: z.array(Attachment.shape.name),
+});
+export type StreamPreviewRequest = z.infer<typeof StreamPreviewRequest>;
+
+export const StreamPreview = z.object({ proposal: RoutingProposal, title: z.string().nullable() });
+export type StreamPreview = z.infer<typeof StreamPreview>;
+
+export const StreamMessage = OwnerMessage.safeExtend({
+  topic: ConversationId.optional(),
+  scope: TopicScope.optional(),
+  newTopic: z.literal(true).optional(),
+  proposal: RoutingProposal.optional(),
+}).refine(({ topic, newTopic, proposal, quotedMessage }) =>
+  !(newTopic && (topic !== undefined || quotedMessage !== undefined))
+  && (proposal === undefined || (quotedMessage === undefined && (newTopic || topic !== undefined))));
 export type StreamMessage = z.infer<typeof StreamMessage>;
+export type ReviewedStreamDestination = Pick<StreamMessage, "topic" | "newTopic"> & { readonly proposal: RoutingProposal };
 
 export const StreamEntry = z.object({
   position: z.number().int().positive(),
@@ -173,6 +209,7 @@ export const StreamEntry = z.object({
 export type StreamEntry = z.infer<typeof StreamEntry>;
 
 export const streamPath = "/api/stream";
+export const streamPreviewPath = `${streamPath}/preview`;
 export const streamPageSize = 50;
 export const streamLargestPage = 500;
 export const StreamPage = z.object({

@@ -10,7 +10,7 @@ export interface TopicActions {
   move(source: string, message: string, destination: TopicMove["destination"]): Promise<boolean>;
 }
 
-const newTopicOption = ":new";
+export const newTopicOption = ":new";
 
 export type TopicEdit = { readonly topic: Conversation; readonly message?: never } | { readonly topic?: never; readonly source: string; readonly message: string };
 
