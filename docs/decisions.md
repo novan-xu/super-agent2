@@ -4180,3 +4180,50 @@ says what was chosen, why, and what the other options were, so it can be reviewe
 - **Other options** Restrict merges to one project, or let the combined topic acquire the source's project.
 
 Office preview conversion is limited to 64 MiB for both input and output, with at most four distinct conversions in progress and a 90-second timeout. This bounds hub memory and converter load; larger originals remain downloadable. Streaming larger files was an alternative, but would require a separate resource-control design.
+
+## 2026-11-18 — Evaluation of routing without a model call (#139)
+
+- **Chosen:** Copy Super-agent2's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts
+  `superagent2-hub-data` read-only, and the first Super-agent's `hub.sqlite` as a byte copy from a one-off container that
+  mounts `superagent-hub-data` read-only. Both containers use the image `superagent2-hub:current`.
+- **Why:** The NAS has no `sqlite3`; the hub image already has Node 24 with `node:sqlite`, so nothing had to be pulled.
+  The first Super-agent's containers are stopped and its database had no WAL, so the file itself is consistent; the
+  live database needs `VACUUM INTO` for a consistent copy.
+- **Other options:** The newest release backup (several hours older); pulling a separate image with `sqlite3`.
+
+- **Chosen:** For the first Super-agent, use every owner message: the stream (`stream_items` of kind `owner`, from the
+  web page, the desktop app and Lark) and the front door (`chat_messages` with direction `in`), not `chat_messages` alone.
+- **Why:** `chat_messages` holds 101 of the 518 owner messages; the issue asks for all of the history.
+- **Other options:** `chat_messages` only, as the issue's table description suggests.
+
+- **Chosen:** Do not count messages the hub would not route: answers sent with a ticket in the first Super-agent and
+  card buttons (`开始：…`, `编排：…`, `全部开始`, `开始所选`). They stay in their topics' history.
+- **Why:** Such messages carry their topic; in Super-agent2 they are sent inside a topic or from a card that belongs to
+  one. Counting them would measure decisions the router never makes.
+- **Other options:** Route every message; the tool also reports that, for comparison.
+
+- **Chosen:** Replay with each message placed into its labelled topic after the decision; candidates are the topics in
+  scope active in the last 24 hours; a message whose topic is idle longer expects a new topic. Tune on the first 60 % of
+  each history by minimising 2 × wrong joins + wrong splits.
+- **Why:** 24 hours is the idle-archive time of #101. Placing each message correctly measures every decision on its
+  own, as if the owner moved misrouted messages. A wrong join pollutes a topic's context and is worse than a wrong split,
+  as the issue says.
+- **Other options:** Let errors cascade; weigh both errors equally; split by data set instead of pooling.
+
+- **Chosen:** Evaluate a reference rule (a message naming a ticket or issue found in exactly one active topic joins it)
+  beside the issue's rules a–d, and recommend it.
+- **Why:** Many of the owner's follow-ups name a ticket or issue number. It is a disentanglement signal without a model
+  and added about 6 points to the rules alone.
+- **Other options:** Evaluate only the rules the issue sketches.
+
+- **Chosen:** Recommend the character-bigram score over the embedding models, taking "a small difference" to mean that
+  the 95 % paired bootstrap interval of the cost difference contains zero.
+- **Why:** The issue asks for the simpler scorer when the difference is small; bigram, `bge-small-zh-v1.5` and `bge-m3`
+  are within that interval of each other on the test part.
+- **Other options:** Pick the lowest test cost (`bge-small-zh-v1.5`, 63 against 67), which has fewer wrong joins.
+
+- **Chosen:** The tool depends on `@huggingface/transformers` 4.3.2; `pnpm-workspace.yaml` denies the install scripts of
+  `onnxruntime-node` and `protobufjs` under `allowBuilds`.
+- **Why:** pnpm refuses to install with unreviewed build scripts. `onnxruntime-node` ships its CPU binaries in the
+  package; its script only downloads CUDA libraries, which nothing here uses.
+- **Other options:** Allow the scripts; keep the models out of the repository's tools and run them from a scratch folder.
