@@ -1,0 +1,134 @@
+name: ${SUPERAGENT2_PROJECT:?run this file through deploy.sh}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  hub:
+    image: ${SUPERAGENT2_PROJECT}-hub:${SUPERAGENT2_TAG:-current}
+    build:
+      context: ${SUPERAGENT2_SOURCE:?run this file through deploy.sh}
+      dockerfile: deploy/Dockerfile
+      target: hub
+      args:
+        SUPERAGENT2_REVISION: ${SUPERAGENT2_REVISION:-}
+    container_name: ${SUPERAGENT2_PROJECT}-hub
+    hostname: ${SUPERAGENT2_PROJECT}-hub
+    restart: unless-stopped
+    init: true
+    depends_on:
+      converter:
+        condition: service_started
+    env_file:
+      - ${SUPERAGENT2_ROOT:?run this file through deploy.sh}/secrets/hub.env
+    environment:
+      HUB_CONVERTER_URL: http://converter:3000
+      HUB_DATA_DIR: /var/lib/superagent2/hub
+      HUB_PORT: "8080"
+      HUB_HOST: 0.0.0.0
+      HUB_BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
+      HUB_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
+      HUB_PROJECT_FOLDERS: ${SUPERAGENT2_ROOT}/projects
+      HUB_SOURCE_REPOSITORY: novan-xu/super-agent2
+    networks:
+      - default
+      - converter
+    extra_hosts:
+      - novanstorage.tail62dd17.ts.net:100.72.209.101
+    ports:
+      - 127.0.0.1:${SUPERAGENT2_HUB_PORT:?run this file through deploy.sh}:8080
+    volumes:
+      - hub-data:/var/lib/superagent2/hub
+      - brain-link:/var/lib/superagent2/link
+      - hub-home:/home/node
+      - ${SUPERAGENT2_ROOT}/projects:${SUPERAGENT2_ROOT}/projects
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 4
+      start_period: 30s
+      start_interval: 2s
+    logging: *logging
+
+  converter:
+    image: gotenberg/gotenberg:9.8.0-libreoffice
+    restart: unless-stopped
+    networks:
+      - converter
+    logging: *logging
+
+  brain:
+    image: ${SUPERAGENT2_PROJECT}-brain:${SUPERAGENT2_TAG:-current}
+    build:
+      context: ${SUPERAGENT2_SOURCE}
+      dockerfile: deploy/Dockerfile
+      target: brain
+      args:
+        SUPERAGENT2_REVISION: ${SUPERAGENT2_REVISION:-}
+    container_name: ${SUPERAGENT2_PROJECT}-brain
+    hostname: ${SUPERAGENT2_PROJECT}-brain
+    restart: unless-stopped
+    init: true
+    depends_on:
+      hub:
+        condition: service_healthy
+    env_file:
+      - ${SUPERAGENT2_ROOT}/secrets/brain.env
+    environment:
+      BRAIN_HUB_URL: http://hub:8080
+      BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
+      BRAIN_WORKSPACE: /home/node/workspace
+      BRAIN_PROGRAM_DIR: /var/lib/superagent2/programs
+      BRAIN_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+    volumes:
+      - brain-link:/var/lib/superagent2/link:ro
+      - brain-codex:/home/node/.codex
+      - brain-claude:/home/node/.claude
+      - brain-dsh:/home/node/.dsh
+      - brain-workspace:/home/node/workspace
+      - brain-programs:/var/lib/superagent2/programs
+    logging: *logging
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.4
+    container_name: ${SUPERAGENT2_PROJECT}-tunnel
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    depends_on:
+      hub:
+        condition: service_healthy
+    env_file:
+      - path: ${SUPERAGENT2_ROOT}/secrets/tunnel.env
+        required: false
+    logging: *logging
+
+volumes:
+  hub-data:
+    name: ${SUPERAGENT2_PROJECT}-hub-data
+  hub-home:
+    name: ${SUPERAGENT2_PROJECT}-hub-home
+  brain-link:
+    name: ${SUPERAGENT2_PROJECT}-brain-link
+  brain-codex:
+    name: ${SUPERAGENT2_PROJECT}-brain-codex
+  brain-claude:
+    name: ${SUPERAGENT2_PROJECT}-brain-claude
+  brain-dsh:
+    name: ${SUPERAGENT2_PROJECT}-brain-dsh
+  brain-programs:
+    name: ${SUPERAGENT2_PROJECT}-brain-programs
+  brain-workspace:
+    name: ${SUPERAGENT2_PROJECT}-brain-workspace
+
+networks:
+  converter:
+    internal: true
+  default:
+    name: ${SUPERAGENT2_PROJECT}_default
