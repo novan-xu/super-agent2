@@ -17,16 +17,33 @@ export function resumeStream(state: TopicStreamState): number | undefined {
   return firstUnsettled === undefined ? state.entries.at(-1)?.position : firstUnsettled.position - 1;
 }
 
+function mergeEntries(earlier: readonly StreamEntry[], later: readonly StreamEntry[]): StreamEntry[] {
+  const entries = new Map<number, StreamEntry>();
+  const positions = new Map<string, number>();
+  for (const item of [...earlier, ...later]) {
+    const previousPosition = positions.get(item.entry.id);
+    if (previousPosition !== undefined) {
+      entries.delete(previousPosition);
+    }
+    const displaced = entries.get(item.position);
+    if (displaced !== undefined) {
+      positions.delete(displaced.entry.id);
+    }
+    entries.set(item.position, item);
+    positions.set(item.entry.id, item.position);
+  }
+  return [...entries.values()].sort((a, b) => a.position - b.position);
+}
+
 export function receiveStream(state: TopicStreamState, message: ServerMessage): TopicStreamState {
   switch (message.type) {
     case "stream.page": {
       const previous = message.reset ? initialTopicStream : state;
-      const entries = new Map(previous.entries.map((item) => [item.position, item]));
-      for (const item of message.entries) {
-        entries.set(item.position, item);
-      }
+      const entries = previous.loading && message.resumed !== true
+        ? mergeEntries(message.entries, previous.entries)
+        : mergeEntries(previous.entries, message.entries);
       return {
-        entries: [...entries.values()].sort((a, b) => a.position - b.position),
+        entries,
         turns: message.turns.reduce(mergeTurn, message.resumed === true ? previous.turns.filter((turn) => turn.state !== "running") : previous.turns),
         before: message.resumed === true ? previous.before : message.before,
         revision: message.revision ?? previous.revision,
@@ -38,8 +55,8 @@ export function receiveStream(state: TopicStreamState, message: ServerMessage): 
       if (state.before !== null && position < state.before) {
         return state;
       }
-      const index = state.entries.findIndex((item) => item.position >= position);
-      const entries = [...state.entries];
+      const entries = state.entries.filter((item) => item.entry.id !== entry.id);
+      const index = entries.findIndex((item) => item.position >= position);
       const item = { position, topic, entry, ...(latestOwner === undefined ? {} : { latestOwner }) };
       if (index === -1) {
         entries.push(item);

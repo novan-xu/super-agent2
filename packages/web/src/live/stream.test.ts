@@ -112,7 +112,7 @@ it("replays unfinished text across topics without changing position or duplicati
     position, entry, topic: { id: entry.conversation, title: entry.conversation, repository: null },
   });
   const first = item(5, text(2, time));
-  const second = item(6, { ...owner(1, time), conversation: "c2" });
+  const second = item(6, { ...owner(3, time), conversation: "c2" });
   const running = turn({ state: "running", endedAt: null });
   const page = receiveStream(initialTopicStream, { type: "stream.page", entries: [first, second], turns: [running], before: 5 });
   expect(resumeStream(page)).toBe(4);
@@ -125,6 +125,21 @@ it("replays unfinished text across topics without changing position or duplicati
   expect(older.entries.map(({ position }) => position)).toEqual([4, 5, 6]);
   expect(older.entries[1]?.entry).toMatchObject({ text: "ab" });
   expect(resumeStream(older)).toBe(6);
+});
+
+it("keeps the current entry when an older page repeats its ID at a different position", () => {
+  const topic = { id, title: "", repository: null };
+  const older = { position: 3, entry: owner(1, now), topic };
+  const current = { position: 8, entry: { ...older.entry, text: "updated" }, topic };
+  const other = { position: 9, entry: owner(2, now), topic };
+  const state = { ...initialTopicStream, entries: [current, other], before: current.position, loading: true };
+
+  const page = receiveStream(state, { type: "stream.page", entries: [older], turns: [], before: null });
+  expect(page.entries).toEqual([current, other]);
+
+  const moved = { position: 7, entry: current.entry, topic };
+  const updated = receiveStream(page, { ...moved, type: "stream.entry" });
+  expect(updated.entries).toEqual([moved, other]);
 });
 
 it("keeps the history cursor when resuming and removes live statuses for turns that ended offline", () => {
