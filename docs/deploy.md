@@ -394,3 +394,13 @@ The hub uses `gotenberg/gotenberg:9.8.0-libreoffice` for Office previews.
 The converter has no published port or volumes and is attached only to the internal `converter` network shared with the hub.
 Preview PDFs are cached under the hub data volume in `previews/`.
 Release and rollback start the converter before the hub.
+
+## Additional MCP servers
+
+The hub can offer additional HTTP MCP servers by setting `HUB_EXTRA_MCP_SERVERS` in `secrets/hub.env` to a JSON array.
+For example, use `[{"name":"Agent_wring","url":"http://<mac-mini-host>:<port>/mcp","secret":"AGENT_WRING_TOKEN","brain":true,"workers":true}]` and put `AGENT_WRING_TOKEN` in the same secret file.
+Replace the host and port with the actual Tailscale endpoint, and restart the hub and brain through the normal deployment procedure.
+Names must be unique and cannot be `hub`; URLs must use HTTP or HTTPS and cannot contain credentials, a query, or a fragment.
+The hub rejects invalid definitions and missing secrets at startup.
+Claude Code, Codex, and dsh receive these servers; Antigravity currently skips them.
+The brain container must reach the endpoint directly through the NAS network and Tailscale; if it cannot, fix the host or container routing to that endpoint.

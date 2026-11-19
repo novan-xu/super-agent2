@@ -1,4 +1,4 @@
-import type { Provider } from "@super-agent2/protocol";
+import type { ExtraMcpServer, Provider } from "@super-agent2/protocol";
 
 export type ProgramEvent =
   | { readonly type: "session"; readonly session: string }
@@ -24,6 +24,7 @@ export interface ToolEndpoint {
 export interface OpenOptions {
   readonly session: string | null;
   readonly tools: ToolEndpoint | null;
+  readonly extraMcp?: readonly ExtraMcpServer[];
   readonly workspace: string;
 }
 

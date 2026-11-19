@@ -15,3 +15,7 @@ export interface ProgramSettings {
   readonly codexConfig?: Readonly<Record<string, unknown>>;
   readonly processTree?: boolean;
 }
+
+export function extraMcpVariable(index: number): string {
+  return `SUPER_AGENT_EXTRA_MCP_TOKEN_${index}`;
+}

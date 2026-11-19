@@ -135,9 +135,7 @@ export function createHubLink(options: LinkOptions): HubLink {
         }
         return;
       }
-      if (message.type !== "hello") {
-        handlers?.receive(message);
-      }
+      handlers?.receive(message);
     });
     current.on("error", (error) => report(`The link to the hub failed: ${error.message}`));
     current.on("close", () => {

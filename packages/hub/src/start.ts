@@ -25,6 +25,7 @@ export async function startFromEnvironment(
   const cloudflare = cloudflareSettings(env);
   const hub = await startHub({
     config: loaded.config,
+    environment: env,
     report: options.report,
     ...("missing" in cloudflare ? {} : { serviceTokens: cloudflareServiceTokens(cloudflare) }),
     ...(options.keySource === undefined ? {} : { keySource: options.keySource }),

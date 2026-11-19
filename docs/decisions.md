@@ -3463,3 +3463,9 @@ Streaming larger files was an alternative, but would require a separate resource
   This replaces the unlimited hand-back corrections in "Nothing the owner, the brain or a worker sends has a cap of its own".
 - **Why:** A worker gets time to make a commit or correct its first hand-back, while repeatedly leaving an invalid hand-back ends the attempt.
 - **Other options:** Fail after a fixed number of total turns, let every invalid file edit reset the streak, or base the limit on elapsed time.
+
+## 2026-11-19 ? Extra MCP servers
+
+- **Chosen:** Configure extra HTTP MCP servers in the hub environment and send selected servers over existing authenticated links to the brain and workers.
+- **Why:** This keeps the list and secrets in one place without adding a settings interface or putting tokens in process arguments.
+- **Other options:** A settings page, separate configuration on each machine, or a proxy through the runner.

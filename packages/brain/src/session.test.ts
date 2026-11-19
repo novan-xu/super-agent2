@@ -68,9 +68,10 @@ const manualSchedule: Schedule = (callback) => {
   };
 };
 
-async function startHub(fixedPort = 0): Promise<Hub> {
+async function startHub(fixedPort = 0, environment: Readonly<Record<string, string | undefined>> = {}): Promise<Hub> {
   hub = await startTestHub({
     config: { ...testConfig(dataDir), port: fixedPort, projectFolders: ["/srv/projects"] },
+    environment,
     keySource: staticKeySource(keySet(key)),
     clock,
     targets: [scriptedTarget()],
@@ -227,6 +228,15 @@ async function callTool(options: OpenOptions, name: string, args: Record<string,
 }
 
 describe("the brain's session", () => {
+  it("receives the hub's extra MCP servers before opening a program", async () => {
+    const definition = { name: "Agent_wring", url: "http://mini/mcp", secret: "WRING_TOKEN", brain: true, workers: false };
+    await startHub(0, { HUB_EXTRA_MCP_SERVERS: JSON.stringify([definition]), WRING_TOKEN: "example-secret" });
+    startBrain(["gpt"]);
+    const conversation = await newConversation();
+    await say(conversation.id, "Hello");
+    const first = await programs.gpt.next();
+    expect(first.handle.options.extraMcp).toEqual([{ name: "Agent_wring", url: definition.url, token: "example-secret" }]);
+  });
   it("bypasses routing for topic input and quotes, including steering a live session and reading a long quote", async () => {
     const running = await startHub();
     startBrain(["gpt", "claude", "deepseek"]);

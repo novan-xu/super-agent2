@@ -108,6 +108,15 @@ function current(id: number): Ticket {
 }
 
 describe("work for a started ticket", () => {
+  it("sends configured extra MCP servers with a code assignment", () => {
+    work.close();
+    const extraMcp = [{ name: "Agent_wring", url: "http://mini/mcp", token: "example-secret" }];
+    work = createWorkService({ database, clock, tickets, runners, credentials: testCredentials, extraMcp });
+    const ticket = working();
+    work.begin(ticket);
+    runners.connect("pc", 2);
+    expect(runners.of("work.start", "pc")[0]?.task.extraMcp).toEqual(extraMcp);
+  });
   it("queues the first attempt, starts it on the chosen machine with the owner's token, and begins only once", () => {
     const ticket = working([21, 22]);
     work.begin(ticket);

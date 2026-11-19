@@ -1,3 +1,4 @@
+import { ExtraMcpServer } from "./extra-mcp.js";
 import { z } from "zod";
 import { Attachment } from "./attachments.js";
 import { ConversationId, MessageId, Provider, RoutingProposal } from "./conversations.js";
@@ -226,6 +227,7 @@ export type BrainMessage = z.infer<typeof BrainMessage>;
 export const HubHello = z.object({
   type: z.literal("hello"),
   protocol: ProtocolVersion,
+  extraMcp: z.array(ExtraMcpServer).optional(),
 });
 export type HubHello = z.infer<typeof HubHello>;
 

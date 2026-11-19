@@ -1,3 +1,4 @@
+import { extraMcpFromEnvironment } from "./extra-mcp.js";
 import { createModelDiscovery } from "./model-discovery.js";
 import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
@@ -103,8 +104,9 @@ export interface Hub {
 export async function startHub(options: HubOptions): Promise<Hub> {
   const clock = options.clock ?? systemClock;
   const { config } = options;
-  const database = openDatabase({ dataDir: config.dataDir, clock });
   const environment = options.environment ?? process.env;
+  const extraMcp = extraMcpFromEnvironment(environment);
+  const database = openDatabase({ dataDir: config.dataDir, clock });
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
   const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
   const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
@@ -177,7 +179,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
     const brainToken = brainTokenCheck(brainSecret);
     const vapidKey = config.vapid?.privateKey;
-    memories = createMemoryService({ database, clock, secrets: () => secretValues(environment, vapidKey === undefined ? [brainSecret] : [brainSecret, vapidKey]) });
+    memories = createMemoryService({ database, clock, secrets: () => secretValues(environment, [...extraMcp.brain, ...extraMcp.workers].map((server) => server.token).concat(vapidKey === undefined ? [brainSecret] : [brainSecret, vapidKey])) });
     lock =
       options.gate === undefined
         ? createConfirmationLock({
@@ -197,6 +199,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     });
     const routingModels = config.routingModels;
     conversations = createConversationService({
+      extraMcp: extraMcp.brain,
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
       routing: {
         primary: config.routingPrimary,
@@ -219,6 +222,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         tickets,
         runners,
         credentials,
+        extraMcp: extraMcp.workers,
         files,
         attachments,
         defaults,

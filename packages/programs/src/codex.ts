@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { OpenOptions, ProgramAdapter, ProgramHandle, ProgramListener, PromptImage, SteerResult } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import { createRpc, type Rpc } from "./rpc.js";
-import { type ProgramSettings, toolTokenVariable } from "./settings.js";
+import { extraMcpVariable, type ProgramSettings, toolTokenVariable } from "./settings.js";
 
 const ThreadResult = z.looseObject({
   thread: z.looseObject({ id: z.string() }),
@@ -157,6 +157,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
           },
         }),
     ...settings.codexConfig,
+    ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [`mcp_servers.${server.name}`, { url: server.url, bearer_token_env_var: extraMcpVariable(index) }])),
   };
 
   const emitEnd = (outcome: "completed" | "interrupted") => {
@@ -286,7 +287,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   let rpc: Rpc | undefined;
   const child: LineProcess = spawnLines(invocationOf(settings.program, ["app-server"]), {
     cwd: options.workspace,
-    env: tools === null ? { ...settings.environment } : { ...settings.environment, [toolTokenVariable]: tools.token },
+    env: { ...settings.environment, ...(tools === null ? {} : { [toolTokenVariable]: tools.token }), ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [extraMcpVariable(index), server.token])) },
     onMessage: (message) => rpc?.handle(message),
     tree: settings.processTree === true,
   });
