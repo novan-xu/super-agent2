@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -298,13 +299,13 @@ async function stuckOnSecondPull(): Promise<Stuck> {
     handIn(runner, chain.id, attempt, 22, [8]);
     await settled(running);
     if (attempt < 5) {
-      const guided = await callBrainTool(running, "guide_ticket", { ticket: chain.id, guidance: { en: `Round ${attempt - 1}: step 8 expects the number 8.`, zh: `第 ${attempt - 1} 轮：第 8 步要的是数字 8。` } }, conversation);
+      const guided = await callBrainTool(running, "guide_ticket", { ticket: chain.code, guidance: { en: `Round ${attempt - 1}: step 8 expects the number 8.`, zh: `第 ${attempt - 1} 轮：第 8 步要的是数字 8。` } }, conversation);
       expect(guided.isError, guided.text).toBe(false);
     }
   }
   const stuck = current(running, chain.id);
   expect(stuck).toMatchObject({ state: "stuck", round: 3, stuck: { from: "verifying", failure: { kind: "workflow" } } });
-  const described = await callBrainTool(running, "describe_stuck", { ticket: chain.id, where: { en: "Step 8 keeps failing its own test.", zh: "第 8 步一直过不了自己的测试。" } });
+  const described = await callBrainTool(running, "describe_stuck", { ticket: chain.code, where: { en: "Step 8 keeps failing its own test.", zh: "第 8 步一直过不了自己的测试。" } });
   expect(described.isError, described.text).toBe(false);
   return { started, chain: stuck, first, second, deployment: deployment.id, waiting: waiting.id, afterDeployment: afterDeployment.id };
 }
@@ -362,30 +363,30 @@ describe("giving up a stuck chain", () => {
     expect(stops(sent, chain.id)).toEqual([{ type: "work.stop", ticket: chain.id, save: true, remove: false }]);
 
     const told = notices(running, conversation).at(-1);
-    expect(told?.text).toBe(`你放弃了工单 ${chain.id}，已开补救工单 ${repair.id}，等你开始`);
-    expect(told?.prompt).toContain(`A repair ticket was opened for ticket ${chain.id} in the same step: ticket ${repair.id}. It is pending: the hub does not start it`);
+    expect(told?.text).toBe(`你放弃了工单 ${chain.code}，已开补救工单 ${repair.code}，等你开始`);
+    expect(told?.prompt).toContain(`A repair ticket was opened for ticket ${ticketReference(chain)} in the same step: ticket ${ticketReference(repair)}. It is pending: the hub does not start it`);
     expect(told?.prompt).toContain(`It continues on branch ${second}`);
     expect(told?.prompt).toContain("the issues still open: #8, #9");
-    expect(told?.prompt).toContain(`What waited for ticket ${chain.id} now waits for ticket ${repair.id}`);
+    expect(told?.prompt).toContain(`What waited for ticket ${ticketReference(chain)} now waits for ticket ${ticketReference(repair)}`);
     expect(told?.prompt).toContain("choose_defaults");
     expect(told?.prompt).toContain("prefer a different provider, or a stronger model");
     expect(told?.prompt).toContain("The owner's words, which the repair's worker is given as well: 换个更强的模型试试");
     expect(told?.prompt).toContain(chain.decisions[0]?.chosen.en ?? "missing");
-    expect(notices(running, conversation).map((entry) => entry.text)).not.toContain(`工单 ${chain.id} 停止了，排在它后面的工单 ${deployment} 由大脑决定是否继续`);
+    expect(notices(running, conversation).map((entry) => entry.text)).not.toContain(`工单 ${chain.code} 停止了，排在它后面的工单 ${deployment} 由大脑决定是否继续`);
 
     expect(running.waiting.cards().some((card) => card.kind === "stuck")).toBe(false);
     expect(running.waiting.cards().map((card) => [card.kind, card.kind === "start" ? card.ticket.id : 0])).toContainEqual(["start", repair.id]);
     expect((await post(running, `/api/tickets/${chain.id}/answer`, { at: 1, answer: "give-up" })).status).toBe(409);
 
-    const read = await callBrainTool(running, "read_ticket", { ticket: repair.id }, conversation);
-    expect(read.text).toContain(`[repair of ticket ${chain.id}]`);
-    expect(read.text).toContain(`This is a repair ticket: it carries on the work of ticket ${chain.id}`);
-    const readEnded = await callBrainTool(running, "read_ticket", { ticket: chain.id }, conversation);
-    expect(readEnded.text).toContain(`[repaired by ticket ${repair.id}]`);
-    expect(readEnded.text).toContain(`Its work goes on in repair ticket ${repair.id}`);
+    const read = await callBrainTool(running, "read_ticket", { ticket: repair.code }, conversation);
+    expect(read.text).toContain(`[repair of ticket ${ticketReference(chain)}]`);
+    expect(read.text).toContain(`This is a repair ticket: it carries on the work of ticket ${ticketReference(chain)}`);
+    const readEnded = await callBrainTool(running, "read_ticket", { ticket: chain.code }, conversation);
+    expect(readEnded.text).toContain(`[repaired by ticket ${ticketReference(repair)}]`);
+    expect(readEnded.text).toContain(`Its work goes on in repair ticket ${ticketReference(repair)}`);
     const listed = await callBrainTool(running, "list_tickets", { all: true }, conversation);
-    expect(listed.text).toContain(`Ticket ${repair.id} [pending] feature in ${repository} (issues #8, #9)`);
-    expect(listed.text).toContain(`[repair of ticket ${chain.id}]`);
+    expect(listed.text).toContain(`Ticket ${ticketReference(repair)} [pending] feature in ${repository} (issues #8, #9)`);
+    expect(listed.text).toContain(`[repair of ticket ${ticketReference(chain)}]`);
   });
 
   it("starts the repair and what waits on it together, gives its worker the account of the failure, and removes the old folder only when the repair ends", async () => {
@@ -405,9 +406,9 @@ describe("giving up a stuck chain", () => {
       "choose_defaults",
       {
         chains: [
-          { ticket: repair.id, kind: "feature", issues: [{ number: 8, difficulty: "complex" }, { number: 9, difficulty: "standard" }], reason: { en: "A stronger model for the step that kept failing", zh: "换个更强的模型来做一直失败的那一步" }, platform: "windows", engine: "codex" },
-          { ticket: deployment, kind: "operation", difficulty: "standard", reason: { en: "A deployment", zh: "一次部署" }, platform: "windows", engine: "claude" },
-          { ticket: afterDeployment, kind: "feature", issues: [{ number: 31, difficulty: "standard" }], reason: { en: "Small", zh: "很小" }, platform: "windows", engine: "claude" },
+          { ticket: repair.code, kind: "feature", issues: [{ number: 8, difficulty: "complex" }, { number: 9, difficulty: "standard" }], reason: { en: "A stronger model for the step that kept failing", zh: "换个更强的模型来做一直失败的那一步" }, platform: "windows", engine: "codex" },
+          { ticket: running.tickets.reference(deployment), kind: "operation", difficulty: "standard", reason: { en: "A deployment", zh: "一次部署" }, platform: "windows", engine: "claude" },
+          { ticket: running.tickets.reference(afterDeployment), kind: "feature", issues: [{ number: 31, difficulty: "standard" }], reason: { en: "Small", zh: "很小" }, platform: "windows", engine: "claude" },
         ],
       },
       conversation,
@@ -432,7 +433,7 @@ describe("giving up a stuck chain", () => {
     expect(message?.task).toMatchObject({ ticket: repair.id, attempt: 1, branch: second, takeover: true, folder: chain.id, merged: [], engine: "codex", model: "gpt-6.1-sol" });
     expect(message?.task.issues.map((issue) => issue.number)).toEqual([8, 9]);
     const note = message?.task.note ?? "";
-    expect(note).toContain(`This ticket, ${repair.id}, is a repair ticket: it was opened when the owner gave up ticket ${chain.id}`);
+    expect(note).toContain(`You are working on ticket ${ticketReference(repair)}, a repair ticket opened when the owner gave up ticket ${ticketReference(chain)}`);
     expect(note).toContain("Guided round 1: the attempt it answered failed because a Woodpecker workflow");
     expect(note).toContain("Round 3: step 8 expects the number 8.");
     expect(note).toContain("It stopped for the owner after 3 guided rounds");
@@ -511,8 +512,8 @@ describe("giving up a stuck chain", () => {
     const message = starts(sent, second.id)[0];
     expect(message?.task).toMatchObject({ takeover: true, folder: chain.id });
     const note = message?.task.note ?? "";
-    expect(note).toContain(`Ticket ${chain.id} (Three steps) ended stopped`);
-    expect(note).toContain(`Ticket ${first.id} (Three steps) ended stopped`);
+    expect(note).toContain(`Ticket ${ticketReference(chain)} (Three steps) ended stopped`);
+    expect(note).toContain(`Ticket ${ticketReference(first)} (Three steps) ended stopped`);
     expect(note).toContain("Round 3: step 8 expects the number 8.");
     expect(note).toContain("the worker's program failed");
     expect(note).toContain("Where it was stuck, in the brain's words: The program keeps crashing.");
@@ -524,7 +525,7 @@ describe("giving up a stuck chain", () => {
 
     const recorded = running.tickets.change((writes) => writes.recordDecisions(second.id, "worker", [decision, { ...decision, chosen: { en: "A new choice.", zh: "新的选择。" } }]));
     expect(recorded.map((entry) => entry.chosen.en)).toEqual(["A new choice."]);
-    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${first.id}，已开补救工单 ${second.id}，等你开始`);
+    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${first.code}，已开补救工单 ${second.code}，等你开始`);
   });
 });
 
@@ -556,27 +557,27 @@ describe("repairing a stopped ticket in conversation", () => {
     const stopped = current(running, chain.id);
     expect(stopped).toMatchObject({ state: "stopped", repairedBy: null });
     expect(running.tickets.list({ open: true }).filter((ticket) => ticket.repairs !== null)).toEqual([]);
-    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`你停止了工单 ${chain.id}，已合并的部分保留`);
-    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`工单 ${chain.id} 停止了，排在它后面的工单 ${waits.id} 由大脑决定是否继续`);
+    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`你停止了工单 ${chain.code}，已合并的部分保留`);
+    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`工单 ${chain.code} 停止了，排在它后面的工单 ${waits.code} 由大脑决定是否继续`);
 
-    const missing = await callBrainTool(running, "open_repair_ticket", { ticket: 999 }, conversation);
+    const missing = await callBrainTool(running, "open_repair_ticket", { ticket: "zzz" }, conversation);
     expect(missing).toMatchObject({ isError: true });
-    const working = await callBrainTool(running, "open_repair_ticket", { ticket: waits.id }, conversation);
+    const working = await callBrainTool(running, "open_repair_ticket", { ticket: waits.code }, conversation);
     expect(working.isError).toBe(true);
     expect(working.text).toContain("only a stopped ticket");
 
-    const opened = await callBrainTool(running, "open_repair_ticket", { ticket: chain.id }, conversation);
+    const opened = await callBrainTool(running, "open_repair_ticket", { ticket: chain.code }, conversation);
     expect(opened.isError, opened.text).toBe(false);
     const repair = current(running, current(running, chain.id).repairedBy ?? 0);
     expect(repair).toMatchObject({ state: "pending", repairs: chain.id, branch: next });
     expect(repair.issues.map((issue) => issue.number)).toEqual([8, 9]);
-    expect(opened.text).toContain(`Opened repair ticket ${repair.id}.`);
+    expect(opened.text).toContain(`Opened repair ticket ${ticketReference(repair)}.`);
     expect(opened.text).toContain("choose_defaults");
     expect(running.tickets.repairRecord(repair.id)).toMatchObject({ openedBy: "brain", words: "", failure: null, where: null });
     expect(current(running, waits.id).waits.map((wait) => wait.ticket)).toEqual([repair.id]);
     expect(current(running, waits.id).state).toBe("waiting");
 
-    const again = await callBrainTool(running, "open_repair_ticket", { ticket: chain.id }, conversation);
+    const again = await callBrainTool(running, "open_repair_ticket", { ticket: chain.code }, conversation);
     expect(again.isError).toBe(true);
     expect(again.text).toContain("already has a repair ticket");
   });
@@ -585,7 +586,7 @@ describe("repairing a stopped ticket in conversation", () => {
     const { running, conversation } = await start();
     const chain = openChain(running, conversation);
     running.tickets.change((writes) => writes.stick(chain.id, { kind: "program", detail: "boom" }));
-    const stuck = await callBrainTool(running, "open_repair_ticket", { ticket: chain.id }, conversation);
+    const stuck = await callBrainTool(running, "open_repair_ticket", { ticket: chain.code }, conversation);
     expect(stuck.isError).toBe(true);
     expect(stuck.text).toContain("only the owner decides now");
 
@@ -595,13 +596,13 @@ describe("repairing a stopped ticket in conversation", () => {
       writes.pullRequestMerged(done.id, { number: 150, closes: [7, 8, 9], mergeCommit: "mm", deployment: null });
       writes.move(done.id, "stopped", { en: "Stopped", zh: "停止" });
     });
-    const nothing = await callBrainTool(running, "open_repair_ticket", { ticket: done.id }, conversation);
+    const nothing = await callBrainTool(running, "open_repair_ticket", { ticket: done.code }, conversation);
     expect(nothing.isError).toBe(true);
     expect(nothing.text).toContain("nothing remains");
 
     const joined = openChain(running, conversation);
     running.tickets.change((writes) => writes.join(joined.id, chain.id, { en: "Joined", zh: "并入" }));
-    const refused = await callBrainTool(running, "open_repair_ticket", { ticket: joined.id }, conversation);
+    const refused = await callBrainTool(running, "open_repair_ticket", { ticket: joined.code }, conversation);
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain("joined into another ticket");
   });
@@ -617,9 +618,9 @@ describe("repairing a stopped ticket in conversation", () => {
     const arranged = await callBrainTool(running, "arrange_chains", { chains: [{ name: "again", repository, issues: [7, 8, 9] }] }, conversation);
     expect(arranged.isError).toBe(true);
     expect(arranged.text).toContain("a repair ticket that continues the work");
-    const later = await callBrainTool(running, "open_task_ticket", { title: { en: "Deploy", zh: "部署" }, summary: { en: "Deploy it", zh: "部署它" }, task: "Deploy it.", kind: "operation", repository, after: [chain.id] }, conversation);
+    const later = await callBrainTool(running, "open_task_ticket", { title: { en: "Deploy", zh: "部署" }, summary: { en: "Deploy it", zh: "部署它" }, task: "Deploy it.", kind: "operation", repository, after: [chain.code] }, conversation);
     expect(later.isError).toBe(true);
-    expect(later.text).toContain(`ticket ${repaired.ticket.id} repairs it, so come after that`);
+    expect(later.text).toContain(`ticket ${ticketReference(repaired.ticket)} repairs it, so come after that`);
   });
 });
 

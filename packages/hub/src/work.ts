@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import { randomBytes, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
@@ -153,8 +154,8 @@ function isFinal(ticket: Ticket): boolean {
   return finishedTicketStates.includes(ticket.state);
 }
 
-export function branchFor(ticket: number, suffix: string): string {
-  return `sa2/ticket-${ticket}-${suffix}`;
+export function branchFor(ticket: Pick<Ticket, "code" | "codeDate">, suffix: string): string {
+  return `sa2/${ticketReference(ticket)}-${suffix}`;
 }
 
 function taskWords(ticket: Ticket): string {
@@ -306,7 +307,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         ticket: ticket.id,
         failure: { kind: failure, detail: reason },
         evidence: [
-          `The worker of ticket ${ticket.id} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${what}: ${reason}`,
+          `The worker of ticket ${ticketReference(ticket)} (${ticket.title.en}), attempt ${attempt.attempt} on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort}, ${what}: ${reason}`,
           ticket.form === "task" ? taskWords(ticket) : `Branch: ${ticket.branch ?? "(none)"}; pull request: ${ticket.pullRequest === null ? "none yet" : `#${ticket.pullRequest}`}.`,
           ...(ticket.report === null || failure !== "task-failed" ? [] : [`The worker's report: ${ticket.report.en}`]),
           ...chineseReport,
@@ -318,9 +319,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     tell(
       ticket.id,
-      text("notice.workerFailed", { ticket: ticket.id }),
+      text("notice.workerFailed", { ticket: ticket.code }),
       [
-        `[hub] The worker of ticket ${ticket.id} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${what}: ${reason}`,
+        `[hub] The worker of ticket ${ticketReference(ticket)} (${ticket.title.en}) on ${attempt.machine} with ${attempt.engine} ${attempt.model} ${attempt.effort} ${what}: ${reason}`,
         ...chineseReport,
         `The ticket stays working with this failure recorded${ticket.form === "task" ? "" : `, on branch ${ticket.branch ?? "(none)"}`}, and nothing is running for it now.`,
         "Its output ends with:",
@@ -341,7 +342,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   const taskOf = (ticket: Ticket, attempt: Attempt): WorkTask | string => {
     if (ticket.repository === null) {
-      return `Ticket ${ticket.id} has no repository`;
+      return `Ticket ${ticketReference(ticket)} has no repository`;
     }
     const credentials = options.credentials((options.accountOf ?? accountFor)(ticket.repository));
     if (!credentials.ok) {
@@ -353,10 +354,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     return {
       ticket: ticket.id,
+      ticketReference: ticketReference(ticket),
       attempt: attempt.attempt,
       repository: ticket.repository,
       account: (options.accountOf ?? accountFor)(ticket.repository),
-      branch: ticket.branch ?? branchFor(ticket.id, suffix()),
+      branch: ticket.branch ?? branchFor(ticket, suffix()),
       title: ticket.title.en,
       issues: ticket.issues.map((issue) => ({ number: issue.number, title: issue.title.en, url: issue.url })),
       merged: mergedIssueNumbers(ticket),
@@ -375,7 +377,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const assignmentOf = (ticket: Ticket, attempt: Attempt): TaskAssignment | string => {
     const task = tickets.task(ticket.id);
     if (task === undefined) {
-      return `Ticket ${ticket.id} has no task`;
+      return `Ticket ${ticketReference(ticket)} has no task`;
     }
     let checkout: TaskAssignment["checkout"] = null;
     let environment: Record<string, string> = {};
@@ -399,6 +401,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     return {
       ticket: ticket.id,
+      ticketReference: ticketReference(ticket),
       attempt: attempt.attempt,
       title: ticket.title.en,
       task: task.task,
@@ -509,7 +512,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   const removeEverywhere = (ticket: Ticket) => {
     for (const machine of machinesOf(ticket.id)) {
-      const key = `${machine}:${ticket.id}`;
+      const key = `${machine}:${ticketReference(ticket)}`;
       if (removalsSent.has(key)) {
         continue;
       }
@@ -540,7 +543,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     const machine = Attempt.parse(worked).machine;
-    const key = `${machine}:${ticket.id}`;
+    const key = `${machine}:${ticketReference(ticket)}`;
     if (!savesSent.has(key) && send(machine, { type: "work.stop", ticket: ticket.id, save: true, remove: false })) {
       savesSent.add(key);
     }
@@ -578,7 +581,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     turn?: TicketTurn,
   ): void => {
     if (ticket.machine === null || ticket.engine === null || ticket.model === null || ticket.effort === null) {
-      throw new Error(`Ticket ${ticket.id} has no machine, engine, model and effort chosen`);
+      throw new Error(`Ticket ${ticketReference(ticket)} has no machine, engine, model and effort chosen`);
     }
     const engine = WorkEngine.safeParse(ticket.engine);
     if (!engine.success) {
@@ -599,7 +602,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         if (current?.state === "verifying") {
           writes.move(ticket.id, "working", back.reason);
         } else if (current?.state !== "working") {
-          throw new Error(`Ticket ${ticket.id} is ${current?.state ?? "gone"} and cannot go back to work`);
+          throw new Error(`Ticket ${ticketReference(ticket)} is ${current?.state ?? "gone"} and cannot go back to work`);
         }
         if (back.branch !== undefined) {
           writes.nextPiece(ticket.id, back.branch);
@@ -612,7 +615,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         end(ticket.id, previous.attempt, "replaced", null, null);
       }
       if (ticket.branch === null && ticket.form === "code") {
-        writes.setBranch(ticket.id, branchFor(ticket.id, suffix()));
+        writes.setBranch(ticket.id, branchFor(ticket, suffix()));
       }
       insertAttempt.run(ticket.id, number, machine, engine.data, ticket.model, ticket.effort, resume, note, handover ? 1 : 0, passing.takeover ? 1 : 0, clock.now());
       passing.record?.(number);
@@ -620,7 +623,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }, turn);
     if (moving) {
       if (send(previous.machine, { type: "work.stop", ticket: ticket.id, save: true, remove: true })) {
-        removalsSent.add(`${previous.machine}:${ticket.id}`);
+        removalsSent.add(`${previous.machine}:${ticketReference(ticket)}`);
       } else if (handover) {
         updateHandover.run(ticket.id);
       }
@@ -649,10 +652,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const begin = (ticket: Ticket) => {
     if (ticket.form === "task") {
       if (tickets.task(ticket.id) === undefined) {
-        throw new Error(`Ticket ${ticket.id} has no task`);
+        throw new Error(`Ticket ${ticketReference(ticket)} has no task`);
       }
     } else if (ticket.repository === null || ticket.issues.length === 0) {
-      throw new Error(`Ticket ${ticket.id} has no repository or no issues`);
+      throw new Error(`Ticket ${ticketReference(ticket)} has no repository or no issues`);
     }
     if (latestOf(ticket.id) !== undefined) {
       dispatch();
@@ -678,7 +681,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       report: event.report,
       files,
       prompt: [
-        `[hub] Task ticket ${ticket.id} (${ticket.title.en}) is done. Its result was delivered to the owner in this conversation: the worker's report${event.text === null ? "" : ", the text as written"}${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. Nothing was verified.`,
+        `[hub] Task ticket ${ticketReference(ticket)} (${ticket.title.en}) is done. Its result was delivered to the owner in this conversation: the worker's report${event.text === null ? "" : ", the text as written"}${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. Nothing was verified.`,
         ...(ticket.deploys && ticket.repository !== null
           ? [
               `It deployed ${ticket.repository}${commit === null ? "" : ` at ${commit}`}. The hub marks the merged tickets of ${ticket.repository} that ${commit === null ? "it" : short(commit)} contains as deployed, so what was arranged after this deployment begins by itself.`,
@@ -792,7 +795,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const store = options.attachments;
     const attempt = attemptOf(asked.ticket, asked.attempt);
     if (store === undefined || attempt === undefined || attempt.machine !== machine || !store.granted(asked.ticket, asked.attachment) || !store.complete(asked.attachment)) {
-      reply(null, `The attachment ${asked.attachment} was not given to ticket ${asked.ticket} on ${machine}`);
+      reply(null, `The attachment ${asked.attachment} was not given to ticket ${tickets.reference(asked.ticket) ?? "(unavailable)"} on ${machine}`);
       return;
     }
     try {
@@ -1112,17 +1115,17 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const worked = lastWorked === undefined ? undefined : Attempt.parse(lastWorked);
     const kept = record?.openedBy === "owner";
     const lines: string[] = [
-      `You are taking over work that earlier workers could not finish. This ticket, ${ticket.id}, is a repair ticket: it was opened ${
+      `You are taking over work that earlier workers could not finish. You are working on ticket ${ticketReference(ticket)}, a repair ticket opened ${
         kept
-          ? `when the owner gave up ticket ${last?.id ?? "?"} after its guided rounds reached the cap`
-          : `by the brain, at the owner's request, for ticket ${last?.id ?? "?"}, which had stopped`
+          ? `when the owner gave up ticket ${last === undefined ? "(unavailable)" : ticketReference(last)} after its guided rounds reached the cap`
+          : `by the brain, at the owner's request, for ticket ${last === undefined ? "(unavailable)" : ticketReference(last)}, which had stopped`
       }, and it carries on what remained. You cannot continue an earlier session: this note and the folder are what you have of it. Nobody is at the computer to answer a question.`,
     ];
     earlier.forEach((before, index) => {
       const next = index + 1 < earlier.length ? tickets.repairRecord(earlier[index + 1]?.id ?? 0) : record;
       const ran = selectWorked.get(before.id);
       lines.push(
-        `Ticket ${before.id} (${before.title.en}) ended ${before.state}${before.stopReason === null ? "" : `: ${before.stopReason.en}`}.${ran === undefined ? " No worker ever ran for it." : ` Its last worker ran on ${programOf(Attempt.parse(ran))}, on ${Attempt.parse(ran).machine}.`}`,
+        `Ticket ${ticketReference(before)} (${before.title.en}) ended ${before.state}${before.stopReason === null ? "" : `: ${before.stopReason.en}`}.${ran === undefined ? " No worker ever ran for it." : ` Its last worker ran on ${programOf(Attempt.parse(ran))}, on ${Attempt.parse(ran).machine}.`}`,
       );
       for (const round of tickets.rounds(before.id)) {
         lines.push(
@@ -1321,9 +1324,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const out = options.defaults?.out();
     tell(
       ticket.id,
-      text("notice.waitingForProvider", { ticket: ticket.id }),
+      text("notice.waitingForProvider", { ticket: ticket.code }),
       [
-        `[hub] Ticket ${ticket.id} (${ticket.title.en}) waits for a provider. Its program, ${programNames[previous.engine]}, reported itself unavailable: ${previous.reason ?? "no reason was given"}.`,
+        `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) waits for a provider. Its program, ${programNames[previous.engine]}, reported itself unavailable: ${previous.reason ?? "no reason was given"}.`,
         `Every provider that could run it is unavailable now: ${engines.map((engine) => `${programNames[engine]} (${out?.get(engine)?.reason ?? "unavailable"})`).join("; ")}.`,
         `The hub tries again by itself when the earliest of their times passes (${whenWords(until)}) or when an allowance reading shows one back. Nothing is asked of you, no guided round is counted and the ticket does not stop.`,
         "Tell the owner in Chinese, in a line, that the ticket waits for a provider, and when it will be tried again if a time is known.",
@@ -1508,19 +1511,19 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     again: (id, note, reason, round, turn) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
-        return { ok: false, reason: `There is no ticket ${id}` };
+        return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}` };
       }
       if (ticket.state !== "working" && ticket.state !== "verifying") {
-        return { ok: false, reason: `Ticket ${id} is ${ticket.state}` };
+        return { ok: false, reason: `Ticket ${ticketReference(ticket)} is ${ticket.state}` };
       }
       const latest = latestOf(id);
       if (latest !== undefined && (latest.state === "queued" || isActive(latest.state))) {
-        return { ok: false, reason: `Ticket ${id} already has a worker` };
+        return { ok: false, reason: `Ticket ${ticketReference(ticket)} already has a worker` };
       }
       if (round !== undefined) {
         const refusal = guidanceRefusal(ticket);
         if (refusal !== null) {
-          return { ok: false, reason: `Ticket ${id} cannot have a guided round now (${refusal})` };
+          return { ok: false, reason: `Ticket ${ticketReference(ticket)} cannot have a guided round now (${refusal})` };
         }
       }
       try {
@@ -1529,26 +1532,26 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
       const now = tickets.get(id);
-      return now === undefined ? { ok: false, reason: `There is no ticket ${id}` } : { ok: true, ticket: now };
+      return now === undefined ? { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}` } : { ok: true, ticket: now };
     },
     onward: (id, merged) => {
       const ticket = tickets.get(id);
       if (ticket === undefined) {
-        return { ok: false, reason: `There is no ticket ${id}` };
+        return { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}` };
       }
       if (ticket.state !== "verifying") {
-        return { ok: false, reason: `Ticket ${id} is ${ticket.state}` };
+        return { ok: false, reason: `Ticket ${ticketReference(ticket)} is ${ticket.state}` };
       }
       const latest = latestOf(id);
       if (latest !== undefined && (latest.state === "queued" || isActive(latest.state))) {
-        return { ok: false, reason: `Ticket ${id} already has a worker` };
+        return { ok: false, reason: `Ticket ${ticketReference(ticket)} already has a worker` };
       }
       const open = new Set(openIssueNumbers(ticket));
       const remaining = ticket.issues.filter((issue) => open.has(issue.number));
       if (remaining.length === 0) {
-        return { ok: false, reason: `Every issue of ticket ${id} is settled` };
+        return { ok: false, reason: `Every issue of ticket ${ticketReference(ticket)} is settled` };
       }
-      const branch = branchFor(id, suffix());
+      const branch = branchFor(ticket, suffix());
       const done = ticket.issues.filter((issue) => !open.has(issue.number));
       const closes = ticket.issues.filter((issue) => merged.closes.includes(issue.number));
       const note = [
@@ -1568,7 +1571,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
       const now = tickets.get(id);
-      return now === undefined ? { ok: false, reason: `There is no ticket ${id}` } : { ok: true, ticket: now };
+      return now === undefined ? { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}` } : { ok: true, ticket: now };
     },
     message: (id, body, from, attachments = [], turn) => {
       const latest = latestOf(id);
@@ -1576,7 +1579,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const active = latest !== undefined && isActive(latest.state);
       const between = state === "working" || state === "verifying";
       if (latest === undefined || (!active && !between)) {
-        return { ok: false, reason: `Ticket ${id} has no running worker` };
+        return { ok: false, reason: `Ticket ${tickets.reference(id) ?? "(unavailable)"} has no running worker` };
       }
       const message: WorkMessageToRunner = { type: "work.message", ticket: id, attempt: latest.attempt, id: randomUUID(), from, text: body, ...(attachments.length === 0 ? {} : { attachments: [...attachments] }) };
       tickets.change(() => {

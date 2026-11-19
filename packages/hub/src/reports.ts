@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
@@ -68,7 +69,7 @@ function chosen(value: string | number | null): string {
 }
 
 function waitText(wait: TicketWait): string {
-  const what = `ticket ${wait.ticket}${wait.deployment ? " to be merged and deployed" : " to be merged"}`;
+  const what = `ticket ${wait.reference ?? "(unavailable)"}${wait.deployment ? " to be merged and deployed" : " to be merged"}`;
   return wait.waived ? `${what} (waived)` : what;
 }
 
@@ -76,8 +77,8 @@ function numbers(list: readonly number[]): string {
   return list.map((number) => `#${number}`).join(", ");
 }
 
-export function repairWords(ticket: Pick<Ticket, "repairs" | "repairedBy">): string {
-  return [ticket.repairs === null ? "" : `repair of ticket ${ticket.repairs}`, ticket.repairedBy === null ? "" : `repaired by ticket ${ticket.repairedBy}`].filter((part) => part !== "").join(", ");
+export function repairWords(ticket: Pick<Ticket, "repairsReference" | "repairedByReference">): string {
+  return [ticket.repairsReference === undefined ? "" : `repair of ticket ${ticket.repairsReference}`, ticket.repairedByReference === undefined ? "" : `repaired by ticket ${ticket.repairedByReference}`].filter((part) => part !== "").join(", ");
 }
 
 export function repairLines(ticket: Ticket, get: (id: number) => Ticket | undefined): string[] {
@@ -85,12 +86,12 @@ export function repairLines(ticket: Ticket, get: (id: number) => Ticket | undefi
   if (ticket.repairs !== null) {
     const before = get(ticket.repairs);
     lines.push(
-      `This is a repair ticket: it carries on the work of ticket ${ticket.repairs}${before === undefined ? "" : ` (${before.state})`}${ticket.form === "code" ? `, on branch ${ticket.branch ?? "(none)"}, with the issues that were still open` : ", the same task"}. Its worker was given what the earlier workers did and what failed.`,
+      `This is a repair ticket: it carries on the work of ticket ${ticket.repairsReference ?? "(unavailable)"}${before === undefined ? "" : ` (${before.state})`}${ticket.form === "code" ? `, on branch ${ticket.branch ?? "(none)"}, with the issues that were still open` : ", the same task"}. Its worker was given what the earlier workers did and what failed.`,
     );
   }
   if (ticket.repairedBy !== null) {
     const after = get(ticket.repairedBy);
-    lines.push(`Its work goes on in repair ticket ${ticket.repairedBy}${after === undefined ? "" : ` (${after.state})`}; what waited for it waits for that ticket.`);
+    lines.push(`Its work goes on in repair ticket ${ticket.repairedByReference ?? "(unavailable)"}${after === undefined ? "" : ` (${after.state})`}; what waited for it waits for that ticket.`);
   }
   return lines;
 }
@@ -103,7 +104,7 @@ export function ticketLine(ticket: Ticket): string {
   const pulls = ticket.pullRequests.map((pull) => `#${pull.number} ${pull.state}`).join(", ");
   const task = ticket.form === "task" ? ` task${ticket.deploys ? " deploying" : ""}${ticket.commit === null ? (ticket.commitRef === null ? "" : ` at ${ticket.commitRef}`) : ` at ${ticket.commit.slice(0, 12)}`}` : "";
   const repair = repairWords(ticket);
-  return `Ticket ${ticket.id} [${ticket.state}] ${ticket.kind}${task} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}${repair === "" ? "" : ` [${repair}]`}: ${ticket.title.en}`;
+  return `Ticket ${ticketReference(ticket)} [${ticket.state}] ${ticket.kind}${task} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}${repair === "" ? "" : ` [${repair}]`}: ${ticket.title.en}`;
 }
 
 export function ranWords(ticket: Ticket): string {
@@ -115,18 +116,18 @@ export function repairReport(ended: Ticket, repair: Ticket, followers: readonly 
   const open = openPullRequest(ended.pullRequests);
   const remaining = openIssueNumbers(repair);
   return [
-    `A repair ticket was opened for ticket ${ended.id} in the same step: ticket ${repair.id}. It is pending: the hub does not start it, and the owner starts it with 开始 on its card in 工作台, like any ticket.`,
+    `A repair ticket was opened for ticket ${ticketReference(ended)} in the same step: ticket ${ticketReference(repair)}. It is pending: the hub does not start it, and the owner starts it with 开始 on its card in 工作台, like any ticket.`,
     repair.form === "task"
       ? "It is the same task, in a new ticket, with the same material."
       : `It continues on branch ${repair.branch ?? "(none)"}${open === undefined ? "" : `, where pull request #${open.number} is open`}, and holds the issues still open: ${numbers(remaining)}. Its worker hands in that same pull request, or a new one if it sees fit. What is merged stays merged.`,
-    `It keeps the kind (${repair.kind}), difficulty (${chosen(repair.difficulty)}), platform (${chosen(repair.platform)}) and repository (${repair.repository ?? "none"}) of ticket ${ended.id}${repair.requiredMachine === null ? "" : `, and runs only on ${repair.requiredMachine}`}. Its worker is given the account of what was done and what failed (every guided round, your description of why it was stuck, the owner's words, the decisions recorded), and ticket ${ended.id}'s folder is kept for it.`,
+    `It keeps the kind (${repair.kind}), difficulty (${chosen(repair.difficulty)}), platform (${chosen(repair.platform)}) and repository (${repair.repository ?? "none"}) of ticket ${ticketReference(ended)}${repair.requiredMachine === null ? "" : `, and runs only on ${repair.requiredMachine}`}. Its worker is given the account of what was done and what failed (every guided round, your description of why it was stuck, the owner's words, the decisions recorded), and ticket ${ticketReference(ended)}'s folder is kept for it.`,
     followers.length === 0
       ? "No other ticket waited for it."
-      : `What waited for ticket ${ended.id} now waits for ticket ${repair.id}: ${followers.map((follower) => `ticket ${follower.id} (${follower.state})`).join(", ")}. The owner's 开始 on ticket ${repair.id} starts those not yet started with it, and the ones already started begin once it has merged or is done.`,
-    `Ticket ${ended.id} ran on ${ranWords(ended)}.`,
+      : `What waited for ticket ${ticketReference(ended)} now waits for ticket ${ticketReference(repair)}: ${followers.map((follower) => `ticket ${ticketReference(follower)} (${follower.state})`).join(", ")}. The owner's 开始 on ticket ${ticketReference(repair)} starts those not yet started with it, and the ones already started begin once it has merged or is done.`,
+    `Ticket ${ticketReference(ended)} ran on ${ranWords(ended)}.`,
     ...(stateDefaults
       ? [
-          `Now call choose_defaults for ticket ${repair.id}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform, a one-line reason and its engine (codex or claude) as for any ticket. It failed on the run above, so usually prefer a different provider, or a stronger model (a higher difficulty gives one), than that one, by what is left on each subscription; read_allowance shows it. Say in the reason, in one line, why you chose it: the owner reads that line on the card, beside the choice. Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.`,
+          `Now call choose_defaults for ticket ${ticketReference(repair)}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform, a one-line reason and its engine (codex or claude) as for any ticket. It failed on the run above, so usually prefer a different provider, or a stronger model (a higher difficulty gives one), than that one, by what is left on each subscription; read_allowance shows it. Say in the reason, in one line, why you chose it: the owner reads that line on the card, beside the choice. Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.`,
         ]
       : []),
   ];

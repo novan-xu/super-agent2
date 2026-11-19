@@ -1,8 +1,11 @@
 import { text } from "@super-agent2/catalog";
+import type { DatabaseSync } from "node:sqlite";
+import { codeAt, ticketCodesExhausted, ticketDate, ticketDateFormatter } from "./ticket-codes.js";
 
 export interface Migration {
   readonly version: number;
   readonly sql: string;
+  readonly backfill?: (connection: DatabaseSync, timeZone: string) => void;
 }
 
 export const migrations: readonly Migration[] = [
@@ -890,6 +893,39 @@ export const migrations: readonly Migration[] = [
   },
   { version: 41, sql: `ALTER TABLE repositories ADD COLUMN alias TEXT;` },
   { version: 42, sql: `ALTER TABLE tickets ADD COLUMN closed_outside TEXT NOT NULL DEFAULT '[]';` },
+  {
+    version: 43,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN code TEXT CHECK (code GLOB '[a-z][a-z][a-z]');
+      ALTER TABLE tickets ADD COLUMN code_date TEXT CHECK (code_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]');
+      CREATE UNIQUE INDEX ticket_codes_by_date ON tickets (code_date, code);
+      CREATE INDEX ticket_codes_by_creation ON tickets (code, created_at DESC, id DESC);
+    `,
+    backfill(connection, timeZone) {
+      const formatter = ticketDateFormatter(timeZone);
+      connection.function("ticket_local_day", { deterministic: true }, (at) => ticketDate(formatter, Number(at)));
+      connection.function("ticket_code_at", { deterministic: true }, (position, date) => {
+        const code = codeAt(Number(position));
+        if (code === undefined) throw new Error(ticketCodesExhausted(String(date)));
+        return code;
+      });
+      connection.exec(`
+        WITH dated AS (
+          SELECT id, created_at, ticket_local_day(created_at) AS day FROM tickets
+        ), ordered AS (
+          SELECT id, day, row_number() OVER (PARTITION BY day ORDER BY created_at, id) - 1 AS position FROM dated
+        )
+        UPDATE tickets SET code = ticket_code_at(ordered.position, ordered.day), code_date = ordered.day
+        FROM ordered WHERE tickets.id = ordered.id;
+        CREATE TRIGGER ticket_codes_required_insert BEFORE INSERT ON tickets
+        WHEN NEW.code IS NULL OR NEW.code_date IS NULL
+        BEGIN SELECT RAISE(ABORT, 'Tickets require a code and creation day'); END;
+        CREATE TRIGGER ticket_codes_required_update BEFORE UPDATE OF code, code_date ON tickets
+        WHEN NEW.code IS NULL OR NEW.code_date IS NULL
+        BEGIN SELECT RAISE(ABORT, 'Tickets require a code and creation day'); END;
+      `);
+    },
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

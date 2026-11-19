@@ -850,7 +850,7 @@ export function createWorks(options: WorksOptions): Works {
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    withWaiting(task.note === null ? taskResumeText(task, where) : taskContinueText(where, task.note));
+    withWaiting(task.note === null ? taskResumeText(task, where) : taskContinueText(task, where, task.note));
   };
 
   const start = async (given: { readonly code: WorkTask } | { readonly assignment: TaskAssignment }) => {
@@ -976,7 +976,7 @@ export function createWorks(options: WorksOptions): Works {
       options.send({ type: "work.file.part", ticket: asked.ticket, attempt: asked.attempt, name: asked.name, offset: asked.offset, data, problem });
     const work = works.get(asked.ticket);
     if (work === undefined || work.record.attempt !== asked.attempt || work.record.kind !== "task") {
-      reply(null, `This machine has no task work for ticket ${asked.ticket}, attempt ${asked.attempt}`);
+      reply(null, `This machine has no matching task work for attempt ${asked.attempt}`);
       return;
     }
     const length = Math.min(asked.length, filePartBytes);
@@ -1057,7 +1057,7 @@ export function createWorks(options: WorksOptions): Works {
       }
     } catch (error) {
       work.messages.delete(id);
-      log(`Could not fetch the attachments of message ${id} for ticket ${incoming.ticket}: ${messageOf(error)}`);
+      log(`Could not fetch the attachments of message ${id} in attempt ${incoming.attempt}: ${messageOf(error)}`);
       return;
     }
     if (!work.live || work.record.ended || work.record.attempt !== incoming.attempt) {
@@ -1120,7 +1120,7 @@ export function createWorks(options: WorksOptions): Works {
     if (keep && task !== undefined) {
       emit(work, { kind: "phase", phase: "saving", detail: "Saving the work on the branch" });
       const pushTo = work.paths.shared ? remote(task.repository) : "origin";
-      saved = await saveWork(gitFor(task, work.paths.shared), ticket, work.record.branch, work.paths, pushTo).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
+      saved = await saveWork(gitFor(task, work.paths.shared), work.record.branch, work.paths, pushTo).catch((error: unknown) => ({ saved: false, detail: messageOf(error) }));
     }
     if (open || (keep && task !== undefined)) {
       if (open) {
@@ -1134,7 +1134,7 @@ export function createWorks(options: WorksOptions): Works {
       try {
         await removeWorktree(git, work.record.branch, work.paths);
       } catch (error) {
-        log(`Could not remove the worktree of ticket ${ticket}: ${messageOf(error)}`);
+        log(`Could not remove the worktree at ${work.paths.worktree}: ${messageOf(error)}`);
         return;
       }
       emit(work, {

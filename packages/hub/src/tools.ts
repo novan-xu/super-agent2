@@ -31,6 +31,9 @@ import {
   roundCap,
   type TicketRound,
   TicketKind,
+  TicketReference,
+  ticketReference,
+  ticketReferencePattern,
   ticketKinds,
   taskKinds,
 } from "@super-agent2/protocol";
@@ -138,7 +141,7 @@ const TaskArguments = z.object({
   repository: RepositoryName.optional(),
   commit: z.union([z.literal(mergedCommit), CommitRef]).optional(),
   deploy: z.boolean().optional(),
-  after: z.array(z.number().int().positive()).optional(),
+  after: z.array(TicketReference).optional(),
   difficulty: Difficulty.optional(),
   platform: Platform.optional(),
 });
@@ -148,19 +151,19 @@ const ListArguments = z.object({
   limit: z.number().int().positive().max(500).optional(),
 });
 
-const ReadTicketArguments = z.object({ ticket: z.number().int().positive() });
+const ReadTicketArguments = z.object({ ticket: TicketReference });
 
-const StopTicketArguments = z.object({ ticket: z.number().int().positive(), reason: GeneratedText });
+const StopTicketArguments = z.object({ ticket: TicketReference, reason: GeneratedText });
 
-const DecisionArguments = z.object({ ticket: z.number().int().positive(), chosen: GeneratedText, why: GeneratedText, other_options: GeneratedText });
+const DecisionArguments = z.object({ ticket: TicketReference, chosen: GeneratedText, why: GeneratedText, other_options: GeneratedText });
 
-const MessageWorkerArguments = z.object({ ticket: z.number().int().positive(), text: z.string().trim().min(1), attachments: z.array(AttachmentId).optional() });
+const MessageWorkerArguments = z.object({ ticket: TicketReference, text: z.string().trim().min(1), attachments: z.array(AttachmentId).optional() });
 
 const ChainArgument = z.object({
   name: z.string().trim().min(1).max(100),
   repository: RepositoryName,
   issues: z.array(z.number().int().positive()).min(1),
-  after: z.array(z.union([z.string().trim().min(1), z.number().int().positive()])).optional(),
+  after: z.array(z.string().trim().min(1)).optional(),
   after_deployment: z.boolean().optional(),
   title: GeneratedText.optional(),
   summary: GeneratedText.optional(),
@@ -171,16 +174,16 @@ const ChainArgument = z.object({
 
 const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1) });
 
-const TicketArgument = z.object({ ticket: z.number().int().positive() });
+const TicketArgument = z.object({ ticket: TicketReference });
 
-const GuideArguments = z.object({ ticket: z.number().int().positive(), guidance: GeneratedText });
+const GuideArguments = z.object({ ticket: TicketReference, guidance: GeneratedText });
 
-const StuckArguments = z.object({ ticket: z.number().int().positive(), where: GeneratedText });
+const StuckArguments = z.object({ ticket: TicketReference, where: GeneratedText });
 
-const MergeArguments = z.object({ ticket: z.number().int().positive(), reason: z.string().trim().min(1) });
+const MergeArguments = z.object({ ticket: TicketReference, reason: z.string().trim().min(1) });
 
 const DefaultsArgument = z.object({
-  ticket: z.number().int().positive(),
+  ticket: TicketReference,
   kind: TicketKind,
   issues: z.array(z.object({ number: z.number().int().positive(), difficulty: Difficulty })).optional(),
   difficulty: Difficulty.optional(),
@@ -190,6 +193,12 @@ const DefaultsArgument = z.object({
 });
 
 const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) });
+
+const ticketCodeSchema = (what: string) => ({
+  type: "string",
+  pattern: ticketReferencePattern,
+  description: `${what}. Use a code such as aaa for the newest match or aaa-2026-11-19 for an exact ticket.`,
+});
 
 const generatedSchema = (what: string) => ({
   type: "object",
@@ -257,7 +266,7 @@ function loopDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The failed ticket" },
+          ticket: ticketCodeSchema("The failed ticket"),
           guidance: generatedSchema("guidance to the worker: what failed and why, and what to change; the worker gets the English, the owner sees the Chinese in the ticket's timeline"),
         },
         required: ["ticket", "guidance"],
@@ -272,7 +281,7 @@ function loopDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The ticket stopped for the owner" },
+          ticket: ticketCodeSchema("The ticket stopped for the owner"),
           where: generatedSchema("description of where the ticket is stuck"),
         },
         required: ["ticket", "where"],
@@ -289,11 +298,11 @@ function roundLines(rounds: readonly TicketRound[]): string[] {
   );
 }
 
-function loopText(outcome: LoopOutcome, done: (ticket: number) => string): ToolResult {
+function loopText(outcome: LoopOutcome, done: (ticket: string) => string): ToolResult {
   if (!outcome.ok) {
     return { text: `Nothing was changed: ${outcome.reason}`, isError: true };
   }
-  return { text: `${done(outcome.ticket.id)}\n${ticketLine(outcome.ticket)}` };
+  return { text: `${done(ticketReference(outcome.ticket))}\n${ticketLine(outcome.ticket)}` };
 }
 
 function verificationDefinitions() {
@@ -309,7 +318,7 @@ function verificationDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The ticket in verifying" },
+          ticket: ticketCodeSchema("The ticket in verifying"),
           reason: { type: "string", description: "Why the rules are skipped: what the owner asked, in English" },
         },
         required: ["ticket", "reason"],
@@ -327,18 +336,18 @@ function mergedText(outcome: SkipOutcome): ToolResult {
   const reason = ticket.verification?.reason ?? null;
   const commit = ticket.verification?.mergeCommit ?? null;
   if (ticket.state === "merged") {
-    return { text: `Merged ticket ${ticket.id} with the rules skipped${commit === null ? "" : ` as commit ${commit}`}.\n${ticketLine(ticket)}\nYou are told separately what was closed and whether it needs deploying.` };
+    return { text: `Merged ticket ${ticketReference(ticket)} with the rules skipped${commit === null ? "" : ` as commit ${commit}`}.\n${ticketLine(ticket)}\nYou are told separately what was closed and whether it needs deploying.` };
   }
   const last = ticket.pullRequests.at(-1);
   if (ticket.state === "working" && last?.state === "merged") {
     return {
-      text: `Merged pull request #${last.number} of ticket ${ticket.id} with the rules skipped${last.mergeCommit === null ? "" : ` as commit ${last.mergeCommit}`}. The chain is not done: its worker continues with ${openIssueNumbers(ticket).map((number) => `#${number}`).join(", ")}, and the rules apply again to its next pull request.\n${ticketLine(ticket)}`,
+      text: `Merged pull request #${last.number} of ticket ${ticketReference(ticket)} with the rules skipped${last.mergeCommit === null ? "" : ` as commit ${last.mergeCommit}`}. The chain is not done: its worker continues with ${openIssueNumbers(ticket).map((number) => `#${number}`).join(", ")}, and the rules apply again to its next pull request.\n${ticketLine(ticket)}`,
     };
   }
   if (ticket.state === "working") {
-    return { text: `Ticket ${ticket.id} was not merged: ${reason ?? "it went back to its worker"}. When the worker hands back the pull request again, the rules apply again.\n${ticketLine(ticket)}` };
+    return { text: `Ticket ${ticketReference(ticket)} was not merged: ${reason ?? "it went back to its worker"}. When the worker hands back the pull request again, the rules apply again.\n${ticketLine(ticket)}` };
   }
-  return { text: `Ticket ${ticket.id} is not merged yet: ${reason ?? "it is still being checked"}. The hub keeps trying.\n${ticketLine(ticket)}`, isError: ticket.verification?.state === "conflict" };
+  return { text: `Ticket ${ticketReference(ticket)} is not merged yet: ${reason ?? "it is still being checked"}. The hub keeps trying.\n${ticketLine(ticket)}`, isError: ticket.verification?.state === "conflict" };
 }
 
 function defaultsDefinitions() {
@@ -374,7 +383,7 @@ function defaultsDefinitions() {
             items: {
               type: "object",
               properties: {
-                ticket: { type: "integer", minimum: 1, description: "The chain's ticket number" },
+                ticket: ticketCodeSchema("The chain's ticket code"),
                 kind: {
                   type: "string",
                   enum: [...ticketKinds],
@@ -414,7 +423,7 @@ function statedText(outcome: StateOutcome, defaults: StartDefaults): ToolResult 
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
-  const lines = outcome.tickets.map((ticket) => `Ticket ${ticket.id}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${choiceText(defaults.resolve(ticket))}`);
+  const lines = outcome.tickets.map((ticket) => `Ticket ${ticketReference(ticket)}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${choiceText(defaults.resolve(ticket))}`);
   lines.push("The owner sees these on the cards in 工作台 and can change them before the start.");
   return { text: lines.join("\n") };
 }
@@ -427,8 +436,8 @@ function chainDefinitions() {
       description: [
         "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: its issues, worked on in the order given, handed once to one worker, which opens as many pull requests for them as it sees fit; the hub merges each one and gives the worker the rest, and the chain is merged when every issue of it is closed.",
         "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
-        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a task ticket that deploys it is done, or you record the deployment with report_deployment). A chain may also come after a task ticket, such as the deployment, by its number: it begins once that ticket is done.",
-        "`after` names other chains of this call by name, or tickets by number; a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again. A task ticket arranged after a chain you rearrange follows the chains its issues went to.",
+        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a task ticket that deploys it is done, or you record the deployment with report_deployment). A chain may also come after a task ticket, such as the deployment, by its code: it begins once that ticket is done.",
+        "`after` names other chains of this call by name, or tickets by code (use a dated code if a chain name matches a bare code); a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again. A task ticket arranged after a chain you rearrange follows the chains its issues went to.",
         "Every issue of a pending ticket you touch must be named. A chain of several issues needs its own title and summary in English and Chinese; a chain that keeps one ticket's issues keeps that ticket's title. Tickets whose issues all went to other chains are closed as joined.",
         "The whole arrangement is checked first: one that has a cycle, or names an issue or ticket that does not exist, is refused and nothing changes. Calling it again with a new arrangement rearranges.",
         "Only the owner starts a chain, with 开始 on its card in 工作台; you cannot start one.",
@@ -447,8 +456,8 @@ function chainDefinitions() {
                 issues: { type: "array", items: { type: "integer", minimum: 1 }, minItems: 1, description: "The issue numbers in working order" },
                 after: {
                   type: "array",
-                  items: { anyOf: [{ type: "string" }, { type: "integer", minimum: 1 }] },
-                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket numbers",
+                  items: { type: "string" },
+                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as aaa or aaa-2026-11-19",
                 },
                 after_deployment: { type: "boolean", description: "Also wait until the earlier work is deployed: a task ticket that deploys it is done, or you record it with report_deployment" },
                 title: generatedSchema("chain title"),
@@ -472,7 +481,7 @@ function chainDefinitions() {
         "Record that the merged work of a code ticket is deployed by other means than a task ticket that deploys it (which marks what it deploys by itself): the owner deployed it by hand, say. Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
       inputSchema: {
         type: "object",
-        properties: { ticket: { type: "integer", minimum: 1, description: "The merged ticket whose work is deployed" } },
+        properties: { ticket: ticketCodeSchema("The merged ticket whose work is deployed") },
         required: ["ticket"],
         additionalProperties: false,
       },
@@ -484,7 +493,7 @@ function chainDefinitions() {
         "A ticket the owner started waits for others to merge or be done. When one of those stops, you are told, and decide: stop the waiting ticket with stop_ticket, or let it go ahead with this tool, which drops its wait on every stopped ticket; it then begins once what it still waits for has merged or is done.",
       inputSchema: {
         type: "object",
-        properties: { ticket: { type: "integer", minimum: 1, description: "The waiting ticket" } },
+        properties: { ticket: ticketCodeSchema("The waiting ticket") },
         required: ["ticket"],
         additionalProperties: false,
       },
@@ -492,7 +501,7 @@ function chainDefinitions() {
   ];
 }
 
-function arrangedText(outcome: ArrangeOutcome): ToolResult {
+function arrangedText(outcome: ArrangeOutcome, reference: TicketService["reference"]): ToolResult {
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
@@ -501,11 +510,11 @@ function arrangedText(outcome: ArrangeOutcome): ToolResult {
     const after =
       ticket.waits.length === 0
         ? "nothing before it"
-        : `after ${ticket.waits.map((wait) => `ticket ${wait.ticket}${wait.deployment ? " (merged and deployed)" : ""}`).join(", ")}`;
-    return `Chain ${name} is ticket ${ticket.id} in ${ticket.repository ?? ""}: ${issues}; ${after}.`;
+        : `after ${ticket.waits.map((wait) => `ticket ${wait.reference ?? "(unavailable)"}${wait.deployment ? " (merged and deployed)" : ""}`).join(", ")}`;
+    return `Chain ${name} is ticket ${ticketReference(ticket)} in ${ticket.repository ?? ""}: ${issues}; ${after}.`;
   });
   if (outcome.joined.length > 0) {
-    lines.push(`Closed as joined into other chains: ${outcome.joined.map((id) => `ticket ${id}`).join(", ")}.`);
+    lines.push(`Closed as joined into other chains: ${outcome.joined.map((id) => `ticket ${reference(id) ?? "(unavailable)"}`).join(", ")}.`);
   }
   lines.push("They wait for the owner to start them with 开始 on their cards in 工作台. Tell the owner, in Chinese, how the work is arranged.");
   return { text: lines.join("\n") };
@@ -515,7 +524,7 @@ function ticketOutcomeText(outcome: TicketOutcome, done: string): ToolResult {
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
-  const began = outcome.began.length === 0 ? "Nothing began yet." : `Began: ${outcome.began.map((ticket) => `ticket ${ticket.id}`).join(", ")}.`;
+  const began = outcome.began.length === 0 ? "Nothing began yet." : `Began: ${outcome.began.map((ticket) => `ticket ${ticketReference(ticket)}`).join(", ")}.`;
   return { text: `${done}\n${ticketLine(outcome.ticket)}\n${began}` };
 }
 
@@ -575,7 +584,7 @@ function ticketDefinitions() {
         "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`), and its text when you have it, verbatim; a piece without `text` is described by its source only. A file the owner attached in this conversation is passed on as the file itself, by its attachment id in `attachment`, with a name that keeps its extension.",
         `When the task needs a repository (a deployment, a script that lives in it), name it in \`repository\`, and the worker gets a checkout of it beside its scratch folder, at \`commit\`: a SHA, a branch (its head when the work begins), or "${mergedCommit}", the final merge commit of the code chain of that repository this ticket comes \`after\`, filled in by the hub when the work begins. Without \`commit\`, the default branch's head when the work begins.`,
         `With \`deploy\` true the task is to deploy the repository by its ${deploymentFile} (where it runs, how to deploy, how to check health, how to roll back): the hub reads the file on the default branch and runs the ticket only on the machine it names; the worker deploys, checks health, rolls back when the new version does not come up, and reports what happened. Opened after a code chain of that repository, its commit is "${mergedCommit}" unless you name another.`,
-        "`after` names tickets this one waits for, by number: it begins by itself once they have merged or are done. Arranged after a chain that is not started yet, the owner's one 开始 on that chain starts both, and the work begins when the chain has merged. Arranged after a ticket already started, it waits for its own 开始.",
+        "`after` names tickets this one waits for, by code: it begins by itself once they have merged or are done. Arranged after a chain that is not started yet, the owner's one 开始 on that chain starts both, and the work begins when the chain has merged. Arranged after a ticket already started, it waits for its own 开始.",
         "Afterwards state its defaults with choose_defaults (kind writing or operation), as for any ticket. The owner starts it; you cannot start it.",
       ].join(" "),
       inputSchema: {
@@ -603,7 +612,7 @@ function ticketDefinitions() {
           repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
           commit: { type: "string", description: `The commit of the checkout: a SHA, a branch, or "${mergedCommit}" for the final merge commit of the code chain it comes after` },
           deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
-          after: { type: "array", items: { type: "integer", minimum: 1 }, description: "Ticket numbers this one waits for" },
+          after: { type: "array", items: ticketCodeSchema("A ticket this one waits for") },
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
         },
@@ -630,7 +639,7 @@ function ticketDefinitions() {
       description: "Read a ticket and remember its current version for this topic. Use this before making changes to the ticket. Shows its issues, state, choices, branch, pull request, dependencies, history, and decisions with the owner's reviews.",
       inputSchema: {
         type: "object",
-        properties: { ticket: { type: "integer", minimum: 1, description: "The ticket number" } },
+        properties: { ticket: ticketCodeSchema("The ticket code") },
         required: ["ticket"],
         additionalProperties: false,
       },
@@ -643,7 +652,7 @@ function ticketDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The ticket number" },
+          ticket: ticketCodeSchema("The ticket code"),
           text: { type: "string", description: "The message, in English" },
           attachments: {
             type: "array",
@@ -666,7 +675,7 @@ function ticketDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The ticket the decision belongs to" },
+          ticket: ticketCodeSchema("The ticket the decision belongs to"),
           chosen: generatedSchema("statement of what was chosen"),
           why: generatedSchema("reason it was chosen"),
           other_options: generatedSchema("the other options there were, and why they were not taken"),
@@ -682,7 +691,7 @@ function ticketDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          ticket: { type: "integer", minimum: 1, description: "The ticket number" },
+          ticket: ticketCodeSchema("The ticket code"),
           reason: generatedSchema("reason for stopping"),
         },
         required: ["ticket", "reason"],
@@ -700,7 +709,7 @@ function ticketDefinitions() {
       ].join(" "),
       inputSchema: {
         type: "object",
-        properties: { ticket: { type: "integer", minimum: 1, description: "The stopped ticket whose work should go on" } },
+        properties: { ticket: ticketCodeSchema("The stopped ticket whose work should go on") },
         required: ["ticket"],
         additionalProperties: false,
       },
@@ -720,10 +729,10 @@ function filingText(outcome: FilingOutcome): ToolResult {
   const issue = outcome.ticket.issues[0];
   const where = issue === undefined ? "" : `${issue.repository}#${issue.number} ${issue.url}`;
   const first = outcome.ticketExisted
-    ? `This issue already has ticket ${outcome.ticket.id}; nothing new was opened.`
+    ? `This issue already has ticket ${ticketReference(outcome.ticket)}; nothing new was opened.`
     : outcome.issueCreated
-      ? `Filed ${where} and opened ticket ${outcome.ticket.id}.`
-      : `Used the existing issue ${where} and opened ticket ${outcome.ticket.id}.`;
+      ? `Filed ${where} and opened ticket ${ticketReference(outcome.ticket)}.`
+      : `Used the existing issue ${where} and opened ticket ${ticketReference(outcome.ticket)}.`;
   return { text: `${first}\n${ticketReport(outcome.ticket)}\nOnce the issues for this need are filed, arrange them into chains with arrange_chains.` };
 }
 
@@ -964,6 +973,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       tools.tickets.versions.requireActive(scope);
       return scope;
     };
+    const resolve = (reference: string): number => {
+      const id = tools.tickets.resolve(reference);
+      if (id === undefined) throw new TicketWriteRefused(`There is no ticket ${reference}.`);
+      return id;
+    };
     switch (name) {
       case "file_issue": {
         const parsed = FileArguments.safeParse(raw);
@@ -1017,7 +1031,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           repository: parsed.data.repository,
           commit: parsed.data.commit,
           deploy: parsed.data.deploy,
-          after: parsed.data.after,
+          after: parsed.data.after?.map(resolve),
           difficulty: parsed.data.difficulty,
           platform: parsed.data.platform,
           conversation: turn.conversation,
@@ -1033,7 +1047,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const pendingBefore = ticket.waits.some((wait) => tools.tickets.get(wait.ticket)?.state === "pending");
         return {
           text: [
-            `Opened task ticket ${ticket.id}.`,
+            `Opened task ticket ${ticketReference(ticket)}.`,
             ticketReport(ticket),
             ...opened.notes,
             `Now state its defaults with choose_defaults (kind ${ticket.kind}, its difficulty and platform, a one-line reason${ticket.kind === "writing" ? "" : ", and its engine"}).`,
@@ -1056,7 +1070,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const detail = tools.tickets.detail(parsed.data.ticket);
+        const detail = tools.tickets.detail(resolve(parsed.data.ticket));
         if (detail === undefined) {
           return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
         }
@@ -1109,7 +1123,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!chosen.ok) {
           return { text: `Nothing was sent: ${chosen.reason}.`, isError: true };
         }
-        const sent = tools.work.message(parsed.data.ticket, parsed.data.text, "brain", chosen.attachments, writeTurn());
+        const sent = tools.work.message(resolve(parsed.data.ticket), parsed.data.text, "brain", chosen.attachments, writeTurn());
         if (!sent.ok) {
           return { text: sent.reason, isError: true };
         }
@@ -1124,12 +1138,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        if (tools.tickets.get(parsed.data.ticket)?.state === "stuck") {
+        if (tools.tickets.get(resolve(parsed.data.ticket))?.state === "stuck") {
           return { text: `Ticket ${parsed.data.ticket} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你, whether to resume it or give it up. Tell the owner.`, isError: true };
         }
-        const result = tools.tickets.stop(parsed.data.ticket, parsed.data.reason, writeTurn());
+        const result = tools.tickets.stop(resolve(parsed.data.ticket), parsed.data.reason, writeTurn());
         if (result.ok) {
-          return { text: [`Stopped ticket ${result.ticket.id}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
+          return { text: [`Stopped ticket ${ticketReference(result.ticket)}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
         }
         return result.error === "not_found"
           ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
@@ -1140,18 +1154,18 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const before = tools.tickets.get(parsed.data.ticket);
+        const before = tools.tickets.get(resolve(parsed.data.ticket));
         if (before === undefined) {
           return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
         }
         if (before.state === "stuck") {
-          return { text: `Ticket ${before.id} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你: giving it up there opens its repair ticket. Tell the owner.`, isError: true };
+          return { text: `Ticket ${ticketReference(before)} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你: giving it up there opens its repair ticket. Tell the owner.`, isError: true };
         }
         const repaired = tools.tickets.repair(before.id, "brain", "", writeTurn());
         if (!repaired.ok) {
           return { text: `No repair ticket was opened: ${repaired.reason}`, isError: true };
         }
-        return { text: [`Opened repair ticket ${repaired.ticket.id}.`, ticketReport(repaired.ticket), ...repairReport(before, repaired.ticket, repaired.followers, true), ...chainProgress(before)].join("\n") };
+        return { text: [`Opened repair ticket ${ticketReference(repaired.ticket)}.`, ticketReport(repaired.ticket), ...repairReport(before, repaired.ticket, repaired.followers, true), ...chainProgress(before)].join("\n") };
       }
       case "record_decision": {
         const parsed = DecisionArguments.safeParse(raw);
@@ -1159,10 +1173,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         const { ticket, chosen, why, other_options } = parsed.data;
-        if (tools.tickets.get(ticket) === undefined) {
-          return { text: `There is no ticket ${ticket}; nothing was recorded.`, isError: true };
-        }
-        const recorded = tools.tickets.change((writes) => writes.recordDecisions(ticket, "brain", [{ chosen, why, otherOptions: other_options }]), writeTurn());
+        const id = resolve(ticket);
+        const recorded = tools.tickets.change((writes) => writes.recordDecisions(id, "brain", [{ chosen, why, otherOptions: other_options }]), writeTurn());
         const decision = recorded[0];
         return {
           text:
@@ -1198,7 +1210,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return statedText(tools.chains.state(parsed.data.chains, writeTurn()), tools.defaults);
+        return statedText(tools.chains.state(parsed.data.chains.map((chain) => ({ ...chain, ticket: resolve(chain.ticket) })), writeTurn()), tools.defaults);
       }
       case "guide_ticket": {
         if (tools.loop === undefined) {
@@ -1208,13 +1220,13 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const outcome = tools.loop.guide(parsed.data.ticket, parsed.data.guidance, writeTurn());
+        const outcome = tools.loop.guide(resolve(parsed.data.ticket), parsed.data.guidance, writeTurn());
         if (!outcome.ok) {
           return { text: `No round was started: ${outcome.reason}`, isError: true };
         }
         const round = outcome.round;
         return {
-          text: `${round === undefined || round.round === null ? `Ticket ${outcome.ticket.id} went back to its worker for a retry not counted as a guided round.` : `Ticket ${outcome.ticket.id} went back to its worker for guided round ${round.round} of ${roundCap}.`} You are told how it ends.\n${ticketLine(outcome.ticket)}`,
+          text: `${round === undefined || round.round === null ? `Ticket ${ticketReference(outcome.ticket)} went back to its worker for a retry not counted as a guided round.` : `Ticket ${ticketReference(outcome.ticket)} went back to its worker for guided round ${round.round} of ${roundCap}.`} You are told how it ends.\n${ticketLine(outcome.ticket)}`,
         };
       }
       case "describe_stuck": {
@@ -1225,7 +1237,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return loopText(tools.loop.describe(parsed.data.ticket, parsed.data.where, writeTurn()), (ticket) => `The card of ticket ${ticket} now says where it is stuck. It waits for the owner.`);
+        return loopText(tools.loop.describe(resolve(parsed.data.ticket), parsed.data.where, writeTurn()), (ticket) => `The card of ticket ${ticket} now says where it is stuck. It waits for the owner.`);
       }
       case "merge_ticket": {
         if (tools.verification === undefined) {
@@ -1235,14 +1247,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return mergedText(await tools.verification.skip(parsed.data.ticket, parsed.data.reason, writeTurn()));
+        return mergedText(await tools.verification.skip(resolve(parsed.data.ticket), parsed.data.reason, writeTurn()));
       }
       default:
-        return chainCall(tools.chains, name, raw, writeTurn);
+        return chainCall(tools, name, raw, writeTurn, resolve);
     }
   };
 
-  const chainCall = (chains: ChainArranger | undefined, name: string, raw: unknown, writeTurn: () => TicketTurn): ToolResult | undefined => {
+  const chainCall = ({ chains, tickets }: TicketTools, name: string, raw: unknown, writeTurn: () => TicketTurn, resolve: (reference: string) => number): ToolResult | undefined => {
     if (chains === undefined) {
       return undefined;
     }
@@ -1252,13 +1264,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
+        const names = new Set(parsed.data.chains.map((chain) => chain.name));
         return arrangedText(
           chains.arrange(
             parsed.data.chains.map((chain) => ({
               name: chain.name,
               repository: chain.repository,
               issues: chain.issues,
-              after: chain.after,
+              after: chain.after?.map((before) => names.has(before) || !TicketReference.safeParse(before).success ? before : resolve(before)),
               afterDeployment: chain.after_deployment,
               title: chain.title,
               summary: chain.summary,
@@ -1268,6 +1281,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             })),
             writeTurn(),
           ),
+          tickets.reference,
         );
       }
       case "report_deployment": {
@@ -1275,14 +1289,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return ticketOutcomeText(chains.deployed(parsed.data.ticket, writeTurn()), `Recorded that the work of ticket ${parsed.data.ticket} is deployed.`);
+        return ticketOutcomeText(chains.deployed(resolve(parsed.data.ticket), writeTurn()), `Recorded that the work of ticket ${parsed.data.ticket} is deployed.`);
       }
       case "proceed_ticket": {
         const parsed = TicketArgument.safeParse(raw);
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return ticketOutcomeText(chains.proceed(parsed.data.ticket, writeTurn()), `Ticket ${parsed.data.ticket} no longer waits for the tickets that stopped.`);
+        return ticketOutcomeText(chains.proceed(resolve(parsed.data.ticket), writeTurn()), `Ticket ${parsed.data.ticket} no longer waits for the tickets that stopped.`);
       }
       default:
         return undefined;

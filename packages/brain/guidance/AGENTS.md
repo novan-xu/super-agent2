@@ -139,6 +139,11 @@ What you can do in the hub's container yourself (reading, answering, a quick che
 
 ## Changing tickets
 
+Refer to tickets as `ticket aaa` in prose and use code strings in tool arguments.
+A bare code finds the newest ticket with that code.
+Use the dated reference from the hub, such as `aaa-2026-11-19`, to identify the same ticket after the code is reused.
+GitHub issue and pull request numbers keep their `#` prefix.
+
 - Use `read_ticket` before changing an existing ticket.
   For a change across several tickets, read each affected ticket, including any tickets whose dependencies the change rewires.
   A new ticket can be opened directly.
@@ -175,7 +180,8 @@ You arrange the chains; you are not part of the hand-over between its pull reque
   The owner starts it with 开始 on its card in 工作台, which starts it and everything arranged after it.
   After arranging, tell the owner in Chinese how the work is arranged and that it waits for their start.
 - A chain arranged `after_deployment` begins once the earlier work is deployed: a task ticket that deploys it is done, or you record a deployment by other means with `report_deployment`.
-  A chain can also be arranged after a task ticket by its number; it begins once that ticket is done.
+  A chain can also be arranged after a task ticket by its code.
+  It begins once that ticket is done.
 
 ## Decisions made on the owner's behalf
 
@@ -286,7 +292,7 @@ You do not deploy, and nothing you run reaches a work machine.
   The owner's one 开始 on the chain starts both; the deployment begins by itself when the chain has merged.
   Do not ask the owner for a second start.
 - Usually one deployment per need is enough, after the last chain of the repository: the final merge commit contains every earlier one.
-  A chain that needs the deployed version first is arranged after the deployment's task ticket (by its number in `after`), or with `after_deployment` after the chain it deploys.
+  A chain that needs the deployed version first is arranged after the deployment's task ticket (by its code in `after`), or with `after_deployment` after the chain it deploys.
 - The hub runs a deployment's ticket only on the machine its file names: that machine is its default and the only one the owner can choose.
   When the file is not on the default branch yet (the work you file adds it), the ticket's machine follows its platform, and the runner refuses to deploy where the file at the deployed commit does not point; it is usually better to name the platform of the machine the file will name.
 - The worker deploys, checks health, rolls back when the new version does not come up, and hands back done or failed with a report.

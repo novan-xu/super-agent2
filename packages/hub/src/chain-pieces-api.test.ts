@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,7 +199,7 @@ describe("a chain handed in as several pull requests", () => {
     const { running, runner, sent, conversation } = await start();
     const ticket = begin(running, conversation);
     const first = current(running, ticket.id).branch ?? "";
-    expect(first).toMatch(/^sa2\/ticket-\d+-[0-9a-f]{4}$/);
+    expect(first).toMatch(/^sa2\/[a-z]{3}-2026-11-17-[0-9a-f]{4}$/);
     expect(starts(sent, ticket.id)[0]?.task).toMatchObject({ attempt: 1, branch: first, merged: [] });
 
     event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
@@ -208,7 +209,7 @@ describe("a chain handed in as several pull requests", () => {
     handIn(runner, ticket.id, 1, 21, [7, 8]);
     await settled(running);
     expect(current(running, ticket.id)).toMatchObject({ state: "verifying", pullRequest: 21, verification: { state: "failed" } });
-    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing step test.", zh: "修好失败的步骤测试。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.code, guidance: { en: "Fix the failing step test.", zh: "修好失败的步骤测试。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
 
@@ -222,7 +223,7 @@ describe("a chain handed in as several pull requests", () => {
     const second = continued.branch ?? "";
     expect(continued).toMatchObject({ state: "working", round: 0, freeRetry: false, pullRequest: 21, verification: null, work: { attempt: 3 } });
     expect(second).not.toBe(first);
-    expect(second).toMatch(/^sa2\/ticket-\d+-[0-9a-f]{4}$/);
+    expect(second).toMatch(/^sa2\/[a-z]{3}-2026-11-17-[0-9a-f]{4}$/);
     expect(continued.pullRequests).toEqual([
       expect.objectContaining({ number: 21, branch: first, state: "merged", closes: [7, 8], mergeCommit: "merge-of-bbb222" }),
     ]);
@@ -238,7 +239,7 @@ describe("a chain handed in as several pull requests", () => {
     expect(third?.note).toContain("Pull request #21 is merged into main as commit merge-of-bbb222. It closed #7, #8.");
     expect(third?.note).toContain("- #9 Step 9");
     expect(third?.note).toContain(`Your folder is now on a new branch, ${second}, made from the updated main`);
-    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`]);
+    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`]);
     const moves = running.tickets.moves(ticket.id).map((move) => [move.from, move.to, move.reason?.zh ?? null]);
     expect(moves).toContainEqual(["verifying", "working", "PR #21 已合并，接着做 #9"]);
 
@@ -257,11 +258,11 @@ describe("a chain handed in as several pull requests", () => {
     expect(forge.merges.map((merge) => merge.number)).toEqual([21, 22]);
     expect(forge.repository(repository).issues.get(9)).toBe("closed");
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.id} 已合并`]);
+    expect(told.map((entry) => entry.text)).toEqual([`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.code} 已合并`]);
     expect(told.at(-1)?.prompt).toContain("Pull requests merged in novan-xu/super-agent-sandbox, in order: #21 (closed #7, #8, commit merge-of-bbb222); #22 (closed #9, commit merge-of-ccc333).");
     expect(told.at(-1)?.prompt).toContain("That is the final merge commit");
 
-    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.id }, conversation);
+    const read = await callBrainTool(running, "read_ticket", { ticket: ticket.code }, conversation);
     expect(read.text).toContain("#7 merged, #8 merged, #9 merged; pull requests #21 merged, #22 merged");
     expect(read.text).toContain(`#22 merged from ${second}`);
   });
@@ -355,7 +356,7 @@ describe("a chain handed in as several pull requests", () => {
     expect(told).toHaveLength(1);
     expect(told[0]?.prompt).toContain("The last, #21, was merged as commit merge-of-aaa111.");
     expect(told[0]?.prompt).toContain("Issue #9 was closed on GitHub without a pull request of this chain (stateReason: COMPLETED).");
-    expect(told[0]?.prompt).toContain(`task ticket ${deployment.id} deploys it`);
+    expect(told[0]?.prompt).toContain(`task ticket ${ticketReference(deployment)} deploys it`);
     expect(current(running, deployment.id)).toMatchObject({ state: "working", commit: "merge-of-aaa111" });
   });
 
@@ -452,7 +453,7 @@ describe("a chain handed in as several pull requests", () => {
     ]);
     expect(forge.repository(repository).issues.get(7)).toBe("closed");
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.id}，已合并的部分保留`]);
+    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.code}，已合并的部分保留`]);
     expect(told[0]?.prompt).toContain("Pull requests merged, in order: #41 (closed #7, commit merge-of-eee555).");
     expect(told[0]?.prompt).toContain(`Still open: #8, #9; open pull request: #42 from ${second}.`);
     expect(told[0]?.prompt).toContain("the repository has a deployment");
@@ -482,7 +483,7 @@ describe("a message for a chain's worker between two pieces", () => {
     const id = kept.ok ? kept.id : "";
     expect(sent.filter((message) => message.type === "work.message")).toEqual([]);
 
-    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: { en: "Fix the failing test.", zh: "修好失败的测试。" } }, conversation);
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.code, guidance: { en: "Fix the failing test.", zh: "修好失败的测试。" } }, conversation);
     expect(guided.isError, guided.text).toBe(false);
     const after = sent.findIndex((message) => message.type === "work.start" && message.task.attempt === 2);
     expect(after).toBeGreaterThanOrEqual(0);

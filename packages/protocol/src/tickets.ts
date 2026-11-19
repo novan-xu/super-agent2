@@ -6,6 +6,7 @@ import { GeneratedText } from "./generated.js";
 import { ProgramId } from "./runner.js";
 import { TicketRound, TicketStuck } from "./rounds.js";
 import { TicketVerification } from "./verification.js";
+import { TicketCode, TicketCodeDate, TicketReference } from "./ticket-reference.js";
 import { WorkStatus } from "./work.js";
 
 export const ticketForms = ["code", "task"] as const;
@@ -90,6 +91,7 @@ export type TicketIssue = z.infer<typeof TicketIssue>;
 
 export const TicketWait = z.object({
   ticket: TicketId,
+  reference: TicketReference.optional(),
   deployment: z.boolean(),
   waived: z.boolean(),
 });
@@ -198,6 +200,8 @@ export const CommitRef = z
 
 export const Ticket = z.object({
   id: TicketId,
+  code: TicketCode,
+  codeDate: TicketCodeDate,
   form: TicketForm.default("code"),
   repository: RepositoryName.nullable(),
   issues: z.array(TicketIssue),
@@ -240,6 +244,8 @@ export const Ticket = z.object({
   joinedInto: TicketId.nullable(),
   repairs: TicketId.nullable().default(null),
   repairedBy: TicketId.nullable().default(null),
+  repairsReference: TicketReference.optional(),
+  repairedByReference: TicketReference.optional(),
   conversation: ConversationId.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),

@@ -1,3 +1,4 @@
+import { ticketReferences } from "./ticket-codes.js";
 import { openTicketStates, RoutingProposal, type TopicScope } from "@super-agent2/protocol";
 import {
   bigramConfiguration,
@@ -172,6 +173,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const recentReplies = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}`);
   const lastExchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq DESC LIMIT 1");
   const exchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq");
+  const ticketCodes = ticketReferences(connection);
   const ticketTopics = connection.prepare("SELECT conversation_id FROM tickets WHERE id = ? AND conversation_id IS NOT NULL");
   const issueTopics = connection.prepare(`
     SELECT t.conversation_id FROM ticket_issues i JOIN tickets t ON t.id = i.ticket_id WHERE i.number = ? AND t.conversation_id IS NOT NULL
@@ -259,7 +261,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     const result = new Set<string>();
     for (const reference of byKey.values()) {
       const number = Number(reference.value);
-      const linked = reference.kind === "ticket" ? ticketTopics.all(number)
+      const ticket = reference.kind !== "ticket" ? undefined : Number.isNaN(number) ? ticketCodes.resolve(reference.value) : number;
+      const linked = ticket !== undefined ? ticketTopics.all(ticket)
         : reference.kind === "issue" ? issueTopics.all(number, number, number) : [];
       const topicsOfReference = linked.map((row) => Conversation.parse(row).conversation_id);
       if (topicsOfReference.length > 0) {

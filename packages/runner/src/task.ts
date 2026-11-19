@@ -301,6 +301,7 @@ export function assignmentText(task: TaskAssignment, place: TaskPlace): string {
   return [
     "# Your task",
     "",
+    ...(task.ticketReference === undefined ? [] : [`You are working on ticket ${task.ticketReference}.`]),
     `Title: ${task.title}`,
     ...(place.machine === undefined ? [] : [`This machine: ${place.machine}`]),
     `Scratch folder: ${place.scratch}`,

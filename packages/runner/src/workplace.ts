@@ -336,7 +336,7 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
           throw new Error(`git ${switching.join(" ")} failed in ${paths.worktree}${aside === null ? "" : `; the uncommitted work is kept on the local branch ${aside.branch}`}: ${`${switched.stderr}${switched.stdout}`.trim()}`);
         }
         const leftover = aside === null ? null : { ...aside, carried: await carryOver(git, paths.worktree, aside.commit) };
-        if (current.startsWith("sa2/ticket-") && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/${tracking}/${current}`, paths.clone))) {
+        if (/^sa2\/(?:ticket-|[a-z]{3}-\d{4}-\d{2}-\d{2}-)/.test(current) && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/${tracking}/${current}`, paths.clone))) {
           await deleteBranch(git, paths, current);
         }
         return { base, created: false, switched: true, from, leftover };
@@ -402,14 +402,14 @@ export async function folderState(git: Git, worktree: string, base: string | nul
   return { commits, status: status.text, unread };
 }
 
-export async function saveWork(git: Git, ticket: number, branch: string, paths: WorkPaths, pushTo = "origin"): Promise<Saved> {
+export async function saveWork(git: Git, branch: string, paths: WorkPaths, pushTo = "origin"): Promise<Saved> {
   if (!existsSync(paths.worktree)) {
     return { saved: false, detail: "The worktree is gone, so there was nothing to save" };
   }
   await git.must(["add", "-A"], paths.worktree);
   const staged = await git.run(["diff", "--cached", "--quiet"], paths.worktree);
   if (staged.code === 1) {
-    await git.must(["commit", "--no-verify", "-m", `Save work in progress of ticket ${ticket} so that it is on the branch`], paths.worktree);
+    await git.must(["commit", "--no-verify", "-m", "Save work in progress on the worker branch"], paths.worktree);
   }
   const pushed = await git.run(["push", pushTo, `HEAD:refs/heads/${branch}`], paths.worktree);
   if (pushed.code !== 0) {

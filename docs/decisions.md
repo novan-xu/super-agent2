@@ -3463,3 +3463,12 @@ Streaming larger files was an alternative, but would require a separate resource
   This replaces the unlimited hand-back corrections in "Nothing the owner, the brain or a worker sends has a cap of its own".
 - **Why:** A worker gets time to make a commit or correct its first hand-back, while repeatedly leaving an invalid hand-back ends the attempt.
 - **Other options:** Fail after a fixed number of total turns, let every invalid file edit reset the streak, or base the limit on elapsed time.
+
+## 2026-11-19 — Daily ticket codes
+
+- **Chosen:** All tickets share a three-letter sequence that starts at `aaa` each day in the hub's configured time zone, `America/New_York` by default.
+  The page shows the letters alone, and hub and worker messages give dated references that remain valid after the code is reused.
+  The database, runner protocol, routes and work folders retain their internal integer keys.
+- **Why:** GitHub issues and pull requests already use numbers, so reusing the same notation for hub tickets made it possible to deploy the wrong merge.
+  A configured time zone aligns the reset with the owner's calendar, and retaining the internal key keeps existing relationships, links and running work intact.
+- **Other options:** A sequence based on UTC, or replacing the internal key and migrating every dependent record and runner message.

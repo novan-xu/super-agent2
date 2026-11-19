@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { brainToolsPath, conversationHeader, protocolVersion, type RunningTurn, turnHeader } from "@super-agent2/protocol";
+import { brainToolsPath, conversationHeader, protocolVersion, type RunningTurn, ticketReference, turnHeader } from "@super-agent2/protocol";
 import type { BrainLink } from "../conversations.js";
 import type { Hub } from "../hub.js";
 
@@ -42,8 +42,8 @@ export async function callBrainTool(hub: Hub, name: string, args: Record<string,
   }
   const scope = startToolTurn(brain.link, conversation ?? brain.topic);
   const affected = name === "arrange_chains" || name === "open_repair_ticket" || name === "choose_defaults"
-    ? hub.tickets.list({ limit: 1000 }).map((ticket) => ticket.id)
-    : typeof args["ticket"] === "number" && name !== "read_ticket" ? [args["ticket"]] : [];
+    ? hub.tickets.list({ limit: 1000 }).map(ticketReference)
+    : typeof args["ticket"] === "string" && name !== "read_ticket" ? [args["ticket"]] : [];
   try {
     for (const ticket of affected) {
       await requestBrainTool(hub, "read_ticket", { ticket }, scope);

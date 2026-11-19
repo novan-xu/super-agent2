@@ -470,7 +470,7 @@ describe("when every provider is unavailable", () => {
     expect(switches(ticket.id)).toHaveLength(1);
     expect(switches(ticket.id)[0]).toMatchObject({ kind: "waiting", from: "claude", to: null, until: clock.now() + 1_800_000, attempt: 1 });
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe(text("notice.waitingForProvider", { ticket: ticket.id }));
+    expect(told[0]?.notice).toBe(text("notice.waitingForProvider", { ticket: ticket.code }));
     expect(told[0]?.prompt).toContain("waits for a provider");
     tick?.();
     tick?.();

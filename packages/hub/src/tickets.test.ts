@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,23 @@ function request(number = 7, overrides: Partial<TicketToOpen> = {}): TicketToOpe
 const writing: Partial<TicketToOpen> = { kind: "writing", repository: null, issues: [] };
 
 describe("tickets", () => {
+  it("allocates codes across forms, wraps the last letter, and resets at local midnight", () => {
+    const midnight = Date.parse("2026-07-19T04:00:00Z");
+    clock = new TestClock(midnight - 1);
+    const database = open();
+    const tickets = createTicketService({ database, clock });
+    const first = tickets.open(request(1));
+    const second = tickets.open(request(2, { ...writing, task: { task: "Translate.", materials: [] } }));
+    expect([ticketReference(first), ticketReference(second)]).toEqual(["aaa-2026-07-18", "aab-2026-07-18"]);
+    const rest = Array.from({ length: 25 }, (_, index) => tickets.open(request(index + 3)).code);
+    expect(rest.slice(-2)).toEqual(["aaz", "aba"]);
+    database.connection.prepare("UPDATE tickets SET code = 'zzz' WHERE code = 'aba'").run();
+    expect(() => tickets.open(request(28))).toThrow(/All 17576 ticket codes for 2026-07-18 have been used/);
+    clock.advance(1);
+    expect(ticketReference(tickets.open(request(28)))).toBe("aaa-2026-07-19");
+    expect(ticketReference(tickets.open(request(29)))).toBe("aab-2026-07-19");
+  });
+
   it("opens a pending ticket with its issue, records that it was filed, and announces it", () => {
     const database = open();
     const tickets = createTicketService({ database, clock });
@@ -145,7 +163,7 @@ describe("tickets", () => {
     expect(() => tickets.open(request(1, { repository: null }))).toThrow(/repository/);
     expect(() => tickets.open(request(1, { issues: [] }))).toThrow(/at least one issue/);
     expect(() => tickets.open(request(1, { kind: "writing" }))).toThrow(/A task ticket has no issues/);
-    expect(() => tickets.open(request(1, { waitsFor: [99] }))).toThrow(/no ticket 99/);
+    expect(() => tickets.open(request(1, { waitsFor: [99] }))).toThrow(/predecessor ticket could not be found/);
     expect(() => tickets.open(request(1, { title: { en: "x", zh: "x" } }))).toThrow();
     const twice = request(1);
     expect(() => tickets.open({ ...twice, issues: [twice.issues[0]!, twice.issues[0]!] })).toThrow(/twice/);
@@ -472,14 +490,14 @@ describe("repair tickets", () => {
     expect(tickets.get(ended.id)).toMatchObject({ state: "stopped", repairs: null, repairedBy: result.ticket.id });
     expect(tickets.repairRecord(result.ticket.id)).toMatchObject({ openedBy: "brain", words: "please", failure: null, where: null, saved: null });
     expect(tickets.lineage(result.ticket.id).map((ticket) => ticket.id)).toEqual([ended.id]);
-    expect(tickets.repair(ended.id, "brain", "")).toEqual({ ok: false, reason: `Ticket ${ended.id} already has a repair ticket` });
+    expect(tickets.repair(ended.id, "brain", "")).toEqual({ ok: false, reason: `Ticket ${ticketReference(ended)} already has a repair ticket` });
   });
 
   it("refuses a ticket that has not stopped, was joined, or has nothing left", () => {
     const tickets = createTicketService({ database: open(), clock });
     const working = tickets.open(request(7));
     expect(tickets.repair(working.id, "brain", "")).toMatchObject({ ok: false });
-    expect(tickets.repair(999, "brain", "")).toEqual({ ok: false, reason: "There is no ticket 999." });
+    expect(tickets.repair(999, "brain", "")).toEqual({ ok: false, reason: "There is no ticket (unavailable)." });
     const joined = tickets.open(request(8));
     tickets.change((writes) => writes.join(joined.id, working.id, reason));
     expect(tickets.repair(joined.id, "brain", "")).toMatchObject({ ok: false, reason: expect.stringContaining("joined") as unknown as string });

@@ -49,6 +49,7 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
   return [
     "# Your task",
     "",
+    ...(task.ticketReference === undefined ? [] : [`You are working on ticket ${task.ticketReference}.`]),
     `Repository: ${task.repository}`,
     `Working folder: ${place.worktree}`,
     ...artifactLines(place.artifacts),
@@ -73,7 +74,7 @@ export function brief(task: WorkTask, place: BriefPlace): string {
 
 export function resumeText(task: WorkTask, place: BriefPlace): string {
   return [
-    "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
+    `[hub] Your previous turn was cut off because the machine's runner restarted. Continue ${task.ticketReference === undefined ? "the task" : `ticket ${task.ticketReference}`} from where you left off.`,
     "Check `git status` and `git log` in your working folder first, and look at what is already on the branch and in any open pull request from it.",
     `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
     failedHandback,
@@ -87,7 +88,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, failedHandback, ...artifactLines(place.artifacts)].join("\n");
+  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, failedHandback, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export interface LeftoverPlace {
@@ -170,7 +171,7 @@ export function taskBrief(task: TaskAssignment, place: TaskPlace): string {
 
 export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
   return [
-    "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
+    `[hub] Your previous turn was cut off because the machine's runner restarted. Continue ${task.ticketReference === undefined ? "the task" : `ticket ${task.ticketReference}`} from where you left off.`,
     `Look at what is already in your output folder ${place.output}${place.checkout === null ? "" : ` and in the checkout ${place.checkout}`} first, and check the state of anything you were changing on this machine before you do it again.`,
     `Hand back by writing the JSON file at ${place.handback} when you are done or know the task failed, as described at the start.`,
     ...artifactLines(place.artifacts),
@@ -180,8 +181,8 @@ export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
     .trim();
 }
 
-export function taskContinueText(place: TaskPlace, note: string): string {
-  return [`[hub] ${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`, ...artifactLines(place.artifacts)].join("\n");
+export function taskContinueText(task: TaskAssignment, place: TaskPlace, note: string): string {
+  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export function taskLostSessionNote(): string {

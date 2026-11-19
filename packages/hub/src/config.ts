@@ -5,6 +5,7 @@ import { z } from "zod";
 import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
 import { vapidProblem } from "./push.js";
+import { validTicketTimeZone } from "./ticket-codes.js";
 
 function list(text: string | undefined): string[] {
   return (text ?? "")
@@ -41,6 +42,7 @@ const Environment = z.object({
     .pipe(z.number().int().max(65535, { error: "must be between 0 and 65535" }))
     .default(8080),
   HUB_HOST: z.string().min(1, { error: "must not be empty" }).default("0.0.0.0"),
+  HUB_TICKET_TIME_ZONE: unlessEmpty(z.string().refine(validTicketTimeZone, { error: "must be a valid time zone, such as America/New_York" })),
   HUB_PROJECT_FOLDERS: z
     .string()
     .optional()
@@ -78,6 +80,7 @@ export interface Config {
   readonly dataDir: string;
   readonly port: number;
   readonly host: string;
+  readonly ticketTimeZone?: string;
   readonly projectFolders: readonly string[];
   readonly brainTokenFile: string;
   readonly converterUrl?: string;
@@ -144,6 +147,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,
       host: value.HUB_HOST,
+      ...(value.HUB_TICKET_TIME_ZONE === undefined ? {} : { ticketTimeZone: value.HUB_TICKET_TIME_ZONE }),
       projectFolders: value.HUB_PROJECT_FOLDERS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       ...(value.HUB_CONVERTER_URL === undefined ? {} : { converterUrl: value.HUB_CONVERTER_URL.replace(/\/+$/, "") }),

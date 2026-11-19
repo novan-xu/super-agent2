@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import {
   CommitRef,
@@ -63,12 +64,12 @@ function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function requirePredecessor(ticket: Ticket | undefined, id: number): Ticket {
+function requirePredecessor(ticket: Ticket | undefined): Ticket {
   if (ticket === undefined) {
-    throw new TicketError(`there is no ticket ${id} to come after.`);
+    throw new TicketError(`the predecessor ticket could not be found.`);
   }
   if (ticket.state === "stopped") {
-    throw new TicketError(ticket.repairedBy === null ? `ticket ${id} has stopped, so nothing can come after it.` : `ticket ${id} has stopped; ticket ${ticket.repairedBy} repairs it, so come after that.`);
+    throw new TicketError(ticket.repairedBy === null ? `ticket ${ticketReference(ticket)} has stopped, so nothing can come after it.` : `ticket ${ticketReference(ticket)} has stopped; ticket ${ticket.repairedByReference ?? "(unavailable)"} repairs it, so come after that.`);
   }
   return ticket;
 }
@@ -172,7 +173,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     const after = [...new Set(request.after ?? [])];
     let before: Ticket[];
     try {
-      before = after.map((id) => requirePredecessor(tickets.get(id), id));
+      before = after.map((id) => requirePredecessor(tickets.get(id)));
     } catch (error) {
       return refuse(reasonOf(error));
     }
@@ -210,7 +211,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     try {
       const ticket = tickets.change((writes) => {
         for (const id of after) {
-          requirePredecessor(writes.get(id), id);
+          requirePredecessor(writes.get(id));
         }
         const id = writes.open({
           form: "task",
@@ -228,7 +229,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         });
         const opened = writes.get(id);
         if (opened === undefined) {
-          throw new TicketError(`Ticket ${id} was not stored`);
+          throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} was not stored`);
         }
         options.attachments?.grant(id, request.materials.flatMap((piece) => piece.attachment == null ? [] : [piece.attachment]));
         return opened;
@@ -266,7 +267,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         continue;
       }
       if (typeof gitHub === "string") {
-        notes.push(`Whether ticket ${candidate.id} (merge commit ${short(candidate.merge_commit)}) is in what was deployed could not be read: ${gitHub}.`);
+        notes.push(`Whether ticket ${options.tickets.reference(candidate.id) ?? "(unavailable)"} (merge commit ${short(candidate.merge_commit)}) is in what was deployed could not be read: ${gitHub}.`);
         continue;
       }
       try {
@@ -275,7 +276,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
           deployed.push(candidate.id);
         }
       } catch (error) {
-        notes.push(`Whether ticket ${candidate.id} (merge commit ${short(candidate.merge_commit)}) is in what was deployed could not be read: ${reasonOf(error)}.`);
+        notes.push(`Whether ticket ${options.tickets.reference(candidate.id) ?? "(unavailable)"} (merge commit ${short(candidate.merge_commit)}) is in what was deployed could not be read: ${reasonOf(error)}.`);
       }
     }
     if (closed) {

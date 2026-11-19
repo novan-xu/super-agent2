@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import { type Migration, migrations as hubMigrations } from "./migrations.js";
+import { defaultTicketTimeZone } from "./ticket-codes.js";
 
 export const databaseFileName = "hub.sqlite";
 
@@ -17,6 +18,7 @@ export interface HubDatabase {
   readonly dataDir: string;
   readonly instance: string;
   readonly createdAt: number;
+  readonly ticketTimeZone: string;
   appliedVersions(): number[];
   healthy(): boolean;
   close(): void;
@@ -26,9 +28,10 @@ export interface OpenDatabaseOptions {
   readonly dataDir: string;
   readonly clock: Clock;
   readonly migrations?: readonly Migration[];
+  readonly ticketTimeZone?: string;
 }
 
-export function applyMigrations(connection: DatabaseSync, migrations: readonly Migration[], clock: Clock): void {
+export function applyMigrations(connection: DatabaseSync, migrations: readonly Migration[], clock: Clock, timeZone = defaultTicketTimeZone): void {
   connection.exec(`
     CREATE TABLE IF NOT EXISTS migrations (
       version INTEGER PRIMARY KEY,
@@ -59,6 +62,7 @@ export function applyMigrations(connection: DatabaseSync, migrations: readonly M
     connection.exec("BEGIN IMMEDIATE");
     try {
       connection.exec(migration.sql);
+      migration.backfill?.(connection, timeZone);
       record.run(migration.version, clock.now());
       connection.exec("COMMIT");
     } catch (error) {
@@ -71,9 +75,10 @@ export function applyMigrations(connection: DatabaseSync, migrations: readonly M
 export function openDatabase(options: OpenDatabaseOptions): HubDatabase {
   mkdirSync(options.dataDir, { recursive: true });
   const connection = new DatabaseSync(join(options.dataDir, databaseFileName));
+  const ticketTimeZone = options.ticketTimeZone ?? defaultTicketTimeZone;
   try {
     connection.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    applyMigrations(connection, options.migrations ?? hubMigrations, options.clock);
+    applyMigrations(connection, options.migrations ?? hubMigrations, options.clock, ticketTimeZone);
     connection
       .prepare("INSERT INTO hub (id, instance, created_at) VALUES (1, ?, ?) ON CONFLICT (id) DO NOTHING")
       .run(randomUUID(), options.clock.now());
@@ -83,6 +88,7 @@ export function openDatabase(options: OpenDatabaseOptions): HubDatabase {
       dataDir: options.dataDir,
       instance: row.instance,
       createdAt: row.created_at,
+      ticketTimeZone,
       appliedVersions: () =>
         connection
           .prepare("SELECT version FROM migrations ORDER BY version")

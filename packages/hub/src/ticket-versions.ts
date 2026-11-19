@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
+import { ticketReferences } from "./ticket-codes.js";
 
 export interface TicketTurn {
   readonly conversation: string;
@@ -13,6 +14,7 @@ const Changed = z.object({ ticket_id: z.number(), before: z.number().nullable() 
 const Holder = z.object({ turn_id: z.string(), conversation_id: z.string(), title: z.string() });
 
 export function createTicketVersions({ connection }: HubDatabase) {
+  const references = ticketReferences(connection);
   connection.exec(`
     CREATE TEMP TABLE IF NOT EXISTS capture_ticket_changes (active INTEGER PRIMARY KEY) STRICT;
     CREATE TEMP TABLE IF NOT EXISTS changed_tickets (ticket_id INTEGER PRIMARY KEY, before INTEGER) STRICT;
@@ -66,7 +68,7 @@ export function createTicketVersions({ connection }: HubDatabase) {
           const holder = Holder.parse(row);
           if (holder.turn_id !== turn.id) {
             const topic = holder.title === "" ? holder.conversation_id : `"${holder.title}" (${holder.conversation_id})`;
-            throw new TicketWriteRefused(`Ticket ${id} is locked by topic ${topic}, turn ${holder.turn_id}. Wait for that turn to end, then read the ticket again.`);
+            throw new TicketWriteRefused(`Ticket ${references.get(id) ?? "(unavailable)"} is locked by topic ${topic}, turn ${holder.turn_id}. Wait for that turn to end, then read the ticket again.`);
           }
         }
         if (before === null) {
@@ -74,10 +76,10 @@ export function createTicketVersions({ connection }: HubDatabase) {
         }
         const seen = selectSeen.get(turn.conversation, id);
         if (seen === undefined) {
-          throw new TicketWriteRefused(`Read ticket ${id} with read_ticket before changing it.`);
+          throw new TicketWriteRefused(`Read ticket ${references.get(id) ?? "(unavailable)"} with read_ticket before changing it.`);
         }
         if (seen["version"] !== before) {
-          throw new TicketWriteRefused(`Ticket ${id} changed since this topic last read or wrote it. Read it again with read_ticket before retrying.`);
+          throw new TicketWriteRefused(`Ticket ${references.get(id) ?? "(unavailable)"} changed since this topic last read or wrote it. Read it again with read_ticket before retrying.`);
         }
       }
       for (const { ticket_id: id } of changed) {

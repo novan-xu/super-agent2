@@ -1,3 +1,4 @@
+import { ticketReferences } from "./ticket-codes.js";
 import { rearrangePrefix, rearrangePrompt } from "./rearrange.js";
 import { createHash, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
@@ -332,13 +333,13 @@ function titleOf(message: string, attachments: readonly Attachment[] = []): stri
   return characters.length > titleLength ? `${characters.slice(0, titleLength - 1).join("")}…` : line;
 }
 
-function deliveryHistory(entry: DeliveryEntry): string {
+function deliveryHistory(entry: DeliveryEntry, reference: string | undefined): string {
   const files = entry.files.length === 0 ? "" : ` Files: ${entry.files.map((file) => file.name).join(", ")}.`;
   const report = entry.report === null ? "" : ` The worker's report: ${entry.report.en}`;
-  return `[hub] The result of task ticket ${entry.ticket} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
+  return `[hub] The result of task ticket${reference === undefined ? "" : ` ${reference}`} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
-function historyItem(raw: unknown): HistoryItem {
+function historyItem(raw: unknown, reference: (id: number) => string | undefined): HistoryItem {
   const row = EntryRow.parse(raw);
   const entry = toEntry(row);
   const provider = row.provider === null ? null : Provider.parse(row.provider);
@@ -350,7 +351,7 @@ function historyItem(raw: unknown): HistoryItem {
     case "notice":
       return { kind: "notice", text: entry.text };
     case "delivery":
-      return { kind: "notice", text: deliveryHistory(entry) };
+      return { kind: "notice", text: deliveryHistory(entry, reference(entry.ticket)) };
     case "text":
       return { kind: "text", provider, text: entry.text };
     case "tool":
@@ -370,7 +371,9 @@ function heldPrompt(command: CommandRecord, output: string, conversation: string
 export function createConversationService(options: ConversationServiceOptions): ConversationService {
   const { connection } = options.database;
   const { clock, commands, tickets } = options;
-  const topics = createTopicContext(options.database, historyItem, (id) => corrections.resolve(id) ?? id);
+  const references = ticketReferences(connection);
+  const toHistoryItem = (raw: unknown) => historyItem(raw, references.get);
+  const topics = createTopicContext(options.database, toHistoryItem, (id) => corrections.resolve(id) ?? id);
   const listeners = new Set<ConversationListener>();
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
   let closing = false;
@@ -796,7 +799,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       .all(conversation, through, Number(includeWaiting))
       .map((row) => EntryRow.parse(row))
       .filter((row) => !exclude.has(row.id))
-      .map(historyItem);
+      .map(toHistoryItem);
 
   const providerOfTurn = (turn: string): Provider | null => {
     const found = getTurn(turn);
@@ -1102,7 +1105,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     const previous = selectEntry.get(id);
     const old = previous === undefined ? undefined : JSON.parse(EntryRow.parse(previous).body) as { text: string; seq: number };
     if (old !== undefined && old.seq >= work.seq) return;
-    const value = event.kind === "text" ? (old?.text ?? text("notice.taskProgress", { ticket: work.ticket })) + event.delta : text("notice.taskStarted", { ticket: work.ticket });
+    const value = event.kind === "text" ? (old?.text ?? text("notice.taskProgress", { ticket: ticket.code })) + event.delta : text("notice.taskStarted", { ticket: ticket.code });
     const body = { text: value, ticket: work.ticket, seq: work.seq };
     if (previous === undefined) addEntry({ id, conversation: ticket.conversation, kind: "notice", turn: null, body, at: work.at });
     else { updateBody.run(JSON.stringify(body), id); emitEntry(id); }

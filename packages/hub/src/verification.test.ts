@@ -1,3 +1,4 @@
+import { ticketReference } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -244,7 +245,7 @@ describe("a documentation-only pull request", () => {
     expect(forge.repository(repository).branches.has(`sa2/ticket-${ticket.id}-beef`)).toBe(false);
     expect(tickets.moves(ticket.id).at(-1)).toMatchObject({ from: "verifying", to: "merged", reason: { zh: "只改了文本和文档，直接合并" } });
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 已合并`);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.code} 已合并`);
     expect(told[0]?.prompt).toContain("only text and documentation files changed");
   });
 
@@ -382,7 +383,7 @@ describe("a code pull request", () => {
       { workflow: "check-windows", step: "check", exitCode: 1, log: "pnpm check\n1 comment finding(s) in 321 checked file(s).\n[ELIFECYCLE] Command failed with exit code 1." },
     ]);
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 没有通过验证，大脑会决定怎么处理`);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`);
     expect(told[0]?.prompt).toContain("workflow check-windows, step check (exit code 1)");
     expect(told[0]?.prompt).toContain("1 comment finding(s)");
     expect(mergeCalls()).toEqual([]);
@@ -535,7 +536,7 @@ describe("the skip shortcut", () => {
 
   it("refuses a ticket that is not in verifying", async () => {
     const ticket = openTicket([63]);
-    expect(await verification.skip(ticket.id, "Because")).toEqual({ ok: false, reason: `Ticket ${ticket.id} is pending; only a ticket in verifying, whose worker has handed back its pull request, can be merged.` });
+    expect(await verification.skip(ticket.id, "Because")).toEqual({ ok: false, reason: `Ticket ${ticketReference(ticket)} is pending; only a ticket in verifying, whose worker has handed back its pull request, can be merged.` });
     expect(forge.merges).toEqual([]);
   });
 });
@@ -558,14 +559,14 @@ describe("after the merge", () => {
     await settle();
     expect(current(plain.id).verification?.deployment).toBe(false);
     expect(current(deployed.id).verification?.deployment).toBe(true);
-    const plainReport = told.find((entry) => entry.prompt.includes(`Ticket ${plain.id} (`));
-    const deployedReport = told.find((entry) => entry.prompt.includes(`Ticket ${deployed.id} (`));
-    expect(plainReport?.notice).toBe(`工单 ${plain.id} 已合并`);
+    const plainReport = told.find((entry) => entry.prompt.includes(`Ticket ${ticketReference(plain)} (`));
+    const deployedReport = told.find((entry) => entry.prompt.includes(`Ticket ${ticketReference(deployed)} (`));
+    expect(plainReport?.notice).toBe(`工单 ${plain.code} 已合并`);
     expect(plainReport?.prompt).toContain("the repository has no deployment");
-    expect(deployedReport?.notice).toBe(`工单 ${deployed.id} 已合并，这次改动需要部署`);
+    expect(deployedReport?.notice).toBe(`工单 ${deployed.code} 已合并，这次改动需要部署`);
     expect(deployedReport?.prompt).toContain("so this change needs deploying");
     expect(deployedReport?.prompt).toContain("no task ticket is arranged to deploy it");
-    expect(deployedReport?.prompt).toContain(`open_task_ticket (deploy true, after ${deployed.id}`);
+    expect(deployedReport?.prompt).toContain(`open_task_ticket (deploy true, after ["${ticketReference(deployed)}"]`);
     expect(deployedReport?.prompt).not.toContain("deploy_repository");
   });
 
@@ -584,9 +585,9 @@ describe("after the merge", () => {
     });
     tickets.change((writes) => writes.move(deployment.id, "waiting"));
     await settle();
-    const report = told.find((entry) => entry.prompt.includes(`Ticket ${chain.id} (`));
-    expect(report?.notice).toBe(`工单 ${chain.id} 已合并，接着部署`);
-    expect(report?.prompt).toContain(`task ticket ${deployment.id} deploys it, arranged after this chain: it begins by itself now`);
+    const report = told.find((entry) => entry.prompt.includes(`Ticket ${ticketReference(chain)} (`));
+    expect(report?.notice).toBe(`工单 ${chain.code} 已合并，接着部署`);
+    expect(report?.prompt).toContain(`task ticket ${ticketReference(deployment)} deploys it, arranged after this chain: it begins by itself now`);
     expect(report?.prompt).not.toContain("report_deployment");
   });
 
@@ -776,9 +777,9 @@ describe("a pipeline that runs far beyond the usual", () => {
     expect(told).toEqual([]);
     await after(1);
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 的验证已等了 30 分钟，通常 10 分钟，大脑会先去看一眼，没有问题就不打扰你`);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.code} 的验证已等了 30 分钟，通常 10 分钟，大脑会先去看一眼，没有问题就不打扰你`);
     const prompt = told[0]?.prompt ?? "";
-    expect(prompt).toContain(`ticket ${ticket.id}`);
+    expect(prompt).toContain(`ticket ${ticketReference(ticket)}`);
     expect(prompt).toContain("has waited 30 minutes");
     expect(prompt).toContain("Pull request #8 in novan-xu/super-agent-sandbox, head new2");
     expect(prompt).toContain(`pipeline ${fakeWoodpeckerServer}/repos/6/pipeline/4`);
@@ -854,7 +855,7 @@ describe("a pipeline that runs far beyond the usual", () => {
     expect(told).toEqual([]);
     await after(1);
     expect(told).toHaveLength(1);
-    expect(told[0]?.notice).toBe(`工单 ${ticket.id} 的验证已等了 2 小时，这个仓库还没有足够的历史，先按 2 小时 算，大脑会先去看一眼，没有问题就不打扰你`);
+    expect(told[0]?.notice).toBe(`工单 ${ticket.code} 的验证已等了 2 小时，这个仓库还没有足够的历史，先按 2 小时 算，大脑会先去看一眼，没有问题就不打扰你`);
     expect(told[0]?.prompt).toContain("Woodpecker says: it has no pipeline for this head, 2 hours after the hub first saw the head.");
     expect(told[0]?.prompt).toContain("This is notice 1 for this head.");
     expect(told[0]?.prompt).toContain("The hub has no usual time for novan-xu/super-agent-sandbox yet (0 green pipelines recorded, 3 needed), so it uses a first-time allowance of 2 hours");

@@ -21,6 +21,8 @@ import {
 
 const ticket = {
   id: 1,
+  code: "aaa",
+  codeDate: "2026-11-19",
   form: "code",
   repository: "novan-xu/super-agent-sandbox",
   issues: [

@@ -91,7 +91,47 @@ const fileArguments = {
   kind: "feature",
 };
 
+const writingArguments = {
+  title: { en: "Translate a notice", zh: "翻译一则通知" },
+  summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
+  task: "Translate the notice into English.",
+  kind: "writing",
+  material: [
+    { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
+    { name: "terms", source: "https://example.com/terms" },
+  ],
+};
+
 describe("the brain's ticket tools", () => {
+  it("resolves bare and dated codes across a daily reset", async () => {
+    const running = await start();
+    await callBrainTool(running, "open_task_ticket", writingArguments);
+    clock.advance(86_400_000);
+    await callBrainTool(running, "open_task_ticket", { ...writingArguments, task: "Translate the newer notice." });
+    const newest = await callBrainTool(running, "read_ticket", { ticket: "aaa" });
+    expect(newest).toMatchObject({ isError: false, text: expect.stringContaining("Ticket aaa-2026-11-18") });
+    expect(newest.text).toContain("Translate the newer notice.");
+    const older = await callBrainTool(running, "read_ticket", { ticket: "aaa-2026-11-17" });
+    expect(older).toMatchObject({ isError: false, text: expect.stringContaining("Ticket aaa-2026-11-17") });
+    expect(older.text).not.toContain("Translate the newer notice.");
+    expect(await callBrainTool(running, "read_ticket", { ticket: "aaa-2026-11-16" })).toEqual({
+      isError: true, text: "There is no ticket aaa-2026-11-16.",
+    });
+    expect(await callBrainTool(running, "read_ticket", { ticket: 1 })).toMatchObject({ isError: true });
+  });
+
+  it("keeps numeric ticket references out of model-facing templates", () => {
+    const files = [
+      "chains.ts", "conversations.ts", "failure-loop.ts", "hub.ts", "rearrange.ts", "reports.ts", "reviews.ts",
+      "task-tickets.ts", "ticket-versions.ts", "tools.ts", "topic-context.ts", "verification.ts", "work.ts",
+      "../../runner/src/brief.ts", "../../runner/src/task.ts",
+    ];
+    for (const file of files) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).not.toMatch(/\bticket\s+(?:number\b|#?\d+\b|\$\{(?:word|id|[\w.]+\.(?:id|ticket_id|waits_for))\s*\})/i);
+    }
+  });
+
   it("are listed beside the command tools", async () => {
     const running = await start();
     const token = readFileSync(join(dataDir, "brain.token"), "utf8").trim();
@@ -147,7 +187,7 @@ describe("the brain's ticket tools", () => {
     const filed = await callBrainTool(running, "file_issue", fileArguments, conversation.id);
     expect(filed.isError).toBe(false);
     expect(filed.text).toContain(`Filed ${sandbox}#1`);
-    expect(filed.text).toContain("opened ticket 1");
+    expect(filed.text).toContain("opened ticket aaa-2026-11-17");
     expect(github.repositories.get(sandbox)?.[0]?.body).toBe(fileArguments.body);
 
     const socket = sockets[0]!;
@@ -156,20 +196,20 @@ describe("the brain's ticket tools", () => {
     expect(update?.type === "ticket" && update.ticket).toMatchObject({ state: "pending", title: { zh: "启动时打印问候" }, conversation: conversation.id });
 
     const listed = await callBrainTool(running, "list_tickets", {});
-    expect(listed.text).toBe(`Ticket 1 [pending] feature in ${sandbox} (issues #1): Print a greeting on start`);
+    expect(listed.text).toBe(`Ticket aaa-2026-11-17 [pending] feature in ${sandbox} (issues #1): Print a greeting on start`);
 
-    const read = await callBrainTool(running, "read_ticket", { ticket: 1 });
+    const read = await callBrainTool(running, "read_ticket", { ticket: "aaa" });
     expect(read.text).toContain("Chinese title: 启动时打印问候");
     expect(read.text).toContain(`${sandbox}#1 Print a greeting on start (https://github.com/${sandbox}/issues/1)`);
     expect(read.text).toContain("filed -> pending");
 
-    const stopped = await callBrainTool(running, "stop_ticket", { ticket: 1, reason: { en: "Only a test", zh: "只是测试" } });
+    const stopped = await callBrainTool(running, "stop_ticket", { ticket: "aaa", reason: { en: "Only a test", zh: "只是测试" } });
     expect(stopped.isError).toBe(false);
     await until(socket, () => page.some((message) => message.type === "ticket" && message.ticket.state === "stopped"));
-    expect((await callBrainTool(running, "stop_ticket", { ticket: 1, reason: { en: "Again", zh: "再一次" } })).text).toContain("is stopped and cannot be stopped");
+    expect((await callBrainTool(running, "stop_ticket", { ticket: "aaa", reason: { en: "Again", zh: "再一次" } })).text).toContain("is stopped and cannot be stopped");
     expect((await callBrainTool(running, "list_tickets", {})).text).toBe("There are no tickets.");
-    expect((await callBrainTool(running, "list_tickets", { all: true })).text).toContain("Ticket 1 [stopped]");
-    expect((await callBrainTool(running, "read_ticket", { ticket: 1 })).text).toContain("Stopped because: Only a test");
+    expect((await callBrainTool(running, "list_tickets", { all: true })).text).toContain("Ticket aaa-2026-11-17 [stopped]");
+    expect((await callBrainTool(running, "read_ticket", { ticket: "aaa" })).text).toContain("Stopped because: Only a test");
   });
 
   it("refuses arguments without a Chinese copy, and an unknown ticket", async () => {
@@ -178,8 +218,8 @@ describe("the brain's ticket tools", () => {
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain("The arguments are not valid");
     expect(github.jobs).toEqual([]);
-    expect((await callBrainTool(running, "read_ticket", { ticket: 5 })).text).toBe("There is no ticket 5.");
-    expect((await callBrainTool(running, "stop_ticket", { ticket: 5, reason: { en: "x", zh: "停" } })).isError).toBe(true);
+    expect((await callBrainTool(running, "read_ticket", { ticket: "zzz" })).text).toBe("There is no ticket zzz.");
+    expect((await callBrainTool(running, "stop_ticket", { ticket: "zzz", reason: { en: "x", zh: "停" } })).isError).toBe(true);
   });
 
   it("opens a ticket for an issue filed some other way", async () => {
@@ -199,34 +239,23 @@ describe("the brain's ticket tools", () => {
 });
 
 describe("the brain's tool for task tickets", () => {
-  const writingArguments = {
-    title: { en: "Translate a notice", zh: "翻译一则通知" },
-    summary: { en: "Translate the notice into English", zh: "把通知译成英文" },
-    task: "Translate the notice into English.",
-    kind: "writing",
-    material: [
-      { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
-      { name: "terms", source: "https://example.com/terms" },
-    ],
-  };
-
   it("opens a pending ticket with no repository and no issue, keeping the task and the material, and shows them on read", async () => {
     const running = await start();
     const conversation = running.conversations.create();
     const opened = await callBrainTool(running, "open_task_ticket", writingArguments, conversation.id);
     expect(opened.isError).toBe(false);
-    expect(opened.text).toContain("Opened task ticket 1");
+    expect(opened.text).toContain("Opened task ticket aaa-2026-11-17");
     expect(github.jobs).toEqual([]);
     expect(running.tickets.get(1)).toMatchObject({ form: "task", kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id, title: { zh: "翻译一则通知" } });
     expect(running.tickets.task(1)?.materials).toEqual([
       { name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" },
       { name: "terms", source: "https://example.com/terms", text: null },
     ]);
-    const read = await callBrainTool(running, "read_ticket", { ticket: 1 });
+    const read = await callBrainTool(running, "read_ticket", { ticket: "aaa" });
     expect(read.text).toContain("Task: Translate the notice into English.");
     expect(read.text).toContain("Material notice.txt, from pasted by the owner in the conversation (6 characters given)");
     expect(read.text).toContain("Material terms, from https://example.com/terms (by its source only)");
-    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("Ticket 1 [pending] writing task in no repository: Translate a notice");
+    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("Ticket aaa-2026-11-17 [pending] writing task in no repository: Translate a notice");
   });
 
   it("refuses a missing Chinese copy, an unsafe material name and repeated names, opening nothing", async () => {
@@ -325,7 +354,7 @@ describe("tickets for the page", () => {
     const page = await pageSocket(second);
     const snapshot = page.find((message) => message.type === "tickets");
     expect(snapshot?.type === "tickets" && snapshot.tickets.map((ticket) => [ticket.id, ticket.state, ticket.title.zh])).toEqual([[1, "working", "启动时打印问候"]]);
-    expect((await callBrainTool(second, "file_issue", fileArguments)).text).toContain("already has ticket 1");
+    expect((await callBrainTool(second, "file_issue", fileArguments)).text).toContain("already has ticket aaa-2026-11-17");
     expect(github.created).toBe(1);
   });
 });

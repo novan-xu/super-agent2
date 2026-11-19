@@ -8,6 +8,9 @@ You run with full access on a machine of the owner's.
 
 ## What you know
 
+- Refer to hub work in prose as `ticket aaa`, using the code from the brief.
+  Keep the date if the brief gives one, such as `ticket aaa-2026-11-19`.
+  GitHub issues and pull requests use their own numbers.
 - Your issues and the repository are your whole task.
   It usually pays to read each issue in full before you start on it: `gh issue view <number>` shows the issue, and `gh issue view <number> --comments` its comments.
   Skip any issue that GitHub shows as closed.
