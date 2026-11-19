@@ -67,6 +67,37 @@ below).
   card. In the first Super-agent these were 176 of 518 owner messages; replayed through the router they add wrong joins.
 - Do not widen rule b: longer limits (20 characters) and longer idle times (2 h) were in the search and were not chosen.
 
+## Decision taken for #143
+
+The session that wrote the implementation issue (#143) chose differently from the recommendation above:
+
+- **Primary router:** `bge-small-zh-v1.5` with the constants chosen on the train part with a wrong join counted twice:
+  rules a, e and b, then the score with threshold 0.570, margin 0.096 and decay 0.048 (13 wrong joins and 37 wrong
+  splits on the test part).
+- **Fallback and shadow:** the strict bigram router (rule b; threshold 0.055, margin 0.091, decay 0.18) decides when the
+  model is unavailable, and otherwise runs beside the primary with its decision recorded.
+- **Record:** every routing decision is stored in the database, so the owner's corrections become labels.
+
+Cost on the test part (154 messages) at each weight of a wrong join; the chosen router is the lowest at all three:
+
+| Router | Wrong joins | Wrong splits | 2 × joins + splits | 3 × | 4 × |
+|---|---|---|---|---|---|
+| bge-small-zh, constants chosen with weight 2 (chosen) | 13 | 37 | 63 | 76 | 89 |
+| Bigram, constants chosen with weight 2 | 20 | 27 | 67 | 87 | 107 |
+| Bigram, constants chosen with weight 3 (strict; recommended above) | 11 | 48 | 70 | 81 | 92 |
+| bge-small-zh, constants chosen with weight 3 | 10 | 51 | 71 | 81 | 91 |
+
+It makes about as few wrong joins as the strict bigram router (13 against 11) with 11 fewer wrong splits, and
+fragmentation was the owner's original complaint. With only the threshold moved, bge-small-zh leaves fewer wrong splits
+than bigram between 8 % and 11 % wrong joins on both parts: on the test part at 13–16 wrong joins of 154 (36–34 against
+57–49), on the train part at 20–25 of 234 (73–50 against 75–61), level at 19 (8.1 %). Below 8 % bigram is level or
+better on both parts (test 12 wrong joins: 64 against 57; train 15–18: 85–91 against 80–90).
+
+This is not statistically established. The paired bootstrap intervals above contain zero for the cost difference
+between bge-small-zh and bigram with weight-2 constants and for both kinds of error with weight-3 constants, the matched
+curves were drawn with the threshold moved on the very messages they are measured on, and the evaluator's
+recommendation was the strict bigram router. The shadow record exists to settle the choice on real use.
+
 ## Data
 
 | Data set | Source | Period | Owner messages | Routed (scored) | Topics | Median messages per topic | One-message topics | Messages ≤ 10 characters |

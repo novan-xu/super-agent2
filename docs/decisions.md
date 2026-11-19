@@ -4294,3 +4294,19 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   `bge-small-zh-v1.5` is not better than bigram (10 and 51 against 11 and 48), so the scorer stays bigram.
 - **Other options:** Keep the constants chosen with weight 2, which are right more often (70 % against 62 %); use
   `bge-small-zh-v1.5` at the threshold that looked best on the test part, which was picked on the test messages.
+
+## 2026-11-18 — Router chosen for #143
+
+- **Chosen:** `bge-small-zh-v1.5` with the constants chosen on the train part with a wrong join counted twice (rules a,
+  e and b; threshold 0.570, margin 0.096, decay 0.048; 13 wrong joins and 37 wrong splits on the test part) as the
+  primary router. The strict bigram router (rule b; threshold 0.055, margin 0.091, decay 0.18) decides when the model is
+  unavailable and otherwise runs as a shadow whose decision is recorded beside the primary's. Every decision is recorded
+  in the database, so the owner's corrections become labels.
+- **Why:** That point has the lowest test-part cost whether a wrong join counts 2×, 3× or 4× (63, 76 and 89, against
+  67, 87 and 107 for bigram with weight-2 constants, 70, 81 and 92 for the strict bigram router, and 71, 81 and 91 for
+  bge-small-zh with weight-3 constants). It makes about as few wrong joins as the strict bigram router with 11 fewer
+  wrong splits, and fragmentation was the owner's original complaint. With only the threshold moved, bge-small-zh leaves
+  fewer wrong splits than bigram at 8–11 % wrong joins on both the train and the test part. This is not statistically
+  established; the evaluator's recommendation was the strict bigram router, and the shadow record exists to settle the
+  choice on real use.
+- **Other options:** The strict bigram router alone; the bigram router with weight-2 constants.
