@@ -6,6 +6,7 @@ import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
 import { clockOf } from "./Entries.js";
 import { failureText } from "./HoldCard.js";
+import { TicketNumber } from "./TicketParts.js";
 
 export interface StuckCardProps {
   readonly card: Card;
@@ -26,7 +27,7 @@ export function StuckCard({ card, use, focused, href, open, answer }: StuckCardP
   const sending = use.step === "sending";
   const busy = (verdict: StuckAnswer) => (sending && use.verdict === verdict ? " is-busy" : "");
   return (
-    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={chineseOf(ticket.title)}>
+    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} #${ticket.id}`}>
       <div className="wcard-kind">
         <span className="chip chip--warn">{text(`loop.failure.${stuck.failure.kind}`)}</span>
         <span className="chip">{text("ticket.roundValue", { round: stuck.round })}</span>
@@ -39,7 +40,7 @@ export function StuckCard({ card, use, focused, href, open, answer }: StuckCardP
         <span className="od-fill num">{clockOf(card.at)}</span>
       </div>
       <a className="card-title" href={href} onClick={(event) => followLink(event, open)}>
-        {chineseOf(ticket.title)}
+        <TicketNumber id={ticket.id} /> {chineseOf(ticket.title)}
       </a>
       {stuck.where !== null ? (
         <p className="chain-reason">{chineseOf(stuck.where)}</p>

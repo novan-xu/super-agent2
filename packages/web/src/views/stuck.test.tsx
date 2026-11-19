@@ -28,6 +28,8 @@ describe("a stopped ticket's card in 等你", () => {
   it("says what the ticket is, which round it is on, and where it is stuck in the brain's words", () => {
     const shown = text(render(state(stuckCard(4, { where: { en: "Stuck on the greeting test", zh: "卡在问候的测试上，三轮都没改对" } }))));
     expect(shown).toContain("工作 4");
+    expect(render(state(stuckCard(4)))).toContain('<span class="mono wb-ticket-number">#4</span>');
+    expect(render(state(stuckCard(4)))).toContain('aria-label="工作 4 #4"');
     expect(shown).toContain("第 3 轮");
     expect(shown).toContain("流水线没通过");
     expect(shown).toContain("卡在问候的测试上，三轮都没改对");

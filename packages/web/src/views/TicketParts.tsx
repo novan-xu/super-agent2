@@ -24,6 +24,10 @@ export function PhaseStatus({ phase }: { readonly phase: TicketPhase }) {
   );
 }
 
+export function TicketNumber({ id }: { readonly id: number }) {
+  return <span className="mono wb-ticket-number">{`#${id}`}</span>;
+}
+
 export const pullRequestTones: Readonly<Record<TicketPullRequestState, "ok" | "info" | "mute">> = { merged: "ok", open: "info", closed: "mute" };
 
 export function ChainNumbers({ ticket }: { readonly ticket: Ticket }) {
