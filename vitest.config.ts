@@ -21,6 +21,7 @@ export default defineConfig({
       { extends: true, plugins: [react()], test: { name: "web", root: "packages/web", exclude: [...configDefaults.exclude, "**/*.dom.test.tsx"], css: { include: [/page.css/] } } },
       { extends: true, plugins: [react()], test: { name: "web-dom", root: "packages/web", include: ["**/*.dom.test.tsx"], environment: "happy-dom" } },
       { extends: true, test: { name: "markup-text", root: "tools/markup-text" } },
+      { extends: true, test: { name: "sentence-lines", root: "tools/sentence-lines" } },
       { extends: true, test: { name: "zero-comment", root: "tools/zero-comment" } },
       { extends: true, test: { name: "route-eval", root: "tools/route-eval" } },
     ],

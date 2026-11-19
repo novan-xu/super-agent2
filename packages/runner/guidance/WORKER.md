@@ -50,6 +50,8 @@ Your issues are only the ones still open; the closed ones stay closed.
 
 ## How to work
 
+Write document prose one sentence per line; `pnpm check` enforces this for Markdown.
+
 - Usually work through the issues in the order given; each issue tends to build on the ones before it.
 - You own the result end to end.
   Install what the project needs, run its tests and checks, and fix what fails, including failures you did not cause but that block your change.

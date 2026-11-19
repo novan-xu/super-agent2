@@ -3422,3 +3422,11 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** When older tickets lack a topic, look through their repair lineage and its predecessors before creating a topic for delivery.
 - **Why:** Related work can share its existing topic while older standalone tickets can still receive notices.
 - **Other options:** Create a topic as soon as the lineage lacks one or fail to deliver until a topic is assigned.
+
+## 2026-11-19 — Enforce Markdown sentence lines (#179)
+
+- **Chosen:** Check tracked and unignored Markdown files in `pnpm check` with a dedicated workspace tool using a Markdown parser and a shared Git file list.
+  Check paragraph and list prose for multiple sentences and wrapped sentences; accept colon-ended lines and single-line phrases.
+  Ignore tables, headings, code, HTML, references and front matter, and use a small abbreviation list for common non-terminal periods.
+- **Why:** The owner required enforcement in CI, and parsing keeps code and other non-prose syntax out of the check while including new files before they are committed.
+- **Other options:** Check only tracked files, use line-based matching without a Markdown parser, or require punctuation on every list item.

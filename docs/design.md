@@ -530,6 +530,8 @@ This is the complete list.
    The owner explicitly required the hub to allow only one topic turn to change a ticket at a time.
    The hub enforces this on all brain-initiated changes to its ticket state, with a stale-read check and release at the end of the turn (see [Ticket changes](#ticket-changes)).
    The owner's controls and the hub's own work continue independently, and their changes advance the ticket version.
+9. **One sentence per line in Markdown prose.**
+   The owner explicitly required this rule, checked in CI.
 
 ## Tests
 
