@@ -11,6 +11,7 @@ export interface WorkPaths {
   readonly handback: string;
   readonly scratch?: string;
   readonly shared?: true;
+  readonly matchedByName?: { readonly origin: string | null };
   readonly artifacts?: ArtifactFolder;
 }
 
@@ -119,12 +120,24 @@ export async function pathsInProjects(
         break;
       }
     }
+    let matchedByName: WorkPaths["matchedByName"];
+    if (clone === undefined) {
+      const folder = names.find((entry) => entry.toLowerCase() === name.toLowerCase());
+      if (folder !== undefined) {
+        const candidate = join(root, folder);
+        const check = existsSync(join(candidate, ".git")) ? await git.run(["rev-parse", "--show-toplevel"], candidate) : undefined;
+        if (check?.code !== 0 || !samePath(check.stdout.trim(), candidate)) throw new Error(`The projects folder contains ${candidate}, but it is not a Git checkout`);
+        const origin = await git.run(["config", "--local", "--get", "remote.origin.url"], candidate);
+        matchedByName = { origin: origin.code === 0 ? origin.stdout.trim() : null };
+        clone = candidate;
+      }
+    }
     if (clone === undefined) {
       if (name.toLowerCase() === "_agent") throw new Error("The repository needs a first-level checkout with a folder name other than _agent");
       clone = join(root, name);
       try {
         lstatSync(clone);
-        throw new Error(`The projects folder already contains ${clone} with a different origin or without a checkout`);
+        throw new Error(`The projects folder already contains ${clone} but it is not a Git checkout`);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
@@ -132,7 +145,7 @@ export async function pathsInProjects(
     }
     const worktrees = join(agent, basename(clone));
     ownedDirectory(worktrees);
-    return { ...paths, clone, worktree: join(worktrees, `t${ticket}`), shared: true };
+    return { ...paths, clone, worktree: join(worktrees, `t${ticket}`), shared: true, ...(matchedByName === undefined ? {} : { matchedByName }) };
   });
 }
 
@@ -157,17 +170,22 @@ async function defaultBranch(git: Git, clone: string): Promise<string> {
   return head.replace(/^origin\//, "");
 }
 
+export function trackingRemote(paths: WorkPaths): string {
+  return paths.matchedByName === undefined ? "origin" : "superagent2";
+}
+
 export async function prepareRepository(git: Git, url: string, repository: string, paths: WorkPaths): Promise<string> {
   const { clone, shared } = paths;
   if (shared) {
-    if (!existsSync(join(clone, ".git")) || !await matchesOrigin(git, clone, url, repository.toLowerCase())) {
+    if (!existsSync(join(clone, ".git")) || (await git.run(["rev-parse", "--show-toplevel"], clone)).code !== 0 || (paths.matchedByName === undefined && !await matchesOrigin(git, clone, url, repository.toLowerCase()))) {
       throw new Error(`There is no checkout of ${repository} at ${clone}`);
     }
     const head = await git.must(["ls-remote", "--symref", url, "HEAD"], clone);
     const base = /^ref: refs\/heads\/([^\t\r\n]+)\tHEAD\r?$/m.exec(head)?.[1];
     if (base === undefined) throw new Error("The repository has no default branch");
-    await git.must(["fetch", "--prune", "--no-auto-maintenance", "--no-recurse-submodules", "--no-write-fetch-head", "--", url, "+refs/heads/*:refs/remotes/origin/*"], clone);
-    await git.must(["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${base}`], clone);
+    const tracking = trackingRemote(paths);
+    await git.must(["fetch", "--prune", "--no-auto-maintenance", "--no-recurse-submodules", "--no-write-fetch-head", "--", url, `+refs/heads/*:refs/remotes/${tracking}/*`], clone);
+    await git.must(["symbolic-ref", `refs/remotes/${tracking}/HEAD`, `refs/remotes/${tracking}/${base}`], clone);
     return base;
   }
   if (!existsSync(join(clone, ".git"))) {
@@ -302,6 +320,7 @@ async function carryOver(git: Git, worktree: string, commit: string): Promise<bo
 export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: string, branch: string, paths: WorkPaths): Promise<Prepared> {
   return withClone(paths.clone, async () => {
     const base = await prepareRepository(git, remote(repository), repository, paths);
+    const tracking = trackingRemote(paths);
     await checkWorktreePath(git, paths);
     if (existsSync(paths.worktree)) {
       const current = await currentBranch(git, paths.worktree);
@@ -310,14 +329,14 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
       }
       if (current !== undefined && current !== "HEAD") {
         const aside = await setAside(git, paths.worktree, current);
-        const from = (await exists(git, `refs/heads/${branch}`, paths.clone)) ? branch : (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) ? `origin/${branch}` : `origin/${base}`;
-        const switching = from === branch ? ["switch", branch] : ["switch", !paths.shared && from === `origin/${branch}` ? "--track" : "--no-track", "-C", branch, from];
+        const from = (await exists(git, `refs/heads/${branch}`, paths.clone)) ? branch : (await exists(git, `refs/remotes/${tracking}/${branch}`, paths.clone)) ? `${tracking}/${branch}` : `${tracking}/${base}`;
+        const switching = from === branch ? ["switch", branch] : ["switch", !paths.shared && from === `${tracking}/${branch}` ? "--track" : "--no-track", "-C", branch, from];
         const switched = await git.run(switching, paths.worktree);
         if (switched.code !== 0) {
           throw new Error(`git ${switching.join(" ")} failed in ${paths.worktree}${aside === null ? "" : `; the uncommitted work is kept on the local branch ${aside.branch}`}: ${`${switched.stderr}${switched.stdout}`.trim()}`);
         }
         const leftover = aside === null ? null : { ...aside, carried: await carryOver(git, paths.worktree, aside.commit) };
-        if (current.startsWith("sa2/ticket-") && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/origin/${current}`, paths.clone))) {
+        if (current.startsWith("sa2/ticket-") && !current.endsWith(leftoverSuffix) && !(await exists(git, `refs/remotes/${tracking}/${current}`, paths.clone))) {
           await deleteBranch(git, paths, current);
         }
         return { base, created: false, switched: true, from, leftover };
@@ -329,12 +348,12 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
       await git.must(["worktree", "add", paths.worktree, branch], paths.clone);
       return { base, created: true, switched: false, from: branch, leftover: null };
     }
-    if (await exists(git, `refs/remotes/origin/${branch}`, paths.clone)) {
-      await git.must(["worktree", "add", paths.shared ? "--no-track" : "--track", "-b", branch, paths.worktree, `origin/${branch}`], paths.clone);
-      return { base, created: true, switched: false, from: `origin/${branch}`, leftover: null };
+    if (await exists(git, `refs/remotes/${tracking}/${branch}`, paths.clone)) {
+      await git.must(["worktree", "add", paths.shared ? "--no-track" : "--track", "-b", branch, paths.worktree, `${tracking}/${branch}`], paths.clone);
+      return { base, created: true, switched: false, from: `${tracking}/${branch}`, leftover: null };
     }
-    await git.must(["worktree", "add", "--no-track", "-b", branch, paths.worktree, `origin/${base}`], paths.clone);
-    return { base, created: true, switched: false, from: `origin/${base}`, leftover: null };
+    await git.must(["worktree", "add", "--no-track", "-b", branch, paths.worktree, `${tracking}/${base}`], paths.clone);
+    return { base, created: true, switched: false, from: `${tracking}/${base}`, leftover: null };
   });
 }
 
@@ -366,11 +385,11 @@ async function readState(git: Git, args: readonly string[], cwd: string): Promis
   return result.code === 0 ? { text: result.stdout.trim(), problem: null } : { text: "", problem: `git ${args.join(" ")} failed: ${`${result.stderr}${result.stdout}`.trim()}` };
 }
 
-export async function folderState(git: Git, worktree: string, base: string | null): Promise<FolderState> {
+export async function folderState(git: Git, worktree: string, base: string | null, tracking = "origin"): Promise<FolderState> {
   const unread: string[] = [];
   let commits = "";
   if (base !== null) {
-    const log = await readState(git, ["log", "--oneline", `origin/${base}..HEAD`], worktree);
+    const log = await readState(git, ["log", "--oneline", `${tracking}/${base}..HEAD`], worktree);
     commits = log.text;
     if (log.problem !== null) {
       unread.push(log.problem);

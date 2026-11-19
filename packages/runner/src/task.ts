@@ -15,7 +15,7 @@ import {
   type TaskOutcome,
 } from "@super-agent2/protocol";
 import type { Git } from "./git.js";
-import { checkWorktreePath, discardWorktree, prepareRepository, type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
+import { checkWorktreePath, discardWorktree, prepareRepository, trackingRemote, type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
 import type { ArtifactFolder } from "./storage.js";
 
 export function taskPaths(home: string, ticket: number, repository: string | null = null, folderOf: number = ticket): WorkPaths {
@@ -56,12 +56,13 @@ export async function prepareCheckout(git: Git, remote: RemoteUrl, checkout: Non
     const url = remote(checkout.repository);
     const base = await prepareRepository(git, url, checkout.repository, paths);
     await checkWorktreePath(git, paths);
+    const tracking = trackingRemote(paths);
     const wanted = checkout.commit ?? checkout.ref;
     let commit: string | undefined;
     if (wanted === null) {
-      commit = await verified(git, `origin/${base}`, paths.clone);
+      commit = await verified(git, `${tracking}/${base}`, paths.clone);
     } else {
-      commit = (checkout.commit === null ? await verified(git, `origin/${wanted}`, paths.clone) : undefined) ?? (await verified(git, wanted, paths.clone));
+      commit = (checkout.commit === null ? await verified(git, `${tracking}/${wanted}`, paths.clone) : undefined) ?? (await verified(git, wanted, paths.clone));
       if (commit === undefined) {
         await git.run(paths.shared ? ["fetch", "--no-write-fetch-head", "--no-recurse-submodules", "--", url, wanted] : ["fetch", "origin", wanted], paths.clone);
         commit = await verified(git, wanted, paths.clone);

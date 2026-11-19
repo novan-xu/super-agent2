@@ -324,6 +324,56 @@ describe("a worker on the runner", () => {
     expect(readFileSync(join(owner, "notes.txt"), "utf8")).toBe("owner's notes");
   });
 
+  it.each(["missing", "different"])("reuses a same-name checkout with %s origin without changing owner state", async (origin) => {
+    const projects = join(realpathSync(scratch), "Projects");
+    const owner = join(projects, "Super-Agent-Sandbox");
+    mkdirSync(projects);
+    const repo = git(projects);
+    await repo.must(["clone", remote, owner], projects);
+    if (origin === "missing") await repo.must(["remote", "remove", "origin"], owner);
+    else await repo.must(["remote", "set-url", "origin", "https://example.com/other.git"], owner);
+    await repo.must(["switch", "-c", "owner-branch"], owner);
+    if (origin === "different") {
+      const tree = (await repo.must(["rev-parse", "HEAD^{tree}"], owner)).trim();
+      const other = (await repo.must(["commit-tree", tree, "-m", "Other remote"], owner)).trim();
+      await repo.must(["update-ref", "refs/remotes/origin/main", other], owner);
+    }
+    writeFileSync(join(owner, "README.md"), "owner edit");
+    const config = readFileSync(join(owner, ".git", "config"), "utf8");
+    const status = await repo.must(["status", "--porcelain"], owner);
+    const refs = await repo.must(["for-each-ref", "refs/remotes/origin", "--format=%(refname) %(objectname)"], owner);
+    const works = start({ storage: () => ({ projectsDir: projects }) });
+    works.receive({ type: "work.start", task: task(55) });
+    await works.idle();
+    const worktree = join(projects, "_agent", "Super-Agent-Sandbox", "t55");
+    expect(programs.last().options.workspace).toBe(worktree);
+    expect(await repo.must(["rev-parse", "HEAD"], worktree)).toBe(await repo.must(["rev-parse", "refs/remotes/superagent2/main"], owner));
+    expect(events(55).some(({ event }) => "detail" in event && event.detail.includes(`Matched checkout ${owner} by folder name; origin: ${origin === "missing" ? "not configured" : "https://example.com/other.git"}`))).toBe(true);
+    expect(readFileSync(join(owner, ".git", "config"), "utf8")).toBe(config);
+    expect(await repo.must(["status", "--porcelain"], owner)).toBe(status);
+    expect((await repo.must(["branch", "--show-current"], owner)).trim()).toBe("owner-branch");
+    expect(await repo.must(["for-each-ref", "refs/remotes/origin", "--format=%(refname) %(objectname)"], owner)).toBe(refs);
+  });
+
+  it("prefers an origin match over a same-name checkout and refuses a non-checkout fallback", async () => {
+    const projects = join(realpathSync(scratch), "Projects");
+    const sameName = join(projects, "SUPER-AGENT-SANDBOX");
+    const matching = join(projects, "other folder");
+    mkdirSync(sameName, { recursive: true });
+    writeFileSync(join(sameName, "keep"), "owner file");
+    const repo = git(projects);
+    await repo.must(["clone", remote, matching], projects);
+    const works = start({ storage: () => ({ projectsDir: projects }) });
+    works.receive({ type: "work.start", task: task(56) });
+    await works.idle();
+    expect(programs.last().options.workspace).toBe(join(projects, "_agent", "other folder", "t56"));
+    await repo.must(["remote", "remove", "origin"], matching);
+    works.receive({ type: "work.start", task: task(57) });
+    await works.idle();
+    expect(events(57).at(-1)?.event).toMatchObject({ kind: "failed", failure: "prepare", reason: expect.stringContaining("not a Git checkout") });
+    expect(readFileSync(join(sameName, "keep"), "utf8")).toBe("owner file");
+  });
+
   it("clones an absent checkout and leaves an unrelated directory at a worktree path alone", async () => {
     const projects = join(realpathSync(scratch), "Projects");
     const managed = join(projects, "_agent", "super-agent-sandbox");
