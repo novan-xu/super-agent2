@@ -1,3 +1,4 @@
+import { rearrangePrefix, rearrangePrompt } from "./rearrange.js";
 import { createHash, randomUUID } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
@@ -72,6 +73,7 @@ export interface BrainConnection {
 
 export interface ConversationService {
   create(): Conversation;
+  rearrange(repository: string | null | undefined): Conversation | undefined;
   get(id: string): Conversation | undefined;
   list(limit?: number): Conversation[];
   announce(id: string): void;
@@ -400,6 +402,9 @@ export function createConversationService(options: ConversationServiceOptions): 
   const savePending = connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)");
   const listPending = connection.prepare("SELECT * FROM pending_topic_inputs ORDER BY created_at, rowid");
   const deletePending = connection.prepare("DELETE FROM pending_topic_inputs WHERE id = ?");
+  const activeRearrange = connection.prepare(`SELECT 1 FROM conversation_entries e
+    LEFT JOIN turns t ON t.id = e.turn_id
+    WHERE e.kind = 'notice' AND substr(e.prompt, 1, ?) = ? AND (e.taken = 0 OR t.state = 'running') LIMIT 1`);
   const selectSystem = connection.prepare("SELECT * FROM conversations WHERE system = 1");
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
   const selectTurns = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? ORDER BY started_at, rowid");
@@ -1192,6 +1197,16 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   return {
     create,
+    rearrange: (repository) => {
+      if (activeRearrange.get(rearrangePrefix.length, rearrangePrefix) !== undefined) return undefined;
+      const title = repository == null ? "重新编排" : `重新编排 · ${repository}`;
+      const id = storeTopic(options.database, clock.now(), title, { repository: repository ?? null, titleOrigin: "owner" });
+      const conversation = get(id);
+      if (conversation === undefined) throw new Error(`Conversation ${id} was not stored`);
+      emit({ type: "conversation", conversation });
+      postHubEntry({ conversation: id, kind: "notice", turn: null, body: { text: title }, prompt: rearrangePrompt(repository, tickets.list({ open: true, limit: Number.MAX_SAFE_INTEGER })) });
+      return conversation;
+    },
     topics,
     tell,
     deliver: deliverResult,

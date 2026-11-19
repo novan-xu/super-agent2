@@ -135,6 +135,8 @@ export function App() {
 
   const [workRepository, setWorkRepository] = useState<string | null | undefined>(undefined);
   const [workTopic, setWorkTopic] = useState<string | null>(null);
+  const [rearranging, setRearranging] = useState(false);
+  const rearrangeInFlight = useRef(false);
   const [workTicket, setWorkTicket] = useState<number | null>(null);
   const selectWorkRepository = useCallback((repository: string | null | undefined) => { setWorkRepository(repository); setWorkTopic(null); }, []);
   const workScope = useMemo(() => workbenchScope(workRepository), [workRepository]);
@@ -226,6 +228,27 @@ export function App() {
     }),
     [controller],
   );
+  const rearrange = useCallback(async () => {
+    if (rearrangeInFlight.current) return false;
+    rearrangeInFlight.current = true;
+    setRearranging(true);
+    try {
+      const result = await hubApi.rearrange(workRepository);
+      if (!result.ok) {
+        setToast(text("workbench.rearrangeFailed"));
+        window.clearTimeout(toastTimer.current);
+        toastTimer.current = window.setTimeout(() => setToast(null), toastDuration);
+        return false;
+      }
+      setWorkRepository(workRepository);
+      setWorkTicket(null);
+      setWorkTopic(result.value.conversation.id);
+      return true;
+    } finally {
+      rearrangeInFlight.current = false;
+      setRearranging(false);
+    }
+  }, [workRepository]);
   const togglePush = useCallback(() => void pushController.toggle(), [pushController]);
   const ticketHref = useCallback((ticket: number) => pagePath({ view: "ticket", ticket }), []);
   const openFromHistory = useCallback(
@@ -350,6 +373,8 @@ export function App() {
           focused={clearFocus}
           push={pushPhase(pushFacts)}
           togglePush={togglePush}
+          rearrange={rearrange}
+          rearranging={rearranging}
           panel={workTicket === null ? <ConversationView
             compact conversation={conversationId} scope={scope} state={currentTopic}
             stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}

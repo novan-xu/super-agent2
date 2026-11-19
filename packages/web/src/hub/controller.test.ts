@@ -22,6 +22,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
   };
   return {
     calls,
+    rearrange: () => answer("rearrange", { conversation }),
     conversations: () => answer("conversations", { brain: { linked: true }, conversations: [] }),
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
     answerQuestions: (id) => answer(`questions ${id}`, { entry }),

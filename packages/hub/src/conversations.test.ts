@@ -133,6 +133,53 @@ function connect(running: Hub) {
   return { link, messages };
 }
 
+describe("workbench rearrangement", () => {
+  it("authenticates, scopes, delivers and serializes rearrangement turns", async () => {
+    const running = await start();
+    const project = openTicket(running, undefined, "org/one");
+    const daily = openTicket(running);
+    const other = openTicket(running, undefined, "org/two");
+    const brain = connect(running);
+    const url = `${base(running)}/api/workbench/rearrange`;
+    const headers = { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json", origin: base(running) };
+    const post = (body: unknown, extra: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { ...headers, ...extra }, body: JSON.stringify(body) });
+    expect((await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(403);
+    expect((await post({}, { origin: "https://evil.example" })).status).toBe(403);
+    expect((await post({ repository: "invalid" })).status).toBe(400);
+    const first = await post({ repository: "ORG/ONE" });
+    expect(first.status).toBe(201);
+    const topic = ConversationResponse.parse(await first.json()).conversation;
+    expect(topic.repository).toBe("ORG/ONE");
+    const input = brain.messages.find((message) => message.type === "input" && message.conversation === topic.id);
+    expect(input?.type).toBe("input");
+    if (input?.type !== "input") throw new Error("Missing rearrangement input");
+    expect(input.input.text).toContain(`"id":${project.id}`);
+    expect(input.input.text).not.toContain(`"id":${daily.id}`);
+    expect(input.input.text).not.toContain(`"id":${other.id}`);
+    for (const rule of ["list_tickets", "read_ticket", "arrange_chains", "choose_defaults", "stop_ticket", "record_decision", "Never touch a ticket whose worker is running", "Never start anything", "Reply in Chinese"]) expect(input.input.text).toContain(rule);
+    expect((await post({})).status).toBe(409);
+    brain.link.receive({ type: "turn.started", conversation: topic.id, turn: "rearrange-turn", provider: "gpt", model: "test", inputs: [input.input.id] });
+    expect((await post({ repository: null })).status).toBe(409);
+    brain.link.receive({ type: "turn.finished", conversation: topic.id, turn: "rearrange-turn", outcome: "completed", reason: null });
+    const second = await post({ repository: null });
+    expect(second.status).toBe(201);
+    const dailyTopic = ConversationResponse.parse(await second.json()).conversation;
+    expect(dailyTopic.repository).toBeNull();
+    const dailyInput = brain.messages.find((message) => message.type === "input" && message.conversation === dailyTopic.id);
+    if (dailyInput?.type !== "input") throw new Error("Missing daily input");
+    expect(dailyInput.input.text).toContain(`"id":${daily.id}`);
+    expect(dailyInput.input.text).not.toContain(`"id":${project.id}`);
+    brain.link.receive({ type: "turn.started", conversation: dailyTopic.id, turn: "daily-turn", provider: "gpt", model: "test", inputs: [dailyInput.input.id] });
+    brain.link.receive({ type: "turn.finished", conversation: dailyTopic.id, turn: "daily-turn", outcome: "completed", reason: null });
+    const all = await post({});
+    expect(all.status).toBe(201);
+    const allTopic = ConversationResponse.parse(await all.json()).conversation;
+    const allInput = brain.messages.find((message) => message.type === "input" && message.conversation === allTopic.id);
+    if (allInput?.type !== "input") throw new Error("Missing all-scope input");
+    for (const item of [project, daily, other]) expect(allInput.input.text).toContain(`"id":${item.id}`);
+  });
+});
+
 describe("the brain's token", () => {
   it("is made once, kept in a file, and accepted only as a bearer token", () => {
     const path = join(dataDir, "secrets", "brain.token");

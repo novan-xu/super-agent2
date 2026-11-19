@@ -97,6 +97,7 @@ export function historyPath(page: HistoryRequest): string {
 }
 
 export const hubApi = {
+  rearrange: (repository: string | null | undefined) => call("/api/workbench/rearrange", ConversationResponse, { repository }),
   conversations: () => call("/api/conversations?all=1", ConversationList),
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
   send: (id: string, text: string, attachments: readonly string[] = [], quotedMessage?: string) =>

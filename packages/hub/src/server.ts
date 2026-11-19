@@ -586,6 +586,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { machines: options.runners.statuses() });
       return;
     }
+    if (path === "/api/workbench/rearrange" && method === "POST" && options.conversations !== undefined) {
+      if (!ownerAction(request, response)) return;
+      const input = parseJson(await readBody(request), z.object({ repository: RepositoryName.nullable().optional() }).strict());
+      if (input === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+      } else {
+        const conversation = options.conversations.rearrange(input.repository);
+        if (conversation === undefined) sendJson(response, 409, { error: "conflict" });
+        else sendJson(response, 201, { conversation });
+      }
+      return;
+    }
     if (path === waitingPath && method === "GET" && options.waiting !== undefined) {
       sendJson(response, 200, { cards: options.waiting.cards() });
       return;
