@@ -84,6 +84,7 @@ import {
   ProviderOrderChange,
   RepositoryAccountChange,
   RepositoryPinChange,
+  RepositoryAliasChange,
   StorageSettings,
   type SettingsSnapshot,
 } from "@super-agent2/protocol";
@@ -137,6 +138,7 @@ export const settingsPath = "/api/settings";
 export const brainOrderPath = "/api/brain/order";
 export const repositoryAccountPath = "/api/repositories/account";
 export const repositoryPinPath = "/api/repositories/pin";
+export const repositoryAliasPath = "/api/repositories/alias";
 export const repositoryRefreshPath = "/api/repositories/refresh";
 
 const revokeRoute = /^\/api\/machines\/([^/]{1,63})\/revoke$/;
@@ -582,7 +584,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       return;
     }
-    if (((path === brainOrderPath || path === repositoryAccountPath) && method === "PUT") || (path === repositoryPinPath && method === "POST")) {
+    if (((path === brainOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath) && method === "POST")) {
       await serveSettingChange(request, response, path);
       return;
     }
@@ -774,6 +776,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     const repositories = options.repositories;
+    if (path === repositoryAliasPath) {
+      const given = parseJson(body, RepositoryAliasChange.strict());
+      if (given === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+      } else if (repositories === undefined || !repositories.setAlias(given.repository, given.alias)) {
+        sendJson(response, 404, { error: "not_found" });
+      } else {
+        settings.changed();
+        sendJson(response, 200, settings.snapshot());
+      }
+      return;
+    }
     if (path === repositoryPinPath) {
       const given = parseJson(body, RepositoryPinChange.strict());
       if (given === undefined) {

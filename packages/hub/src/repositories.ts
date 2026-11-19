@@ -10,6 +10,7 @@ export interface RepositoryAccounts {
   list(): RepositoryAccount[];
   set(repository: string, account: GitHubAccount): boolean;
   setPinned(repository: string, pinned: boolean): boolean;
+  setAlias(repository: string, alias: string | null): boolean;
   replaceDiscovered(accounts: readonly GitHubAccount[], found: readonly DiscoveredRepository[]): void;
 }
 
@@ -25,6 +26,7 @@ const CatalogRow = z.object({
   repository: z.string(),
   account: GitHubAccount.nullable(),
   pinned: z.number(),
+  alias: z.string().nullable(),
   listed: z.number(),
   github_archived: z.number(),
 });
@@ -49,6 +51,7 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
   const setPin = connection.prepare(
     "INSERT INTO repositories (repository, pinned) VALUES (?, ?) ON CONFLICT (repository) DO UPDATE SET pinned = excluded.pinned",
   );
+  const setAlias = connection.prepare("INSERT INTO repositories (repository, alias) VALUES (?, ?) ON CONFLICT (repository) DO UPDATE SET alias = excluded.alias");
   const clearListed = connection.prepare("UPDATE repositories SET listed = 0 WHERE account = ? AND listed = 1");
   const record = connection.prepare(`
     INSERT INTO repositories (repository, account, listed, github_archived) VALUES (?, ?, ?, ?)
@@ -101,7 +104,7 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       const key = repository.toLowerCase();
       const stored = catalog.get(key);
       const override = overrides.get(key);
-      return { repository, account: override ?? stored?.account ?? accountFor(repository), chosen: override !== undefined, pinned: stored?.pinned === 1 };
+      return { repository, account: override ?? stored?.account ?? accountFor(repository), chosen: override !== undefined, pinned: stored?.pinned === 1, ...(stored?.alias == null ? {} : { alias: stored.alias }) };
     });
   };
 
@@ -130,6 +133,12 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       const known = list().find((row) => row.repository.toLowerCase() === key);
       if (known === undefined) return false;
       setPin.run(known.repository, Number(pinned));
+      return true;
+    },
+    setAlias: (repository, alias) => {
+      const known = list().find((row) => row.repository.toLowerCase() === repository.toLowerCase());
+      if (known === undefined) return false;
+      setAlias.run(known.repository, alias?.trim() || null);
       return true;
     },
     replaceDiscovered: (accounts, found) => {

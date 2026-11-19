@@ -138,11 +138,11 @@ export function App() {
   const [rearranging, setRearranging] = useState(false);
   const rearrangeInFlight = useRef(false);
   const [workTicket, setWorkTicket] = useState<number | null>(null);
-  const pinnedRepositories = useMemo(() => page.settings?.repositories.filter((row) => row.pinned).map((row) => row.repository) ?? [], [page.settings?.repositories]);
+  const pinnedRepositories = useMemo(() => page.settings?.repositories.filter((row) => row.pinned).map(({ repository, alias }) => ({ repository, alias })) ?? [], [page.settings?.repositories]);
   const selectWorkRepository = useCallback((repository: string | null | undefined) => { setWorkRepository(repository); setWorkTopic(null); }, []);
   useEffect(() => {
     if (typeof workRepository !== "string" || page.settings === null) return;
-    const current = pinnedRepositories.find((name) => name.toLowerCase() === workRepository.toLowerCase());
+    const current = pinnedRepositories.find((row) => row.repository.toLowerCase() === workRepository.toLowerCase())?.repository;
     if (current !== workRepository) selectWorkRepository(current);
   }, [page.settings, pinnedRepositories, selectWorkRepository, workRepository]);
   const workScope = useMemo(() => workbenchScope(workRepository), [workRepository]);
@@ -307,6 +307,7 @@ export function App() {
       setOrder: (order) => controller.setOrder(order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
       setPinned: (repository, pinned) => controller.setPinned(repository, pinned),
+      setAlias: (repository, alias) => controller.setAlias(repository, alias),
       setTable: (table) => controller.setTable(table),
       setAppearance: (change) => {
         writeAppearance(storageOf(), change);

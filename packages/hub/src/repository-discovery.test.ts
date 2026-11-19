@@ -170,7 +170,7 @@ describe("repository discovery", () => {
 });
 
 it("migrates existing ticket repositories once and leaves later repositories archived", () => {
-  const previous = open(migrations.slice(0, -1));
+  const previous = open(migrations.slice(0, -2));
   addTicket(previous, "novan-xu/Existing", 1);
   addTicket(previous, "novan-xu/existing", 2);
   const database = open();
@@ -181,4 +181,21 @@ it("migrates existing ticket repositories once and leaves later repositories arc
   ]);
   expect(repositories.setPinned("novan-xu/existing", false)).toBe(true);
   expect(createRepositoryAccounts(open(), clock).list().every((row) => !row.pinned)).toBe(true);
+});
+
+
+it("migrates and persists repository aliases independently of pins and discovery", () => {
+  const previous = open(migrations.slice(0, -1));
+  addTicket(previous, "Org/Project", 1);
+  const repositories = createRepositoryAccounts(open(), clock);
+  expect(repositories.setAlias("ORG/PROJECT", "  Project  ")).toBe(true);
+  expect(repositories.setAlias("org/missing", "Missing")).toBe(false);
+  repositories.setPinned("org/project", true);
+  repositories.replaceDiscovered(["novan-xu"], [{ repository: "org/project", account: "novan-xu", archived: false }]);
+  const reloaded = createRepositoryAccounts(open(), clock);
+  expect(reloaded.list()[0]).toMatchObject({ alias: "Project", pinned: true });
+  reloaded.setPinned("org/project", false);
+  expect(reloaded.list()[0]?.alias).toBe("Project");
+  reloaded.setAlias("org/project", "   ");
+  expect(createRepositoryAccounts(open(), clock).list()[0]?.alias).toBeUndefined();
 });

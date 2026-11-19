@@ -16,7 +16,7 @@ import type { CardActions } from "./WorkbenchView.js";
 export interface CanvasWorkbenchProps {
   readonly tickets: readonly Ticket[];
   readonly topics: readonly Conversation[];
-  readonly pinnedRepositories: readonly string[];
+  readonly pinnedRepositories: readonly { readonly repository: string; readonly alias?: string | null }[];
   readonly waiting: WaitingState;
   readonly actions: CardActions;
   readonly repository: string | null | undefined;
@@ -77,12 +77,12 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     for (const card of waiting.cards) if (card.kind !== "hold") map.set(card.ticket.id, card.ticket);
     return [...map.values()];
   }, [tickets, waiting.cards]);
-  const repositories = useMemo(() => [...props.pinnedRepositories].sort((a, b) => a.localeCompare(b)), [props.pinnedRepositories]);
+  const repositories = useMemo(() => [...props.pinnedRepositories].sort((a, b) => (a.alias ?? a.repository).localeCompare(b.alias ?? b.repository) || a.repository.localeCompare(b.repository)), [props.pinnedRepositories]);
   const canvas = useMemo(() => canvasOf(all, repository, new Set(stuck.keys()), new Map([...starts].map(([id, card]) => [id, card.before.map((before) => before.id)]))), [all, repository, stuck, starts]);
   useEffect(() => {
     if (props.focus === null || !waiting.known) return;
     const scopeFor = (name: string | null | undefined) =>
-      name == null ? name : repositories.find((pinned) => pinned.toLowerCase() === name.toLowerCase());
+      name == null ? name : repositories.find((pinned) => pinned.repository.toLowerCase() === name.toLowerCase())?.repository;
     const card = waiting.cards.find((entry) => entry.key === props.focus);
     if (card?.kind === "hold") {
       props.selectRepository(undefined);
@@ -121,13 +121,13 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     const matching = all.filter((ticket) => belongs(value, ticket.repository));
     const waitingHere = matching.some((ticket) => stuck.has(ticket.id) || starts.has(ticket.id)) || ((value === undefined || value === null) && holds.length > 0);
     const running = matching.some((ticket) => ticket.state !== "pending") || topics.some((topic) => belongs(value, topic.repository) && topic.state === "working");
-    return <button key={value ?? (value === null ? "daily" : "all")} type="button" className="wb-repo" aria-pressed={repository === value} onClick={() => chooseRepository(value)}>
+    return <button key={value ?? (value === null ? "daily" : "all")} type="button" className="wb-repo" title={typeof value === "string" ? value : undefined} aria-pressed={repository === value} onClick={() => chooseRepository(value)}>
       <span className={`dot dot--${waitingHere ? "warn" : running ? "ok" : "mute"}`} role="img" aria-label={text(waitingHere ? "workbench.mark.waits" : running ? "workbench.mark.runs" : "workbench.mark.idle")} /><span className="od-truncate">{label}</span><span className="count">{matching.length}</span>
     </button>;
   };
   return <div ref={layout} className={`wb-layout${dragging ? " wb-layout--dragging" : ""}`} style={{ "--wb-panel-width": `${panelWidth}px` } as CSSProperties}>
     <aside ref={railElement} className="wb-repos" aria-label={text("conversation.repository")}>
-      {rail(undefined, text("workbench.all"))}{repositories.map((name) => rail(name, name))}{rail(null, text("conversation.daily"))}
+      {rail(undefined, text("workbench.all"))}{repositories.map((row) => rail(row.repository, row.alias ?? row.repository))}{rail(null, text("conversation.daily"))}
     </aside>
     <div className="wb-mobile-tabs"><button type="button" aria-pressed={pane === "canvas"} onClick={() => setPane("canvas")}>{text("navigation.workbench")}</button><button type="button" aria-pressed={pane === "panel"} onClick={() => setPane("panel")}>{text("navigation.conversation")}</button></div>
     <main className={`wb-canvas ${pane === "panel" ? "wb-mobile-hidden" : ""}`} onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, textarea, select, .wcard")) props.selectTicket(null); }}>

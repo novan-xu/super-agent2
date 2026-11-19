@@ -62,6 +62,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     setMachineStorage: (name, storage) => answer(`setMachineStorage ${name}`, storage),
     setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
+    setAlias: (repository, alias) => answer(`setAlias ${repository} ${alias}`, settingsSnapshot()),
     setPinned: (repository, pinned) => answer(`setPinned ${repository} ${pinned}`, settingsSnapshot()),
     refreshRepositories: () => answer("refreshRepositories", {}),
     setTable: (table) => answer("setTable", { table }),
