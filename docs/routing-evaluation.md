@@ -93,7 +93,7 @@ than bigram between 8 % and 11 % wrong joins on both parts: on the test part at 
 57–49), on the train part at 20–25 of 234 (73–50 against 75–61), level at 19 (8.1 %). Below 8 % bigram is level or
 better on both parts (test 12 wrong joins: 64 against 57; train 15–18: 85–91 against 80–90).
 
-This is not statistically established. The paired bootstrap intervals above contain zero for the cost difference
+This is not statistically established. The paired bootstrap intervals under Results contain zero for the cost difference
 between bge-small-zh and bigram with weight-2 constants and for both kinds of error with weight-3 constants, the matched
 curves were drawn with the threshold moved on the very messages they are measured on, and the evaluator's
 recommendation was the strict bigram router. The shadow record exists to settle the choice on real use.
