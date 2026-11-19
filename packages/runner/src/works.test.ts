@@ -307,11 +307,14 @@ describe("a worker on the runner", () => {
     await works.close();
     const cleanupLogs: string[] = [];
     const restarted = start({ storage: () => ({}), log: (line) => cleanupLogs.push(line) });
+    expect(restarted.held().map(({ ticket }) => ticket).sort()).toEqual([51, 52]);
+    const registrations = await repo.must(["worktree", "list", "--porcelain", "-z"], owner);
     for (const ticket of [51, 52]) restarted.receive({ type: "work.stop", ticket, save: false, remove: true });
     await restarted.idle();
     expect(cleanupLogs).toEqual([]);
     for (const ticket of [51, 52]) {
-      expect(existsSync(join(projects, "_agent", "Sandbox in use", `t${ticket}`))).toBe(false);
+      const worktree = join(projects, "_agent", "Sandbox in use", `t${ticket}`);
+      expect(existsSync(worktree), JSON.stringify({ worktree, registrations })).toBe(false);
       expect(existsSync(join(nas, "super-agent-sandbox", "tickets", `t${ticket}`, "check.log"))).toBe(true);
       expect(await repo.must(["branch", "--list", task(ticket).branch], owner)).toBe("");
     }
