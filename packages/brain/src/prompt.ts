@@ -72,8 +72,30 @@ export function describeHistory(history: readonly HistoryItem[], root: string = 
     .join("\n\n");
 }
 
-export function inputText(inputs: readonly BrainInput[], root: string = defaultAttachmentsFolder): string {
-  return inputs.map((input) => withAttachments(input.text, input.attachments, root)).join("\n\n");
+const routingRules: Readonly<Record<NonNullable<BrainInput["routing"]>["rule"], string>> = {
+  a: "open question",
+  e: "reference",
+  b: "short reply",
+  c: "similarity",
+  d: "no confident match",
+};
+
+export function inputText(inputs: readonly BrainInput[], root: string = defaultAttachmentsFolder, withSpeakers = false): string {
+  return inputs.map((input) => {
+    const speaker = withSpeakers ? (input.source === "owner" ? "Owner: " : "Hub notice: ") : "";
+    const text = `${speaker}${withAttachments(input.text, input.attachments, root)}`;
+    const { routing } = input;
+    if (routing === undefined) {
+      return text;
+    }
+    const note = `[hub] Message ${input.entry ?? input.id} was routed here (${routingRules[routing.rule]}, ${routing.placement} topic). Hand over only if it clearly belongs elsewhere. If unsure, answer here.`;
+    const candidate = routing.placement === "new" ? routing.candidate : undefined;
+    const lines = candidate === undefined ? [note] : [
+      note,
+      `[hub] Candidate ${candidate.id} ${JSON.stringify(candidate.title)}${candidate.summary === "" ? "" : ` — ${candidate.summary}`}`,
+    ];
+    return [...lines, text].join("\n");
+  }).join("\n\n");
 }
 
 function changeLine(change: MemoryChange): string {

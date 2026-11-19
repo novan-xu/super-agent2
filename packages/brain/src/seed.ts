@@ -1,6 +1,6 @@
 import { type BrainInput, type Prepared, type Provider, quoteInlineLimit, type TopicBoardEntry } from "@super-agent2/protocol";
 import type { PromptImage } from "@super-agent2/programs";
-import { attachmentPath, describeHistory, inputText, memoryPrompt, promptImages, withAttachments } from "./prompt.js";
+import { attachmentPath, describeHistory, inputText, memoryPrompt, promptImages } from "./prompt.js";
 
 export const defaultSoftShare = 0.15;
 export const fallbackInputCapacity: Readonly<Record<Provider, number>> = { gpt: 128_000, claude: 200_000, deepseek: 128_000 };
@@ -65,9 +65,7 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     tickets: "[hub] Open tickets",
     board: prepared.seed === undefined ? "[hub] Topic board changes" : "[hub] Topic board",
   };
-  const input = options.continuing
-    ? inputs.map((item) => `${item.source === "owner" ? "Owner" : "Hub notice"}: ${withAttachments(item.text, item.attachments, attachments)}`).join("\n\n")
-    : inputText(inputs, attachments);
+  const input = inputText(inputs, attachments, options.continuing);
   const continuation = options.continuing
     ? "[hub] Another assistant was answering the owner and stopped because it became unavailable. Continue answering the latest input using the work already done. Do not repeat a command that already ran unless it needs to run again."
     : "";

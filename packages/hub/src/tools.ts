@@ -20,6 +20,7 @@ import {
   deploymentFile,
   MaterialName,
   MessageId,
+  TopicRename,
   mergedCommit,
   AttachmentId,
   type Attachment,
@@ -83,7 +84,14 @@ const ReadArguments = z.object({
 
 const StopArguments = z.object({ id: z.string().min(1) });
 const QuoteArguments = z.strictObject({ id: MessageId, offset: z.number().int().nonnegative().default(0) });
-const HandoverArguments = z.strictObject({ destination: ConversationId, message: MessageId.optional() });
+const HandoverArguments = z.strictObject({
+  destination: z.union([
+    ConversationId.describe("A destination topic id from the topic board"),
+    TopicRename.extend({ title: TopicRename.shape.title.describe("A new topic title in the owner's language") }),
+  ]),
+  message: MessageId.describe("An owner message id from this turn. Defaults to the latest owner message in the turn.").optional(),
+  ownerRequested: z.literal(true).describe("Set only when the owner explicitly asks to move the message.").optional(),
+});
 const AssignRepositoryArguments = z.strictObject({ repository: RepositoryName });
 
 const CodeKind = z.enum(codeKinds);
@@ -823,16 +831,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "handover",
         title: "Hand over an owner message",
-        description: "Move the current owner message to another topic when the owner asks or the message belongs there. The current turn stops and the destination answers it.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            destination: { type: "string", description: "The destination topic id from the topic board" },
-            message: { type: "string", description: "An owner message id in this turn. Defaults to the most recent owner message in the turn." },
-          },
-          required: ["destination"],
-          additionalProperties: false,
-        },
+        description: "Move a message when the owner asks or its automatic routing is clearly wrong. If unsure or it is a new aspect of the same subject, answer here. The current turn stops and the destination answers.",
+        inputSchema: z.toJSONSchema(HandoverArguments, { io: "input" }),
       },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
@@ -1309,9 +1309,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       case "handover": {
         const args = HandoverArguments.safeParse(parsed.data.arguments);
         const moved = conversation !== undefined && turn !== undefined && !aborted.aborted && conversations.brainReady() && args.success
-          ? conversations.handover(conversation, turn, args.data.destination, args.data.message) : undefined;
+          ? conversations.handover(conversation, turn, args.data.destination, args.data.message, args.data.ownerRequested) : undefined;
         result = moved?.ok === true ? { text: `Owner message ${moved.value} belongs to the destination topic now and will be delivered after withdrawal.` }
-          : { text: "An active turn with an owner message and an existing destination topic are required.", isError: true };
+          : { text: "An active turn, a message eligible for handover, and a valid destination are required.", isError: true };
         break;
       }
       case "set_topic_repository": {

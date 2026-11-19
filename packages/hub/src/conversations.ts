@@ -53,7 +53,7 @@ import type { TicketService } from "./tickets.js";
 import { createTopicRouter, type Routing, type RoutingOptions } from "./topic-routing.js";
 import { createTopicContext, type TopicContext } from "./topic-context.js";
 
-import { createTopicCorrections, defaultTopicArchiveMilliseconds, type TopicEdit } from "./topic-corrections.js";
+import { createTopicCorrections, defaultTopicArchiveMilliseconds, type HandoverDestination, type TopicEdit } from "./topic-corrections.js";
 
 export type ConversationEvent = ConversationUpdate | TurnUpdate | (EntryUpdate & StreamEntry) | EntryDelta | BrainUpdate | TopicHistoryUpdate;
 
@@ -93,7 +93,7 @@ export interface ConversationService {
   archiveIdle(): void;
   historyRevision(): number;
   move(message: string, destination: TopicMove["destination"], source?: string): TopicEdit<string>;
-  handover(source: string, turn: string, destination: string, message?: string): TopicEdit<string>;
+  handover(source: string, turn: string, destination: HandoverDestination, message?: string, ownerRequested?: boolean): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
   deliver(delivery: Delivery): string;
@@ -154,6 +154,7 @@ export const brainRestartedReason = text("turn.reason.brainRestarted");
 export const brainAbsentReason = text("turn.reason.brainAbsent");
 
 const titleLength = 80;
+const candidateSummaryLength = 320;
 const recoveredReason = "recovered after a restart";
 
 const ConversationRow = z.object({
@@ -195,6 +196,7 @@ const EntryRow = z.object({
   delivery_id: z.string().nullable(),
   created_at: z.number().int(),
   placement: OwnerEntry.shape.placement,
+  routing_rule: RoutingProposal.shape.decided.shape.rule.nullish(),
 });
 type EntryRow = z.infer<typeof EntryRow>;
 
@@ -396,14 +398,16 @@ export function createConversationService(options: ConversationServiceOptions): 
   const finishTurn = connection.prepare("UPDATE turns SET state = ?, reason = ?, ended_at = ?, ticket_writes_revoked = 1 WHERE id = ?");
   const revokeTicketWrites = connection.prepare("UPDATE turns SET ticket_writes_revoked = 1 WHERE id = ?");
   const changeTurnProvider = connection.prepare("UPDATE turns SET provider = ?, model = ? WHERE id = ?");
-  const placedByRouter = "r.owner_changed = 0 AND r.moved_at IS NULL AND e.conversation_id = r.placed_in";
+  const originalPlacement = "r.moved_at IS NULL AND e.handed_over = 0 AND e.conversation_id = r.placed_in";
+  const placedByRouter = `${originalPlacement} AND coalesce(r.owner_placed, r.owner_changed) = 0`;
   const joinedByRouter = `${placedByRouter} AND r.topic = r.placed_in`;
   const placement = `CASE WHEN ${joinedByRouter} THEN 'router-joined'
     WHEN ${placedByRouter} THEN 'router-opened'
     ELSE 'owner' END AS placement`;
   const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
-  const selectEntry = connection.prepare(`SELECT e.*, ${placement} FROM ${entrySource} WHERE e.id = ?`);
-  const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND moved_at IS NULL");
+  const routingColumns = `${placement}, CASE WHEN ${originalPlacement} AND r.owner_placed = 0 THEN r.rule END AS routing_rule`;
+  const selectEntry = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.id = ?`);
+  const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND owner_placed IS NOT 1 AND moved_at IS NULL AND brain_moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
   `);
@@ -412,14 +416,14 @@ export function createConversationService(options: ConversationServiceOptions): 
      WHERE e.conversation_id = ? AND (e.seq > ? OR e.turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY e.seq`,
   );
   const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND (? OR taken IS NOT 0) ORDER BY seq");
-  const selectWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE taken = 0 ORDER BY created_at, rowid");
-  const selectTopicWaiting = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND taken = 0 ORDER BY seq");
+  const selectWaiting = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.taken = 0 ORDER BY e.created_at, e.rowid`);
+  const selectTopicWaiting = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.conversation_id = ? AND e.taken = 0 ORDER BY e.seq`);
   const selectLastSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ?");
   const insertEntry = connection.prepare(
     `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, stream_seq)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
-  const streamSelect = `SELECT e.*, ${placement}, c.title AS topic_title, c.repository, c.needs_repository,
+  const streamSelect = `SELECT e.*, ${routingColumns}, c.title AS topic_title, c.repository, c.needs_repository,
     CASE WHEN ${joinedByRouter} THEN NOT EXISTS (
       SELECT 1 FROM conversation_entries AS later WHERE later.conversation_id = e.conversation_id AND later.seq > e.seq AND later.kind = 'owner'
     ) END AS latest_owner
@@ -643,6 +647,19 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
+  const routingNote = (row: EntryRow, match?: string): BrainInput["routing"] => {
+    const rule = row.routing_rule;
+    if (rule == null) return undefined;
+    if (row.placement === "router-joined") return { placement: "existing", rule };
+    const topic = match === undefined ? undefined : get(match);
+    if (topic === undefined || topic.id === row.conversation_id) return { placement: "new", rule };
+    const characters = [...topics.summary(topic.id).replace(/\s+/gu, " ").trim()];
+    const summary = characters.length > candidateSummaryLength
+      ? `${characters.slice(0, candidateSummaryLength - 1).join("")}…`
+      : characters.join("");
+    return { placement: "new", rule, candidate: { id: topic.id, title: topic.title, summary } };
+  };
+
   const deliver = (row: EntryRow) => {
     if (row.prompt === null || row.taken !== 0 || corrections.blocked(row.conversation_id, row.seq)) {
       return;
@@ -654,6 +671,10 @@ export function createConversationService(options: ConversationServiceOptions): 
       source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached),
       ...(body?.questionResponse === undefined ? {} : { questionResponse: body.questionResponse }),
     };
+    const routing = routingNote(row, body?.possibleMatch);
+    if (routing !== undefined) {
+      input.routing = routing;
+    }
     if (row.quote_id !== null) {
       const quoted = quoteOf(row.quote_id);
       if (quoted !== undefined) {
@@ -670,10 +691,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     sendToBrain({ type: "input", conversation: row.conversation_id, input });
   };
 
-  const createOwnerTopic = (at: number, message: string, attachments: readonly Attachment[], scope: TopicScope, repository: string | null) =>
-    storeTopic(options.database, at, titleOf(message, attachments), { repository, needsRepository: scope.kind === "code" && repository === null });
+  const createOwnerTopic = (at: number, title: string, scope: TopicScope, repository: string | null) =>
+    storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null });
 
-  const createMoveDestination = (id: string, at: number): string => {
+  const createMoveDestination = (id: string, at: number, title?: string): string => {
     const row = EntryRow.parse(selectEntry.get(id));
     const owner = OwnerEntry.parse(toEntry(row));
     const source = toConversation(selectConversation.get(row.conversation_id));
@@ -683,7 +704,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       : original?.["scope"] === "code" ? { kind: "code" }
       : repository !== null ? { kind: "repository", repository }
       : source.needsRepository === true ? { kind: "code" } : { kind: "daily" };
-    return createOwnerTopic(at, owner.text, owner.attachments, scope, router.repositoryFor(owner.text, scope));
+    return createOwnerTopic(at, title ?? titleOf(owner.text, owner.attachments), scope, router.repositoryFor(owner.text, scope));
   };
 
   const corrections = createTopicCorrections({
@@ -693,6 +714,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     ready: () => link?.ready === true,
     send: sendToBrain,
     topic: rawGet,
+    isRouted: (entry) => EntryRow.parse(selectEntry.get(entry)).routing_rule != null,
     createMoveDestination,
     announce,
     historyChanged: (topics) => emit({ type: "topic.history", topics }),
@@ -1088,11 +1110,11 @@ export function createConversationService(options: ConversationServiceOptions): 
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (conversation === undefined) {
-        const topic = createOwnerTopic(at, message, attachments, scope, repository);
+        const topic = createOwnerTopic(at, titleOf(message, attachments), scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
-      if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, ownerChanged);
+      if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: !pending });
       if (pending) deletePending.run(id);
       connection.exec("COMMIT");
     } catch (error) {

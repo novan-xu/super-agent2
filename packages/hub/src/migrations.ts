@@ -854,6 +854,17 @@ export const migrations: readonly Migration[] = [
     version: 37,
     sql: `ALTER TABLE routing_decisions ADD COLUMN owner_changed INTEGER NOT NULL DEFAULT 0 CHECK (owner_changed IN (0, 1));`,
   },
+  {
+    version: 38,
+    sql: `
+      ALTER TABLE routing_decisions ADD COLUMN owner_placed INTEGER CHECK (owner_placed IN (0, 1));
+      ALTER TABLE routing_decisions ADD COLUMN brain_moved_to TEXT;
+      ALTER TABLE routing_decisions ADD COLUMN brain_moved_at INTEGER;
+      ALTER TABLE routing_decisions ADD COLUMN brain_overridden INTEGER NOT NULL DEFAULT 0 CHECK (brain_overridden IN (0, 1));
+      ALTER TABLE conversation_entries ADD COLUMN handed_over INTEGER NOT NULL DEFAULT 0 CHECK (handed_over IN (0, 1));
+      UPDATE routing_decisions SET owner_placed = 1 WHERE owner_changed = 1;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -7,12 +7,14 @@ import type { HubDatabase } from "./database.js";
 export const defaultTopicArchiveMilliseconds = 86_400_000;
 
 export type TopicEdit<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: "not_found" | "conflict" };
+export type HandoverDestination = string | { readonly title: string };
 
 const missing = { ok: false, error: "not_found" } as const;
 const conflict = { ok: false, error: "conflict" } as const;
 const success = <T>(value: T): TopicEdit<T> => ({ ok: true, value });
 
 const Id = z.object({ id: z.string() });
+const HandoverInput = Id.extend({ handed_over: z.number() });
 const Transfer = z.object({ entry: z.string(), source: z.string(), input: z.string(), reset_session: z.number() });
 const Merge = z.object({ id: z.string(), source: z.string(), destination: z.string() });
 const Alias = Merge.omit({ id: true });
@@ -27,7 +29,8 @@ interface TopicCorrectionsOptions {
   readonly ready: () => boolean;
   readonly send: (message: HubToBrain) => boolean;
   readonly topic: (id: string) => Conversation | undefined;
-  readonly createMoveDestination: (entry: string, at: number) => string;
+  readonly isRouted: (entry: string) => boolean;
+  readonly createMoveDestination: (entry: string, at: number, title?: string) => string;
   readonly announce: (id: string) => void;
   readonly historyChanged: (topics: string[]) => void;
   readonly ticketsChanged: (ids: number[]) => void;
@@ -47,7 +50,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const listAliases = connection.prepare("SELECT id AS source, merged_into AS destination FROM conversations WHERE merged_into IS NOT NULL");
   const selectOwner = connection.prepare("SELECT id, conversation_id, turn_id, delivery_id FROM conversation_entries WHERE id = ? AND kind = 'owner'");
   const selectInput = connection.prepare(`
-    SELECT e.id FROM conversation_entries e JOIN turns t ON t.id = e.turn_id
+    SELECT e.id, e.handed_over FROM conversation_entries e JOIN turns t ON t.id = e.turn_id
     WHERE t.id = ? AND t.conversation_id = ? AND t.state = 'running' AND t.ticket_writes_revoked = 0
       AND e.conversation_id = t.conversation_id AND e.kind = 'owner' AND e.taken = 1 AND (? IS NULL OR e.id = ?)
     ORDER BY e.seq DESC LIMIT 1
@@ -82,10 +85,11 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const moveEntry = connection.prepare(`
     UPDATE conversation_entries SET conversation_id = ?,
       seq = (SELECT coalesce(max(seq), 0) + 1 FROM conversation_entries WHERE conversation_id = ?),
-      turn_id = NULL, taken = 0, delivery_id = ?, prompt = coalesce(prompt, json_extract(body, '$.text'), ''),
+      turn_id = NULL, taken = 0, delivery_id = ?, handed_over = max(handed_over, ?), prompt = coalesce(prompt, json_extract(body, '$.text'), ''),
       body = json_remove(body, '$.possibleMatch') WHERE id = ?
   `);
-  const correctRouting = connection.prepare("UPDATE routing_decisions SET moved_to = ?, moved_at = ? WHERE entry = ?");
+  const correctRouting = connection.prepare("UPDATE routing_decisions SET moved_to = ?, moved_at = ?, brain_overridden = (brain_moved_at IS NOT NULL) WHERE entry = ?");
+  const correctBrainRouting = connection.prepare("UPDATE routing_decisions SET brain_moved_to = ?, brain_moved_at = ? WHERE entry = ?");
   const activate = connection.prepare("UPDATE conversations SET topic_state = 'active', activity_at = max(activity_at, ?), updated_at = ? WHERE id = ?");
   const saveMerge = connection.prepare("INSERT INTO topic_merges (id, source, destination) VALUES (?, ?, ?)");
   const selectMerge = connection.prepare("SELECT * FROM topic_merges WHERE id = ?");
@@ -176,7 +180,10 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
   };
 
-  const move = (id: string, destinationId: TopicMove["destination"], expectedSource?: string): TopicEdit<string> => {
+  const move = (
+    id: string, destinationId: TopicMove["destination"],
+    { expectedSource, title, byBrain = false }: { expectedSource?: string | undefined; title?: string; byBrain?: boolean } = {},
+  ): TopicEdit<string> => {
     const row = selectOwner.get(id);
     const destination = destinationId === null ? null : resolve(destinationId);
     if (row === undefined || destination === undefined) {
@@ -192,10 +199,10 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
     const now = clock.now();
     const moved = transaction(() => {
-      const target = destination ?? options.createMoveDestination(id, now);
+      const target = destination ?? options.createMoveDestination(id, now, title);
       saveTransfer.run(id, source, owner.delivery_id ?? id, Number(owner.turn_id !== null));
-      moveEntry.run(target, target, randomUUID(), id);
-      correctRouting.run(target, now, id);
+      moveEntry.run(target, target, randomUUID(), Number(byBrain), id);
+      (byBrain ? correctBrainRouting : correctRouting).run(target, now, id);
       if (owner.turn_id !== null) {
         revoke.run(owner.turn_id, source);
         if (clearSummary.run(owner.turn_id).changes > 0) {
@@ -241,7 +248,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       }
     },
     finishOfflineMerges,
-    move,
+    move: (id: string, destination: TopicMove["destination"], expectedSource?: string) => move(id, destination, { expectedSource }),
     withdrawing: (source: string, turn: string, input: string) => {
       if (findTransfer.get(source, input) !== undefined) {
         revoke.run(turn, source);
@@ -267,16 +274,20 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
         }
       }
     },
-    handover: (source: string, turn: string, destination: string, message?: string): TopicEdit<string> => {
-      if (resolve(destination) === source) {
+    handover: (source: string, turn: string, destination: HandoverDestination, message?: string, ownerRequested = false): TopicEdit<string> => {
+      if (typeof destination === "string" && resolve(destination) === source) {
         return conflict;
       }
       const input = selectInput.get(turn, source, message ?? null, message ?? null);
       if (input === undefined) {
         return conflict;
       }
-      const { id } = Id.parse(input);
-      const moved = move(id, destination);
+      const { id, handed_over } = HandoverInput.parse(input);
+      if (handed_over === 1 || (!ownerRequested && !options.isRouted(id))) {
+        return conflict;
+      }
+      const moved = typeof destination === "string" ? move(id, destination, { byBrain: true })
+        : move(id, null, { byBrain: true, title: destination.title });
       return moved.ok ? success(id) : moved;
     },
     rename: (id: string, title: string): TopicEdit<string> => {

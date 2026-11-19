@@ -126,6 +126,13 @@ async function brainSocket(running: Hub): Promise<{ socket: WebSocket; received:
   return { socket, received };
 }
 
+function connect(running: Hub) {
+  const messages: HubToBrain[] = [];
+  const link = running.conversations.attach({ send: (message) => messages.push(message), close: () => undefined });
+  link.receive({ type: "hello", protocol: protocolVersion, running: [] });
+  return { link, messages };
+}
+
 describe("the brain's token", () => {
   it("is made once, kept in a file, and accepted only as a bearer token", () => {
     const path = join(dataDir, "secrets", "brain.token");
@@ -457,6 +464,7 @@ describe("the topic stream", () => {
   it("sends the shown destination without rerouting and records both kinds of owner override", async () => {
     const running = await start();
     const service = running.conversations;
+    const { messages } = connect(running);
     const scope = { kind: "repository", repository: "owner/project" } as const;
     const shown = openTicket(running, undefined, scope.repository).conversation!;
     const { proposal } = StreamPreview.parse(await (await streamRequest(running, "/preview", { text: "Yes", attachmentNames: [], scope })).json());
@@ -472,22 +480,27 @@ describe("the topic stream", () => {
     const changed = await send({ topic: newer, proposal });
     const opened = await send({ newTopic: true, proposal });
     const routed = await send({});
-    expect(accepted).toMatchObject({ topic: { id: shown }, entry: { placement: "router-joined" } });
+    expect(accepted).toMatchObject({ topic: { id: shown }, entry: { placement: "owner" } });
     expect(changed).toMatchObject({ topic: { id: newer }, entry: { placement: "owner" } });
     expect(opened).toMatchObject({ topic: { title: "Yes", repository: scope.repository }, entry: { placement: "owner" } });
     expect(opened.entry).not.toHaveProperty("possibleMatch");
     expect(routed).toMatchObject({ topic: { id: opened.topic.id }, entry: { placement: "router-joined" } });
-    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed, rule FROM routing_decisions ORDER BY rowid").all()).toEqual([
-      { topic: shown, placed_in: shown, owner_changed: 0, rule: "b" },
-      { topic: shown, placed_in: newer, owner_changed: 1, rule: "b" },
-      { topic: shown, placed_in: opened.topic.id, owner_changed: 1, rule: "b" },
-      { topic: opened.topic.id, placed_in: opened.topic.id, owner_changed: 0, rule: "b" },
+    const inputs = messages.flatMap((message) => message.type === "input" ? [message.input] : []);
+    expect(inputs.map(({ id }) => id)).toEqual([accepted.entry.id, changed.entry.id, opened.entry.id, routed.entry.id]);
+    for (const input of inputs.slice(0, 3)) expect(input).not.toHaveProperty("routing");
+    expect(inputs[3]?.routing).toEqual({ placement: "existing", rule: "b" });
+    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed, owner_placed, rule FROM routing_decisions ORDER BY rowid").all()).toEqual([
+      { topic: shown, placed_in: shown, owner_changed: 0, owner_placed: 1, rule: "b" },
+      { topic: shown, placed_in: newer, owner_changed: 1, owner_placed: 1, rule: "b" },
+      { topic: shown, placed_in: opened.topic.id, owner_changed: 1, owner_placed: 1, rule: "b" },
+      { topic: opened.topic.id, placed_in: opened.topic.id, owner_changed: 0, owner_placed: 0, rule: "b" },
     ]);
   });
 
   it("opens a new topic as previewed even when a matching topic becomes available before sending", async () => {
     const running = await start();
     const service = running.conversations;
+    const { messages } = connect(running);
     const scope = { kind: "code" } as const;
     const { proposal } = await service.previewStream({ text: "Continue", attachmentNames: [], scope });
     expect(proposal.decided.topic).toBeNull();
@@ -496,9 +509,11 @@ describe("the topic stream", () => {
     expect(response.status).toBe(202);
     const opened = StreamEntry.parse(await response.json());
     expect(opened.topic.id).not.toBe(existing);
-    expect(opened).toMatchObject({ topic: { title: "Continue", repository: null, needsRepository: true }, entry: { placement: "router-opened" } });
-    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed FROM routing_decisions").get())
-      .toEqual({ topic: null, placed_in: opened.topic.id, owner_changed: 0 });
+    expect(opened).toMatchObject({ topic: { title: "Continue", repository: null, needsRepository: true }, entry: { placement: "owner" } });
+    expect(messages.at(-1)).toMatchObject({ type: "input", input: { id: opened.entry.id } });
+    expect(messages.at(-1)).not.toHaveProperty("input.routing");
+    expect(running.database.connection.prepare("SELECT topic, placed_in, owner_changed, owner_placed FROM routing_decisions").get())
+      .toEqual({ topic: null, placed_in: opened.topic.id, owner_changed: 0, owner_placed: 1 });
   });
 
   it.each(["archived", "merged"] as const)("refuses a shown destination that was %s without recording or placing the message", async (state) => {
@@ -679,6 +694,77 @@ describe("topic context", () => {
     return { link, prepare, finish };
   }
 
+  it("replays legacy placements without allowing an automatic handover of ambiguous input", async () => {
+    const earlier = openDatabase({ dataDir, clock, migrations: migrations.filter(({ version }) => version <= 37) });
+    earlier.connection.exec(`
+      INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES
+        ('source', 'Source', 'idle', 100, 100), ('target', 'Target', 'idle', 100, 100);
+      INSERT INTO conversation_entries (id, conversation_id, seq, kind, body, prompt, taken, created_at, stream_seq) VALUES
+        ('ambiguous', 'source', 1, 'owner', '{"text":"Pending request"}', 'Pending request', 0, 100, 1),
+        ('changed', 'source', 2, 'owner', '{"text":"Explicit override"}', 'Explicit override', 0, 100, 2);
+      INSERT INTO routing_decisions (entry, decided_at, scope, candidates, configuration, rule, topic, placed_in, owner_changed) VALUES
+        ('ambiguous', 100, 'daily', 2, 'bigram', 'b', 'source', 'source', 0),
+        ('changed', 100, 'daily', 2, 'bigram', 'b', 'target', 'source', 1);
+    `);
+    earlier.close();
+    const running = await start();
+    const { link, messages } = connect(running);
+    const inputs = messages.flatMap((message) => message.type === "input" ? [message.input] : []);
+    expect(inputs.map(({ id }) => id)).toEqual(["ambiguous", "changed"]);
+    for (const input of inputs) expect(input).not.toHaveProperty("routing");
+    expect(running.conversations.entries("source")).toMatchObject([
+      { id: "ambiguous", placement: "router-joined" }, { id: "changed", placement: "owner" },
+    ]);
+    link.receive({ type: "turn.started", conversation: "source", turn: "legacy", inputs: ["ambiguous"], provider: "gpt", model: "model" });
+    expect(running.conversations.handover("source", "legacy", "target")).toEqual({ ok: false, error: "conflict" });
+    expect(running.database.connection.prepare("SELECT owner_placed FROM routing_decisions ORDER BY rowid").all())
+      .toEqual([{ owner_placed: null }, { owner_placed: 1 }]);
+  });
+
+  it("sends the routing rule and a clipped candidate summary on first delivery and reconnect", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const opened = (await service.sendToStream(undefined, "Initial topic", []))!;
+    expect(messages.at(-1)).toMatchObject({ type: "input", input: { routing: { placement: "new", rule: "d" } } });
+    expect(messages.at(-1)).not.toHaveProperty("input.routing.candidate");
+
+    const topic = opened.topic.id;
+    const first = service.send(topic, "Planning the release " + "🚀".repeat(170))!;
+    const turn = { conversation: topic, turn: "summary-turn" };
+    link.receive({ type: "turn.started", ...turn, inputs: [opened.entry.id, first.id], provider: "gpt", model: "model" });
+    link.receive({ type: "text", ...turn, block: "answer", delta: "Confirmed " + "🌱".repeat(175) });
+    link.receive({ type: "turn.finished", ...turn, outcome: "completed", reason: null });
+    const second = service.send(topic, "Continue the release planning " + "🚀".repeat(170))!;
+    const next = { conversation: topic, turn: "second-summary-turn" };
+    link.receive({ type: "turn.started", ...next, inputs: [second.id], provider: "gpt", model: "model" });
+    link.receive({ type: "text", ...next, block: "answer", delta: "Checklist " + "🌱".repeat(175) });
+    link.receive({ type: "turn.finished", ...next, outcome: "completed", reason: null });
+
+    const split = (await service.sendToStream(undefined, "Something entirely different", []))!;
+    expect(split.entry).toMatchObject({ possibleMatch: topic });
+    const delivered = messages.at(-1);
+    expect(delivered).toMatchObject({
+      type: "input", conversation: split.topic.id,
+      input: { id: split.entry.id, routing: { placement: "new", rule: "d", candidate: { id: topic, title: "Initial topic" } } },
+    });
+    const routing = delivered?.type === "input" ? delivered.input.routing : undefined;
+    const summary = routing?.placement === "new" ? routing.candidate?.summary ?? "" : "";
+    const full = service.topics.summary(topic).replace(/\s+/gu, " ").trim();
+    expect(summary).toBe([...full].slice(0, 319).join("") + "…");
+    expect([...summary]).toHaveLength(320);
+    const reconnected = connect(running);
+    expect(reconnected.messages).toContainEqual(delivered);
+    const splitTurn = { conversation: split.topic.id, turn: "split" };
+    reconnected.link.receive({ type: "turn.started", ...splitTurn, inputs: [split.entry.id], provider: "gpt", model: "model" });
+    expect(service.handover(split.topic.id, splitTurn.turn, topic)).toEqual({ ok: true, value: split.entry.id });
+    expect(reconnected.messages.at(-1)).toEqual({ type: "input.withdraw", conversation: split.topic.id, input: split.entry.id });
+    reconnected.link.receive({ type: "turn.finished", ...splitTurn, outcome: "interrupted", reason: null });
+    reconnected.link.receive({ type: "input.withdrawn", conversation: split.topic.id, input: split.entry.id });
+    expect(reconnected.messages.at(-1)).toMatchObject({ type: "input", conversation: topic, input: { entry: split.entry.id } });
+    expect(reconnected.messages.at(-1)).not.toHaveProperty("input.routing");
+  });
+
   it("seeds complete turns through 50, then the older summary and the newest 50 turns", async () => {
     const running = await start();
     const topic = running.conversations.create().id;
@@ -774,13 +860,6 @@ describe("topic context", () => {
 });
 
 describe("topic corrections and archive policy", () => {
-  function connect(running: Hub) {
-    const messages: HubToBrain[] = [];
-    const link = running.conversations.attach({ send: (message) => messages.push(message), close: () => undefined });
-    link.receive({ type: "hello", protocol: protocolVersion, running: [] });
-    return { link, messages };
-  }
-
   async function topicRequest(running: Hub, id: string, action = "", body?: object) {
     return fetch(`${base(running)}/api/conversations/${id}${action}`, {
       headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json", origin: base(running) },
