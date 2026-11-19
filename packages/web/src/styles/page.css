@@ -25,11 +25,19 @@ a.tab { color: var(--muted); }
   .conv:not(.conv--compact) .conv-pick { display: none; }
 }
 @media (max-width: 767px) {
+  .conv-bar { gap: var(--space-1); }
+  .conv-navigation { gap: var(--space-1); }
   .conv-tabs { flex: 1 0 auto; }
-  .conv-tabs a { flex: 1; }
-  .conv-repository { width: 100%; }
+  .conv-tabs a { flex: 1; min-height: 32px; }
+  .conv-repository { width: 100%; min-height: 36px; font-size: var(--text-base); }
+  .conv-pick { min-height: 36px; }
+  .conv-current .icon-btn { width: 36px; height: 36px; }
   .conv-toolbar .brain-chip .mono { display: none; }
   .conv-title { font-size: var(--text-lg); }
+  .composer-foot select.field.composer-destination { min-height: 36px; font-size: var(--text-base); }
+  .stream .msg-text h1 { font-size: var(--text-base); }
+  .stream .msg-text h2 { font-size: var(--text-md); }
+  .stream .msg-text h3, .stream .msg-text h4 { font-size: var(--text-sm); }
 }
 
 .conv-list { display: grid; gap: 2px; }
