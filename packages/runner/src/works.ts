@@ -599,7 +599,7 @@ export function createWorks(options: WorksOptions): Works {
       codexConfig: workerCodexConfig,
       processTree: true,
     });
-    const handle = adapter.open({ session, tools: null, workspace: work.paths.worktree }, (event) => onProgram(work, handle, event));
+    const handle = adapter.open({ session, tools: null, ...(task.extraMcp === undefined ? {} : { extraMcp: task.extraMcp }), workspace: work.paths.worktree }, (event) => onProgram(work, handle, event));
     work.handle = handle;
     const pid = handle.processId?.();
     if (pid !== undefined) {

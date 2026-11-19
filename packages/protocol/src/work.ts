@@ -1,3 +1,4 @@
+import { ExtraMcpServer } from "./extra-mcp.js";
 import { z } from "zod";
 import { Attachment, AttachmentId } from "./attachments.js";
 import { GitHubAccount } from "./commands.js";
@@ -139,6 +140,7 @@ export const WorkTask = z.object({
   takeover: z.boolean().default(false),
   folder: Ticket.optional(),
   environment: z.record(z.string(), z.string()),
+  extraMcp: z.array(ExtraMcpServer).optional(),
 });
 export type WorkTask = z.infer<typeof WorkTask>;
 
@@ -174,6 +176,7 @@ export const TaskAssignment = z.object({
   takeover: z.boolean().default(false),
   folder: Ticket.optional(),
   environment: z.record(z.string(), z.string()).default({}),
+  extraMcp: z.array(ExtraMcpServer).optional(),
 });
 export type TaskAssignment = z.infer<typeof TaskAssignment>;
 

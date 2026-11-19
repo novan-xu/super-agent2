@@ -113,6 +113,7 @@ function messageOf(error: unknown): string {
 }
 
 export function createBrain(options: BrainOptions): Brain {
+  let extraMcp: import("@super-agent2/protocol").ExtraMcpServer[] = [];
   const { transport, adapters } = options;
   const newId = options.newId ?? randomUUID;
   const maximumOpen = options.maximumOpen ?? 4;
@@ -350,6 +351,7 @@ export function createBrain(options: BrainOptions): Brain {
       {
         session,
         tools: { url: options.tools.url, token: options.tools.token, conversation: state.id, turn: turn.id },
+        extraMcp,
         workspace: options.workspace,
       },
       (event) => {
@@ -693,6 +695,10 @@ export function createBrain(options: BrainOptions): Brain {
     status,
     receive: (message) => {
       if (closing) {
+        return;
+      }
+      if (message.type === "hello") {
+        extraMcp = message.extraMcp ?? [];
         return;
       }
       if (message.type === "order") {
