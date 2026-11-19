@@ -598,7 +598,8 @@ The runner checks paths on its own platform and reports the folders in use and t
 Cleared settings let the corresponding `runner.env` values take effect.
 
 Within a projects folder, the runner reuses a first-level checkout whose `origin` names the repository, regardless of the checkout's folder name or remote URL form.
-It makes one checkout under the repository name when a match is absent.
+When no origin matches, it reuses a Git checkout whose first-level folder name matches the repository name without regard to case.
+It makes one checkout under the repository name when neither match is present.
 Code tickets get separate branches and worktrees at `_agent/<checkout folder>/t<ticket>`.
 Tasks with a repository get a detached worktree, and tasks without one get `_agent/_tasks/t<ticket>`.
 Preparation is serialized per repository.

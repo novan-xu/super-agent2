@@ -58,7 +58,7 @@ import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
 import { artifactsVariable, type StorageSelection, ticketArtifacts } from "./storage.js";
-import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, withRepository, type WorkPaths, workPaths } from "./workplace.js";
+import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, trackingRemote, withRepository, type WorkPaths, workPaths } from "./workplace.js";
 import { checkTaskHandback, clearOutput, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
@@ -114,12 +114,16 @@ export interface Works {
   close(): Promise<void>;
 }
 
-const WorkspaceLocation = z.object({ clone: z.string().min(1), worktree: z.string().min(1), scratch: z.string().min(1).optional(), shared: z.literal(true).optional() });
+function checkoutMatchNote(paths: WorkPaths): string {
+  return paths.matchedByName === undefined ? "" : `Matched checkout ${paths.clone} by folder name; origin: ${paths.matchedByName.origin ?? "not configured"}`;
+}
+
+const WorkspaceLocation = z.object({ clone: z.string().min(1), worktree: z.string().min(1), scratch: z.string().min(1).optional(), shared: z.literal(true).optional(), matchedByName: z.object({ origin: z.string().nullable() }).optional() });
 type WorkspaceLocation = z.infer<typeof WorkspaceLocation>;
 
 function locationOf(paths: WorkPaths): WorkspaceLocation {
-  const { clone, worktree, scratch, shared } = paths;
-  return { clone, worktree, scratch, shared };
+  const { clone, worktree, scratch, shared, matchedByName } = paths;
+  return { clone, worktree, scratch, shared, matchedByName };
 }
 
 function useLocation(paths: WorkPaths, workspace: WorkspaceLocation | null | undefined): WorkPaths {
@@ -130,6 +134,7 @@ function useLocation(paths: WorkPaths, workspace: WorkspaceLocation | null | und
     worktree: workspace.worktree,
     ...(workspace.scratch === undefined ? {} : { scratch: workspace.scratch }),
     ...(workspace.shared === undefined ? {} : { shared: workspace.shared }),
+    ...(workspace.matchedByName === undefined ? {} : { matchedByName: workspace.matchedByName }),
   };
 }
 
@@ -634,7 +639,7 @@ export function createWorks(options: WorksOptions): Works {
                   ? `, carrying over the uncommitted changes found there (a copy is on ${prepared.leftover.branch})`
                   : `; the uncommitted changes found there did not apply cleanly and are kept on ${prepared.leftover.branch}`
             }`
-          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`, artifactsNote(work)].filter(Boolean).join(". "),
+          : `Reusing the worktree ${work.paths.worktree} on ${task.branch}`, checkoutMatchNote(work.paths), artifactsNote(work)].filter(Boolean).join(". "),
     });
     const session = task.session ?? work.record.session;
     try {
@@ -646,7 +651,7 @@ export function createWorks(options: WorksOptions): Works {
     const where = place(work);
     const waiting = work.queue.splice(0);
     const leftover = prepared.leftover === null ? [] : [leftoverText({ ...prepared.leftover, into: task.branch, base: prepared.base })];
-    const state = task.takeover ? [takeoverText(await folderState(git, work.paths.worktree, prepared.base), task.branch, prepared.base)] : [];
+    const state = task.takeover ? [takeoverText(await folderState(git, work.paths.worktree, prepared.base, trackingRemote(work.paths)), task.branch, prepared.base)] : [];
     if (work.task !== task || work.stopping) {
       return;
     }
@@ -689,6 +694,8 @@ export function createWorks(options: WorksOptions): Works {
         }
         work.record = { ...work.record, commit: checkout.commit, base: checkout.base };
         save(work);
+        const matchNote = checkoutMatchNote(work.paths);
+        if (matchNote !== "") details.push(matchNote);
         details.push(`${checkout.created ? "Checked out" : "Kept the checkout of"} ${task.checkout.repository} at ${checkout.commit} in ${work.paths.worktree}`);
         if (task.deploys) {
           const problem = deploymentProblem(readDeploymentAt(work.paths.worktree), options.machine, checkout.commit);
