@@ -202,6 +202,28 @@ async function failThreeRounds(started: Started, issue: number): Promise<Ticket>
 }
 
 describe("the failure loop, unattended", () => {
+  it("passes a code worker's failure report and output to the brain for a guided round", async () => {
+    const { running, runner, conversation } = await start();
+    const ticket = begin(running, conversation, 4);
+    const report = { en: "The package registry is unavailable.", zh: "软件包仓库无法访问。" };
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    event(runner, ticket.id, 1, { kind: "text", block: "b", delta: "The install failed before the tests could run." });
+    event(runner, ticket.id, 1, { kind: "failed", failure: "no-pull-request", reason: report.en, report });
+
+    expect(current(running, ticket.id)).toMatchObject({
+      state: "working", round: 0, report, work: { state: "failed", failure: "no-pull-request", reason: report.en },
+    });
+    const [told] = notices(running, conversation);
+    expect(told?.prompt).toContain(report.en);
+    expect(told?.prompt).toContain(report.zh);
+    expect(told?.prompt).toContain("The install failed before the tests could run.");
+    expect(told?.prompt).toContain("Your guidance starts round 1");
+
+    const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.id, guidance: guidance(1) }, conversation);
+    expect(guided.isError, guided.text).toBe(false);
+    expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
+  });
+
   it("reports a killed step and its log and accepts a guided round", async () => {
     const { running, runner, conversation } = await start();
     const ticket = begin(running, conversation, 5);

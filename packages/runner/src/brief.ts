@@ -43,6 +43,8 @@ function issueLines(task: WorkTask): string[] {
   ];
 }
 
+const failedHandback = 'If you cannot hand in a pull request for any open issue, write the same file with "outcome": "failed" and a bilingual "report" explaining why.';
+
 export function taskText(task: WorkTask, place: BriefPlace): string {
   return [
     "# Your task",
@@ -57,6 +59,7 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     ...issueLines(task),
     "",
     `Hand in each pull request by writing the JSON file at: ${place.handback}`,
+    failedHandback,
   ].join("\n");
 }
 
@@ -73,6 +76,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
     "[hub] Your previous turn was cut off because the machine's runner restarted. Continue the task from where you left off.",
     "Check `git status` and `git log` in your working folder first, and look at what is already on the branch and in any open pull request from it.",
     `Hand in by writing the JSON file at ${place.handback} when a pull request is open, as described at the start.`,
+    failedHandback,
     ...artifactLines(place.artifacts),
     task.note === null ? "" : `\n${task.note}`,
     "",
@@ -83,7 +87,7 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, ...artifactLines(place.artifacts)].join("\n");
+  return [`[hub] ${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, failedHandback, ...artifactLines(place.artifacts)].join("\n");
 }
 
 export interface LeftoverPlace {

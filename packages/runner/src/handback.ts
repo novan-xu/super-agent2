@@ -95,13 +95,15 @@ export function readBranchPullWith(run: ProcessRunner, gh: string): BranchPullRe
 export type HandbackOutcome =
   | { readonly ok: true; readonly outcome: "finished"; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
   | { readonly ok: true; readonly outcome: "settled" }
+  | { readonly ok: true; readonly outcome: "failed"; readonly report: GeneratedText }
   | { readonly ok: false; readonly problem: string };
 
 export interface HandbackCheck extends GitHubContext {
   readonly path: string;
   readonly branch: string;
   readonly outstanding: readonly number[];
-  readonly closedOutside: readonly number[];
+  readonly closedOutside?: readonly number[] | undefined;
+  readonly readClosedIssues: ClosedIssueReader;
   readonly read: PullRequestReader;
   readonly readBranchPull: BranchPullReader;
 }
@@ -111,41 +113,67 @@ function listed(numbers: readonly number[]): string {
 }
 
 export async function checkHandback(check: HandbackCheck): Promise<HandbackOutcome> {
-  const open = check.outstanding.filter((issue) => !check.closedOutside.includes(issue));
-  const outcome = await checkPullHandback(check, open);
-  if (outcome.ok || open.length > 0) {
-    return outcome;
+  const handback = readHandback(check.path);
+  const failure = handback.kind === "given" && handback.value.outcome === "failed"
+    ? { ok: true, outcome: "failed", report: handback.value.report } as const : undefined;
+  try {
+    const closed = check.closedOutside ?? await check.readClosedIssues(check, check.outstanding);
+    const open = check.outstanding.filter((issue) => !closed.includes(issue));
+    const outcome = await checkPullHandback(check, open, handback);
+    if (open.length > 0 || (outcome.ok && outcome.outcome === "finished")) {
+      return outcome;
+    }
+    const pull = check.outstanding.length === 0 ? null : await check.readBranchPull(check, check.branch, check.outstanding);
+    return pull === null
+      ? { ok: true, outcome: "settled" }
+      : failure ?? { ok: false, problem: `Every issue is settled, and pull request #${pull} is still open from this branch with a closing reference to the chain. Hand in #${pull} by writing the JSON file at ${check.path}.` };
+  } catch (error) {
+    if (failure !== undefined) {
+      return failure;
+    }
+    throw error;
   }
-  const pull = check.outstanding.length === 0 ? null : await check.readBranchPull(check, check.branch, check.outstanding);
-  return pull === null
-    ? { ok: true, outcome: "settled" }
-    : { ok: false, problem: `Every issue is settled, and pull request #${pull} is still open from this branch with a closing reference to the chain. Hand in #${pull} by writing the JSON file at ${check.path}.` };
 }
 
-async function checkPullHandback(check: HandbackCheck, open: readonly number[]): Promise<HandbackOutcome> {
+type ReadHandback = { readonly kind: "missing" } | { readonly kind: "invalid"; readonly problem: string } | { readonly kind: "given"; readonly value: Handback };
+
+function readHandback(path: string): ReadHandback {
   let text: string;
   try {
-    text = readFileSync(check.path, "utf8").replace(/^﻿/, "");
+    text = readFileSync(path, "utf8").replace(/^﻿/, "");
   } catch {
-    return {
-      ok: false,
-      problem: `You have not handed in a pull request: there is no file at ${check.path}. ${listed(open)} ${open.length === 1 ? "is" : "are"} still open. Open a pull request from your branch that closes at least one of them, then write that file as described in your task.`,
-    };
+    return { kind: "missing" };
   }
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    return { ok: false, problem: `The hand-back file ${check.path} is not valid JSON (${error instanceof Error ? error.message : String(error)}). Write it again.` };
+    return { kind: "invalid", problem: `The hand-back file ${path} is not valid JSON (${error instanceof Error ? error.message : String(error)}). Write it again.` };
   }
   const parsed = Handback.safeParse(raw);
   if (!parsed.success) {
     return {
-      ok: false,
-      problem: `The hand-back file ${check.path} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "pullRequest" (a number) and "summary" with "en" in English and "zh" in Simplified Chinese, and may list "decisions", each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh".`,
+      kind: "invalid",
+      problem: `The hand-back file ${path} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. For a pull request, give "pullRequest" (a number) and "summary". If you cannot hand in a pull request, give "outcome": "failed" and "report". Both "summary" and "report" need "en" in English and "zh" in Simplified Chinese. A pull request hand-in may list "decisions", each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh".`,
     };
   }
-  const handback = parsed.data;
+  return { kind: "given", value: parsed.data };
+}
+
+async function checkPullHandback(check: HandbackCheck, open: readonly number[], submission: ReadHandback): Promise<HandbackOutcome> {
+  if (submission.kind === "missing") {
+    return {
+      ok: false,
+      problem: `You have not handed in a pull request: there is no file at ${check.path}. ${listed(open)} ${open.length === 1 ? "is" : "are"} still open. Hand in a pull request that closes one of them, or write a failed hand-back as described in your task if you cannot.`,
+    };
+  }
+  if (submission.kind === "invalid") {
+    return { ok: false, problem: submission.problem };
+  }
+  const handback = submission.value;
+  if (handback.outcome === "failed") {
+    return { ok: true, outcome: "failed", report: handback.report };
+  }
   const state = await check.read(check.repository, handback.pullRequest, check.environment, check.cwd);
   if (typeof state === "string") {
     return { ok: false, problem: `Pull request #${handback.pullRequest} named in the hand-back file could not be read: ${state}` };

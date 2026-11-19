@@ -272,6 +272,11 @@ function handBack(ticket: number, pullRequest: number, closes: readonly number[]
   pulls.set(pullRequest, { number: pullRequest, url: `https://github.com/${repository}/pull/${pullRequest}`, state: "OPEN", head: branch, closes });
 }
 
+async function finishTurn(works: Works, handle: FakeHandle): Promise<void> {
+  handle.emit({ type: "turn.finished", outcome: "completed" });
+  await works.idle();
+}
+
 describe("a worker on the runner", () => {
   it("shares the owner's checkout between tickets and retains NAS outputs after restart and cleanup", async () => {
     const root = realpathSync(scratch);
@@ -432,7 +437,7 @@ describe("a worker on the runner", () => {
     expect(readFileSync(join(paths.folder, "work.json"), "utf8")).not.toContain(token);
   });
 
-  it("asks the worker to fix a missing or wrong hand-back for as long as it is wrong, and hands back once it is right", async () => {
+  it("asks the worker to fix a missing or wrong hand-back, and hands back once it is right", async () => {
     const works = start();
     works.receive({ type: "work.start", task: task(6) });
     let handle = await programs.prompted(1);
@@ -453,6 +458,81 @@ describe("a worker on the runner", () => {
     expect(await ended(6)).toMatchObject({ kind: "finished", pullRequest: 41, closes: [11, 12] });
   });
 
+  it("hands back a bilingual code failure even when GitHub cannot be reached", async () => {
+    let offline = false;
+    const works = start({ readClosedIssues: async () => {
+      if (offline) throw new Error("GitHub is unavailable");
+      return [];
+    } });
+    works.receive({ type: "work.start", task: task(69) });
+    const handle = await programs.prompted(1);
+    const report = { en: "The package registry is unavailable.", zh: "软件包仓库无法访问。" };
+    writeFileSync(workPaths(home, repository, 69).handback, JSON.stringify({ outcome: "failed", report }));
+    offline = true;
+    await finishTurn(works, handle);
+    expect(events(69).at(-1)?.event).toEqual({ kind: "failed", failure: "no-pull-request", reason: report.en, report });
+    expect(handle.prompts).toHaveLength(1);
+    expect(handle.closed).toBe(true);
+  });
+
+  it.each([false, true])("fails after three idle code turns, with a commit during the first three turns: %s", async (commit) => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(70) });
+    const handle = await programs.prompted(1);
+    await finishTurn(works, handle);
+    await finishTurn(works, handle);
+    expect(handle.prompts).toHaveLength(3);
+    if (commit) {
+      const cwd = handle.options.workspace;
+      await git(cwd).must(["commit", "--allow-empty", "-m", "Advance the branch"], cwd);
+      await finishTurn(works, handle);
+      expect(handle.prompts).toHaveLength(4);
+      await finishTurn(works, handle);
+      await finishTurn(works, handle);
+      expect(handle.prompts).toHaveLength(6);
+    }
+    await finishTurn(works, handle);
+    expect(events(70).at(-1)?.event).toMatchObject({
+      kind: "failed", failure: "no-pull-request", reason: expect.stringContaining("3 consecutive turns without progress. You have not handed in a pull request"),
+    });
+    expect(handle.prompts).toHaveLength(commit ? 6 : 3);
+  });
+
+  it("keeps the idle streak when the runner restarts the same attempt", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(71) });
+    const handle = await programs.prompted(1);
+    handle.emit({ type: "session", session: "prior-session" });
+    await finishTurn(works, handle);
+    await finishTurn(works, handle);
+    await works.close();
+
+    const restarted = start();
+    restarted.receive({ type: "work.start", task: task(71) });
+    const resumed = await programs.prompted(1);
+    expect(resumed.options.session).toBe("prior-session");
+    await finishTurn(restarted, resumed);
+    expect(events(71).at(-1)?.event).toMatchObject({ kind: "failed", failure: "no-pull-request" });
+    expect(resumed.prompts).toHaveLength(1);
+  });
+
+  it.each(["owner", "brain"] as const)("resets the idle streak on a new message from the %s", async (from) => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(72) });
+    const handle = await programs.prompted(1);
+    await finishTurn(works, handle);
+    await finishTurn(works, handle);
+    works.receive({ type: "work.message", ticket: 72, attempt: 1, id: "new-input", from, text: "Try again with the updated dependency." });
+    await works.idle();
+    expect(handle.steered).toEqual([`[Message from the ${from}] Try again with the updated dependency.`]);
+    await finishTurn(works, handle);
+    await finishTurn(works, handle);
+    expect(handle.prompts).toHaveLength(5);
+    await finishTurn(works, handle);
+    expect(events(72).at(-1)?.event).toMatchObject({ kind: "failed", failure: "no-pull-request" });
+    expect(handle.prompts).toHaveLength(5);
+  });
+
   it("checks GitHub when resuming or repairing and marks the closed issues in each brief", async () => {
     const works = start({ readClosedIssues: async () => [11] });
     works.receive({ type: "work.start", task: task(65, { session: "prior-session", note: "Continue with the rest." }) });
@@ -468,7 +548,7 @@ describe("a worker on the runner", () => {
     expect(repair.prompts[0]).toContain("#11 First issue (https://github.com/novan-xu/super-agent-sandbox/issues/11), closed on GitHub without a pull request of this chain; nothing to do");
   });
 
-  it("ends without a hand-back prompt when the last open issue closes during a turn", async () => {
+  it.each([false, true])("settles when the last issue closes during a turn, with an explicit failure file: %s", async (explicitFailure) => {
     let dropped = false;
     const works = start({
       readClosedIssues: async (_context, numbers) => dropped ? [...numbers] : [],
@@ -481,6 +561,10 @@ describe("a worker on the runner", () => {
     works.receive({ type: "work.start", task: task(67, { merged: [11] }) });
     const handle = await programs.prompted(1);
     dropped = true;
+    if (explicitFailure) {
+      const report = { en: "The last issue no longer needs work.", zh: "最后一个问题不再需要处理。" };
+      writeFileSync(workPaths(home, repository, 67).handback, JSON.stringify({ outcome: "failed", report }));
+    }
     handle.emit({ type: "turn.finished", outcome: "completed" });
     expect(await ended(67)).toEqual({ kind: "settled" });
     expect(handle.prompts).toHaveLength(1);
@@ -847,7 +931,7 @@ describe("a task worker on the runner", () => {
     expect(existsSync(workPaths(home, repository, 20).worktree)).toBe(false);
   });
 
-  it("delivers only files when there is no text, and tells the worker what is wrong with a hand-back until it is right", async () => {
+  it("delivers only files when there is no text, and tells the worker what is wrong with a hand-back", async () => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(21) });
     let handle = await programs.prompted(1);
@@ -861,6 +945,29 @@ describe("a task worker on the runner", () => {
     writeOutput(21, { "table.xlsx": "cells" }, { files: ["table.xlsx"], summary });
     handle.emit({ type: "turn.finished", outcome: "completed" });
     expect(await ended(21)).toEqual({ kind: "delivered", outcome: "done", text: null, files: [{ name: "table.xlsx", size: 5, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }], report: summary });
+  });
+
+  it.each([false, true])("fails after three idle task turns, with a hand-back file appearing during the first three turns: %s", async (file) => {
+    const works = start();
+    works.receive({ type: "work.task", task: writingTask(73) });
+    const handle = await programs.prompted(1);
+    await finishTurn(works, handle);
+    await finishTurn(works, handle);
+    expect(handle.prompts).toHaveLength(3);
+    if (file) {
+      writeOutput(73, {}, "not JSON");
+      await finishTurn(works, handle);
+      expect(handle.prompts).toHaveLength(4);
+      await finishTurn(works, handle);
+      await finishTurn(works, handle);
+      expect(handle.prompts).toHaveLength(6);
+      writeOutput(73, {}, "still not JSON");
+    }
+    await finishTurn(works, handle);
+    expect(events(73).at(-1)?.event).toMatchObject({
+      kind: "failed", failure: "no-pull-request", reason: expect.stringContaining(file ? "is not valid JSON" : "You have not handed back"),
+    });
+    expect(handle.prompts).toHaveLength(file ? 6 : 3);
   });
 
   it("refuses a hand-back that names a missing file or a path outside the output folder", async () => {

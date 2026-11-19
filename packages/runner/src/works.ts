@@ -140,6 +140,14 @@ function useLocation(paths: WorkPaths, workspace: WorkspaceLocation | null | und
   };
 }
 
+const emptyTurnLimit = 3;
+
+const HandbackProgress = z.object({
+  head: z.string().nullable(),
+  fileSeen: z.boolean(),
+  emptyTurns: z.number().int().nonnegative(),
+});
+
 const WorkRecord = z.object({
   kind: z
     .enum(["code", "task", "writing"])
@@ -159,6 +167,7 @@ const WorkRecord = z.object({
   commit: z.string().nullable().default(null),
   folder: z.number().int().positive().nullable().default(null),
   workspace: WorkspaceLocation.nullable().optional(),
+  handbackProgress: HandbackProgress.nullable().default(null),
   ended: z.boolean(),
 });
 type WorkRecord = z.output<typeof WorkRecord>;
@@ -453,7 +462,8 @@ export function createWorks(options: WorksOptions): Works {
         ...context,
         path: work.paths.handback,
         branch: task.branch,
-        closedOutside: closedOutside ?? await readClosedIssues(context, context.outstanding),
+        closedOutside,
+        readClosedIssues,
         read: readPullRequest,
         readBranchPull,
       });
@@ -462,6 +472,9 @@ export function createWorks(options: WorksOptions): Works {
       }
       if (outcome.outcome === "settled") {
         return { ok: true, event: { kind: "settled" } };
+      }
+      if (outcome.outcome === "failed") {
+        return { ok: true, event: { kind: "failed", failure: "no-pull-request", reason: outcome.report.en, report: outcome.report } };
       }
       return {
         ok: true,
@@ -501,6 +514,27 @@ export function createWorks(options: WorksOptions): Works {
     return work.task === undefined ? undefined : checkCode(work, work.task);
   };
 
+  const handbackHead = async (work: Work): Promise<string | null> => {
+    const credentialed = work.task ?? (work.assignment === undefined ? undefined : credentialedOf(work.assignment));
+    if (credentialed === undefined) {
+      return null;
+    }
+    const ref = work.task === undefined ? "HEAD" : `refs/heads/${work.task.branch}`;
+    const result = await gitFor(credentialed, work.paths.shared).run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], work.paths.worktree);
+    return result.code === 0 ? result.stdout.trim() : null;
+  };
+
+  const initializeHandbackProgress = async (work: Work) => {
+    if (work.record.handbackProgress !== null) {
+      return;
+    }
+    const head = await handbackHead(work);
+    if (!work.stopping) {
+      work.record = { ...work.record, handbackProgress: { head, fileSeen: existsSync(work.paths.handback), emptyTurns: 0 } };
+      save(work);
+    }
+  };
+
   const check = async (work: Work) => {
     if (work.task === undefined && work.assignment === undefined) {
       return;
@@ -519,6 +553,29 @@ export function createWorks(options: WorksOptions): Works {
       await end(work, outcome.event);
       return;
     }
+    const head = await handbackHead(work);
+    if (generation !== work.generation || work.record.ended || work.stopping) {
+      return;
+    }
+    const previous = work.record.handbackProgress;
+    const filePresent = existsSync(work.paths.handback);
+    const committed = head !== null && previous?.head != null && head !== previous.head;
+    const newFile = filePresent && !previous?.fileSeen;
+    const emptyTurns = committed || newFile ? 0 : (previous?.emptyTurns ?? 0) + 1;
+    work.record = { ...work.record, handbackProgress: {
+      head: head ?? previous?.head ?? null,
+      fileSeen: filePresent || (previous?.fileSeen ?? false),
+      emptyTurns,
+    } };
+    if (emptyTurns >= emptyTurnLimit) {
+      await end(work, {
+        kind: "failed",
+        failure: "no-pull-request",
+        reason: `No valid hand-back after ${emptyTurns} consecutive turns without progress. ${outcome.problem}`,
+      });
+      return;
+    }
+    save(work);
     emit(work, { kind: "message", id: randomUUID(), from: "hub", text: outcome.problem, delivery: "steered" });
     startTurn(work, `[hub] ${outcome.problem}`);
   };
@@ -686,6 +743,10 @@ export function createWorks(options: WorksOptions): Works {
     }
     const currentTask = { ...task, closedOutside };
     work.task = currentTask;
+    await initializeHandbackProgress(work);
+    if (work.stopping) {
+      return;
+    }
     const session = task.session ?? work.record.session;
     try {
       openProgram(work, task, session);
@@ -760,6 +821,10 @@ export function createWorks(options: WorksOptions): Works {
     const note = artifactsNote(work);
     if (note !== "") details.push(note);
     emit(work, { kind: "phase", phase: "prepared", detail: details.join("; ") });
+    await initializeHandbackProgress(work);
+    if (work.stopping) {
+      return;
+    }
     const session = task.session ?? work.record.session;
     try {
       openProgram(work, task, session);
@@ -833,6 +898,7 @@ export function createWorks(options: WorksOptions): Works {
       commit: existing === undefined ? null : existing.record.commit,
       folder: task.folder ?? null,
       workspace,
+      handbackProgress: sameAttempt ? existing.record.handbackProgress : null,
       ended: false,
     };
     const work = blank(record, paths);
@@ -1023,10 +1089,15 @@ export function createWorks(options: WorksOptions): Works {
 
   const message = (incoming: MessageWork) => {
     const work = works.get(incoming.ticket);
-    if (work === undefined || work.record.attempt !== incoming.attempt || !work.live || work.record.ended || work.messages.has(incoming.id)) {
+    if (work === undefined || work.record.attempt !== incoming.attempt || !work.live || work.stopping || work.record.ended || work.messages.has(incoming.id)) {
       return Promise.resolve();
     }
     work.messages.add(incoming.id);
+    const progress = work.record.handbackProgress;
+    if ((incoming.from === "owner" || incoming.from === "brain") && progress !== null && progress.emptyTurns > 0) {
+      work.record = { ...work.record, handbackProgress: { ...progress, emptyTurns: 0 } };
+      save(work);
+    }
     const next = work.inbox.then(() => deliverMessage(work, incoming));
     work.inbox = next.catch(() => undefined);
     return next;

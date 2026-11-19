@@ -3448,3 +3448,18 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** Use a nearby timeline comment by the actor who closed the issue as evidence for the closing comment.
 - **Why:** GitHub records the close and the comment separately.
 - **Other options:** Show the state reason only or include unrelated comments from the issue.
+
+## 2026-11-19 — End hand-back retries after three idle turns (#190)
+
+- **Chosen:** A code worker can hand back `{"outcome":"failed","report":{"en": "...","zh": "..."}}` at the usual path.
+  Its bilingual report and recent output reach the brain through the existing `no-pull-request` failure and guided-round flow.
+- **Why:** A worker that cannot hand in a pull request can explain the blocker as soon as it finds it.
+- **Other options:** Require an invalid hand-back before escalating or use a separate failure kind.
+
+- **Chosen:** End a code or task attempt when its third consecutive turn without a valid hand-back or progress ends.
+  A changed Git head, the first appearance of the hand-back file, or a new message from the owner or brain starts a fresh streak.
+  Keep the streak on the runner if it restarts the same attempt.
+  Send the last validation problem and recent worker output to the brain.
+  This replaces the unlimited hand-back corrections in "Nothing the owner, the brain or a worker sends has a cap of its own".
+- **Why:** A worker gets time to make a commit or correct its first hand-back, while repeatedly leaving an invalid hand-back ends the attempt.
+- **Other options:** Fail after a fixed number of total turns, let every invalid file edit reset the streak, or base the limit on elapsed time.

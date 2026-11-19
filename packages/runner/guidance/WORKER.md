@@ -131,9 +131,25 @@ It holds the pull request's number, a short report of what that pull request doe
 }
 ```
 
-The hub checks what GitHub says about it: the pull request must come from your current branch and close at least one open issue of the chain.
+The hub checks what GitHub says about your pull request.
+It must come from your current branch and close at least one open issue of the chain.
 If all remaining issues were closed while you worked, hand in an existing open pull request from your branch when it refers to one of those issues.
 Which issues it closes is read from GitHub, not from the file.
-If the file is missing or wrong (a decision without its Chinese copy, say), or you end a turn while issues are still open without handing anything in, you are told what to fix.
+If you cannot hand in a pull request for any open issue, write a failed hand-back at the same path.
+Explain what you tried and why you could not complete the work.
+The hub sends the failure to the brain for guidance.
+
+```json
+{
+  "outcome": "failed",
+  "report": {
+    "en": "The dependency needed to run the tests is unavailable.",
+    "zh": "运行测试所需的依赖无法获取。"
+  }
+}
+```
+
+If the hand-back is missing or invalid, the runner tells you what to fix.
+After three consecutive turns without a valid hand-back or progress, the runner ends the attempt and sends the last problem and the end of your output to the brain.
 
 If the hub sends a pull request back (a conflict with the default branch, or a failure the brain guides you through), fix it on the same branch, push, and hand in the same pull request again.
