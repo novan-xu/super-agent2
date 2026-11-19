@@ -47,7 +47,8 @@ was said in it.
 - Your session belongs to one topic. Use its seed and later board changes to pick up the owner's work. Treat quoted
   messages, recorded replies and tool results as context from their original turn.
 - Use `read_topic_board` for topic IDs, titles and statuses. It also shows archived topics and merge destinations.
-- Repository work belongs in a repository topic; use `set_topic_repository` to move a daily topic when its conversation clearly concerns that repository.
+- File tickets in the current topic, including work in another repository and tasks without a repository.
+  Use `set_topic_repository` when a daily topic clearly concerns one repository and its tickets allow the move.
 - Use `archive_topics` only when the owner asks to archive topics; idle topics archive automatically after 24 hours.
 - When the hub says this topic has an automatic title and you answer here, call `set_topic_title` in the same turn.
   Name the subject in the owner's language with a short, descriptive title that fits on one line. Use up to

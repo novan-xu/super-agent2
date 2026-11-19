@@ -50,6 +50,7 @@ import type { Clock } from "./clock.js";
 import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import { createTicketVersions, type TicketTurn } from "./ticket-versions.js";
+import { createTopicResolver } from "./topic-corrections.js";
 import { verificationOf } from "./verification-record.js";
 
 export interface TaskToOpen {
@@ -582,7 +583,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   let inside = false;
 
   const selectTicket = connection.prepare("SELECT * FROM tickets WHERE id = ?");
-  const selectTopic = connection.prepare("SELECT id FROM conversations WHERE id = ? AND system = 0 AND merged_into IS NULL AND needs_repository = 0 AND repository IS ? COLLATE NOCASE");
+  const resolveTopic = createTopicResolver(options.database);
   const claimTopic = connection.prepare(
     `UPDATE conversations SET repository = ?, needs_repository = 0
      WHERE id = ? AND system = 0 AND merged_into IS NULL AND repository IS NULL
@@ -925,18 +926,17 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return id;
     };
     const chooseTopic = (request: TicketToOpen): string => {
-      const { conversation, repository } = request;
-      if (conversation !== undefined) {
-        if (selectTopic.get(conversation, repository) !== undefined) {
-          return conversation;
-        }
-        if (repository !== null && claimTopic.run(repository, conversation, repository).changes > 0) {
-          changeTopicHistory.run();
-          changedTopics.add(conversation);
-          return conversation;
-        }
+      const source = request.conversation ?? turn?.conversation;
+      const { repository } = request;
+      const topic = (source === undefined ? undefined : resolveTopic(source)) ?? turn?.conversation;
+      if (topic === undefined) {
+        return openTopic(request.title.zh.trim(), repository);
       }
-      return openTopic(request.title.zh.trim(), repository);
+      if (repository !== null && claimTopic.run(repository, topic, repository).changes > 0) {
+        changeTopicHistory.run();
+        changedTopics.add(topic);
+      }
+      return topic;
     };
     const touch = (id: number) => {
       updateTouched.run(clock.now(), id);
@@ -973,14 +973,6 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const card = `task-card-${id}`;
         insertTaskNotice.run(card, topic, topic, JSON.stringify({ text: text("notice.taskPending", { title: request.title.zh.trim() }), ticket: id, start: true }), now);
         changedEntries.push(card);
-        if (request.conversation !== undefined && request.conversation !== topic) {
-          const source = connection.prepare("SELECT id FROM conversations WHERE id = ? AND merged_into IS NULL").get(request.conversation);
-          if (source !== undefined) {
-            const pointer = `task-pointer-${id}`;
-            insertTaskNotice.run(pointer, request.conversation, request.conversation, JSON.stringify({ text: text("notice.taskMoved", { title: request.title.zh.trim() }), destination: topic }), now);
-            changedEntries.push(pointer);
-          }
-        }
       }
       insertIssues(id, request.issues);
       if (request.task !== undefined) {
@@ -1003,7 +995,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const lineage = [...earlierIds(id), id];
         const inherited = lineage.map(topicOf).findLast((topic) => topic !== undefined);
         const root = existing(lineage[0] ?? id);
-        const topic = inherited ?? openTopic(root.title.zh, root.repository);
+        const topic = inherited ?? lineage.toReversed().flatMap((ticket) => selectWaits.all(ticket))
+          .map((row) => topicOf(WaitRow.parse(row).waits_for)).find((topic) => topic !== undefined)
+          ?? openTopic(root.title.zh, root.repository);
         for (const ticket of lineage) {
           if (topicOf(ticket) === undefined) {
             updateTicketTopic.run(topic, ticket);

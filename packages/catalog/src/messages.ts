@@ -248,7 +248,6 @@ export const messages = {
   "engine.antigravity": "Antigravity",
   "notice.waiting.start": "有新的工单可以开始",
   "notice.taskPending": "任务：{title}",
-  "notice.taskMoved": "已在日常继续：{title}",
   "notice.taskStarted": "工单 {ticket} 已开始",
   "notice.taskProgress": "工单 {ticket}：",
   "notice.taskOpen": "查看工单",

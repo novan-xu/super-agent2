@@ -4532,3 +4532,18 @@ Office preview conversion is limited to 64 MiB for both input and output, with a
   start it and see questions, progress and results in daily. The ticket detail keeps the full execution log.
 - **Other options:** Create a new topic for every task, leave the task only on the workbench, or copy the entire
   worker event log into the conversation.
+
+## 2026-11-19 — Keep new tickets in their filing topics (#163)
+
+- **Chosen:** Keep a new ticket and its notices in its filing topic, following any completed topic merge.
+  Keep the existing repository claim checks. A cross-repository ticket or repository-less task can share a topic
+  with other work, and the workbench lists it under its own repository or 日常. This supersedes the topic split
+  and link introduced in #157.
+- **Why:** The owner can follow the request and its work in one place without collecting topics named after tickets.
+- **Other options:** Split work by repository into separate topics or move a topic whenever it acquires a ticket
+  from a different repository.
+
+- **Chosen:** When older tickets lack a topic, look through their repair lineage and its predecessors before
+  creating a topic for delivery.
+- **Why:** Related work can share its existing topic while older standalone tickets can still receive notices.
+- **Other options:** Create a topic as soon as the lineage lacks one or fail to deliver until a topic is assigned.

@@ -223,13 +223,11 @@ describe("a writing ticket's delivery", () => {
     expect(opened.text).toContain("Opened task ticket 1");
     expect(opened.text).toContain("choose_defaults");
     const ticket = running.tickets.get(1);
-    expect(ticket).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending" });
-    const daily = ticket!.conversation!;
-    expect(daily).not.toBe(conversation.id);
-    const stream = async (query: string) => (await (await owner(running, `/api/stream${query}`)).json()) as { entries: { topic: { id: string }; entry: { id: string; kind: string; text?: string | null; ticket?: number; destination?: string; start?: boolean; files?: unknown[] } }[] };
-    expect((await stream("?repository=")).entries).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: daily }), entry: expect.objectContaining({ ticket: 1, start: true }) }));
-    expect((await stream(`?repository=${encodeURIComponent(sandbox)}`)).entries).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: conversation.id }), entry: expect.objectContaining({ destination: daily }) }));
-    expect((await stream(`?repository=${encodeURIComponent(sandbox)}`)).entries.filter(({ entry }) => entry.destination === daily)).toHaveLength(1);
+    expect(ticket).toMatchObject({ kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id });
+    const stream = async (repository: string) => (await (await owner(running, `/api/stream?repository=${encodeURIComponent(repository)}`)).json()) as { entries: { topic: { id: string }; entry: { id: string; kind: string; text?: string | null; ticket?: number; start?: boolean } }[] };
+    const filingTopic = expect.objectContaining({ id: conversation.id });
+    expect((await stream(sandbox)).entries).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ id: "task-card-1", ticket: 1, start: true }) }));
+    expect((await stream("")).entries).toEqual([]);
     expect(running.tickets.task(1)).toEqual({
       task: "Translate input/notice.txt into English. Keep the tone.",
       materials: [{ name: "notice.txt", source: "pasted by the owner in the conversation", text: "你好，世界。" }],
@@ -252,11 +250,10 @@ describe("a writing ticket's delivery", () => {
     event(runner, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
     event(runner, 1, 2, { kind: "text", block: "question", delta: "Which " });
     event(runner, 1, 3, { kind: "text", block: "question", delta: "format?" });
-    const progress = (await stream("?repository=")).entries;
-    expect(progress).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: daily }), entry: expect.objectContaining({ text: "工单 1 已开始" }) }));
-    expect(progress).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: daily }), entry: expect.objectContaining({ text: "工单 1：Which format?", ticket: 1 }) }));
+    const progress = (await stream(sandbox)).entries;
+    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 1 已开始" }) }));
+    expect(progress).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ text: "工单 1：Which format?", ticket: 1 }) }));
     expect(updates).toContain("task-card-1");
-    expect(updates).toContain("task-pointer-1");
     const question = progress.find(({ entry }) => entry.text === "工单 1：Which format?");
     expect(updates).toContain(question?.entry.id);
     expect(updates.filter((id) => id === question?.entry.id)).toHaveLength(2);
@@ -270,11 +267,10 @@ describe("a writing ticket's delivery", () => {
     expect(sent.filter((message) => message.type === "work.file")).toEqual([{ type: "work.file", ticket: 1, attempt: 1, name: "译文.pdf", offset: 0, length: 4 }]);
     runner.receive({ type: "work.file.part", ticket: 1, attempt: 1, name: "译文.pdf", offset: 0, data: Buffer.from([1, 2, 3, 4]).toString("base64"), problem: null });
     expect(running.tickets.get(1)).toMatchObject({ state: "delivered", pullRequest: null, branch: null });
-    const detail = (await (await owner(running, `/api/conversations/${daily}`)).json()) as { entries: { kind: string; ticket?: number; text?: string | null; files?: unknown[] }[] };
+    const detail = (await (await owner(running, `/api/conversations/${conversation.id}`)).json()) as { entries: { kind: string; ticket?: number; text?: string | null; files?: unknown[] }[] };
     const delivery = detail.entries.find((entry) => entry.kind === "delivery");
     expect(delivery).toMatchObject({ kind: "delivery", ticket: 1, text: "Hello, world.\n", files: [{ name: "译文.pdf", size: 4 }] });
-    expect((await stream("?repository=")).entries).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: daily }), entry: expect.objectContaining({ kind: "delivery", ticket: 1 }) }));
-    expect((await stream(`?repository=${encodeURIComponent(sandbox)}`)).entries.filter(({ entry }) => entry.ticket === 1)).toEqual([]);
+    expect((await stream(sandbox)).entries).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ kind: "delivery", ticket: 1 }) }));
     const file = await owner(running, `/api/tickets/1/files/${encodeURIComponent("译文.pdf")}`);
     expect(file.status).toBe(200);
     expect(Buffer.from(await file.arrayBuffer())).toEqual(Buffer.from([1, 2, 3, 4]));
@@ -286,9 +282,9 @@ describe("a writing ticket's delivery", () => {
     expect(JSON.stringify(events)).not.toContain(Buffer.from([1, 2, 3, 4]).toString("base64"));
     const failed = await callBrainTool(running, "open_task_ticket", {
       title: { en: "Prepare a draft", zh: "准备草稿" }, summary: { en: "Prepare a draft", zh: "准备草稿" }, task: "Prepare a draft.", kind: "writing",
-    }, daily);
+    }, conversation.id);
     expect(failed.isError).toBe(false);
-    expect(running.tickets.get(2)?.conversation).toBe(daily);
+    expect(running.tickets.get(2)?.conversation).toBe(conversation.id);
     running.tickets.change((writes) => {
       writes.choose(2, { machine: "pc", engine: "antigravity", model: "gemini-3.8-flash", effort: "high", by: { machine: "owner", engine: "owner", model: "owner", effort: "owner" } });
       writes.move(2, "working");
@@ -296,7 +292,7 @@ describe("a writing ticket's delivery", () => {
     running.work.begin(running.tickets.get(2)!);
     event(runner, 2, 1, { kind: "phase", phase: "started", detail: "Started" });
     event(runner, 2, 2, { kind: "failed", failure: "task-failed", reason: "The source is missing" });
-    expect((await stream("?repository=")).entries).toContainEqual(expect.objectContaining({ topic: expect.objectContaining({ id: daily }), entry: expect.objectContaining({ kind: "notice", text: "工单 2 的执行没有完成，大脑会决定怎么处理" }) }));
-    expect((await stream(`?repository=${encodeURIComponent(sandbox)}`)).entries.filter(({ entry }) => entry.ticket === 2)).toEqual([]);
+    expect((await stream(sandbox)).entries).toContainEqual(expect.objectContaining({ topic: filingTopic, entry: expect.objectContaining({ kind: "notice", text: "工单 2 的执行没有完成，大脑会决定怎么处理" }) }));
+    expect((await stream("")).entries).toEqual([]);
   });
 });

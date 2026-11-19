@@ -88,15 +88,15 @@ the hub.
 - Each project is one GitHub repository, identified by `owner/name`. Each topic belongs to one project or to 日常.
   A new topic from 代码 may temporarily have no repository while it waits for the owner to name one. It stays in
   代码 while it waits. Confirmed memory, tickets and the topic board are shared across projects.
-- Filing repository work in a daily topic moves that topic and its conversation into the repository, provided all
-  linked tickets belong to that repository. Otherwise the ticket receives a new repository topic. The brain may
+- A new ticket stays in its filing topic, following any completed topic merge to its destination. Filing repository
+  work in a daily topic moves the topic into that repository when all linked tickets belong to it and the topic
+  passes the claim checks. Otherwise the topic keeps its repository or stays in 日常. The brain may
   assign a repository to a daily or pending topic, including another topic at the owner's request; System, merged
   topics, pending merges and conflicting tickets are refused. A repository topic without repository tickets can
   move to 日常. Each move updates the page live.
-- A repository-less task belongs to 日常. A request already in a daily topic keeps that topic, including for
-  later tasks and repairs; a request in code opens a daily topic and leaves one link at its source. The daily
-  conversation keeps a link to its start card and ticket, worker start and text updates, failure notices and
-  its delivered text and files. The ticket detail holds the complete worker log. 工作台's 日常 shows open tasks.
+- A repository-less task shows its start card, worker start and text updates, failure notices and delivered text
+  and files in its filing topic. The ticket detail holds the complete worker log. 工作台 lists tickets by their own
+  repository, including repository-less tasks under 日常.
 - The owner sees each topic's work as it happens. The owner can send more input while a topic is answering and can
   interrupt that topic. Codex and Claude Code take both natively. `dsh` uses the control plugin shipped with the brain.
 - A topic opened from an owner message starts with the message's first line or attachment name. The hub asks the
@@ -217,8 +217,8 @@ is omitted, state how many items were left out and name the hub tool that reads 
 
 ### Ticket changes
 
-- Each ticket belongs to the topic that filed it. Repairs opened by the hub inherit the repaired ticket's topic.
-  A ticket's topic is the destination for its [notices](#notices).
+- Each ticket belongs to the topic that filed it. A new chain inherits its head ticket's topic, and a repair
+  inherits the repaired ticket's topic. A ticket's topic is the destination for its [notices](#notices).
 - A topic gets a ticket's lock on its first successful change to that ticket in a turn. The hub refuses changes from
   another topic while the lock is held and names the holder. Reads can continue.
 - A topic reads an existing ticket before changing it. The hub ties the write to the topic turn and refuses it when
@@ -601,8 +601,8 @@ are.
 ## Notices
 
 - Ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic
-  and appear in the main stream. They are not routed. The first event for an older ticket without a topic creates
-  one named after the ticket. Later events use that same topic.
+  and appear in that topic's stream. An older ticket without a topic first inherits one from its repair lineage
+  or a predecessor it waits for. If neither provides a topic, the first event creates one named after the ticket.
 - Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use in 日常.
   New-model notices link to Settings → Models and tell the brain the reported efforts, machines and current row.
 
