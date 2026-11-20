@@ -16,6 +16,7 @@ const main: readonly Destination[] = [
   { view: "conversations", icon: "chat", label: text("navigation.conversation") },
   { view: "history", icon: "history", label: text("navigation.history") },
   { view: "memory", icon: "memory", label: text("navigation.memory") },
+  { view: "schedules", icon: "calendar", label: text("navigation.schedules") },
 ];
 
 const foot: readonly Destination[] = [{ view: "settings", icon: "gear", label: text("navigation.settings") }];

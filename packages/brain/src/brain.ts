@@ -373,14 +373,15 @@ export function createBrain(options: BrainOptions): Brain {
   const steerQueued = async (state: State) => {
     const live = state.live;
     const turn = state.turn;
-    if (live === undefined || turn === undefined || live.attempt !== turn.current || !turn.started || state.steering || state.pause !== undefined) {
+    if (live === undefined || turn === undefined || turn.inputs[0]?.scheduleRun !== undefined
+      || live.attempt !== turn.current || !turn.started || state.steering || state.pause !== undefined) {
       return;
     }
     state.steering = true;
     try {
       while (state.queue.length > 0 && state.turn === turn && state.live === live && !turn.interrupting && state.pause === undefined) {
         const input = state.queue[0];
-        if (input === undefined) {
+        if (input === undefined || input.scheduleRun !== undefined) {
           return;
         }
         const prepared = await transport.prepare({ conversation: state.id, provider: live.provider, exclude: [], fresh: false, steer: true });
@@ -503,9 +504,10 @@ export function createBrain(options: BrainOptions): Brain {
     if (provider === undefined) {
       return;
     }
+    const scheduled = state.queue.findIndex((input) => input.scheduleRun !== undefined);
     const turn: TurnRun = {
       id: newId(),
-      inputs: state.queue.splice(0),
+      inputs: state.queue.splice(0, scheduled < 0 ? state.queue.length : Math.max(1, scheduled)),
       tried: new Set(),
       withdrawing: new Set(),
       provider,

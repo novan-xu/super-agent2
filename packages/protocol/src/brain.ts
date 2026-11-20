@@ -49,6 +49,7 @@ export const BrainInput = z.object({
   routing: BrainRouting.optional(),
   questionResponse: z.object({ card: MessageId, answers: QuestionAnswers }).optional(),
   needsRepository: z.literal(true).optional(),
+  scheduleRun: z.uuid().optional(),
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 

@@ -3606,3 +3606,29 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** In all of 代码, use a unique known repository named in the message to narrow topic matching while preserving explicit ticket and issue references.
 - **Why:** Otherwise similar wording about service parameters or configuration can match a topic in another repository.
 - **Other options:** Use the repository name only when opening a new topic or add operation-specific keywords to the router.
+
+## 2026-11-20 — Run confirmed schedules in their own turns (#206)
+
+- **Chosen:** Use numeric five-field cron in the hub time zone, with daily, weekly and monthly controls for common plans in 定时.
+  Use `cron-parser` to calculate occurrences.
+- **Why:** A cron expression can represent custom schedules while the parser handles local clock changes.
+- **Other options:** Offer a fixed menu of recurrence types or implement the date calculations in the hub.
+
+- **Chosen:** Run each trigger in a dedicated brain turn and start its newly opened work after the turn completes successfully.
+  New work waits for its dependencies and a suitable machine.
+  Pre-existing tickets retain their own start authorization, and incomplete drafts stay available for review.
+- **Why:** The brain needs time to arrange chains and state choices before any worker starts.
+- **Other options:** Start work as soon as it is filed or adopt every pending ticket touched during the run.
+
+- **Chosen:** Revoke pending automatic starts when the owner changes, pauses or deletes the confirmed revision, and keep work already started in the ordinary ticket flow.
+  Resuming recurring work uses the next scheduled time.
+- **Why:** A revision fixes the scope of the original authorization, and started tickets already have their own execution and recovery state.
+- **Other options:** Keep earlier revisions authorized after a change, or cancel running workers along with their schedule.
+
+- **Chosen:** Keep one-time schedules as completed with their run history.
+- **Why:** The owner can find the outcome after the run and can edit the entry to confirm a new time.
+- **Other options:** Delete one-time schedules when they finish or omit them from the schedule list.
+
+- **Chosen:** Use a named machine for work from the run, with deployment targets taken from the deployment recipe.
+- **Why:** Machine-specific chores need a fixed target, and deployments must follow their project's recorded recipe.
+- **Other options:** Give the brain an advisory machine name only or use the schedule's machine for deployments too.

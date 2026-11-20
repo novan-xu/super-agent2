@@ -39,6 +39,10 @@ import {
   type MachineSystem,
   type Provider,
   SettingsSnapshot,
+  ScheduleHistory,
+  ScheduleList,
+  type ScheduleAction,
+  type ScheduleFields,
   StorageSettings,
 } from "@super-agent2/protocol";
 import { z } from "zod";
@@ -154,6 +158,15 @@ export const hubApi = {
 };
 
 export type HubApi = typeof hubApi;
+
+export const scheduleApi = {
+  schedules: () => call("/api/schedules", ScheduleList),
+  scheduleHistory: (id: string) => call(`/api/schedules/${encodeURIComponent(id)}`, ScheduleHistory),
+  saveSchedule: (fields: ScheduleFields, id?: string, revision?: number) => id === undefined
+    ? call("/api/schedules", ScheduleList, { fields })
+    : call(`/api/schedules/${encodeURIComponent(id)}`, ScheduleList, { fields, revision }, "PUT"),
+  changeSchedule: (id: string, action: ScheduleAction) => call(`/api/schedules/${encodeURIComponent(id)}/${action}`, ScheduleList, {}),
+};
 
 export function attachmentPath(id: string): string {
   return `${attachmentsPath}/${encodeURIComponent(id)}`;

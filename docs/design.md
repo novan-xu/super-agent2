@@ -311,6 +311,7 @@ The database, page routes, runner messages and folder paths use the stable inter
 4. **Start.**
    The owner presses 开始 on a chain's card.
    One start starts the whole arrangement.
+   A confirmed schedule authorizes the hub to start the work opened by each of its runs.
 5. **Work.**
    The runner creates a git worktree on a new branch and starts a worker in full-access mode.
    Before starting or resuming a code worker, the runner checks the issue state on GitHub and marks any issue already closed as requiring no work.
@@ -380,6 +381,37 @@ The delivered result offers a link to its worker log.
 If the result contains files, the hub adds one titled entry to 传输 with the result text and the files.
 The conversation also offers the files.
 Agent_wring workers save in Agent_wring and report the saved item and summary in the conversation.
+
+### Scheduled work
+
+A schedule stores a title, instructions, timing, an optional repository and work machine, and the topic that receives its results.
+Recurring schedules use numeric five-field cron in `HUB_TICKET_TIME_ZONE`.
+A single run uses an absolute timestamp and keeps its history after completion.
+The schedule records who confirmed its plan and when.
+
+In conversation, the brain calls `propose_schedule` with an English instruction and a Chinese confirmation that states the timing and scope.
+It calls `create_schedule` when a newer owner message in the same topic explicitly agrees.
+The hub checks the active turn and the order of the messages, and the proposal expires after 24 hours.
+Replacing the plan uses the same flow with the schedule ID.
+`list_schedules`, `pause_schedule`, `resume_schedule` and `delete_schedule` manage existing schedules.
+The owner can also confirm a new or edited plan and manage schedules on the 定时 page.
+
+At a due time the hub records a run and posts its instruction into its topic as a scheduled input.
+The brain takes this input in a dedicated turn and decides what the work needs at that time.
+It can answer directly, call `run_scheduled_light_task`, open a visible task ticket, or file issues and arrange chains and deployments.
+It states defaults for any visible work in that turn.
+New tickets carry the run ID, including chains assembled from tickets of that run.
+The hub starts those tickets after a successful turn if the recorded schedule revision still authorizes the run.
+Work with missing defaults or a pending predecessor outside the run stays available for review.
+The usual dependency and machine rules apply, including the deployment recipe's target.
+The schedule's machine, when set, applies to its other worker tickets.
+Retry, verification and merge follow the normal rules.
+
+Due times accumulate into one run while the hub or brain is offline.
+A due time is recorded as skipped while a prior run is queued, its brain turn is underway, or any work it started is waiting, running or verifying.
+The topic receives a short skip notice and keeps the run's output.
+Pausing, editing or deleting a plan invalidates automatic starts from its older revision.
+Work the hub already started continues under its own ticket.
 
 ## Chains
 
@@ -580,7 +612,8 @@ This is the complete list.
 3. **Verification rules** before an automatic merge.
 4. **Zero comments**, checked in CI across the whole repository.
 5. **Start by the owner.**
-   A chain starts only from 开始 on its card, in the owner's own authenticated session.
+   A chain starts from 开始 in the owner's authenticated session or from a confirmed schedule's authorized run.
+   The hub verifies that a run consumed its own scheduled input and starts only tickets that the hub recorded for that run.
 6. **No reach into the NAS host or the work machines.**
    The brain's commands run only in the hub's container.
    The hub has no target on the NAS host, mounts nothing of it but its own folders, and holds no key to sign in to it; a runner runs no command the hub sends, only the workers of tickets the owner started.
@@ -723,11 +756,14 @@ Kept from it:
 - one accent colour, for primary actions, the current item and counts that ask for attention
 - state dots in fixed hues that never take the accent colour
 - a sidebar on wide screens and a tab bar on phones
-- the navigation: 工作台, 对话, 历史, 记忆, with 设置 last
+- the navigation: 工作台, 对话, 历史, 记忆, 定时, with 设置 last
 - start cards in 工作台: what can start now, and what comes after it
 
 Changed by this design:
 
+- 定时 lists each schedule with its recurrence, next run and latest outcome.
+  The owner can create, edit, pause, resume and delete schedules there.
+  The run history links to topic messages and visible tickets, and the workbench marks tickets that came from schedules.
 - 对话 keeps a switch at the top, 代码 | 日常 | 传输.
   代码 shows all repository topics or the topics in one selected repository.
   日常 shows daily topics, including System.

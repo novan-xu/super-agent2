@@ -209,6 +209,7 @@ export const Ticket = z.object({
   light: LightTaskMode.optional(),
   repository: RepositoryName.nullable(),
   project: RepositoryName.optional(),
+  scheduleRun: z.uuid().optional(),
   issues: z.array(TicketIssue),
   title: GeneratedText,
   summary: GeneratedText,

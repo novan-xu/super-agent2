@@ -33,6 +33,7 @@ import { createLightTransfer } from "./transfer.js";
 import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
 import { createLightTaskQuestions } from "./light-task-questions.js";
 import { createLightTasks } from "./light-tasks.js";
+import { createSchedules, type Schedules } from "./schedules.js";
 import { type AttachmentStore, attachmentsFolder, createAttachmentStore } from "./attachments.js";
 import type { Fetch } from "./github-api.js";
 import { type GeneratedText, ticketReference } from "@super-agent2/protocol";
@@ -65,6 +66,7 @@ export interface HubOptions {
   readonly gitHubBase?: string;
   readonly verificationTicker?: Ticker;
   readonly workTicker?: Ticker;
+  readonly scheduleTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
@@ -96,6 +98,7 @@ export interface Hub {
   readonly loop: FailureLoop;
   readonly reviews: DecisionReviews;
   readonly taskTickets: TaskTickets;
+  readonly schedules: Schedules;
   readonly memories: MemoryService;
   readonly admin: MachineAdmin;
   readonly repositories: RepositoryAccounts;
@@ -121,6 +124,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let push: PushService | undefined;
   let server: HubServer;
   let chains: Chains;
+  let schedules: Schedules;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
   let reviews: DecisionReviews;
@@ -210,6 +214,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     conversations = createConversationService({
       extraMcp: extraMcp.brain,
       lightTaskContext: (topic, message) => lightTasks.context(topic, message) + lightQuestions.context(topic, message),
+      scheduleContext: (topic, message) => schedules.context(topic, message),
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
       routing: {
         primary: config.routingPrimary,
@@ -278,6 +283,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       defaults,
       tell: told.tell,
       work: ticketWork,
+    });
+    schedules = createSchedules({
+      database, clock, conversations, tickets, chains, owner: config.ownerEmail, ticker: options.scheduleTicker,
+      report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
     });
     const worker = work;
     verification = createVerification({
@@ -372,6 +381,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,
+      schedules,
       tools: createToolServer({
         commands,
         conversations,
@@ -381,6 +391,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           tickets,
           tasks: taskTickets,
           light: lightTasks,
+          schedules,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,
@@ -437,6 +448,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     chains.resume();
     verification.resume();
     taskTickets.resume();
+    schedules.resume();
     const warn = () => {
       try {
         admin.warnExpiring();
@@ -468,6 +480,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       loop: failures,
       reviews,
       taskTickets,
+      schedules,
       memories,
       admin,
       repositories,
@@ -477,6 +490,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       close: async () => {
         clearInterval(accessCheck);
         clearInterval(repositoryRefresh);
+        schedules.close();
         repositoryDiscovery.close();
         settings.close();
         try {
@@ -501,6 +515,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     runners.close();
+    schedules.close();
     taskTickets.close();
     await taskTickets.idle();
     verification.close();

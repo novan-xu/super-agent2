@@ -16,7 +16,7 @@ import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullReque
 
 const nearBottom = 48;
 
-export type TicketOrigin = "workbench" | "history";
+export type TicketOrigin = "workbench" | "history" | "schedules";
 
 export interface TicketActions {
   stop(ticket: number): Promise<boolean>;
@@ -726,7 +726,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
   const backLink = (
     <a className="back" href={backHref} onClick={(event) => followLink(event, back)}>
       <Icon name="back" />
-      {origin === "history" ? text("navigation.history") : text("navigation.workbench")}
+      {text(`navigation.${origin}`)}
     </a>
   );
 
@@ -760,6 +760,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
             </span>
           )}
           <span className="chip">{text(kindKey(ticket))}</span>
+          {ticket.scheduleRun === undefined ? null : <span className="chip">{text("schedule.ticket")}</span>}
           <RepairChip ticket={ticket} />
           {ticket.repairs === null ? null : (
             <a className="chip chip--mono" href={ticketHref(ticket.repairs)} onClick={(event) => followLink(event, () => openTicket(ticket.repairs ?? 0))}>

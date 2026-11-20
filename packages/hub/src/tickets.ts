@@ -55,9 +55,10 @@ import type { Clock } from "./clock.js";
 import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
 import { codeAfter, ticketCodesExhausted, ticketDate, ticketDateFormatter, ticketReferences } from "./ticket-codes.js";
-import { createTicketVersions, type TicketTurn } from "./ticket-versions.js";
+import { createTicketVersions, TicketWriteRefused, type TicketTurn } from "./ticket-versions.js";
 import { createTopicResolver } from "./topic-corrections.js";
 import { verificationOf } from "./verification-record.js";
+import { scheduleAccess } from "./schedule-access.js";
 
 export interface TaskToOpen {
   readonly task: string;
@@ -247,6 +248,7 @@ export interface TicketService {
   switches(id: number): TicketSwitch[];
   task(id: number): TicketTask | undefined;
   lightTopicAllows(topic: string, project: string | undefined): boolean;
+  scheduleForTurn: ReturnType<typeof scheduleAccess>["forTurn"];
   repairRecord(id: number): RepairRecord | undefined;
   lineage(id: number): Ticket[];
   repair(id: number, by: RepairOpener, words: string, turn?: TicketTurn): RepairOutcome;
@@ -279,6 +281,7 @@ const TicketRow = z.object({
   required_machine: z.string().nullable(),
   repository: z.string().nullable(),
   project: z.string().nullable(),
+  schedule_run: z.string().nullable(),
   kind: z.string(),
   title_en: z.string(),
   title_zh: z.string(),
@@ -597,6 +600,7 @@ function likePattern(term: string): string {
 export function createTicketService(options: TicketServiceOptions): TicketService {
   const { connection } = options.database;
   const versions = createTicketVersions(options.database);
+  const scheduled = scheduleAccess(options.database);
   const { clock } = options;
   const work = options.work ?? noTicketWork;
   const listeners = new Set<TicketListener>();
@@ -678,8 +682,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (form, light, required_machine, repository, project, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    `INSERT INTO tickets (form, light, required_machine, repository, project, schedule_run, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -772,6 +776,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       light: value.light ?? undefined,
       repository: value.repository,
       ...(value.project === null ? {} : { project: value.project }),
+      ...(value.schedule_run === null ? {} : { scheduleRun: value.schedule_run }),
       issues,
       title: { en: value.title_en, zh: value.title_zh },
       summary: { en: value.summary_en, zh: value.summary_zh },
@@ -1005,6 +1010,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     };
     const open = (request: TicketToOpen, inheritedTopic?: string): number => {
       check(request);
+      const run = turn === undefined ? undefined : scheduled.forTurn(turn);
+      if (run !== undefined && !run.authorized) throw new TicketWriteRefused("This scheduled run can no longer open work.");
       if (request.light !== undefined && (request.conversation === undefined || !lightTopicAllows(request.conversation, request.project))) {
         throw new TicketError("A light task needs an active daily topic or a topic for its project.");
       }
@@ -1016,9 +1023,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const result = insertTicket.run(
         formOf(request),
         request.light ?? null,
-        request.requiredMachine ?? null,
+        request.requiredMachine ?? (request.task?.deploys === true ? null : run?.machine ?? null),
         request.repository,
         request.project ?? null,
+        run?.id ?? null,
         request.kind,
         request.title.en.trim(),
         request.title.zh.trim(),
@@ -1033,7 +1041,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         date,
       );
       const id = Number(result.lastInsertRowid);
-      if (formOf(request) === "task" && ticketProject(request) === null && request.light === undefined) {
+      if (run === undefined && formOf(request) === "task" && ticketProject(request) === null && request.light === undefined) {
         const card = `task-card-${id}`;
         insertTaskNotice.run(card, topic, topic, JSON.stringify({ text: text("notice.taskPending", { title: request.title.zh.trim() }), ticket: id, start: true }), now);
         changedEntries.push(card);
@@ -1542,6 +1550,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     },
     task: taskOf,
     lightTopicAllows,
+    scheduleForTurn: scheduled.forTurn,
     repairRecord: (id) => {
       const row = selectRepairOf.get(id);
       return row === undefined ? undefined : repairOf(row);
