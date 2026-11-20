@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ticket, workStatus } from "../live/fixtures.js";
+import { startCard, ticket, workStatus } from "../live/fixtures.js";
 import { initialWaiting } from "../live/waiting.js";
 import { CanvasWorkbench, type CanvasWorkbenchProps } from "./CanvasWorkbench.js";
 
@@ -59,6 +59,29 @@ const width = () => host.querySelector<HTMLElement>(".wb-layout")!.style.getProp
 async function render() { await act(async () => root.render(<CanvasWorkbench {...props} />)); }
 
 describe("workbench panel resizing", () => {
+  it("starts only complete cards in the selected scope and disables while sending", async () => {
+    const start = vi.fn();
+    const cards = [startCard(1, { ticket: { repository: "org/one" } }), startCard(2, { ticket: { repository: "org/two" } }), startCard(3, { ticket: { repository: null } }), startCard(4, { ticket: { repository: "org/one" }, choice: { missing: ["defaults"] } }), startCard(5, { startable: false })];
+    const waiting = { ...initialWaiting, known: true, cards };
+    const actions = { ...props.actions, start };
+    const button = () => host.querySelector<HTMLButtonElement>(".wb-toolbar .btn-primary");
+    await act(async () => root.render(<CanvasWorkbench {...props} waiting={{ ...waiting, cards: [] }} actions={actions} />));
+    expect(button()).toBeNull();
+    await act(async () => root.render(<CanvasWorkbench {...props} waiting={waiting} actions={actions} />));
+    expect(button()?.textContent).toContain("3");
+    await act(async () => button()!.click());
+    expect(start).toHaveBeenLastCalledWith(["start:1", "start:2", "start:3"]);
+    await act(async () => root.render(<CanvasWorkbench {...props} waiting={waiting} actions={actions} repository="ORG/ONE" />));
+    expect(button()?.textContent).toContain("1");
+    await act(async () => button()!.click());
+    expect(start).toHaveBeenLastCalledWith(["start:1"]);
+    await act(async () => root.render(<CanvasWorkbench {...props} waiting={waiting} actions={actions} repository={null} />));
+    await act(async () => button()!.click());
+    expect(start).toHaveBeenLastCalledWith(["start:3"]);
+    await act(async () => root.render(<CanvasWorkbench {...props} waiting={{ ...waiting, use: { "start:1": { step: "sending", verdict: null, failure: null } } }} actions={actions} />));
+    expect(button()?.disabled).toBe(true);
+  });
+
   it("starts rearrangement and opens the conversation panel after it succeeds", async () => {
     const rearrange = vi.fn().mockResolvedValue(true);
     await act(async () => root.render(<CanvasWorkbench {...props} rearrange={rearrange} />));
