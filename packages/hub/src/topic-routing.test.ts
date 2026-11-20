@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +20,10 @@ let database: HubDatabase;
 let embedded: string[];
 let lines: string[];
 
-function fakeScorer(fails: (text: string) => boolean = () => false): Scorer {
+function fakeScorer(fails: (text: string) => boolean = () => false, identity = "fake"): Scorer {
   return {
     name: "fake",
+    identity,
     loadMs: 0,
     represent: (text) => {
       embedded.push(text);
@@ -263,6 +264,130 @@ describe("topic routing configurations", () => {
   });
 });
 
+describe("stored topic text vectors", () => {
+  const stored = () =>
+    database.connection.prepare("SELECT entry, model, hex(text_hash) AS hash FROM routing_vectors ORDER BY entry, model").all().map((row) => ({ ...row }));
+  const hashOf = (text: string) => createHash("sha256").update(text).digest("hex").toUpperCase();
+  const setBody = (id: string, body: Record<string, unknown>) =>
+    database.connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?").run(JSON.stringify(body), id);
+
+  it("are read back by a later router, which computes none of them in the background or when routing", async () => {
+    const first = topic(60);
+    said(first, "alpha project plan", 60);
+    replied(first, "Beta reply", 59);
+    said(topic(30), "gamma notes", 30);
+    (await router()).close();
+    expect([...embedded].sort()).toEqual(["Beta reply", "alpha project plan", "gamma notes"]);
+    expect(stored()).toHaveLength(3);
+
+    embedded = [];
+    const later = await router();
+    later.refresh();
+    await later.settled();
+    expect(embedded).toEqual([]);
+    expect((await later.route(message("tell me about alpha"))).decided).toMatchObject({ configuration: "model", rule: "c", topic: first });
+    expect(embedded).toEqual(["tell me about alpha"]);
+  });
+
+  it("computes each distinct text once when several routings start together", async () => {
+    const routing = await router();
+    const first = topic(60);
+    said(first, "alpha project plan", 60);
+    replied(first, "Beta reply", 59);
+    said(topic(60), "gamma notes", 60);
+    const results = await Promise.all([
+      routing.route(message("tell me about alpha")),
+      routing.route(message("what about gamma")),
+      routing.route(message("tell me about alpha")),
+      routing.route(message("tell me about alpha")),
+    ]);
+    expect(results.map(({ decided }) => decided.configuration)).toEqual(["model", "model", "model", "model"]);
+    expect([...embedded].sort()).toEqual(["Beta reply", "alpha project plan", "gamma notes", "tell me about alpha", "what about gamma"]);
+  });
+
+  it("computes a previewed draft once however often it is previewed", async () => {
+    said(topic(60), "alpha project plan", 60);
+    const routing = await router();
+    embedded = [];
+    await routing.route(message("tell me about alpha"));
+    await routing.route(message("tell me about alpha"));
+    expect(embedded).toEqual(["tell me about alpha"]);
+  });
+
+  it("stores a routed message's vector under its entry without computing it again", async () => {
+    const first = topic(60);
+    said(first, "alpha project plan", 60);
+    const routing = await router();
+    embedded = [];
+    const text = "tell me about alpha";
+    await routing.route(message(text));
+    const id = said(first, text);
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual([text]);
+    expect(stored()).toContainEqual({ entry: id, model: "fake", hash: hashOf(text) });
+  });
+
+  it("computes an entry's changed text once, replaces its row and ignores changes past the length limit", async () => {
+    const first = topic(5);
+    const reply = replied(first, "Beta", 5);
+    const routing = await router();
+    const grown = `Beta reply grows ${"x".repeat(400)}`;
+    setBody(reply, { text: grown });
+    embedded = [];
+    routing.refresh();
+    await routing.settled();
+    setBody(reply, { text: `${grown} and further` });
+    routing.refresh();
+    await routing.settled();
+    await routing.route(message("tell me about beta"));
+    expect(embedded).toEqual([grown.slice(0, 320), "tell me about beta"]);
+    expect(stored()).toEqual([{ entry: reply, model: "fake", hash: hashOf(grown.slice(0, 320)) }]);
+
+    embedded = [];
+    await router();
+    expect(embedded).toEqual([]);
+  });
+
+  it("never uses vectors stored under another model identity", async () => {
+    const first = topic(60);
+    const owner = said(first, "alpha project plan", 60);
+    await router();
+    embedded = [];
+    const other = await router({ model: () => Promise.resolve(fakeScorer(() => false, "other")) });
+    expect(embedded).toEqual(["alpha project plan"]);
+    expect(stored()).toEqual([
+      { entry: owner, model: "fake", hash: hashOf("alpha project plan") },
+      { entry: owner, model: "other", hash: hashOf("alpha project plan") },
+    ]);
+    embedded = [];
+    await other.route(message("tell me about alpha"));
+    await router();
+    expect(embedded).toEqual(["tell me about alpha"]);
+  });
+
+  it("keeps stored vectors while a topic is archived and removes them with their entry", async () => {
+    const first = topic(60);
+    const owner = said(first, "alpha project plan", 60);
+    const reply = replied(first, "Beta reply", 59);
+    const routing = await router();
+    const state = database.connection.prepare("UPDATE conversations SET topic_state = ? WHERE id = ?");
+    state.run("archived", first);
+    routing.refresh();
+    await routing.settled();
+    expect(stored()).toHaveLength(2);
+
+    state.run("active", first);
+    embedded = [];
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual([]);
+
+    database.connection.prepare("DELETE FROM conversation_entries WHERE id = ?").run(reply);
+    expect(stored()).toEqual([{ entry: owner, model: "fake", hash: hashOf("alpha project plan") }]);
+  });
+});
+
 describe("repository of a new topic in all of code", () => {
   it("is set when the message names exactly one known repository", async () => {
     expect(namedRepository("deploy gamma please", ["owner/alpha", "Owner/Beta", "other/gamma"])).toBe("other/gamma");
@@ -319,6 +444,7 @@ describe("routing in the hub", () => {
     expect(decisions(running)).toEqual([]);
     expect(lines.some((line) => line.startsWith("Topic routing decision "))).toBe(false);
     const item = (await service.sendToStream(topic, text, [], { proposal }))!;
+    await service.routingSettled();
     expect(embedded.filter((input) => input === text)).toEqual([text]);
     expect(decisions(running)).toMatchObject([{
       entry: item.entry.id, topic, placed_in: topic, owner_changed: 0, owner_placed: 1,

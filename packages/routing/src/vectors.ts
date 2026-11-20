@@ -2,6 +2,7 @@ export type Vector = Float32Array;
 
 export interface Scorer {
   readonly name: string;
+  readonly identity: string;
   readonly loadMs: number;
   represent(text: string): Promise<Vector>;
   similarity(left: Vector, right: Vector): number;
@@ -88,6 +89,7 @@ export function bigramSimilarity(left: Vector, right: Vector): number {
 export function bigramScorer(): Scorer {
   return {
     name: "bigram",
+    identity: "bigram",
     loadMs: 0,
     represent: (text) => Promise.resolve(bigramVector(text)),
     similarity: bigramSimilarity,

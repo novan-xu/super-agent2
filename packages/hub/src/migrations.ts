@@ -926,6 +926,19 @@ export const migrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 44,
+    sql: `
+      CREATE TABLE routing_vectors (
+        entry TEXT NOT NULL REFERENCES conversation_entries (id) ON DELETE CASCADE,
+        model TEXT NOT NULL,
+        text_hash BLOB NOT NULL CHECK (length(text_hash) = 32),
+        vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0),
+        computed_at INTEGER NOT NULL,
+        PRIMARY KEY (entry, model, text_hash)
+      ) STRICT, WITHOUT ROWID;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bigramConfiguration, modelConfiguration } from "./configurations.js";
 import { decide, minute, rank, type RouteCandidate, type RouteInput, type Rules } from "./rules.js";
+import { bgeSmallZh, type ModelSpec, modelIdentity } from "./model.js";
 import { characterLength, endsWithQuestion, namedReferences, referencesIn } from "./signals.js";
 import { bigramScorer, bigramUnits } from "./vectors.js";
 
@@ -71,5 +72,22 @@ describe("signals", () => {
     const same = await scorer.represent("部署相册");
     expect(scorer.similarity(same, await scorer.represent("部署相册"))).toBeCloseTo(1, 6);
     expect(scorer.similarity(same, await scorer.represent("天气预报"))).toBe(0);
+  });
+
+  it("names a model by everything that makes its vectors differ", () => {
+    const variants: ModelSpec[] = [
+      bgeSmallZh,
+      { ...bgeSmallZh, name: "renamed" },
+      { ...bgeSmallZh, model: "Xenova/other" },
+      { ...bgeSmallZh, revision: "0000000000000000000000000000000000000000" },
+      { ...bgeSmallZh, revision: undefined },
+      { ...bgeSmallZh, dtype: "q8" },
+      { ...bgeSmallZh, pooling: "mean" },
+      { ...bgeSmallZh, prefix: "query: " },
+    ];
+    const identities = variants.map(modelIdentity);
+    expect(new Set(identities).size).toBe(variants.length);
+    expect(modelIdentity({ ...bgeSmallZh })).toBe(identities[0]);
+    expect(identities).not.toContain(bigramScorer().identity);
   });
 });
