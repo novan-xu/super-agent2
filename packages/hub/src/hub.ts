@@ -214,7 +214,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     conversations = createConversationService({
       extraMcp: extraMcp.brain,
       lightTaskContext: (topic, message) => lightTasks.context(topic, message) + lightQuestions.context(topic, message),
-      scheduleContext: (topic, message) => schedules.context(topic, message),
+      scheduleContext: (topic, message) => schedules?.context(topic, message) ?? "",
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
       routing: {
         primary: config.routingPrimary,

@@ -35,7 +35,7 @@ export const messages = {
   "schedule.monthDay": "日期",
   "schedule.repository": "仓库（可选）",
   "schedule.machine": "机器（可选）",
-  "schedule.cron": "Cron 表达式",
+  "schedule.cron": "定时表达式",
   "schedule.cron.hint": "分钟、小时、日、月、星期",
   "schedule.frequency.daily": "每天",
   "schedule.frequency.weekly": "每周",
