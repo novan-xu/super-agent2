@@ -79,6 +79,40 @@ function updater(supervised = true): Updater {
 }
 
 describe("a runner moving to the hub's version", () => {
+  it("keeps a prepared version through a reconnect until it switches", async () => {
+    const update = updater();
+    busy = 1;
+    update.announced(next);
+    await update.settled();
+    const folder = versionFolder(join(home, "versions"), next);
+    update.confirmed();
+    expect(existsSync(mainIn(folder))).toBe(true);
+    expect(existsSync(join(folder, readyFile))).toBe(true);
+    busy = 0;
+    update.changed();
+    expect(restarts).toBe(1);
+    expect(readState(entryFiles(home))?.current).toBe(mainIn(folder));
+  });
+
+  it.each(["folder", "main", "marker"])("prepares again when the ready %s is missing before switching", async (missing) => {
+    const update = updater();
+    busy = 1;
+    update.announced(next);
+    await update.settled();
+    const folder = versionFolder(join(home, "versions"), next);
+    rmSync(missing === "folder" ? folder : missing === "main" ? mainIn(folder) : join(folder, readyFile), { recursive: true, force: true });
+    calls.length = 0;
+    busy = 0;
+    update.changed();
+    expect(restarts).toBe(0);
+    expect(readState(entryFiles(home))?.current).toBe(oldMain);
+    await update.settled();
+    expect(calls).toEqual(["download 2", "extract", "install", "check"]);
+    expect(restarts).toBe(1);
+    expect(existsSync(mainIn(folder))).toBe(true);
+    expect(existsSync(join(folder, readyFile))).toBe(true);
+  });
+
   it("prepares the announced version while work runs, and switches to it only once nothing runs", async () => {
     const update = updater();
     busy = 1;
