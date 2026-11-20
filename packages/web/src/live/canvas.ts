@@ -1,4 +1,4 @@
-import type { Ticket } from "@super-agent2/protocol";
+import { type Ticket, ticketProject } from "@super-agent2/protocol";
 
 export type CanvasSection = "waits" | "running" | "ready" | "later";
 export interface CanvasNode {
@@ -16,7 +16,7 @@ export function canvasOf(tickets: readonly Ticket[], repository: string | null |
     const allowed = unresolved?.get(ticket.id);
     return ticket.waits.filter((wait) => !wait.waived && (allowed === undefined || allowed.includes(wait.ticket))).map((wait) => wait.ticket);
   };
-  const belongs = (ticket: Ticket) => repository === undefined || (ticket.repository?.toLowerCase() ?? null) === (repository?.toLowerCase() ?? null);
+  const belongs = (ticket: Ticket) => repository === undefined || (ticketProject(ticket)?.toLowerCase() ?? null) === (repository?.toLowerCase() ?? null);
   const selected = tickets.filter(belongs);
   const ids = new Set(selected.map((ticket) => ticket.id));
   const refs = new Set<number>();

@@ -43,6 +43,7 @@ import {
   type TopicMove,
   TopicScope,
   topicInScope,
+  ticketProject,
   Turn,
   type TurnOutcome,
   type TurnUpdate,
@@ -425,7 +426,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
     WHERE id = ? AND system = 0 AND merged_into IS NULL
       AND (repository IS NULL OR ? IS NULL OR repository = ? COLLATE NOCASE)
-      AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE)
+      AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)
       AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
   `);
   const assignmentTurn = connection.prepare("SELECT 1 FROM turns WHERE id = ? AND conversation_id = ? AND state = 'running' AND ticket_writes_revoked = 0");
@@ -1145,7 +1146,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const taskProgress = (work: StoredWorkEvent) => {
     const ticket = tickets.get(work.ticket);
-    if (ticket?.form !== "task" || ticket.light !== undefined || ticket.repository !== null || ticket.conversation === null) return;
+    if (ticket?.form !== "task" || ticket.light !== undefined || ticketProject(ticket) !== null || ticket.conversation === null) return;
     const event = work.event;
     if (event.kind !== "text" && !(event.kind === "phase" && (event.phase === "started" || event.phase === "resumed"))) return;
     const key = event.kind === "text" ? `text-${event.block}` : `phase-${work.seq}`;

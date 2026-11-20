@@ -3591,6 +3591,22 @@ Streaming larger files was an alternative, but would require a separate resource
   The two downloads share the same bytes, and deleting a transfer entry leaves its conversation download available.
   Agent_wring tasks use a library-only result mode and report the saved item in the conversation.
 
+## 2026-11-20 — Put repository operations in code topics (#211)
+
+- **Chosen:** Use `project` for a related repository on scratch-only tasks and include it in placement, repository filters and task reports.
+  Use `repository` for work that needs a checkout.
+- **Why:** The same repository can own work that needs a checkout and work on its secrets, service parameters or configuration that can run in scratch.
+- **Other options:** Use one repository field with a separate checkout flag or infer the project from the filing topic.
+
+- **Chosen:** A project light task starts in a matching repository topic or claims an eligible topic when the confirmed task is filed.
+  A conflicting topic requires a matching topic before dispatch.
+- **Why:** A light task's result is delivered in its topic, so that topic carries its repository placement.
+- **Other options:** Allow mixed light tasks in any topic or create a different topic when the proposal is confirmed.
+
+- **Chosen:** In all of 代码, use a unique known repository named in the message to narrow topic matching while preserving explicit ticket and issue references.
+- **Why:** Otherwise similar wording about service parameters or configuration can match a topic in another repository.
+- **Other options:** Use the repository name only when opening a new topic or add operation-specific keywords to the router.
+
 ## 2026-11-20 — Hub commits under a burst of work events (#218)
 
 - **Chosen:** The hub database runs with `PRAGMA synchronous = NORMAL`, set in `openDatabase` next to `journal_mode = WAL`.

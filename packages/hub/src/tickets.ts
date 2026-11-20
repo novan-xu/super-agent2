@@ -40,6 +40,7 @@ import {
   type TicketForm,
   type TicketKind,
   TicketMove,
+  ticketProject,
   TicketPullRequest,
   TicketRun,
   type TicketState,
@@ -79,6 +80,7 @@ export interface TicketToOpen {
   readonly task?: TaskToOpen | undefined;
   readonly requiredMachine?: string | null | undefined;
   readonly repository: string | null;
+  readonly project?: string | undefined;
   readonly issues: readonly TicketIssue[];
   readonly title: GeneratedText;
   readonly summary: GeneratedText;
@@ -244,6 +246,7 @@ export interface TicketService {
   rounds(id: number): TicketRound[];
   switches(id: number): TicketSwitch[];
   task(id: number): TicketTask | undefined;
+  lightTopicAllows(topic: string, project: string | undefined): boolean;
   repairRecord(id: number): RepairRecord | undefined;
   lineage(id: number): Ticket[];
   repair(id: number, by: RepairOpener, words: string, turn?: TicketTurn): RepairOutcome;
@@ -275,6 +278,7 @@ const TicketRow = z.object({
   form: z.string(),
   required_machine: z.string().nullable(),
   repository: z.string().nullable(),
+  project: z.string().nullable(),
   kind: z.string(),
   title_en: z.string(),
   title_zh: z.string(),
@@ -582,7 +586,7 @@ const defaultLimit = 200;
 
 const issueTexts = "i.title_en || char(10) || i.title_zh || char(10) || i.summary_en || char(10) || i.summary_zh";
 
-const searchedText = `t.title_en || char(10) || t.title_zh || char(10) || t.summary_en || char(10) || t.summary_zh || char(10) || COALESCE(t.repository, '') || char(10) || COALESCE((SELECT w.task FROM ticket_tasks w WHERE w.ticket_id = t.id), '') || char(10) || COALESCE((SELECT group_concat(${issueTexts}, char(10)) FROM ticket_issues i WHERE i.ticket_id = t.id), '')`;
+const searchedText = `t.title_en || char(10) || t.title_zh || char(10) || t.summary_en || char(10) || t.summary_zh || char(10) || COALESCE(t.repository, t.project, '') || char(10) || COALESCE((SELECT w.task FROM ticket_tasks w WHERE w.ticket_id = t.id), '') || char(10) || COALESCE((SELECT group_concat(${issueTexts}, char(10)) FROM ticket_issues i WHERE i.ticket_id = t.id), '')`;
 
 const escapeCharacter = "\\";
 
@@ -603,14 +607,25 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const dayFormatter = ticketDateFormatter(options.database.ticketTimeZone);
   const lastCode = connection.prepare("SELECT code FROM tickets WHERE code_date = ? ORDER BY code DESC LIMIT 1");
   const resolveTopic = createTopicResolver(options.database);
+  const noTopicMerge = "NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)";
+  const noConflictingTickets = "NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)";
   const claimTopic = connection.prepare(
     `UPDATE conversations SET repository = ?, needs_repository = 0
      WHERE id = ? AND system = 0 AND merged_into IS NULL AND repository IS NULL
-     AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
-     AND NOT EXISTS (
-       SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND repository IS NOT ? COLLATE NOCASE
+     AND ${noTopicMerge} AND ${noConflictingTickets}`,
+  );
+  const lightTopic = connection.prepare(
+    `SELECT 1 FROM conversations WHERE id = ? AND system = 0 AND merged_into IS NULL AND topic_state = 'active'
+     AND ${noTopicMerge} AND (
+       (? IS NULL AND repository IS NULL AND needs_repository = 0)
+       OR repository = ? COLLATE NOCASE
+       OR (? IS NOT NULL AND repository IS NULL AND ${noConflictingTickets})
      )`,
   );
+  const lightTopicAllows = (topic: string, project: string | undefined): boolean => {
+    const name = project ?? null;
+    return lightTopic.get(topic, name, name, name, name) !== undefined;
+  };
   const changeTopicHistory = connection.prepare("UPDATE topic_history_revision SET revision = revision + 1");
   const insertTaskNotice = connection.prepare(`
     INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
@@ -663,8 +678,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (form, light, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    `INSERT INTO tickets (form, light, required_machine, repository, project, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -756,6 +771,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       form: value.form,
       light: value.light ?? undefined,
       repository: value.repository,
+      ...(value.project === null ? {} : { project: value.project }),
       issues,
       title: { en: value.title_en, zh: value.title_zh },
       summary: { en: value.summary_en, zh: value.summary_zh },
@@ -874,7 +890,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     }
     if (request.light !== undefined && (form !== "task" || request.task === undefined || request.repository !== null
       || request.task.deploys === true || request.task.commitRef != null || request.conversation === undefined || (request.waitsFor?.length ?? 0) > 0)) {
-      throw new TicketError("A light task must be a standalone task in a daily topic, without a repository, commit or deployment.");
+      throw new TicketError("A light task must be a standalone task without a checkout, commit or deployment.");
+    }
+    if (request.project !== undefined && (form !== "task" || request.repository !== null || !RepositoryName.safeParse(request.project).success)) {
+      throw new TicketError("Use project as owner/name for a task ticket without a checkout.");
     }
     if (request.task !== undefined && form !== "task") {
       throw new TicketError("Only a task ticket has a task");
@@ -962,7 +981,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     };
     const chooseTopic = (request: TicketToOpen): string => {
       const source = request.conversation ?? turn?.conversation;
-      const { repository } = request;
+      const repository = ticketProject(request);
       const topic = (source === undefined ? undefined : resolveTopic(source)) ?? turn?.conversation;
       if (topic === undefined) {
         return openTopic(request.title.zh.trim(), repository);
@@ -986,6 +1005,9 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     };
     const open = (request: TicketToOpen, inheritedTopic?: string): number => {
       check(request);
+      if (request.light !== undefined && (request.conversation === undefined || !lightTopicAllows(request.conversation, request.project))) {
+        throw new TicketError("A light task needs an active daily topic or a topic for its project.");
+      }
       const now = clock.now();
       const date = ticketDate(dayFormatter, now);
       const code = codeAfter(TicketCode.optional().parse(lastCode.get(date)?.code));
@@ -996,6 +1018,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         request.light ?? null,
         request.requiredMachine ?? null,
         request.repository,
+        request.project ?? null,
         request.kind,
         request.title.en.trim(),
         request.title.zh.trim(),
@@ -1010,7 +1033,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         date,
       );
       const id = Number(result.lastInsertRowid);
-      if (formOf(request) === "task" && request.repository === null && request.light === undefined) {
+      if (formOf(request) === "task" && ticketProject(request) === null && request.light === undefined) {
         const card = `task-card-${id}`;
         insertTaskNotice.run(card, topic, topic, JSON.stringify({ text: text("notice.taskPending", { title: request.title.zh.trim() }), ticket: id, start: true }), now);
         changedEntries.push(card);
@@ -1038,7 +1061,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const root = existing(lineage[0] ?? id);
         const topic = inherited ?? lineage.toReversed().flatMap((ticket) => selectWaits.all(ticket))
           .map((row) => topicOf(WaitRow.parse(row).waits_for)).find((topic) => topic !== undefined)
-          ?? openTopic(root.title.zh, root.repository);
+          ?? openTopic(root.title.zh, ticketProject(root));
         for (const ticket of lineage) {
           if (topicOf(ticket) === undefined) {
             updateTicketTopic.run(topic, ticket);
@@ -1110,6 +1133,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         const repair = open({
           form: old.form,
           repository: old.repository,
+          project: old.project,
           issues: old.issues.filter((issue) => !merged.has(issue.number)),
           title: old.title,
           summary: old.summary,
@@ -1517,6 +1541,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       return ticket === undefined ? undefined : { ticket, moves: movesOf(id), attempts: selectAttempts.all(id).map(workStatusOf), rounds: selectRounds.all(id).map(roundOf), switches: selectSwitches.all(id).map(switchOf) };
     },
     task: taskOf,
+    lightTopicAllows,
     repairRecord: (id) => {
       const row = selectRepairOf.get(id);
       return row === undefined ? undefined : repairOf(row);
