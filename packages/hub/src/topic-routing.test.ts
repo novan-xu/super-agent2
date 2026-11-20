@@ -194,7 +194,7 @@ describe("topic routing rules", () => {
     const routing = await router();
     expect((await routing.route(message("how is 工单 7 going today"))).decided).toMatchObject({ rule: "e", topic: second });
     expect((await routing.route(message("how is ticket ah going today"))).decided).toMatchObject({ rule: "e", topic: second });
-    expect((await routing.route(message("工单 ai-1969-12-31 怎么样"))).decided).toMatchObject({ rule: "e", topic: first });
+    expect((await routing.route(message("工单 AI-1969-12-31 怎么样"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("did issue #42 get fixed"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("is PR 55 merged by now"))).decided).toMatchObject({ rule: "e", topic: first });
     expect((await routing.route(message("PR 99 should be merged"))).decided).toMatchObject({ rule: "e", topic: second });

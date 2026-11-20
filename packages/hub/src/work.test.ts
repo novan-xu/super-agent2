@@ -403,7 +403,7 @@ describe("work for a task ticket", () => {
         type: "work.task",
         task: {
           ticket: ticket.id,
-          ticketReference: "aa-2026-11-17",
+          ticketReference: "AA-2026-11-17",
           attempt: 1,
           title: "Translate a notice",
           task: "Translate input/notice.txt into English.",

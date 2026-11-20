@@ -255,7 +255,7 @@ describe("the failure loop, unattended", () => {
     await settled(running);
     expect(current(running, ticket.id)).toMatchObject({ state: "verifying", round: 0, verification: { state: "failed" } });
     const [told] = notices(running, conversation);
-    expect(told?.text).toBe(`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`);
+    expect(told?.text).toBe(`工单 ${ticket.code.toUpperCase()} 没有通过验证，大脑会决定怎么处理`);
     expect(told?.prompt).toContain("a Woodpecker workflow on its pull request's head is red");
     expect(told?.prompt).toContain("FAIL src/greet.test.ts: expected hello, got hi");
     expect(told?.prompt).toMatch(/\[the first \d+ of \d+ characters are cut; this is the end, where the failure is\]/);
@@ -278,7 +278,7 @@ describe("the failure loop, unattended", () => {
     await settled(running);
     expect(current(running, ticket.id)).toMatchObject({ state: "merged", round: 1 });
     expect(forge.merges).toEqual([{ repository, number: 12, sha: "def456", method: "squash" }]);
-    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.code} 已合并`]);
+    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.code.toUpperCase()} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.code.toUpperCase()} 已合并`]);
 
     const detail = TicketDetail.parse(await (await fetch(`${base(running)}/api/tickets/${ticket.id}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } })).json());
     expect(detail.rounds).toEqual([{ seq: 1, round: 1, attempt: 2, failure: { kind: "workflow", detail: expect.stringContaining("failed") as unknown as string }, guidance: guidance(1), at: clock.now() }]);
@@ -347,7 +347,7 @@ describe("the retry cap", () => {
     expect(ticket.branch).toMatch(/^sa2\/aa-2026-11-17-[0-9a-f]{4}$/);
     expect(sent.filter((message) => message.type === "work.stop")).toEqual([]);
     const told = notices(running, conversation).at(-1);
-    expect(told?.text).toBe(`工单 ${ticket.code} 引导 3 轮还没通过，已停下等你决定`);
+    expect(told?.text).toBe(`工单 ${ticket.code.toUpperCase()} 引导 3 轮还没通过，已停下等你决定`);
     expect(told?.prompt).toContain("describe_stuck");
     expect(told?.prompt).toContain("attempt 4 could not find greet.ts");
     expect(told?.prompt).toContain("FAIL greet.test.ts in attempt 4");
@@ -356,7 +356,7 @@ describe("the retry cap", () => {
     if (card === undefined) {
       throw new Error("no card");
     }
-    expect(payloadOf(card)).toEqual({ title: "等你", body: `工单 ${ticket.code} 引导 3 轮还没通过，等你决定`, url: `/workbench?card=${encodeURIComponent(card.key)}`, tag: card.key });
+    expect(payloadOf(card)).toEqual({ title: "等你", body: `工单 ${ticket.code.toUpperCase()} 引导 3 轮还没通过，等你决定`, url: `/workbench?card=${encodeURIComponent(card.key)}`, tag: card.key });
 
     const described = await callBrainTool(running, "describe_stuck", { ticket: ticket.code, where: { en: "The worker cannot find greet.ts; the issue names a file that does not exist.", zh: "工作者找不到 greet.ts，问题里写的文件并不存在。" } });
     expect(described.isError, described.text).toBe(false);
@@ -428,7 +428,7 @@ describe("the retry cap", () => {
     expect((await post(running, path, { at, answer: "resume" })).status).toBe(409);
     expect(running.waiting.cards().some((card) => card.kind === "stuck")).toBe(false);
     const told = notices(running, conversation).at(-1);
-    expect(told?.text).toBe(`你让工单 ${ticket.code} 继续，引导重新计数：试试把文件名改成 greeting.ts`);
+    expect(told?.text).toBe(`你让工单 ${ticket.code.toUpperCase()} 继续，引导重新计数：试试把文件名改成 greeting.ts`);
     expect(told?.prompt).toContain("The owner's words to you: 试试把文件名改成 greeting.ts");
     expect(told?.prompt).toContain("guide_ticket");
     expect(starts(sent, ticket.id)).toHaveLength(4);
@@ -449,6 +449,6 @@ describe("the retry cap", () => {
     const repair = current(running, ended.repairedBy ?? 0);
     expect(repair).toMatchObject({ state: "pending", repairs: ticket.id, branch: ticket.branch });
     expect(sent.filter((message) => message.type === "work.stop")).toEqual([{ type: "work.stop", ticket: ticket.id, save: true, remove: false }]);
-    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${ticket.code}，已开补救工单 ${repair.code}，等你开始`);
+    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${ticket.code.toUpperCase()}，已开补救工单 ${repair.code.toUpperCase()}，等你开始`);
   });
 });

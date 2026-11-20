@@ -99,7 +99,7 @@ describe("the brain's merge shortcut", () => {
     expect(running.tickets.get(ticket.id)?.state).toBe("merged");
     expect(forge.merges).toEqual([{ repository, number: 12, sha: "abc123", method: "squash" }]);
     const notices = running.conversations.entries(conversation).filter((entry) => entry.kind === "notice");
-    expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual([`工单 ${ticket.code} 已合并`]);
+    expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual([`工单 ${ticket.code.toUpperCase()} 已合并`]);
     const again = await callBrainTool(running, "merge_ticket", { ticket: ticket.code, reason: "Again" });
     expect(again).toEqual({ isError: true, text: `Nothing was merged: Ticket ${ticketReference(ticket)} is already merged.` });
     expect(forge.merges).toHaveLength(1);

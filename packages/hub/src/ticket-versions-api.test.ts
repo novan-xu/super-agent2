@@ -244,7 +244,7 @@ describe("topic turn ticket writes", () => {
     expect(refused).toMatchObject({ isError: true, text: expect.stringContaining(`The GitHub issue was filed at ${url}. No ticket was opened`) });
     expect(running.tickets.list()).toEqual([]);
     const current = startToolTurn(brain, first.conversation);
-    expect(await file(current)).toMatchObject({ isError: false, text: expect.stringContaining("opened ticket aa-2026-11-17") });
+    expect(await file(current)).toMatchObject({ isError: false, text: expect.stringContaining("opened ticket AA-2026-11-17") });
     expect(lockedTickets(running, current)).toEqual([1]);
     expect(created).toBe(1);
   });

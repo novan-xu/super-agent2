@@ -15,6 +15,6 @@ export function text(key: MessageKey, values?: Readonly<Record<string, Value>>):
   const template: string = messages[key];
   return template.replace(/\{(\w+)\}/g, (placeholder, name: string) => {
     const value = values?.[name];
-    return value === undefined ? placeholder : String(value);
+    return value === undefined ? placeholder : (key.startsWith("notice.") && (name === "ticket" || name === "repair" || name === "before") || key.startsWith("workbench.wait") && name === "ticket" || (key === "ticket.repairs" || key === "ticket.repairedBy" || key === "ticket.reason.joined") && name === "ticket") ? String(value).toUpperCase() : String(value);
   });
 }

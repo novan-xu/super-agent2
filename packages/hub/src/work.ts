@@ -161,7 +161,7 @@ function isFinal(ticket: Ticket): boolean {
 }
 
 export function branchFor(ticket: Pick<Ticket, "code" | "codeDate">, suffix: string): string {
-  return `sa2/${ticketReference(ticket)}-${suffix}`;
+  return `sa2/${ticketReference(ticket).toLowerCase()}-${suffix}`;
 }
 
 function taskWords(ticket: Ticket): string {

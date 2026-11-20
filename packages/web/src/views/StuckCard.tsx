@@ -27,7 +27,7 @@ export function StuckCard({ card, use, focused, href, open, answer }: StuckCardP
   const sending = use.step === "sending";
   const busy = (verdict: StuckAnswer) => (sending && use.verdict === verdict ? " is-busy" : "");
   return (
-    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code}`}>
+    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`}>
       <div className="wcard-kind">
         <span className="chip chip--warn">{text(`loop.failure.${stuck.failure.kind}`)}</span>
         <span className="chip">{text("ticket.roundValue", { round: stuck.round })}</span>
