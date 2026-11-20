@@ -153,8 +153,12 @@ export const TopicDetailUpdate = ConversationDetail.extend({
   type: z.literal("topic.detail"), requested: ConversationId,
 });
 
+export const SendId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+export type SendId = z.infer<typeof SendId>;
+
 export const OwnerMessage = z
   .object({
+    id: SendId.optional(),
     text: z.string().trim(),
     attachments: z.array(AttachmentId).default([]),
     quotedMessage: MessageId.optional(),

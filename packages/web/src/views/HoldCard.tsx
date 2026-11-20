@@ -7,7 +7,7 @@ import { Icon } from "../parts/icons.js";
 import { clockOf } from "./Entries.js";
 
 export function failureText(failure: Failure): string {
-  return failure === "network" ? text("failure.network") : text(`refusal.${failure}`);
+  return failure === "network" || failure === "timeout" ? text(`failure.${failure}`) : text(`refusal.${failure}`);
 }
 
 export interface HoldCardProps {

@@ -5,7 +5,7 @@ import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { combinedStreamItems, streamItems } from "../live/stream.js";
 import { topicScopeKey } from "../live/topic-scope.js";
-import { type DraftDestination, loadComposerDraft, saveComposerDraft } from "../live/drafts.js";
+import { type DraftDestination, loadComposerDraft, saveComposerDraft, sendAttempt } from "../live/drafts.js";
 import type { TopicStreamState } from "../live/topic-stream.js";
 import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.js";
 import { Icon } from "../parts/icons.js";
@@ -85,8 +85,8 @@ interface ComposerProps {
   } | undefined;
 }
 
-type ComposerSend = (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination) => Promise<boolean | "stale">;
-type PreviewStream = (request: StreamPreviewRequest) => Promise<StreamPreview | undefined>;
+type ComposerSend = (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination, id?: string) => Promise<boolean | "stale">;
+type PreviewStream = (request: StreamPreviewRequest, signal?: AbortSignal) => Promise<StreamPreview | undefined>;
 
 interface QuotePreview {
   readonly id: string;
@@ -97,6 +97,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
   const [saved] = useState(() => loadComposerDraft(draftKey));
   const [draft, setDraft] = useState(saved.text);
   const [choice, setChoice] = useState(saved.destination);
+  const [attempt, setAttempt] = useState(saved.attempt);
   const [preview, setPreview] = useState<StreamPreview>();
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -106,7 +107,6 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
   const routeDraft = routing !== undefined && quote === undefined;
   const destination: DraftDestination | undefined = !routeDraft ? undefined : choice ??
     (preview === undefined ? undefined : { ...preview, topic: preview.proposal.decided.topic });
-  const needsPreview = routeDraft && choice === null && destination === undefined;
   const targets = routing?.topics.filter((topic) => topic.topicState === "active" && !topic.system && !topic.mergePending) ?? [];
   const getPreview = routing?.preview;
   const scope = routing?.scope;
@@ -115,10 +115,10 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
 
   useEffect(() => {
     if (!routeDraft || scope === undefined || getPreview === undefined || choice != null || sending) return;
-    let current = true;
+    const leaving = new AbortController();
     const request = () => {
-      void getPreview({ scope, text: message, attachmentNames: JSON.parse(attachmentNames) as string[] }).then((result) => {
-        if (current && result !== undefined) {
+      void getPreview({ scope, text: message, attachmentNames: JSON.parse(attachmentNames) as string[] }, leaving.signal).then((result) => {
+        if (!leaving.signal.aborted && result !== undefined) {
           setPreview(result);
           if (choice === null) setChoice(undefined);
         }
@@ -126,7 +126,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
     };
     const timer = setTimeout(request, empty || choice === null ? 0 : previewDelay);
     return () => {
-      current = false;
+      leaving.abort();
       clearTimeout(timer);
     };
   }, [attachmentNames, choice, empty, getPreview, message, routeDraft, scope, sending, status]);
@@ -146,11 +146,11 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
   }, [quote]);
 
   useEffect(() => {
-    saveComposerDraft(draftKey, { text: draft, destination: choice, ...(quote === undefined ? {} : { quote }) });
-  }, [choice, draft, draftKey, quote]);
+    saveComposerDraft(draftKey, { text: draft, destination: choice, attempt, ...(quote === undefined ? {} : { quote }) });
+  }, [attempt, choice, draft, draftKey, quote]);
 
   const submit = useCallback(async () => {
-    if (empty || sending || needsPreview) {
+    if (empty || sending) {
       return;
     }
     const selected = destination === undefined ? undefined : {
@@ -158,7 +158,13 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
     };
     setSending(true);
     const attachments = await attaching.settle();
-    const sent = attachments === undefined ? false : await send(message, attachments, quote?.id, selected);
+    let sent: boolean | "stale" = false;
+    if (attachments !== undefined) {
+      const current = sendAttempt(attempt, JSON.stringify([message, attachments, quote?.id ?? null, choice == null ? null : choice.topic ?? newTopicOption]));
+      setAttempt(current);
+      saveComposerDraft(draftKey, { text: draft, destination: choice, attempt: current, ...(quote === undefined ? {} : { quote }) });
+      sent = await send(message, attachments, quote?.id, selected, current.id);
+    }
     setSending(false);
     if (sent === "stale") {
       setPreview(undefined);
@@ -167,13 +173,14 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
       setDraft("");
       setChoice(undefined);
       setPreview(undefined);
+      setAttempt(undefined);
       attaching.clear();
       if (quote !== undefined) {
         clearQuote(quote.id);
       }
     }
     field.current?.focus();
-  }, [attaching, clearQuote, destination, empty, message, needsPreview, quote, send, sending]);
+  }, [attaching, attempt, choice, clearQuote, destination, draft, draftKey, empty, message, quote, send, sending]);
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!sendsOnEnter(event)) {
@@ -212,7 +219,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
           onChange={(event) => {
             const value = event.target.value;
             setDraft(value);
-            saveComposerDraft(draftKey, { text: value, destination: choice, ...(quote === undefined ? {} : { quote }) });
+            saveComposerDraft(draftKey, { text: value, destination: choice, attempt, ...(quote === undefined ? {} : { quote }) });
           }}
           onKeyDown={keyDown}
           onPaste={attaching.paste}
@@ -245,7 +252,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
               {text("composer.stop")}
             </button>
           ) : null}
-          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={empty || sending || needsPreview}>
+          <button className={sending ? "btn btn-primary btn-sm is-busy" : "btn btn-primary btn-sm"} type="submit" disabled={empty || sending}>
             <Icon name="send" />
             {text("composer.send")}
           </button>
@@ -312,9 +319,9 @@ export function ConversationView(props: ConversationViewProps) {
   }, [draftKey]);
 
   const send = useCallback(
-    async (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination) => {
+    async (message: string, attachments: readonly string[], quotedMessage?: string, destination?: ReviewedStreamDestination, id?: string) => {
       following.current = true;
-      return props.send(message, attachments, quotedMessage, destination);
+      return props.send(message, attachments, quotedMessage, destination, id);
     },
     [props.send],
   );

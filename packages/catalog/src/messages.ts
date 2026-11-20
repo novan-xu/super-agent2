@@ -148,6 +148,7 @@ export const messages = {
   "day.date": "{month}月{day}日",
   "day.dateWithYear": "{year}年{month}月{day}日",
   "failure.network": "没连上 hub，请再试一次",
+  "failure.timeout": "hub 没有回应，消息可能仍会送到；草稿已保留，再发一次也不会重复",
 
   "waiting.title": "等你",
   "waiting.empty": "没有等你的事",
