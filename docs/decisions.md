@@ -3590,3 +3590,55 @@ Streaming larger files was an alternative, but would require a separate resource
 - Link delivered worker files into the private transfer store after receiving them in parts.
   The two downloads share the same bytes, and deleting a transfer entry leaves its conversation download available.
   Agent_wring tasks use a library-only result mode and report the saved item in the conversation.
+
+## 2026-11-20 — Hub commits under a burst of work events (#218)
+
+- **Chosen:** The hub database runs with `PRAGMA synchronous = NORMAL`, set in `openDatabase` next to `journal_mode = WAL`.
+  A commit then no longer waits for the disk; it is durable once the WAL is checkpointed.
+  A power loss of the NAS can lose the last commits, while a crash of the hub process loses nothing, and the database is never corrupted.
+  Lost work events come back on their own: a runner resends everything after the hub's `last_seq` through `work.sync`.
+- **Why:** On 2026-11-20 about 1870 work events arrived in 30 s, each commit waited about 42 ms for the NAS to sync, and since `node:sqlite` is synchronous the hub's main thread did nothing else for over a minute, so the owner's sends timed out.
+  On the hub's volume 100 commits took 4804 ms with `FULL` and 61 ms with `NORMAL`.
+- **Other options:** Keep `FULL` and only batch, which still costs one sync per batch; `OFF`, which can corrupt the database on a power loss; moving SQLite off the main thread, which is out of scope.
+
+- **Chosen:** Work events from runners are queued and written by a drain.
+  The work service takes the scheduling of the drain as the option `schedule`; the hub passes `scheduleWorkDrain`, which runs it at `setImmediate`, so everything that arrived in the same turn of the event loop is written together.
+  Without the option the drain runs at once, one transaction per event as before; tests through `startTestHub` keep that unless they pass `workSchedule`.
+- **Why:** The page, the brain and the other tests read the effect of an event right after sending it, and only the hub needs the deferral.
+- **Other options:** Defer in every service and make every test wait for the drain; a timer window, which would add latency and depend on time.
+
+- **Chosen:** A drain writes the queued events in arrival order in as few transactions as possible.
+  An event that ends or settles an attempt (`finished`, `settled`, `delivered`, `failed`, `stopped`, `unavailable`, and the phase `checking`) is written in a transaction of its own, and the ordinary events between two such events share one.
+  After each commit the drain runs each event's after-commit work in arrival order: the light-task publication, the event's announcement, the `work.sync` request for a gap, and for an ending event the tell, hand-in, file fetch, provider switch and `dispatch`.
+- **Why:** The after-commit work of an ending event changes what later events see (the attempt that is current, a new attempt, a ticket that moved), so writing it alone keeps every outcome the same as one transaction per event, and such events are rare.
+- **Other options:** One transaction for the whole drain, which would run an ending event's after-commit work only after later events were already decided.
+
+- **Chosen:** The `seq` checks run per event inside the batch, against what earlier events of the same batch wrote.
+  A duplicate is ignored, and a gap sends `work.sync` after the commit, once per event that ran ahead, as before.
+- **Why:** The runner's resend protocol depends on these checks being exactly as they were.
+- **Other options:** None considered.
+
+- **Chosen:** Each event in a batch runs inside its own savepoint.
+  An event that throws is rolled back alone and dropped, and the other events of the batch are kept in their order.
+  Its `seq` is not recorded, so the next event of the same attempt runs ahead and asks the runner, through `work.sync`, to send it again.
+  If the commit itself fails, the whole batch is dropped and recovered the same way.
+  An after-commit step that throws does not stop the steps of the later events.
+- **Why:** One bad event must not lose the others, and the runner already resends what the hub has not recorded.
+- **Other options:** Abort the whole batch on any error, which would lose the other tickets' events; retry the failed event, which would fail the same way.
+
+- **Chosen:** Within a batch each touched ticket is announced once, after the commit, with its state at that commit, before the batch's work events are announced.
+- **Why:** This is how `tickets.change` already announces, and the in-between snapshots of a ticket during ordinary events carry nothing a listener acts on.
+- **Other options:** Announce the ticket after each event, which would need a transaction per event again.
+
+- **Chosen:** Before the hub handles a runner's `hello`, file part, attachment request or closed connection, it writes the queued work events first.
+- **Why:** The messages of one runner keep the order they arrived in, as they did when every event was written at once.
+- **Other options:** Queue every runner message, which would delay the replies to file and attachment requests for nothing.
+
+- **Chosen:** Events still queued when the work service closes are dropped.
+- **Why:** By then the other services are closing too, and the runner resends them through `work.sync` when it next says hello.
+- **Other options:** Write them during close, which could run after-commit work against services that are already closed.
+
+- **Chosen:** The brain's streamed `text` and `tool.output` deltas keep one autocommitted `UPDATE` each, and so do a task ticket's progress notice and command output chunks.
+- **Why:** With `synchronous = NORMAL` such a commit does not wait for the disk, so these writes no longer hold the main thread for a sync.
+  What each delta still costs is rewriting the entry's whole body, which grows with the entry and is work for the processor and the WAL, not a wait for the disk.
+- **Other options:** Batch the brain's deltas like the work events, which can follow if long streamed outputs show up as slow.

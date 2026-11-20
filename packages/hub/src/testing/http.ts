@@ -18,7 +18,7 @@ export const emptyRepositoryForge: typeof fetch = (input) => {
 
 export async function startTestHub(options: HubOptions): Promise<Hub> {
   for (;;) {
-    const hub = await startHub({ forgeFetch: emptyRepositoryForge, verificationTicker: () => () => undefined, ...options });
+    const hub = await startHub({ forgeFetch: emptyRepositoryForge, verificationTicker: () => () => undefined, workSchedule: (drain) => drain(), ...options });
     if (!fetchBlockedPorts.has(hub.address.port)) {
       return hub;
     }
