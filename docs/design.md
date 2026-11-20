@@ -32,9 +32,10 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 | Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (with a checkout when requested) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
-The front door is Cloudflare Access on the existing host name, with two applications and no Bypass rule anywhere.
+The front door is Cloudflare Access on the existing host name, with three applications and no Bypass rule anywhere.
 The host's own application admits only the owner, signed in with Google.
 A second application for the path `runner` admits only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the owner's pages and the owner's sign-in never reaches the runners' paths.
+A third application for the path `inbox` admits only service tokens tagged for inbox sources, and the hub checks the source identity and its separate audience on that path.
 The hub verifies each application's own assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes, which the brain reaches on the NAS's internal network with its own token.
 A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes its service token and runner token at once and shows, once, a one-line install command that carries them to the machine.
 The new system took over the existing host name at its first deployment, and the first Super-agent was stopped then.
@@ -711,6 +712,7 @@ What waits for the owner (a held operation, a stopped ticket, a question, a chai
 There is no Lark channel.
 The notification for a held operation names where it runs and the command, cut visibly when it is too long for a push message, and never its environment.
 The brain's memory suggestions wait in 记忆, not in 等你, and send no notification.
+An inbox message sends a push with the source and the beginning of its text, opening that source's 日常 topic.
 
 ## Interface
 
@@ -732,6 +734,8 @@ Changed by this design:
   代码 shows all repository topics or the topics in one selected repository.
   日常 shows daily topics, including System.
   传输 is a private store for device transfers and light-task file results.
+  Each inbox source has a 日常 topic created on first use and restored when a message arrives after archival.
+  Its messages are labelled with the source, available in topic history, and never start a brain turn or enter routing.
   Each brain answer and each owner message has a small topic label that opens the topic view.
   The label also shows the repository when reading all of 代码.
 - 对话 opens in 代码 at the root and at the unqualified conversation list.
@@ -787,6 +791,7 @@ Values are copied on the NAS from the old secrets folder into the new deployment
 | `GITHUB_TOKEN_NOVAN_XU`, `GITHUB_TOKEN_NUOFAN_ISLAND` | NAS, `secrets/github.env` | Every GitHub operation |
 | `ACCESS_TEAM`, `ACCESS_AUD`, `OWNER_EMAIL` | NAS, `secrets/hub.env` | Checking the front door's sign-in |
 | `ACCESS_RUNNER_AUD` | NAS, `secrets/hub.env` | Checking the runner application's assertion on `/runner/` |
+| `ACCESS_INBOX_AUD` | NAS, `secrets/hub.env` | Checking the inbox application's assertion on `/inbox/` |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN` | NAS, `secrets/hub.env` | Creating and deleting runners' Access service tokens (Access: Service Tokens, Edit, nothing else) |
 | Cloudflare API token, `TUNNEL_TOKEN` | NAS, `secrets/cloudflare.env`, `secrets/tunnel.env` | The host name and its tunnel |
 | `WOODPECKER_SERVER`, `WOODPECKER_TOKEN` | NAS, hub environment | Reading CI results and logs |

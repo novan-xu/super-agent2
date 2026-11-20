@@ -575,9 +575,56 @@ function AppearanceSection({ appearance, choose }: { readonly appearance: Appear
   );
 }
 
+function InboxSources() {
+  const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<{ clientId: string; clientSecret: string } | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [available, setAvailable] = useState(true);
+  const refresh = async () => {
+    const response = await fetch("/api/inbox/sources");
+    if (response.status === 503) { setAvailable(false); return; }
+    if (!response.ok) throw new Error();
+    const body = await response.json() as { sources: { id: string; name: string }[] };
+    setSources(body.sources);
+  };
+  useEffect(() => { void refresh().catch(() => setError(text("inbox.failed"))); }, []);
+  const add = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/inbox/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+      if (!response.ok) throw new Error();
+      setCreated(await response.json() as { clientId: string; clientSecret: string });
+      setName(""); await refresh();
+    } catch { setError(text("inbox.failed")); } finally { setBusy(false); }
+  };
+  const revoke = async (id: string) => {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/inbox/sources/${encodeURIComponent(id)}/revoke`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      if (!response.ok) throw new Error();
+      const result = await response.json() as { removed: boolean };
+      if (!result.removed) setError(text("inbox.kept"));
+      await refresh();
+    } catch { setError(text("inbox.failed")); } finally { setBusy(false); }
+  };
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const command = created === null ? "" : `curl -H ${quote(`CF-Access-Client-Id: ${created.clientId}`)} -H ${quote(`CF-Access-Client-Secret: ${created.clientSecret}`)} -H 'Content-Type: application/json' -d '{"text":"hi"}' ${quote(`${window.location.origin}/inbox/message`)}`;
+  if (!available) return null;
+  return <section className="section">
+    <div className="section-head"><h2>{text("inbox.title")}</h2></div>
+    <div className="rows">{sources.map((source) => <div className="srow" key={source.id}><span className="srow-title">{source.name}</span><button type="button" className="btn btn-sm" disabled={busy} onClick={() => void revoke(source.id)}>{text("inbox.revoke")}</button></div>)}</div>
+    <form className="od-row" onSubmit={(event) => void add(event)}><label htmlFor="inbox-name">{text("inbox.name")}</label><input className="field" id="inbox-name" value={name} onChange={(event) => setName(event.currentTarget.value)} pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" required /><button className="btn btn-sm" disabled={busy || created !== null}>{text("inbox.add")}</button></form>
+    {error === "" ? null : <p className="field-err" role="alert">{error}</p>}
+    {created === null ? null : <div className="card card-pad od-stack"><p>{text("inbox.once")}</p><textarea className="field" readOnly value={command} rows={5} /><div className="od-row"><button className="btn btn-sm" type="button" onClick={() => void navigator.clipboard.writeText(command)}>{text("inbox.copy")}</button><button className="btn btn-sm" type="button" onClick={() => setCreated(null)}>{text("inbox.close")}</button></div></div>}
+  </section>;
+}
+
 function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
   return (
     <>
+      <InboxSources />
       <section className="section">
         <div className="section-head">
           <h2>{text("connections.github")}</h2>

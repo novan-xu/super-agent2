@@ -51,6 +51,15 @@ describe("loadConfig", () => {
     expect(problemsFor({ ...valid, ACCESS_RUNNER_AUD: valid.ACCESS_AUD })[0]).toMatch(/^ACCESS_RUNNER_AUD must be the audience tag of the separate application/);
   });
 
+  it("requires a distinct inbox audience when configured", () => {
+    const runner = "b".repeat(64);
+    const inbox = "c".repeat(64);
+    expect(loadConfig({ ...valid, ACCESS_RUNNER_AUD: runner, ACCESS_INBOX_AUD: inbox })).toMatchObject({ ok: true, config: { accessInboxAudience: inbox } });
+    expect(problemsFor({ ...valid, ACCESS_INBOX_AUD: valid.ACCESS_AUD })[0]).toMatch(/^ACCESS_INBOX_AUD/);
+    expect(problemsFor({ ...valid, ACCESS_RUNNER_AUD: runner, ACCESS_INBOX_AUD: runner })[0]).toMatch(/^ACCESS_INBOX_AUD/);
+    expect(problemsFor({ ...valid, ACCESS_INBOX_AUD: "inbox" })[0]).toMatch(/^ACCESS_INBOX_AUD/);
+  });
+
   it("serves the page built next to the hub unless told otherwise", () => {
     expect(defaultPageDir.replaceAll("\\", "/")).toMatch(/\/packages\/web\/dist\/?$/);
     const result = loadConfig({ ...valid, HUB_PAGE_DIR: "/srv/page" });

@@ -25,6 +25,14 @@ const delivery: ConversationEntry = {
   ],
 };
 
+it("labels an inbox message with its source and treats its text as plain text", () => {
+  const entry: ConversationEntry = { id: "inbox", conversation: id, seq: 1, at, kind: "notice", turn: null, source: "shortcut", text: "<b>Hello</b>" };
+  const html = renderToString(<StreamEntry item={{ kind: "entry", key: entry.id, entry, lead: false, live: false }} thisYear={2026} />);
+  expect(html).toContain("<strong>shortcut</strong>");
+  expect(html).toContain("&lt;b&gt;Hello&lt;/b&gt;");
+  expect(html).not.toContain("<b>Hello</b>");
+});
+
 describe("a delivery in the conversation", () => {
   it("links a daily task to its start card and a source notice to its daily topic", () => {
     const notice = { id: "n1", conversation: id, seq: 1, at, kind: "notice" as const, turn: null, text: "等待开始：翻译", ticket: 4, start: true as const };
