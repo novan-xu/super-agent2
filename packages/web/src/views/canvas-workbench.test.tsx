@@ -45,13 +45,17 @@ describe("workbench canvas", () => {
   });
 
   it("scopes work to a repository or daily tickets", () => {
-    const project = renderToStaticMarkup(<CanvasWorkbench {...props} repository="org/one" />);
+    const related = ticket(4, { project: "Org/One", repository: null, form: "task", kind: "operation", issues: [] });
+    const tickets = [...props.tickets, related];
+    const project = renderToStaticMarkup(<CanvasWorkbench {...props} repository="org/one" tickets={tickets} />);
     expect(project).toContain("工作 1");
     expect(project).toContain("工作 2");
     expect(project).not.toContain("工作 3");
-    const daily = renderToStaticMarkup(<CanvasWorkbench {...props} repository={null} />);
+    expect(project).toContain("工作 4");
+    const daily = renderToStaticMarkup(<CanvasWorkbench {...props} repository={null} tickets={tickets} />);
     expect(daily).toContain("工作 3");
     expect(daily).not.toContain("工作 1");
+    expect(daily).not.toContain("工作 4");
   });
 
   it("lists pending and working repository-less tasks in daily", () => {

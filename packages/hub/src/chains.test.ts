@@ -345,6 +345,17 @@ describe("starting", () => {
     expect(chains.cards()).toEqual([]);
   });
 
+  it("accepts both a chain and its successor in the same start", async () => {
+    const { tickets, chains, begun } = setup();
+    file(tickets, 1);
+    file(tickets, 9, other);
+    chains.arranger.arrange([chain("first", [1]), { name: "second", repository: other, issues: [9], after: ["first"] }]);
+    expect(await startOf(chains, 1, 2)).toMatchObject({ ok: true });
+    expect([state(tickets, 1), state(tickets, 2)]).toEqual(["working", "waiting"]);
+    await chains.idle();
+    expect(begun).toEqual([1]);
+  });
+
   it("starts what is arranged after a chain, which waits and then begins by itself when the first merges", async () => {
     const { tickets, chains, begun } = setup();
     file(tickets, 1);

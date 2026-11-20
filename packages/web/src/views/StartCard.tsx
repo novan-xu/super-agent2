@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card } from "@super-agent2/protocol";
+import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card, ticketProject } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
 import { canStartCard, changeOfEffort, changeOfEngine, changeOfMachine, changeOfModel, choiceOptions } from "../live/choice.js";
 import { kindKey } from "../live/phase.js";
@@ -110,14 +110,15 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
 
 export function StartCard({ card, use, focused, start, choose }: StartCardProps) {
   const { ticket } = card;
+  const repository = ticketProject(ticket);
   const sending = use.step === "sending";
   return (
     <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`}>
       <div className="wcard-kind">
-        {ticket.repository === null ? null : (
+        {repository === null ? null : (
           <span className="chip chip--mono">
             <Icon name="repo" />
-            {ticket.repository}
+            {repository}
           </span>
         )}
         <span className="chip">{text(kindKey(ticket))}</span>

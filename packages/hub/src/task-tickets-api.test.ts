@@ -321,11 +321,44 @@ describe("a deployment arranged with the work it deploys", () => {
 });
 
 describe("opening a task ticket", () => {
+  it("places operations under their project and starts them in scratch", async () => {
+    const { running, runners, conversation } = await start();
+    const args = {
+      title: { en: "Check service configuration", zh: "检查服务配置" },
+      summary: { en: "Check the service settings", zh: "检查服务设置" },
+      task: "Check the sandbox service configuration.",
+      kind: "operation",
+      project: repository,
+    };
+    expect(running.conversations.get(conversation)?.repository).toBeNull();
+    const opened = await callBrainTool(running, "open_task_ticket", args, conversation);
+    expect(opened.isError, opened.text).toBe(false);
+    const first = running.tickets.list()[0]!;
+    expect(first).toMatchObject({ project: repository, repository: null, conversation, commit: null });
+    expect(running.conversations.get(conversation)?.repository).toBe(repository);
+
+    const next = await callBrainTool(running, "open_task_ticket", { ...args, project: repository.toUpperCase() }, conversation);
+    expect(next.isError, next.text).toBe(false);
+    expect(running.tickets.list()[0]?.conversation).toBe(conversation);
+    expect(running.conversations.get(conversation)?.repository).toBe(repository);
+    expect((await callBrainTool(running, "set_topic_repository", { repository: null }, conversation)).isError).toBe(true);
+
+    await stated(running, [first]);
+    const card = (await cards(running)).find((candidate) => candidate.ticket.id === first.id);
+    expect(card?.ticket.project).toBe(repository);
+    expect((await ownerPost(running, chainStartPath, { chains: [{ ticket: first.id, fingerprint: card?.fingerprint }] })).status).toBe(202);
+    const sent = [...runners.values()].flatMap((runner) => tasksSent(runner.sent, first.id));
+    expect(sent).toMatchObject([{ task: { checkout: null, deploys: false, environment: {} } }]);
+  });
+
   it("refuses what does not hold together, opening nothing", async () => {
     const { running } = await start();
     const base = { title: { en: "Do it", zh: "做" }, summary: { en: "Do it", zh: "做" }, task: "Do it.", kind: "operation" };
     const refusals = [
       [{ ...base, deploy: true }, "needs the repository"],
+      [{ ...base, project: repository, deploy: true }, "needs the repository"],
+      [{ ...base, project: repository, commit: "main" }, "needs the repository"],
+      [{ ...base, project: repository, repository }, "without a checkout"],
       [{ ...base, commit: "main" }, "needs the repository"],
       [{ ...base, repository, commit: "merged" }, "name that chain's ticket in after"],
       [{ ...base, repository, after: ["zz"] }, "There is no ticket ZZ"],

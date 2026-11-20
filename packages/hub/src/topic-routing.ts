@@ -125,13 +125,13 @@ interface Item {
 
 interface TopicContext {
   readonly id: string;
-  readonly repository: string | null;
   readonly idleMs: number;
   readonly items: readonly Item[];
 }
 
 interface Context {
   readonly message: RoutingMessage;
+  readonly repository: string | null;
   readonly topics: readonly TopicContext[];
   readonly input: RouteInput;
 }
@@ -234,9 +234,10 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     UNION SELECT t.conversation_id FROM ticket_pull_requests p JOIN tickets t ON t.id = p.ticket_id WHERE p.number = ? AND t.conversation_id IS NOT NULL
     UNION SELECT conversation_id FROM tickets WHERE pull_request = ? AND conversation_id IS NOT NULL
   `);
-  const openTicketRepositories = connection.prepare(`
-    SELECT DISTINCT repository FROM tickets
-    WHERE repository IS NOT NULL AND joined_into IS NULL AND state IN (${openTicketStates.map(() => "?").join(", ")})
+  const knownRepositories = connection.prepare(`
+    SELECT coalesce(repository, project) AS repository FROM tickets
+    WHERE (repository IS NOT NULL OR project IS NOT NULL) AND joined_into IS NULL AND state IN (${openTicketStates.map(() => "?").join(", ")})
+    UNION SELECT repository FROM repositories WHERE github_archived = 0 AND (pinned = 1 OR listed = 1)
   `);
   const insertDecision = connection.prepare(`
     INSERT INTO routing_decisions (
@@ -347,12 +348,17 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
 
   const gather = (message: RoutingMessage): Context => {
     const rows = listTopics.all(message.scope.kind, message.scope.kind === "repository" ? message.scope.repository : null).map((row) => TopicRow.parse(row));
-    const topics = rows.map((row): TopicContext => ({ id: row.id, repository: row.repository, idleMs: Math.max(0, message.at - row.activity), items: itemsOf(row.id) }));
+    const repository = repositoryFor(message.text, message.scope, rows);
     const references = namedReferences(message.text, true);
+    const eligible = message.scope.kind === "code" && repository !== null && references.length === 0
+      ? rows.filter((row) => row.repository?.toLowerCase() === repository.toLowerCase())
+      : rows;
+    const topics = eligible.map((row): TopicContext => ({ id: row.id, idleMs: Math.max(0, message.at - row.activity), items: itemsOf(row.id) }));
     const referenced = references.length === 0 ? new Set<string>() : referencedTopics(references, topics);
     const candidates = topics.map((topic): RouteCandidate => ({ topic: topic.id, idleMs: topic.idleMs, ...waiting(topic.id), referenced: referenced.has(topic.id) }));
     return {
       message,
+      repository,
       topics,
       input: { length: characterLength(message.text), attachments: message.attachments.length > 0, hasReferences: references.length > 0, candidates },
     };
@@ -557,7 +563,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     const names = [
       ...(topics ?? listTopics.all(scope.kind, null).map((row) => TopicRow.parse(row)))
         .flatMap(({ repository }) => (repository === null ? [] : [repository])),
-      ...openTicketRepositories.all(...openTicketStates).map((row) => Repository.parse(row).repository),
+      ...knownRepositories.all(...openTicketStates).map((row) => Repository.parse(row).repository),
     ];
     for (const name of names) {
       if (!known.has(name.toLowerCase())) {
@@ -571,7 +577,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     candidates: context.topics.length,
     topic: decided.topic,
     possibleMatch: decided.topic === null ? (decided.best ?? context.topics[0]?.id) : undefined,
-    repository: decided.topic === null ? repositoryFor(context.message.text, context.message.scope, context.topics) : null,
+    repository: decided.topic === null ? context.repository : null,
     decided,
     shadow,
     fallback,

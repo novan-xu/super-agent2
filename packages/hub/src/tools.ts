@@ -141,6 +141,7 @@ const TaskArguments = z.object({
   kind: z.enum(taskKinds),
   material: z.array(MaterialArgument).optional(),
   repository: RepositoryName.optional(),
+  project: RepositoryName.optional(),
   commit: z.union([z.literal(mergedCommit), CommitRef]).optional(),
   deploy: z.boolean().optional(),
   after: z.array(TicketReference).optional(),
@@ -609,6 +610,7 @@ function ticketDefinitions() {
         "Give the task in English, with a Chinese title and summary for the owner: what to do, the result wanted, what done means, and anything the owner said that matters. The worker knows only this task, the material and, when one is named, the repository; not this conversation.",
         "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`), and its text when you have it, verbatim; a piece without `text` is described by its source only. A file the owner attached in this conversation is passed on as the file itself, by its attachment id in `attachment`, with a name that keeps its extension.",
         `When the task needs a repository (a deployment, a script that lives in it), name it in \`repository\`, and the worker gets a checkout of it beside its scratch folder, at \`commit\`: a SHA, a branch (its head when the work begins), or "${mergedCommit}", the final merge commit of the code chain of that repository this ticket comes \`after\`, filled in by the hub when the work begins. Without \`commit\`, the default branch's head when the work begins.`,
+        "When a task concerns a repository but needs no checkout, name it in project and leave repository empty. File it in that repository's topic or a daily topic that can move there. Use project for work such as managing secrets or checking service configuration.",
         `With \`deploy\` true the task is to deploy the repository by its ${deploymentFile} (where it runs, how to deploy, how to check health, how to roll back): the hub reads the file on the default branch and runs the ticket only on the machine it names; the worker deploys, checks health, rolls back when the new version does not come up, and reports what happened. Opened after a code chain of that repository, its commit is "${mergedCommit}" unless you name another.`,
         "`after` names tickets this one waits for, by code: it begins by itself once they have merged or are done. Arranged after a chain that is not started yet, the owner's one 开始 on that chain starts both, and the work begins when the chain has merged. Arranged after a ticket already started, it waits for its own 开始.",
         "Afterwards state its defaults with choose_defaults (kind writing or operation), as for any ticket. The owner starts it; you cannot start it.",
@@ -622,6 +624,7 @@ function ticketDefinitions() {
           kind: { type: "string", enum: [...taskKinds], description: "writing: prose with nothing to do with code; operation: anything done on a machine" },
           material: materialSchema,
           repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
+          project: { type: "string", description: "The related repository as owner/name, when the task needs no checkout" },
           commit: { type: "string", description: `The commit of the checkout: a SHA, a branch, or "${mergedCommit}" for the final merge commit of the code chain it comes after` },
           deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
           after: { type: "array", items: ticketCodeSchema("A ticket this one waits for") },
@@ -635,7 +638,7 @@ function ticketDefinitions() {
     {
       name: "propose_light_task",
       title: "Confirm an everyday task in conversation",
-      description: "In a 日常 topic, post a brief confirmation in Chinese of a repository-less task to be done by a worker. The hub shows the confirmation as your reply. Wait for a newer owner message to agree in words, then call start_light_task with the returned proposal ID. If the scope changes, propose again. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring ingest, wait and save belong to an operation with mode agent_wring. Repository work, deployment and explicit requests to open a ticket use the regular tools.",
+      description: "Post a brief Chinese confirmation for work that needs no checkout, code change or deployment. Use a 日常 topic for unrelated work, or supply project for repository-related work and use its topic or a daily topic that can move there. The hub shows the confirmation as your reply. Wait for a newer owner message to agree in words, then call start_light_task with the returned proposal ID. If the scope changes, propose again. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring ingest, wait and save belong to an operation with mode agent_wring. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -644,6 +647,7 @@ function ticketDefinitions() {
           confirmation: { type: "string", description: "The short Chinese message shown to the owner, asking for agreement in words" },
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
+          project: { type: "string", description: "The related repository as owner/name, when the task concerns one" },
           mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring when the worker saves material in the Agent_wring library. Otherwise use transfer." },
           material: materialSchema,
           difficulty: startChoices.difficulty,
@@ -857,7 +861,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         title: "Run a shell command",
         description: [
           "Run a shell command in the hub's own container on the NAS, with the owner's credentials, and wait until it ends.",
-          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Use a worker for work on a machine. Propose repository-less everyday work in 日常 as a light task and use regular tickets for repository work, deployments or when the owner asks for a ticket.",
+          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Use a worker for work on a machine. Use light tasks for everyday work in 日常 or repository operations that need no checkout, code change or deployment. Use regular tickets for the other work or when the owner asks for a ticket.",
           `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
           "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
         ].join(" "),
@@ -1092,6 +1096,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           task: parsed.data.task,
           kind: parsed.data.kind,
           repository: parsed.data.repository,
+          project: parsed.data.project,
           commit: parsed.data.commit,
           deploy: parsed.data.deploy,
           after: parsed.data.after?.map(resolve),
@@ -1184,6 +1189,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             ? []
             : [
                 `Task: ${task.task}`,
+                ...(detail.ticket.project === undefined ? [] : [`Related repository: ${detail.ticket.project}. The worker uses a scratch folder.`]),
                 ...(detail.ticket.repository === null
                   ? []
                   : [

@@ -1,7 +1,8 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type Conversation, type StartCard as StartData, type Ticket } from "@super-agent2/protocol";
+import { chineseOf, type Conversation, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
+import { canStartCard } from "../live/choice.js";
 import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
 import { kindKey, phaseLooks, ticketPhase, whereOf } from "../live/phase.js";
@@ -88,18 +89,20 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       props.selectRepository(undefined);
       window.setTimeout(() => document.getElementById(`card-${card.key}`)?.scrollIntoView({ block: "center" }), 0);
     } else if (card !== undefined) {
-      props.selectRepository(scopeFor(card.ticket.repository));
+      props.selectRepository(scopeFor(ticketProject(card.ticket)));
       if (card.kind === "start") setPopup(card.ticket.id);
       else { props.selectTicket(card.ticket.id); setPane("panel"); }
     } else if (/^start:[1-9][0-9]*$/.test(props.focus)) {
       const id = Number(props.focus.slice(6));
-      props.selectRepository(scopeFor(tickets.find((ticket) => ticket.id === id)?.repository));
+      const ticket = tickets.find((entry) => entry.id === id);
+      props.selectRepository(scopeFor(ticket === undefined ? undefined : ticketProject(ticket)));
       props.selectTicket(id);
       setPane("panel");
     }
     const timer = window.setTimeout(props.focused, 1000);
     return () => window.clearTimeout(timer);
   }, [props.focus, props.focused, props.selectRepository, props.selectTicket, repositories, tickets, waiting]);
+  const startable = waiting.cards.filter((card): card is StartData => card.kind === "start" && belongs(repository, card.ticket.repository) && canStartCard(card));
   const holds = waiting.cards.filter((card) => card.kind === "hold");
   const activeStart = popup === null ? undefined : starts.get(popup);
   const close = () => { dialog.current?.close(); setPopup(null); source.current?.focus(); };
@@ -118,7 +121,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   const select = (id: number) => { props.selectTicket(id); setPane("panel"); };
   const openStart = (card: StartData, element: HTMLElement) => { source.current = element; setPopup(card.ticket.id); };
   const rail = (value: string | null | undefined, label: string) => {
-    const matching = all.filter((ticket) => belongs(value, ticket.repository));
+    const matching = all.filter((ticket) => belongs(value, ticketProject(ticket)));
     const waitingHere = matching.some((ticket) => stuck.has(ticket.id) || starts.has(ticket.id)) || ((value === undefined || value === null) && holds.length > 0);
     const running = matching.some((ticket) => ticket.state !== "pending") || topics.some((topic) => belongs(value, topic.repository) && topic.state === "working");
     return <button key={value ?? (value === null ? "daily" : "all")} type="button" className="wb-repo" title={typeof value === "string" ? value : undefined} aria-pressed={repository === value} onClick={() => chooseRepository(value)}>
@@ -131,7 +134,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     </aside>
     <div className="wb-mobile-tabs"><button type="button" aria-pressed={pane === "canvas"} onClick={() => setPane("canvas")}>{text("navigation.workbench")}</button><button type="button" aria-pressed={pane === "panel"} onClick={() => setPane("panel")}>{text("navigation.conversation")}</button></div>
     <main className={`wb-canvas ${pane === "panel" ? "wb-mobile-hidden" : ""}`} onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, textarea, select, .wcard")) props.selectTicket(null); }}>
-      <div className="wb-toolbar"><button type="button" className="btn" title={text("workbench.rearrangeTip")} disabled={props.rearranging} onClick={() => void props.rearrange().then((opened) => { if (opened) setPane("panel"); })}>{text("workbench.rearrange")}</button>
+      <div className="wb-toolbar">{startable.length === 0 ? null : <button type="button" className="btn btn-primary" disabled={startable.some((card) => useOf(waiting, card.key).step !== "idle")} onClick={() => actions.start(startable.map((card) => card.key))}><Icon name="check" />{text("chains.startAll")} {startable.length}</button>}<button type="button" className="btn" title={text("workbench.rearrangeTip")} disabled={props.rearranging} onClick={() => void props.rearrange().then((opened) => { if (opened) setPane("panel"); })}>{text("workbench.rearrange")}</button>
       {offersSwitch(props.push) ? <label className="switch-label wb-push"><button className="switch" type="button" role="switch" aria-label={text("push.label")} aria-checked={props.push === "on" || props.push === "working"} disabled={props.push === "blocked" || props.push === "working"} onClick={props.togglePush} />{text("push.label")}</label> : props.push === "install" ? <p className="push-note">{text("push.install")}</p> : null}</div>
       {props.push === "blocked" ? <p className="push-note">{text("push.blocked")}</p> : null}
       {holds.length > 0 && (repository === undefined || repository === null) ? <section className="wb-section"><h2>{text("waiting.title")}</h2><div className="wb-holds">{holds.map((card) => <HoldCard key={card.key} card={card} use={useOf(waiting, card.key)} focused={props.focus === card.key} answer={(verdict) => actions.answer(card.key, verdict)} />)}</div></section> : null}

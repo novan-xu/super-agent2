@@ -208,6 +208,7 @@ export const Ticket = z.object({
   form: TicketForm.default("code"),
   light: LightTaskMode.optional(),
   repository: RepositoryName.nullable(),
+  project: RepositoryName.optional(),
   issues: z.array(TicketIssue),
   title: GeneratedText,
   summary: GeneratedText,
@@ -256,6 +257,10 @@ export const Ticket = z.object({
   endedAt: z.number().int().nullable(),
 });
 export type Ticket = z.infer<typeof Ticket>;
+
+export function ticketProject(ticket: Pick<Ticket, "repository" | "project">): string | null {
+  return ticket.repository ?? ticket.project ?? null;
+}
 
 export const TicketMove = z.object({
   ticket: TicketId,

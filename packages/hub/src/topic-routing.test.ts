@@ -611,6 +611,21 @@ describe("the model's queue", () => {
 });
 
 describe("repository of a new topic in all of code", () => {
+  it("uses the named repository for operations and preserves explicit ticket references", async () => {
+    const alpha = topic(60, { repository: "owner/alpha" });
+    const beta = topic(60, { repository: "owner/beta" });
+    said(alpha, "Check the alpha service configuration", 60);
+    said(beta, "Check the service configuration and rotate credentials for beta", 60);
+    ticket(8, alpha, "owner/alpha");
+    const routing = await router();
+    const scope = { kind: "code" } as const;
+
+    expect(await routing.route(message("Check the service configuration and rotate credentials for alpha", scope)))
+      .toMatchObject({ candidates: 1, topic: alpha });
+    expect(await routing.route(message("Check beta's service configuration mentioned in ticket ai", scope)))
+      .toMatchObject({ candidates: 2, topic: alpha, decided: { rule: "e" } });
+  });
+
   it("is set when the message names exactly one known repository", async () => {
     expect(namedRepository("deploy gamma please", ["owner/alpha", "Owner/Beta", "other/gamma"])).toBe("other/gamma");
     expect(namedRepository("fix OWNER/BETA today", ["owner/alpha", "Owner/Beta"])).toBe("Owner/Beta");

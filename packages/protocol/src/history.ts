@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { finishedTicketStates, Ticket } from "./tickets.js";
+import { finishedTicketStates, Ticket, ticketProject } from "./tickets.js";
 
 export const historyPageSize = 30;
 
@@ -71,7 +71,7 @@ export function searchedTexts(ticket: Ticket): string[] {
     ticket.title.en,
     ticket.summary.zh,
     ticket.summary.en,
-    ticket.repository ?? "",
+    ticketProject(ticket) ?? "",
     ...ticket.issues.flatMap((issue) => [issue.title.zh, issue.title.en, issue.summary.zh, issue.summary.en]),
   ].filter((entry) => entry !== "");
 }

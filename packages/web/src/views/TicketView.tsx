@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { type ChoiceChange, chineseOf, type DecisionReview, type MachineChoice, mergedIssueNumbers, type Ticket } from "@super-agent2/protocol";
+import { type ChoiceChange, chineseOf, type DecisionReview, type MachineChoice, mergedIssueNumbers, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DetailState, isWorkLive, moveLabel, type TimelineEntry, timeline } from "../live/detail.js";
 import { kindKey, panelOffers, ticketPhase, ticketProblem, type TicketProblem } from "../live/phase.js";
@@ -411,6 +411,7 @@ function Actions({ ticket, actions }: { readonly ticket: Ticket; readonly action
 }
 
 function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; readonly known: ReadonlyMap<number, Ticket>; readonly actions: TicketActions; readonly now: number }) {
+  const repository = ticketProject(ticket);
   const [open, setOpen] = useState(false);
   const phase = ticketPhase(ticket);
   const problem = ticketProblem(ticket, known);
@@ -510,17 +511,17 @@ function Panel({ ticket, known, actions, now }: { readonly ticket: Ticket; reado
             </ol>
           </div>
         )}
-        {ticket.repository === null ? null : (
+        {repository === null ? null : (
           <div className="panel-sec">
             <h3>{text("ticket.code")}</h3>
             <dl className="kv">
               <dt>{text("ticket.repository")}</dt>
               <dd>
-                <a className="mono" href={githubRepository(ticket.repository)} target="_blank" rel="noreferrer">
-                  {ticket.repository}
+                <a className="mono" href={githubRepository(repository)} target="_blank" rel="noreferrer">
+                  {repository}
                 </a>
               </dd>
-              {ticket.form === "task" ? (
+              {ticket.repository === null ? null : ticket.form === "task" ? (
                 <>
                   <dt>{text("ticket.commit")}</dt>
                   <dd className="mono">
@@ -743,6 +744,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
   }
 
   const offers = panelOffers(ticket);
+  const repository = ticketProject(ticket);
 
   return (
     <div className="page">
@@ -751,10 +753,10 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
         <div className="meta-row">
           <PhaseStatus phase={ticketPhase(ticket)} />
           <span className="chip chip--mono">{ticket.code.toUpperCase()}</span>
-          {ticket.repository === null ? null : (
+          {repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />
-              {ticket.repository}
+              {repository}
             </span>
           )}
           <span className="chip">{text(kindKey(ticket))}</span>

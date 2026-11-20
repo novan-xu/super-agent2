@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type Ticket } from "@super-agent2/protocol";
+import { chineseOf, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { type HistoryState, historyLine, matchNote } from "../live/history.js";
 import { kindKey } from "../live/phase.js";
@@ -29,6 +29,7 @@ interface RowProps {
 }
 
 const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: RowProps) {
+  const repository = ticketProject(ticket);
   const line = historyLine(ticket);
   const note = matchNote(ticket, query);
   const review = toReview(ticket);
@@ -40,10 +41,10 @@ const HistoryRow = memo(function HistoryRow({ ticket, query, href, open, now }: 
         <span className="lrow-meta">
           <span className="chip">{text(kindKey(ticket))}</span>
           <RepairChip ticket={ticket} />
-          {ticket.repository === null ? null : (
+          {repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />
-              {ticket.repository}
+              {repository}
             </span>
           )}
           {ticket.issues.length === 0 ? null : <ChainNumbers ticket={ticket} />}
