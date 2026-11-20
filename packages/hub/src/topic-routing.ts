@@ -74,6 +74,7 @@ const recentTextLimit = 128;
 
 const TopicRow = z.object({ id: z.string(), repository: z.string().nullable(), activity: z.number().int() });
 const EntryRow = z.object({ id: z.string(), kind: z.string(), body: z.string() });
+const ItemRow = EntryRow.extend({ streaming: z.number().int().optional() });
 const Id = z.object({ id: z.string() });
 const Conversation = z.object({ conversation_id: z.string() });
 const Repository = z.object({ repository: z.string() });
@@ -188,7 +189,10 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   `);
   const firstOwner = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq LIMIT 1");
   const recentOwners = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq DESC LIMIT ${recentOwnerItems}`);
-  const recentReplies = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}`);
+  const recentReplies = connection.prepare(`
+    SELECT id, kind, body, kind = 'text' AND EXISTS (SELECT 1 FROM turns WHERE turns.id = conversation_entries.turn_id AND turns.state = 'running') AS streaming
+    FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}
+  `);
   const lastExchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq DESC LIMIT 1");
   const exchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq");
   const ticketCodes = ticketReferences(connection);
@@ -235,7 +239,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   };
 
   const itemsOf = (topic: string): Item[] => {
-    const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => EntryRow.parse(row));
+    const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => ItemRow.parse(row));
     const seen = new Set<string>();
     const items: Item[] = [];
     for (const row of rows) {
@@ -244,7 +248,11 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       }
       seen.add(row.id);
       const text = entryText(row.kind, bodyOf(row.body));
-      items.push({ id: row.id, text: text.slice(0, row.kind === "owner" ? ownerTextLimit : replyTextLimit) });
+      const limit = row.kind === "owner" ? ownerTextLimit : replyTextLimit;
+      const settled = row.streaming !== 1 || text.length >= limit;
+      if (settled && text.trim() !== "") {
+        items.push({ id: row.id, text: text.slice(0, limit) });
+      }
     }
     return items;
   };

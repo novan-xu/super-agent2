@@ -72,6 +72,24 @@ function entry(conversation: string, kind: "owner" | "text" | "question", body: 
   return id;
 }
 
+function started(conversation: string): string {
+  const id = randomUUID();
+  database.connection
+    .prepare("INSERT INTO turns (id, conversation_id, provider, model, state, started_at) VALUES (?, ?, 'gpt', 'test', 'running', ?)")
+    .run(id, conversation, clock.now());
+  return id;
+}
+
+function ended(turn: string, state: "completed" | "interrupted"): void {
+  database.connection.prepare("UPDATE turns SET state = ?, ended_at = ? WHERE id = ?").run(state, clock.now(), turn);
+}
+
+function streamed(conversation: string, turn: string, text: string): string {
+  const id = entry(conversation, "text", { text });
+  database.connection.prepare("UPDATE conversation_entries SET turn_id = ? WHERE id = ?").run(turn, id);
+  return id;
+}
+
 function said(conversation: string, text: string, idleMinutes = 0): string {
   return entry(conversation, "owner", { text, attachments: [] }, idleMinutes);
 }
@@ -386,6 +404,86 @@ describe("stored topic text vectors", () => {
     database.connection.prepare("DELETE FROM conversation_entries WHERE id = ?").run(reply);
     expect(stored()).toEqual([{ entry: owner, model: "fake", hash: hashOf("alpha project plan") }]);
   });
+
+  it("computes a streaming reply once, after its turn ends", async () => {
+    const first = topic(5);
+    said(first, "alpha project plan", 5);
+    const routing = await router();
+    const turn = started(first);
+    const reply = streamed(first, turn, "Beta");
+    embedded = [];
+    routing.refresh();
+    await routing.settled();
+    setBody(reply, { text: "Beta reply" });
+    await routing.route(message("tell me about beta"));
+    setBody(reply, { text: "Beta reply grows" });
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual(["tell me about beta"]);
+
+    ended(turn, "completed");
+    routing.refresh();
+    await routing.settled();
+    await routing.route(message("tell me about beta"));
+    expect(embedded).toEqual(["tell me about beta", "Beta reply grows"]);
+    expect(stored().filter(({ entry }) => entry === reply)).toEqual([{ entry: reply, model: "fake", hash: hashOf("Beta reply grows") }]);
+  });
+
+  it("computes a streaming reply once its text passes the length limit, and not again when its turn ends", async () => {
+    const first = topic(5);
+    const routing = await router();
+    const turn = started(first);
+    const long = `Beta reply ${"x".repeat(400)}`;
+    const reply = streamed(first, turn, long);
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual([long.slice(0, 320)]);
+    setBody(reply, { text: `${long} and more` });
+    routing.refresh();
+    await routing.settled();
+    ended(turn, "completed");
+    routing.refresh();
+    await routing.settled();
+    await routing.route(message("tell me about beta"));
+    expect(embedded).toEqual([long.slice(0, 320), "tell me about beta"]);
+  });
+
+  it("computes the reply of an interrupted turn once", async () => {
+    const first = topic(5);
+    const routing = await router();
+    const turn = started(first);
+    const reply = streamed(first, turn, "Beta partial");
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual([]);
+    ended(turn, "interrupted");
+    routing.refresh();
+    await routing.settled();
+    routing.refresh();
+    await routing.settled();
+    expect(embedded).toEqual(["Beta partial"]);
+    expect(stored()).toEqual([{ entry: reply, model: "fake", hash: hashOf("Beta partial") }]);
+  });
+
+  it("never computes an entry with empty text", async () => {
+    const first = topic(5);
+    said(first, "", 5);
+    replied(first, "  ", 5);
+    const routing = await router();
+    await routing.route(message("tell me about beta"));
+    expect(embedded).toEqual(["tell me about beta"]);
+    expect(stored()).toEqual([]);
+  });
+
+  it("routes from a topic's other items while one of its replies streams", async () => {
+    const first = topic(60);
+    said(first, "alpha project plan", 60);
+    streamed(first, started(first), "alpha alpha beta");
+    const routing = await router();
+    const routed = await routing.route(message("tell me about alpha"));
+    expect(routed.decided).toMatchObject({ configuration: "model", rule: "c", topic: first });
+    expect(embedded).toEqual(["alpha project plan", "tell me about alpha"]);
+  });
 });
 
 describe("repository of a new topic in all of code", () => {
@@ -490,6 +588,34 @@ describe("routing in the hub", () => {
     clock.advance(minute);
     expect(service.move(routed.entry.id, other)).toEqual({ ok: true, value: other });
     expect(decisions(running)).toMatchObject([{ entry: routed.entry.id, placed_in: topic, moved_to: other, moved_at: clock.now() }]);
+  });
+
+  it("computes a streamed reply once its turn ends, and the reply of a turn the brain lost once", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const topic = service.create().id;
+    service.send(topic, "alpha project plan");
+    const quiet = { send: () => undefined, close: () => undefined };
+    const brain = service.attach(quiet);
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    brain.receive({ type: "turn.started", conversation: topic, turn: "t1", provider: "gpt", model: "test", inputs: [] });
+    brain.receive({ type: "text", conversation: topic, turn: "t1", block: "b", delta: "Beta" });
+    await service.routingSettled();
+    await service.previewStream({ text: "tell me about beta", scope: { kind: "daily" }, attachmentNames: [] });
+    brain.receive({ type: "text", conversation: topic, turn: "t1", block: "b", delta: " reply" });
+    await service.routingSettled();
+    const replies = () => embedded.filter((text) => /^(Beta|Gamma)/.test(text));
+    expect(replies()).toEqual([]);
+    brain.receive({ type: "turn.finished", conversation: topic, turn: "t1", outcome: "completed", reason: null });
+    await service.routingSettled();
+    expect(replies()).toEqual(["Beta reply"]);
+
+    brain.receive({ type: "turn.started", conversation: topic, turn: "t2", provider: "gpt", model: "test", inputs: [] });
+    brain.receive({ type: "text", conversation: topic, turn: "t2", block: "c", delta: "Gamma partial" });
+    await service.routingSettled();
+    service.attach(quiet).receive({ type: "hello", protocol: protocolVersion, running: [] });
+    await service.routingSettled();
+    expect(replies()).toEqual(["Beta reply", "Gamma partial"]);
   });
 
   it("routes a message saved before a restart with the bigram configuration and records why", async () => {

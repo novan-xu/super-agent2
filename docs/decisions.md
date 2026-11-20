@@ -3511,6 +3511,13 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Other options:** A cache for draft texts only; no bound on the cache.
 
 - **Chosen:** The background refresh computes only what memory, the table and the recent texts lack, and still drops from memory the vectors of topics that are no longer active; their rows stay in the table.
-  A reply that streams is computed again only when its first 320 characters change.
 - **Why:** Memory stays bounded by the active topics, and the table is the copy that survives.
-- **Other options:** Keep every vector in memory; wait for a turn to end before computing its replies.
+- **Other options:** Keep every vector in memory.
+
+- **Chosen:** A reply is a topic item only once it is settled: it has no turn, its turn is not `running` in `turns`, or its text already holds at least 320 characters, so the embedded part can no longer change.
+  An unsettled reply is left out of routing and of the background refresh, and the `turn` event raised when its turn ends refreshes the router, which then computes it once.
+  A turn the brain lost across a restart is ended as interrupted when the brain says hello again, which settles its replies the same way.
+  An item whose text is empty or only white space is left out and never sent to the model.
+  Owner and question entries are items as soon as they are written, since their embedded text does not change.
+- **Why:** Each partial text of a streaming reply cost a computation that the next delta made useless.
+- **Other options:** Compute every partial text and replace its row; compute a streaming reply only after a pause in its deltas, which depends on time.
