@@ -84,6 +84,37 @@ describe("applyMigrations", () => {
     expect(() => connection.exec("UPDATE tickets SET code = NULL WHERE id = 3")).toThrow(/require a code and creation day/);
   });
 
+  it("keeps routing vectors per entry, model and text hash, and drops them with their entry", () => {
+    using connection = new DatabaseSync(":memory:");
+    connection.exec("PRAGMA foreign_keys = ON");
+    const clock = new TestClock();
+    applyMigrations(connection, migrations.filter(({ version }) => version < 44), clock);
+    connection.prepare("INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES ('c', 'Topic', 'idle', 1, 1)").run();
+    const entry = connection.prepare("INSERT INTO conversation_entries (id, conversation_id, seq, kind, body, created_at, stream_seq) VALUES (?, 'c', ?, 'owner', '{}', 1, ?)");
+    entry.run("kept", 1, 1);
+    entry.run("gone", 2, 2);
+    applyMigrations(connection, migrations, clock);
+    const insert = connection.prepare("INSERT INTO routing_vectors (entry, model, text_hash, vector, computed_at) VALUES (?, ?, ?, ?, 1)");
+    const hash = new Uint8Array(32);
+    const vector = new Uint8Array(new Float32Array([0.6, 0.8]).buffer);
+    insert.run("kept", "m", hash, vector);
+    insert.run("kept", "n", hash, vector);
+    insert.run("kept", "m", new Uint8Array(32).fill(1), vector);
+    insert.run("gone", "m", hash, vector);
+    expect(() => insert.run("kept", "m", hash, vector)).toThrow(/UNIQUE constraint failed/);
+    expect(() => insert.run("missing", "m", hash, vector)).toThrow(/FOREIGN KEY constraint failed/);
+    expect(() => insert.run("kept", "o", new Uint8Array(31), vector)).toThrow(/CHECK constraint failed/);
+    expect(() => insert.run("kept", "o", hash, new Uint8Array(6))).toThrow(/CHECK constraint failed/);
+    connection.exec("UPDATE conversations SET topic_state = 'archived' WHERE id = 'c'");
+    connection.exec("DELETE FROM conversation_entries WHERE id = 'gone'");
+    const rows = connection.prepare("SELECT entry, model, hex(text_hash) AS hash FROM routing_vectors ORDER BY entry, model, text_hash").all();
+    expect(rows.map((row) => ({ ...row }))).toEqual([
+      { entry: "kept", model: "m", hash: "00".repeat(32) },
+      { entry: "kept", model: "m", hash: "01".repeat(32) },
+      { entry: "kept", model: "n", hash: "00".repeat(32) },
+    ]);
+  });
+
   it("rolls back a migration that fails and applies nothing after it", () => {
     const connection = new DatabaseSync(":memory:");
     const broken = [

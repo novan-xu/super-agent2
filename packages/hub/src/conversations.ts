@@ -390,7 +390,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
   };
 
-  const router = createTopicRouter(options.database, options.routing);
+  const router = createTopicRouter(options.database, { clock, ...options.routing });
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
   const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
   const assignTopicRepository = connection.prepare(`

@@ -3478,3 +3478,46 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** Configure extra HTTP MCP servers in the hub environment and send selected servers over existing authenticated links to the brain and workers.
 - **Why:** This keeps the list and secrets in one place without adding a settings interface or putting tokens in process arguments.
 - **Other options:** A settings page, separate configuration on each machine, or a proxy through the runner.
+
+## 2026-11-20 — Stored routing vectors (#200)
+
+- **Chosen:** Keep the vectors of topic texts in a table, `routing_vectors` (migration 44), keyed by entry, model identity and the SHA-256 of the exact text embedded after the owner or reply length limit, with the vector as a BLOB of 32-bit floats.
+  The router answers from its memory, then from the table, then from its recent texts, and only then computes; a computed vector is written under its entry before it is used.
+  This replaces "Keep the vectors of topic texts in the hub's memory", whose rebuild after the deploy of 2026-11-20 took more than eleven minutes on the NAS while the model was loaded and the bigram configuration therefore did not cover the gap.
+- **Why:** One computation takes 1–1.5 s on the NAS and blocks the hub, so a text should be computed once for as long as its entry, its text and the model stay the same.
+- **Other options:** Load every stored vector into memory at start; keep the memory-only map and only share computations under way.
+
+- **Chosen:** The table keeps a hash of the text, not the text.
+- **Why:** The text is already in `conversation_entries`, and the hash is all a lookup needs.
+- **Other options:** Store the text beside its hash.
+
+- **Chosen:** A row goes with its entry through a foreign key with `ON DELETE CASCADE`, which the hub's `PRAGMA foreign_keys = ON` enforces.
+  Archiving a topic keeps its rows, so reopening it computes nothing.
+  Writing a vector for an entry's new text deletes the entry's rows for older texts under the same model.
+  Rows of another model identity stay, so going back to an earlier model computes nothing; nothing removes them until their entry goes.
+- **Why:** Rows are about 2 KB each for the shipped model and a change of model is rare, so keeping them costs little and makes a rollback free.
+- **Other options:** Delete rows of every other model when a model loads; keep one row per entry whatever the model.
+
+- **Chosen:** The model identity is `modelIdentity(spec)` in `packages/routing`: the name, model, revision, dtype, pooling and prefix.
+  `Scorer` carries it as `identity`, and the bigram scorer's is `bigram`.
+- **Why:** Those are what make two models' vectors incomparable; the normalisation and the library are fixed in the code that ships with the revision.
+- **Other options:** The model name alone, which would read stale vectors after a change of revision or dtype; a hash of the model files.
+
+- **Chosen:** A computation under way is kept in a map keyed by model identity and text, and every caller that needs the same text waits for the same promise; a failed computation is removed so it can be tried again.
+  Every computed text, with or without an entry, also goes into a recent-text cache of the last 128 texts, so the same draft previewed twice, a routed message written as an entry, and a text needed again just after its computation ends all reuse it.
+  All computations still share one serial queue.
+- **Why:** Concurrent previews and the background refresh each computed the same missing text, and a routed message was computed again once it became an entry.
+  Keeping entry texts in the same cache closes the moment between a computation ending and its vector reaching the table.
+- **Other options:** A cache for draft texts only; no bound on the cache.
+
+- **Chosen:** The background refresh computes only what memory, the table and the recent texts lack, and still drops from memory the vectors of topics that are no longer active; their rows stay in the table.
+- **Why:** Memory stays bounded by the active topics, and the table is the copy that survives.
+- **Other options:** Keep every vector in memory.
+
+- **Chosen:** A reply is a topic item only once it is settled: it has no turn, its turn is not `running` in `turns`, or its text already holds at least 320 characters, so the embedded part can no longer change.
+  An unsettled reply is left out of routing and of the background refresh, and the `turn` event raised when its turn ends refreshes the router, which then computes it once.
+  A turn the brain lost across a restart is ended as interrupted when the brain says hello again, which settles its replies the same way.
+  An item whose text is empty or only white space is left out and never sent to the model.
+  Owner and question entries are items as soon as they are written, since their embedded text does not change.
+- **Why:** Each partial text of a streaming reply cost a computation that the next delta made useless.
+- **Other options:** Compute every partial text and replace its row; compute a streaming reply only after a pause in its deltas, which depends on time.

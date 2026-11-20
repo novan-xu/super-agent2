@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { type Clock, systemClock } from "./clock.js";
 import { ticketReferences } from "./ticket-codes.js";
 import { openTicketStates, RoutingProposal, type TopicScope } from "@super-agent2/protocol";
 import {
@@ -32,6 +34,7 @@ export interface RoutingOptions {
   readonly primary?: ConfigurationName | undefined;
   readonly model?: ModelLoader | undefined;
   readonly report?: ((line: string) => void) | undefined;
+  readonly clock?: Clock | undefined;
 }
 
 export interface RoutingMessage {
@@ -67,11 +70,15 @@ type ModelState =
 
 const fallbackReasons = { missing: "model not configured", loading: "model loading", failed: "model failed to load" } as const;
 
+const recentTextLimit = 128;
+
 const TopicRow = z.object({ id: z.string(), repository: z.string().nullable(), activity: z.number().int() });
 const EntryRow = z.object({ id: z.string(), kind: z.string(), body: z.string() });
+const ItemRow = EntryRow.extend({ streaming: z.number().int().optional() });
 const Id = z.object({ id: z.string() });
 const Conversation = z.object({ conversation_id: z.string() });
 const Repository = z.object({ repository: z.string() });
+const StoredVector = z.object({ vector: z.instanceof(Uint8Array).refine((bytes) => bytes.byteLength > 0 && bytes.byteLength % 4 === 0) });
 const Body = z.looseObject({
   text: z.string().optional(),
   attachments: z.array(z.looseObject({ name: z.string().optional() })).optional(),
@@ -119,6 +126,18 @@ function entryText(kind: string, body: z.infer<typeof Body>): string {
     return JSON.stringify(body.questions ?? []);
   }
   return body.text ?? "";
+}
+
+function textHash(text: string): Uint8Array {
+  return createHash("sha256").update(text, "utf8").digest();
+}
+
+function vectorBytes(vector: Vector): Uint8Array {
+  return new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength);
+}
+
+function storedVector(bytes: Uint8Array): Vector {
+  return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
 }
 
 function finite(value: number): number | null {
@@ -170,7 +189,10 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   `);
   const firstOwner = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq LIMIT 1");
   const recentOwners = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq DESC LIMIT ${recentOwnerItems}`);
-  const recentReplies = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}`);
+  const recentReplies = connection.prepare(`
+    SELECT id, kind, body, kind = 'text' AND EXISTS (SELECT 1 FROM turns WHERE turns.id = conversation_entries.turn_id AND turns.state = 'running') AS streaming
+    FROM conversation_entries WHERE conversation_id = ? AND kind IN ('text', 'question') ORDER BY seq DESC LIMIT ${recentReplyItems}
+  `);
   const lastExchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq DESC LIMIT 1");
   const exchange = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind IN ('owner', 'text', 'question') ORDER BY seq");
   const ticketCodes = ticketReferences(connection);
@@ -191,7 +213,18 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const selectVector = connection.prepare("SELECT vector FROM routing_vectors WHERE entry = ? AND model = ? AND text_hash = ?");
+  const dropOtherTexts = connection.prepare("DELETE FROM routing_vectors WHERE entry = ? AND model = ? AND text_hash <> ?");
+  const insertVector = connection.prepare(`
+    INSERT INTO routing_vectors (entry, model, text_hash, vector, computed_at)
+    SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM conversation_entries WHERE id = ?)
+    ON CONFLICT (entry, model, text_hash) DO NOTHING
+  `);
+
+  const clock = options.clock ?? systemClock;
   const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
+  const recent = new Map<string, Vector>();
+  const computing = new Map<string, Promise<Vector>>();
   let model: ModelState = options.model === undefined ? { kind: "missing" } : { kind: "loading" };
   let queue: Promise<unknown> = Promise.resolve();
   let closed = false;
@@ -206,7 +239,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   };
 
   const itemsOf = (topic: string): Item[] => {
-    const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => EntryRow.parse(row));
+    const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => ItemRow.parse(row));
     const seen = new Set<string>();
     const items: Item[] = [];
     for (const row of rows) {
@@ -215,7 +248,11 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       }
       seen.add(row.id);
       const text = entryText(row.kind, bodyOf(row.body));
-      items.push({ id: row.id, text: text.slice(0, row.kind === "owner" ? ownerTextLimit : replyTextLimit) });
+      const limit = row.kind === "owner" ? ownerTextLimit : replyTextLimit;
+      const settled = row.streaming !== 1 || text.length >= limit;
+      if (settled && text.trim() !== "") {
+        items.push({ id: row.id, text: text.slice(0, limit) });
+      }
     }
     return items;
   };
@@ -312,12 +349,61 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return evaluate(bigramConfiguration, context, scoresOf(context, messageVector, (item) => bigramVector(item.text), bigramSimilarity));
   };
 
+  const remember = (key: string, vector: Vector) => {
+    recent.delete(key);
+    recent.set(key, vector);
+    for (const oldest of recent.keys()) {
+      if (recent.size <= recentTextLimit) {
+        break;
+      }
+      recent.delete(oldest);
+    }
+  };
+
+  const textVector = (scorer: Scorer, text: string): Promise<Vector> => {
+    const key = JSON.stringify([scorer.identity, text]);
+    const known = recent.get(key);
+    if (known !== undefined) {
+      remember(key, known);
+      return Promise.resolve(known);
+    }
+    const running = computing.get(key);
+    if (running !== undefined) {
+      return running;
+    }
+    const started = embed(scorer, text).then(
+      (vector) => {
+        remember(key, vector);
+        computing.delete(key);
+        return vector;
+      },
+      (error: unknown) => {
+        computing.delete(key);
+        throw error;
+      },
+    );
+    computing.set(key, started);
+    return started;
+  };
+
   const modelVector = async (scorer: Scorer, item: Item): Promise<Vector> => {
     const known = vectors.get(item.id);
     if (known !== undefined && known.text === item.text) {
       return known.vector;
     }
-    const vector = await embed(scorer, item.text);
+    const hash = textHash(item.text);
+    const row = selectVector.get(item.id, scorer.identity, hash);
+    if (row !== undefined) {
+      const vector = storedVector(StoredVector.parse(row).vector);
+      vectors.set(item.id, { text: item.text, vector });
+      return vector;
+    }
+    const vector = await textVector(scorer, item.text);
+    if (closed) {
+      return vector;
+    }
+    dropOtherTexts.run(item.id, scorer.identity, hash);
+    insertVector.run(item.id, scorer.identity, hash, vectorBytes(vector), clock.now(), item.id);
     vectors.set(item.id, { text: item.text, vector });
     return vector;
   };
@@ -326,7 +412,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     if (context.topics.length === 0) {
       return evaluate(configurations.model, context, []);
     }
-    const messageVector = await embed(scorer, context.message.text.slice(0, ownerTextLimit));
+    const messageVector = await textVector(scorer, context.message.text.slice(0, ownerTextLimit));
     const itemVectors = new Map<string, Vector>();
     for (const topic of context.topics) {
       for (const item of topic.items) {

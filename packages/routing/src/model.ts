@@ -7,6 +7,7 @@ export interface ModelSpec {
   readonly dtype: "fp32" | "q8";
   readonly pooling: "mean" | "cls";
   readonly prefix: string;
+  readonly revision?: string | undefined;
 }
 
 export interface ModelFile {
@@ -34,6 +35,10 @@ export const bgeSmallZh: PinnedModel = {
   ],
 };
 
+export function modelIdentity(spec: ModelSpec): string {
+  return JSON.stringify([spec.name, spec.model, spec.revision ?? null, spec.dtype, spec.pooling, spec.prefix]);
+}
+
 export interface ModelSource {
   readonly directory: string;
   readonly offline: boolean;
@@ -53,6 +58,7 @@ export async function modelScorer(spec: ModelSpec, source: ModelSource): Promise
   const loadMs = performance.now() - started;
   return {
     name: spec.name,
+    identity: modelIdentity(spec),
     loadMs,
     represent: async (text) => {
       const output = await extractor(`${spec.prefix}${text}`, { pooling: spec.pooling, normalize: true });
