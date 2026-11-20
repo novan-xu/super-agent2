@@ -1,4 +1,4 @@
-import { ticketReference } from "@super-agent2/protocol";
+import { ticketProject, ticketReference } from "@super-agent2/protocol";
 import { createHash } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import {
@@ -972,7 +972,7 @@ export function createChains(options: ChainsOptions): Chains {
             fingerprint,
             before: unmetWaits(ticket, index).flatMap((wait) => {
               const before = index.get(wait.ticket);
-              return before === undefined ? [] : [{ id: before.id, title: before.title, repository: before.repository, state: before.state }];
+              return before === undefined ? [] : [{ id: before.id, title: before.title, repository: ticketProject(before), state: before.state }];
             }),
             startable: canStartAlone(ticket, listIndex),
             choice: defaults.resolve(ticket),

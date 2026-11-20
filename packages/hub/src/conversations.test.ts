@@ -475,14 +475,15 @@ describe("the topic stream", () => {
     const codeReply = await running.conversations.sendToStream(undefined, "Work for owner/tickets", [], { scope: { kind: "code" } });
     expect(codeReply).toMatchObject({
       topic: { title: "Work for owner/tickets", repository: "owner/tickets" },
-      entry: { possibleMatch: project, text: "Work for owner/tickets" },
+      entry: { text: "Work for owner/tickets" },
     });
+    expect(codeReply?.entry).not.toHaveProperty("possibleMatch");
     const pending = await running.conversations.sendToStream(undefined, "Something unrelated", [], { scope: { kind: "code" } });
     expect(pending?.topic).toMatchObject({ title: "Something unrelated", repository: null, needsRepository: true });
     expect(decisions()).toEqual([
       { scope: "daily", candidates: 1, rule: "c", topic: daily, placed_in: daily },
       { scope: "repository", candidates: 1, rule: "b", topic: project, placed_in: project },
-      { scope: "code", candidates: 1, rule: "d", topic: null, placed_in: codeReply?.topic.id },
+      { scope: "code", candidates: 0, rule: "d", topic: null, placed_in: codeReply?.topic.id },
       { scope: "code", candidates: 2, rule: "d", topic: null, placed_in: pending?.topic.id },
     ]);
     expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
@@ -1306,15 +1307,15 @@ describe("topic corrections and archive policy", () => {
     const source = openTicket(running, undefined, "team/alpha").conversation!;
     const code = { kind: "code" } as const;
     const repository = { kind: "repository", repository: "team/alpha" } as const;
-    for (const [text, scope, target] of [
-      ["Check other", code, { repository: "team/other" }],
-      ["Review", code, { repository: null, needsRepository: true }],
-      ["Check other", repository, { repository: "team/alpha" }],
+    for (const [text, scope, from, target] of [
+      ["Check other", code, other, { repository: "team/other" }],
+      ["Review", code, source, { repository: null, needsRepository: true }],
+      ["Check other", repository, source, { repository: "team/alpha" }],
     ] as const) {
       service.send(source, "Keep the source recent");
       const routed = (await service.sendToStream(undefined, text, [], { scope }))!;
-      expect(routed).toMatchObject({ topic: { id: source }, entry: { placement: "router-joined" } });
-      const moved = service.move(routed.entry.id, null, source);
+      expect(routed).toMatchObject({ topic: { id: from }, entry: { placement: "router-joined" } });
+      const moved = service.move(routed.entry.id, null, from);
       expect(moved.ok && service.get(moved.value)).toMatchObject(target);
       clock.advance(1);
     }

@@ -966,6 +966,10 @@ export const migrations: readonly Migration[] = [
       CREATE UNIQUE INDEX transfer_ticket ON transfer_entries(ticket);
     `,
   },
+  {
+    version: 46,
+    sql: `ALTER TABLE tickets ADD COLUMN project TEXT CHECK (project IS NULL OR (form = 'task' AND repository IS NULL));`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

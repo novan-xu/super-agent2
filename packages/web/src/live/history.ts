@@ -1,4 +1,4 @@
-import { foldedText, isInHistory, newerPosition, normalisedQuery, positionOf, searchTerms, type Ticket, type TicketHistory } from "@super-agent2/protocol";
+import { foldedText, isInHistory, newerPosition, normalisedQuery, positionOf, searchTerms, type Ticket, type TicketHistory, ticketProject } from "@super-agent2/protocol";
 
 export type HistoryStatus = "idle" | "loading" | "ready" | "failed";
 
@@ -160,7 +160,7 @@ function excerpt(text: string, at: number, length: number): string {
 
 export function matchNote(ticket: Ticket, query: string): string | null {
   const terms = searchTerms(query);
-  const shown = [ticket.title.zh, ticket.repository ?? ""].map(foldedText);
+  const shown = [ticket.title.zh, ticketProject(ticket) ?? ""].map(foldedText);
   const term = terms.find((entry) => !shown.some((text) => text.includes(foldedText(entry))));
   if (term === undefined) {
     return null;

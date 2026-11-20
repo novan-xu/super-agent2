@@ -29,7 +29,7 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 | Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues and opens task tickets, arranges work, evaluates failures, and operates through the hub |
 | Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container, keeps ticket state, enforces the code constraints, serves the front door |
 | Runner | One process on each work machine (PC, Mac mini, others later) | Starts the workers of the tickets the owner started; runs nothing else |
-| Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (and a checkout when a repository is named) for a task ticket |
+| Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (with a checkout when requested) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
 The front door is Cloudflare Access on the existing host name, with two applications and no Bypass rule anywhere.
@@ -87,16 +87,18 @@ A worker does the same, decided by the hub.
   Each topic belongs to one project or to 日常.
   A new topic from 代码 may temporarily have no repository while it waits for the owner to name one.
   It stays in 代码 while it waits.
+  Operations for a single repository belong to its topics in 代码, including secrets, service parameters and configuration.
   Confirmed memory, tickets and the topic board are shared across projects.
 - A new ticket stays in its filing topic, following any completed topic merge to its destination.
   Filing repository work in a daily topic moves the topic into that repository when all linked tickets belong to it and the topic passes the claim checks.
+  Both a checkout repository and a related project count toward these checks.
   Otherwise the topic keeps its repository or stays in 日常.
   The brain may assign a repository to a daily or pending topic, including another topic at the owner's request; System, merged topics, pending merges and conflicting tickets are refused.
   A repository topic without repository tickets can move to 日常.
   Each move updates the page live.
 - A regular repository-less task ticket shows its start card, worker updates, failure notices and delivered text and files in its filing topic.
-  工作台 lists regular tickets by their own repository, including those under 日常.
-  A light task in 日常 appears through its conversation messages and result.
+  工作台 lists regular tickets by their checkout repository or related project and puts unassociated tickets under 日常.
+  A light task appears through its messages and result in its project topic or in 日常.
   The result can open the complete worker log.
 - The owner sees each topic's work as it happens.
   The owner can send more input while a topic is answering and can interrupt that topic.
@@ -167,7 +169,9 @@ A worker does the same, decided by the hub.
   A later owner move flags that the owner corrected the handover and preserves both destinations.
   The hub also logs one line for each initial decision.
 - In 日常 a new topic has no repository; in a repository composer it takes that repository.
-  In all of 代码 it takes a repository only when the message names exactly one of the known repositories (those of the candidates and of open tickets, case-insensitive, as a whole word or as `owner/name`); otherwise it asks the owner which repository it belongs to and assigns it when the owner names it.
+  In all of 代码, an unambiguous name or `owner/name` limits matches to that repository's topics, except when the message cites a ticket or issue.
+  Known names come from active topics, open tickets including their related projects, and the repository catalog's pinned or discovered repositories.
+  A new topic in 代码 uses that repository when named, or waits for the brain to establish the repository with the owner.
 - The owner can move a message to another topic with 移到… and use a possible match in one tap.
   A message the hub routed carries a line naming the rule and whether it joined or opened a topic.
   A new topic also gets its possible match's ID, title and up to 320 characters of the match's summary when there is a candidate.
@@ -342,8 +346,10 @@ The database, page routes, runner messages and folder paths use the stable inter
 
 There are two kinds of ticket.
 Everything above is a code ticket.
-Everything else a worker does is a task ticket: a task in words, with material and attachments, and a repository and a commit when it needs one.
-The worker does it in a scratch folder, beside a checkout of the repository at that commit when one is named, and hands back an outcome (done or failed), a report and any text and files.
+Everything else a worker does is a task ticket with instructions, material and attachments.
+Use `open_task_ticket` with `project` to associate work with its repository in 代码 while the worker runs in scratch.
+Use `repository` when the task needs a checkout, with an optional `commit` to select its revision.
+The worker hands back an outcome (done or failed), a report and any text and files.
 Done, the result is delivered to the owner in the ticket's topic and the main stream, and the ticket is done (`delivered`).
 A failed task goes through the failure loop.
 Nothing is verified.
@@ -351,7 +357,9 @@ A task ticket can be arranged after a code chain and take that chain's final mer
 
 ### Light tasks
 
-In 日常, repository-less everyday deliverables use light tasks, including prose, routine machine operations and Agent_wring work.
+Light tasks cover everyday prose, routine machine operations and Agent_wring work in 日常, along with operations for a repository that can be done in scratch in 代码.
+Use `project` in `propose_light_task` for operations concerning a repository's secrets, service parameters or configuration.
+The active topic must already belong to the project or be eligible to move there when the work starts.
 The brain posts a short confirmation using `propose_light_task` and dispatches using `start_light_task` after the owner agrees in words.
 The hub checks that the proposal is current, is younger than 24 hours and precedes an owner message taken into the active turn of the same topic.
 The brain interprets the owner's words and asks again if the scope changes.
@@ -359,7 +367,8 @@ A proposal can dispatch once.
 Light tasks are standalone and use the existing task ticket, daily code, runner, scratch folder, work events and provider fallback internally.
 The hub chooses the machine, model and effort from the usual defaults and starts an approved task when a suitable machine is available.
 An owner can request an engine or stop the worker in the conversation.
-Repository work, deployments and explicit requests for a ticket use the regular visible flow.
+Code changes always use issue chains.
+Deployments, operations that need a checkout and explicit requests for a ticket use visible tickets.
 
 The conversation shows the confirmation, any worker question and the final result, failure or stop.
 The workbench, waiting list and ticket history omit light tasks.
@@ -732,6 +741,7 @@ Changed by this design:
   Selecting a topic filters the view and sends input directly there.
   Topics can be renamed, merged or archived from the list or the topic view.
 - 工作台 shows repositories on the left, the selected repository's chains in the centre and its conversation on the right.
+  Visible task tickets appear with the repository they concern, including operations in scratch.
   The conversation panel uses the same stream, topic list and composer scoped to that repository.
   全部 uses the combined code stream, and 日常 uses the daily stream.
   A selected ticket replaces the conversation in the panel; a pending ticket opens its start controls in a dialog.

@@ -1,4 +1,4 @@
-import { ticketReference } from "@super-agent2/protocol";
+import { ticketProject, ticketReference } from "@super-agent2/protocol";
 import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
@@ -97,7 +97,7 @@ export function repairLines(ticket: Ticket, get: (id: number) => Ticket | undefi
 }
 
 export function ticketLine(ticket: Ticket): string {
-  const where = ticket.repository === null ? "no repository" : ticket.repository;
+  const where = ticketProject(ticket) ?? "no repository";
   const merged = new Set(mergedIssueNumbers(ticket));
   const closedOutside = new Set(ticket.closedOutside?.map((issue) => issue.number));
   const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : closedOutside.has(issue.number) ? " closed on GitHub" : ""}`).join(", ");

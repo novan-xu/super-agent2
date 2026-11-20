@@ -38,7 +38,7 @@ function sortedNames(names: ReadonlyMap<string, string>): string[] {
 export function createRepositoryAccounts(database: HubDatabase, clock: Clock, source?: string): RepositoryAccounts {
   const { connection } = database;
   const selectNames = connection.prepare(
-    "SELECT DISTINCT repository FROM tickets WHERE repository IS NOT NULL",
+    "SELECT DISTINCT coalesce(repository, project) AS repository FROM tickets WHERE repository IS NOT NULL OR project IS NOT NULL",
   );
   const selectChosen = connection.prepare("SELECT repository, account FROM repository_accounts");
   const selectOne = connection.prepare("SELECT repository, account FROM repository_accounts WHERE repository = ?");

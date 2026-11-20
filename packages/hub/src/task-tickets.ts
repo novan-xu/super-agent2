@@ -28,6 +28,7 @@ export interface TaskTicketRequest {
   readonly kind: "writing" | "operation";
   readonly materials: readonly TaskMaterial[];
   readonly repository?: string | undefined;
+  readonly project?: string | undefined;
   readonly commit?: string | undefined;
   readonly deploy?: boolean | undefined;
   readonly after?: readonly number[] | undefined;
@@ -165,6 +166,9 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     if (repository !== null && !RepositoryName.safeParse(repository).success) {
       return refuse(`${repository} is not a repository as owner/name.`);
     }
+    if (request.project !== undefined && (repository !== null || !RepositoryName.safeParse(request.project).success)) {
+      return refuse("use project as owner/name for a task without a checkout.");
+    }
     if (repository === null && (request.commit !== undefined || request.deploy === true)) {
       return refuse("a commit or a deployment needs the repository it is of; name it in repository.");
     }
@@ -217,6 +221,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         const id = writes.open({
           form: "task",
           repository,
+          project: request.project,
           issues: [],
           title: request.title,
           summary: request.summary,

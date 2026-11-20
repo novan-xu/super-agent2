@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type StuckAnswer, type StuckCard as Card } from "@super-agent2/protocol";
+import { chineseOf, type StuckAnswer, type StuckCard as Card, ticketProject } from "@super-agent2/protocol";
 import { useState } from "react";
 import type { CardUse } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
@@ -19,6 +19,7 @@ export interface StuckCardProps {
 
 export function StuckCard({ card, use, focused, href, open, answer }: StuckCardProps) {
   const { ticket, guidance } = card;
+  const repository = ticketProject(ticket);
   const stuck = ticket.stuck;
   const [words, setWords] = useState("");
   if (stuck === null) {
@@ -31,10 +32,10 @@ export function StuckCard({ card, use, focused, href, open, answer }: StuckCardP
       <div className="wcard-kind">
         <span className="chip chip--warn">{text(`loop.failure.${stuck.failure.kind}`)}</span>
         <span className="chip">{text("ticket.roundValue", { round: stuck.round })}</span>
-        {ticket.repository === null ? null : (
+        {repository === null ? null : (
           <span className="chip chip--mono">
             <Icon name="repo" />
-            {ticket.repository}
+            {repository}
           </span>
         )}
         <span className="od-fill num">{clockOf(card.at)}</span>
