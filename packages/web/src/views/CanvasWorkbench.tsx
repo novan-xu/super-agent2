@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type Conversation, type StartCard as StartData, type Ticket } from "@super-agent2/protocol";
+import { chineseOf, type Conversation, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
 import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
@@ -88,12 +88,13 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       props.selectRepository(undefined);
       window.setTimeout(() => document.getElementById(`card-${card.key}`)?.scrollIntoView({ block: "center" }), 0);
     } else if (card !== undefined) {
-      props.selectRepository(scopeFor(card.ticket.repository));
+      props.selectRepository(scopeFor(ticketProject(card.ticket)));
       if (card.kind === "start") setPopup(card.ticket.id);
       else { props.selectTicket(card.ticket.id); setPane("panel"); }
     } else if (/^start:[1-9][0-9]*$/.test(props.focus)) {
       const id = Number(props.focus.slice(6));
-      props.selectRepository(scopeFor(tickets.find((ticket) => ticket.id === id)?.repository));
+      const ticket = tickets.find((entry) => entry.id === id);
+      props.selectRepository(scopeFor(ticket === undefined ? undefined : ticketProject(ticket)));
       props.selectTicket(id);
       setPane("panel");
     }
@@ -118,7 +119,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   const select = (id: number) => { props.selectTicket(id); setPane("panel"); };
   const openStart = (card: StartData, element: HTMLElement) => { source.current = element; setPopup(card.ticket.id); };
   const rail = (value: string | null | undefined, label: string) => {
-    const matching = all.filter((ticket) => belongs(value, ticket.repository));
+    const matching = all.filter((ticket) => belongs(value, ticketProject(ticket)));
     const waitingHere = matching.some((ticket) => stuck.has(ticket.id) || starts.has(ticket.id)) || ((value === undefined || value === null) && holds.length > 0);
     const running = matching.some((ticket) => ticket.state !== "pending") || topics.some((topic) => belongs(value, topic.repository) && topic.state === "working");
     return <button key={value ?? (value === null ? "daily" : "all")} type="button" className="wb-repo" title={typeof value === "string" ? value : undefined} aria-pressed={repository === value} onClick={() => chooseRepository(value)}>

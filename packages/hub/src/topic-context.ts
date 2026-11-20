@@ -31,7 +31,7 @@ export function createTopicContext({ connection }: HubDatabase, itemOf: (row: un
       FROM conversations WHERE board_revision > ? ORDER BY board_revision`,
   );
   const selectTickets = connection.prepare(
-    `SELECT code, code_date AS codeDate, conversation_id IS ? AS own, state, repository, title_en AS title FROM tickets
+    `SELECT code, code_date AS codeDate, conversation_id IS ? AS own, state, coalesce(repository, project) AS repository, title_en AS title FROM tickets
       WHERE state IN (${openTicketStates.map(() => "?").join(", ")}) ORDER BY own DESC, created_at DESC, id DESC`,
   );
   const selectTurns = connection.prepare(

@@ -1,4 +1,4 @@
-import { activeWorkStates, type FailedStep, type LoopFailureKind, type Ticket, unmetWaits, type VerificationWait, type WorkFailure } from "@super-agent2/protocol";
+import { activeWorkStates, type FailedStep, type LoopFailureKind, type Ticket, ticketProject, unmetWaits, type VerificationWait, type WorkFailure } from "@super-agent2/protocol";
 
 export const ticketPhases = [
   "pending",
@@ -165,8 +165,8 @@ export function ticketGroups(open: readonly Ticket[]): TicketGroup[] {
     if (ticket.state === "pending") {
       continue;
     }
-    const repository = ticket.repository;
-    const key = repository === null ? "tasks" : `repository:${repository}`;
+    const repository = ticketProject(ticket);
+    const key = repository === null ? "tasks" : `repository:${repository.toLowerCase()}`;
     const group = groups.get(key) ?? { repository, tickets: [] };
     group.tickets.push(ticket);
     groups.set(key, group);

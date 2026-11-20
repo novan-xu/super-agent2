@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type DecisionReview, type Ticket, type TicketDecision, unsettledDecisions } from "@super-agent2/protocol";
+import { chineseOf, type DecisionReview, type Ticket, type TicketDecision, ticketProject, unsettledDecisions } from "@super-agent2/protocol";
 import { type KeyboardEvent, memo, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
@@ -135,7 +135,7 @@ export function Decisions({ ticket, review }: { readonly ticket: Ticket; readonl
       </div>
       <div className="mem-list" role="list" aria-labelledby={id}>
         {ticket.decisions.map((decision) => (
-          <DecisionRow key={decision.id} ticket={ticket.id} repository={ticket.repository} decision={decision} review={review} />
+          <DecisionRow key={decision.id} ticket={ticket.id} repository={ticketProject(ticket)} decision={decision} review={review} />
         ))}
       </div>
     </section>
