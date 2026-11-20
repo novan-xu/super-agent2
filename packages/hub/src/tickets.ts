@@ -75,6 +75,7 @@ export interface TicketTask {
 
 export interface TicketToOpen {
   readonly form?: TicketForm | undefined;
+  readonly light?: Ticket["light"];
   readonly task?: TaskToOpen | undefined;
   readonly requiredMachine?: string | null | undefined;
   readonly repository: string | null;
@@ -122,6 +123,7 @@ export type MoveError = "not_found" | "refused";
 export type MoveResult = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly error: MoveError; readonly ticket?: Ticket };
 
 export interface ListOptions {
+  readonly visible?: boolean;
   readonly open?: boolean;
   readonly limit?: number;
 }
@@ -266,6 +268,7 @@ export interface TicketServiceOptions {
 export class TicketError extends Error {}
 
 const TicketRow = z.object({
+  light: z.string().nullable(),
   id: z.number().int(),
   code: TicketCode,
   code_date: TicketCodeDate,
@@ -642,7 +645,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const moveDecisions = connection.prepare("UPDATE ticket_decisions SET ticket_id = ? WHERE ticket_id = ?");
   const updateSent = connection.prepare("UPDATE ticket_decisions SET sent_at = ? WHERE ticket_id = ? AND id = ? AND sent_at IS NULL");
   const selectReviews = connection.prepare(
-    `SELECT d.ticket_id AS ticket_id, COUNT(*) AS count FROM ticket_decisions d JOIN tickets t ON t.id = d.ticket_id WHERE d.verdict IS NULL AND t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${finishedTicketStates.map(() => "?").join(", ")}) GROUP BY d.ticket_id ORDER BY d.ticket_id`,
+    `SELECT d.ticket_id AS ticket_id, COUNT(*) AS count FROM ticket_decisions d JOIN tickets t ON t.id = d.ticket_id WHERE t.light IS NULL AND d.verdict IS NULL AND t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${finishedTicketStates.map(() => "?").join(", ")}) GROUP BY d.ticket_id ORDER BY d.ticket_id`,
   );
   const updateBranch = connection.prepare("UPDATE tickets SET branch = ? WHERE id = ?");
   const updatePullRequest = connection.prepare("UPDATE tickets SET pull_request = ?, report_en = ?, report_zh = ? WHERE id = ?");
@@ -653,15 +656,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys) VALUES (?, ?, ?, ?, ?)");
   const updateCommit = connection.prepare("UPDATE ticket_tasks SET commit_sha = ? WHERE ticket_id = ?");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
-  const selectAll = connection.prepare("SELECT * FROM tickets ORDER BY created_at DESC, id DESC LIMIT ?");
+  const selectAll = connection.prepare("SELECT * FROM tickets WHERE (? OR light IS NULL) ORDER BY created_at DESC, id DESC LIMIT ?");
   const selectOpen = connection.prepare(
-    `SELECT * FROM tickets WHERE state IN (${openTicketStates.map(() => "?").join(", ")}) ORDER BY created_at DESC, id DESC LIMIT ?`,
+    `SELECT * FROM tickets WHERE state IN (${openTicketStates.map(() => "?").join(", ")}) AND (? OR light IS NULL) ORDER BY created_at DESC, id DESC LIMIT ?`,
   );
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (form, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    `INSERT INTO tickets (form, light, required_machine, repository, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -751,6 +754,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       code: value.code,
       codeDate: value.code_date,
       form: value.form,
+      light: value.light ?? undefined,
       repository: value.repository,
       issues,
       title: { en: value.title_en, zh: value.title_zh },
@@ -867,6 +871,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     const form = formOf(request);
     if (!fitsForm(form, request.kind)) {
       throw new TicketError(`A ${form} ticket cannot be of kind ${request.kind}`);
+    }
+    if (request.light !== undefined && (form !== "task" || request.task === undefined || request.repository !== null
+      || request.task.deploys === true || request.task.commitRef != null || request.conversation === undefined || (request.waitsFor?.length ?? 0) > 0)) {
+      throw new TicketError("A light task must be a standalone task in a daily topic, without a repository, commit or deployment.");
     }
     if (request.task !== undefined && form !== "task") {
       throw new TicketError("Only a task ticket has a task");
@@ -985,6 +993,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const topic = inheritedTopic ?? chooseTopic(request);
       const result = insertTicket.run(
         formOf(request),
+        request.light ?? null,
         request.requiredMachine ?? null,
         request.repository,
         request.kind,
@@ -1001,7 +1010,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         date,
       );
       const id = Number(result.lastInsertRowid);
-      if (formOf(request) === "task" && request.repository === null) {
+      if (formOf(request) === "task" && request.repository === null && request.light === undefined) {
         const card = `task-card-${id}`;
         insertTaskNotice.run(card, topic, topic, JSON.stringify({ text: text("notice.taskPending", { title: request.title.zh.trim() }), ticket: id, start: true }), now);
         changedEntries.push(card);
@@ -1054,14 +1063,14 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         touch(id);
       },
       setWaits: (id, waits) => {
-        existing(id);
+        if (existing(id).light !== undefined && waits.length > 0) throw new TicketError("A light task cannot have dependencies.");
         deleteWaits.run(id);
         const seen = new Set<number>();
         for (const wait of waits) {
           if (wait.ticket === id) {
             throw new TicketError(`Ticket ${references.get(id) ?? "(unavailable)"} cannot wait for itself`);
           }
-          existing(wait.ticket);
+          if (existing(wait.ticket).light !== undefined) throw new TicketError("A ticket cannot depend on a light task.");
           if (!seen.has(wait.ticket)) {
             seen.add(wait.ticket);
             insertWait.run(id, wait.ticket, wait.deployment ? 1 : 0);
@@ -1094,6 +1103,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           throw new TicketError(`Every issue of ticket ${ticketReference(old)} is closed, so nothing remains to repair`);
         }
         const merged = new Set(mergedIssueNumbers(old));
+        if (old.light !== undefined) throw new TicketError("Propose a new light task in the conversation to try again.");
         const task = old.form === "task" ? taskOf(id) : undefined;
         const raw = TicketRow.parse(selectTicket.get(id));
         const stuck = raw.stuck_failure === null ? undefined : LoopFailureKind.safeParse(raw.stuck_failure);
@@ -1168,6 +1178,12 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         recordMove(id, current.state, to, reason, now);
         if (to === "stopped" && reason !== undefined) {
           updateStopReason.run(reason.en, reason.zh, id);
+        }
+        if (to === "stopped" && current.light !== undefined && current.conversation !== null) {
+          const entry = `light-ended-${id}`;
+          insertTaskNotice.run(entry, current.conversation, current.conversation,
+            JSON.stringify({ text: text("notice.lightTaskEnded", { title: current.title.zh, reason: reason?.zh ?? text("notice.lightTaskStopped") }) }), now);
+          changedEntries.push(entry);
         }
         if (finishedTicketStates.includes(to)) {
           updateEnded.run(now, id);
@@ -1473,7 +1489,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
     topic: (id) => topicOf(id) ?? change((writes) => writes.topic(id)),
     list: (listing = {}) => {
       const limit = listing.limit ?? defaultLimit;
-      const rows = listing.open === true ? selectOpen.all(...openTicketStates, limit) : selectAll.all(limit);
+      const rows = listing.open === true ? selectOpen.all(...openTicketStates, Number(!listing.visible), limit) : selectAll.all(Number(!listing.visible), limit);
       return rows.map(toTicket);
     },
     history: (listing = {}) => {
@@ -1484,7 +1500,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       const older = before === undefined ? "" : " AND (t.ended_at < ? OR (t.ended_at = ? AND t.id < ?))";
       const matching = terms.map(() => ` AND (${searchedText}) LIKE ? ESCAPE '${escapeCharacter}'`).join("");
       const rows = connection
-        .prepare(`SELECT t.id AS id FROM tickets t WHERE t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${states})${older}${matching} ORDER BY t.ended_at DESC, t.id DESC LIMIT ?`)
+        .prepare(`SELECT t.id AS id FROM tickets t WHERE t.light IS NULL AND t.ended_at IS NOT NULL AND t.joined_into IS NULL AND t.state IN (${states})${older}${matching} ORDER BY t.ended_at DESC, t.id DESC LIMIT ?`)
         .all(...finishedTicketStates, ...(before === undefined ? [] : [before.endedAt, before.endedAt, before.id]), ...terms.map(likePattern), limit + 1);
       const found = rows.flatMap((row) => {
         const ticket = get(FoundRow.parse(row).id);

@@ -94,9 +94,10 @@ A worker does the same, decided by the hub.
   The brain may assign a repository to a daily or pending topic, including another topic at the owner's request; System, merged topics, pending merges and conflicting tickets are refused.
   A repository topic without repository tickets can move to 日常.
   Each move updates the page live.
-- A repository-less task shows its start card, worker start and text updates, failure notices and delivered text and files in its filing topic.
-  The ticket detail holds the complete worker log.
-  工作台 lists tickets by their own repository, including repository-less tasks under 日常.
+- A regular repository-less task ticket shows its start card, worker updates, failure notices and delivered text and files in its filing topic.
+  工作台 lists regular tickets by their own repository, including those under 日常.
+  A light task in 日常 appears through its conversation messages and result.
+  The result can open the complete worker log.
 - The owner sees each topic's work as it happens.
   The owner can send more input while a topic is answering and can interrupt that topic.
   Codex and Claude Code take both natively.
@@ -348,6 +349,29 @@ A failed task goes through the failure loop.
 Nothing is verified.
 A task ticket can be arranged after a code chain and take that chain's final merge commit as its commit, filled in when it begins.
 
+### Light tasks
+
+In 日常, repository-less everyday deliverables use light tasks, including prose, routine machine operations and Agent_wring work.
+The brain posts a short confirmation using `propose_light_task` and dispatches using `start_light_task` after the owner agrees in words.
+The hub checks that the proposal is current, is younger than 24 hours and precedes an owner message taken into the active turn of the same topic.
+The brain interprets the owner's words and asks again if the scope changes.
+A proposal can dispatch once.
+Light tasks are standalone and use the existing task ticket, daily code, runner, scratch folder, work events and provider fallback internally.
+The hub chooses the machine, model and effort from the usual defaults and starts an approved task when a suitable machine is available.
+An owner can request an engine or stop the worker in the conversation.
+Repository work, deployments and explicit requests for a ticket use the regular visible flow.
+
+The conversation shows the confirmation, any worker question and the final result, failure or stop.
+The workbench, waiting list and ticket history omit light tasks.
+A worker can write a question to its runner and pause until the brain relays the owner's original later message and attachments from the same topic.
+The brain can guide retries privately within the existing retry limit.
+A final failure stops the task and posts a single message.
+The delivered result offers a link to its worker log.
+
+If the result contains files, the hub adds one titled entry to 传输 with the result text and the files.
+The conversation also offers the files.
+Agent_wring workers save in Agent_wring and report the saved item and summary in the conversation.
+
 ## Chains
 
 The chain is how work is scheduled.
@@ -592,7 +616,11 @@ A message may be attachments alone.
 
 The transfer tab is a private store independent of topics and the brain.
 Entries retain their exact text and files until deleted.
-Files are uploaded in parts to the hub's private data volume, outside the brain's mounts, and are limited to 100 MiB each and 30 per entry.
+Files are uploaded in parts to the hub's private data volume, outside the brain's mounts.
+The device upload interface allows 100 MiB per file and 30 files per entry.
+File results from light tasks use the same transfer store and the runner's existing part-by-part delivery limits.
+The transfer file and the conversation download share the stored bytes.
+Deleting the transfer entry removes the transfer downloads and leaves the conversation download available.
 Incomplete uploads remain on disk; there is no automatic expiry.
 Entries are paged and changes refresh open pages over the owner WebSocket.
 
@@ -664,7 +692,7 @@ Proper nouns and technical terms may stay as they are.
 
 ## Notices
 
-- Ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic and appear in that topic's stream.
+- Regular ticket events, including merges, failures, stops, deliveries and deployments, go straight to the ticket's topic and appear in that topic's stream.
   An older ticket without a topic first inherits one from its repair lineage or a predecessor it waits for.
   If neither provides a topic, the first event creates one named after the ticket.
 - Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use in 日常.
@@ -694,7 +722,7 @@ Changed by this design:
 - 对话 keeps a switch at the top, 代码 | 日常 | 传输.
   代码 shows all repository topics or the topics in one selected repository.
   日常 shows daily topics, including System.
-  传输 is a separate device-to-device store.
+  传输 is a private store for device transfers and light-task file results.
   Each brain answer and each owner message has a small topic label that opens the topic view.
   The label also shows the repository when reading all of 代码.
 - 对话 opens in 代码 at the root and at the unqualified conversation list.

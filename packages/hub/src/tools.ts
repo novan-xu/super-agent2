@@ -1,6 +1,7 @@
 import {
   Questions,
   CodeEngineChoice,
+  LightTaskMode,
   ProgramId,
   DifficultyRow,
   ModelChoice,
@@ -51,6 +52,7 @@ import { topicCall, topicDefinitions } from "./topic-tools.js";
 import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import { type TicketTurn, TicketWriteRefused } from "./ticket-versions.js";
+import { LightTaskRequest, type LightTasks } from "./light-tasks.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
@@ -146,6 +148,13 @@ const TaskArguments = z.object({
   platform: Platform.optional(),
 });
 
+const ProposeLightArguments = LightTaskRequest.omit({ materials: true }).extend({
+  material: z.array(MaterialArgument).optional(),
+  confirmation: z.string().trim().min(1),
+});
+
+const StartLightArguments = z.strictObject({ proposal: MessageId, engine: ProgramId.optional() });
+
 const ListArguments = z.object({
   all: z.boolean().optional(),
   limit: z.number().int().positive().max(500).optional(),
@@ -216,6 +225,22 @@ const startChoices = {
   account: { type: "string", enum: [...gitHubAccounts], description: "The GitHub account to act as; by default the account that owns the repository" },
 };
 
+const materialSchema = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "A plain file name for the piece, letters, digits, dots, hyphens and underscores, for example notice.txt" },
+      source: { type: "string", description: "Where it comes from, in English" },
+      text: { type: "string", description: "The text itself, verbatim, when you have it" },
+      attachment: { type: "string", description: "The attachment id of a file the owner attached in this conversation, to pass on the file itself" },
+    },
+    required: ["name", "source"],
+    additionalProperties: false,
+  },
+  description: "The material to work from",
+};
+
 type JsonRpcId = z.infer<typeof JsonRpcId>;
 
 export type ToolReply =
@@ -246,6 +271,7 @@ export interface TicketTools {
   readonly tickets: TicketService;
   readonly filer: IssueFiler;
   readonly tasks?: TaskTickets;
+  readonly light?: LightTasks;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
   readonly work?: WorkService;
@@ -594,21 +620,7 @@ function ticketDefinitions() {
           summary: generatedSchema("one or two sentence summary"),
           task: { type: "string", description: "What to do, in English: the work, the result wanted and what done means, anything the owner said that matters" },
           kind: { type: "string", enum: [...taskKinds], description: "writing: prose with nothing to do with code; operation: anything done on a machine" },
-          material: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string", description: "A plain file name for the piece, letters, digits, dots, hyphens and underscores, for example notice.txt" },
-                source: { type: "string", description: "Where it comes from, in English" },
-                text: { type: "string", description: "The text itself, verbatim, when you have it" },
-                attachment: { type: "string", description: "The attachment id of a file the owner attached in this conversation, to pass on the file itself" },
-              },
-              required: ["name", "source"],
-              additionalProperties: false,
-            },
-            description: "The material to work from",
-          },
+          material: materialSchema,
           repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
           commit: { type: "string", description: `The commit of the checkout: a SHA, a branch, or "${mergedCommit}" for the final merge commit of the code chain it comes after` },
           deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
@@ -619,6 +631,49 @@ function ticketDefinitions() {
         required: ["title", "summary", "task", "kind"],
         additionalProperties: false,
       },
+    },
+    {
+      name: "propose_light_task",
+      title: "Confirm an everyday task in conversation",
+      description: "In a 日常 topic, post a brief confirmation in Chinese of a repository-less task to be done by a worker. The hub shows the confirmation as your reply. Wait for a newer owner message to agree in words, then call start_light_task with the returned proposal ID. If the scope changes, propose again. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring ingest, wait and save belong to an operation with mode agent_wring. Repository work, deployment and explicit requests to open a ticket use the regular tools.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: generatedSchema("task title"),
+          summary: generatedSchema("short task summary"),
+          confirmation: { type: "string", description: "The short Chinese message shown to the owner, asking for agreement in words" },
+          task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
+          kind: { type: "string", enum: [...taskKinds] },
+          mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring when the worker saves material in the Agent_wring library. Otherwise use transfer." },
+          material: materialSchema,
+          difficulty: startChoices.difficulty,
+          platform: startChoices.platform,
+          reason: generatedSchema("one-line reason for the difficulty"),
+          engine: { type: "string", enum: [...codeEngineChoices], description: "For operations, the default code engine by allowance" },
+        },
+        required: ["title", "summary", "confirmation", "task", "kind", "reason"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "start_light_task",
+      title: "Dispatch a light task the owner agreed to",
+      description: "Call only after a newer owner message in this same topic explicitly agrees to the current proposal as written. The hub starts it once, or waits for a suitable machine, and publishes its result here. A proposal expires after 24 hours. Use engine only if the owner explicitly selected it. Keep the internal reference private.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          proposal: { type: "string", description: "ID returned by propose_light_task" },
+          engine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner" },
+        },
+        required: ["proposal"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "answer_light_task",
+      title: "Relay the owner's answer to a light-task worker",
+      description: "When the owner answers a waiting worker's question in this topic, relay their original message and any attachments. Use the internal reference supplied with that question. Stop requests use stop_ticket.",
+      inputSchema: { type: "object", properties: { ticket: ticketCodeSchema("The internal light task reference") }, required: ["ticket"], additionalProperties: false },
     },
     {
       name: "list_tickets",
@@ -771,6 +826,30 @@ function heldText(command: CommandRecord): string {
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
 
+  const materialsOf = (material: readonly z.infer<typeof MaterialArgument>[]) => {
+    if (new Set(material.map((piece) => piece.name)).size !== material.length) {
+      return { ok: false as const, result: { text: "Nothing was opened: two pieces of material have the same name.", isError: true } };
+    }
+    const attached = new Map<string, Attachment>();
+    for (const piece of material) {
+      if (piece.attachment === undefined) {
+        continue;
+      }
+      if (piece.text !== undefined) {
+        return { ok: false as const, result: { text: `Nothing was opened: the material ${piece.name} has both text and an attachment; give one.`, isError: true } };
+      }
+      const chosen = options.attachments?.choose([piece.attachment]);
+      if (chosen === undefined || !chosen.ok || chosen.attachments[0] === undefined) {
+        return { ok: false as const, result: { text: `Nothing was opened: ${chosen?.ok === false ? chosen.reason : `there is no attachment ${piece.attachment}`}.`, isError: true } };
+      }
+      attached.set(piece.name, chosen.attachments[0]);
+    }
+    return { ok: true as const, materials: material.map((piece) => {
+      const attachment = attached.get(piece.name);
+      return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
+    }) };
+  };
+
   const definitions = () => {
     return [
       {
@@ -778,7 +857,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         title: "Run a shell command",
         description: [
           "Run a shell command in the hub's own container on the NAS, with the owner's credentials, and wait until it ends.",
-          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Work on a machine is a task ticket for a worker there, which the owner starts.",
+          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Use a worker for work on a machine. Propose repository-less everyday work in 日常 as a light task and use regular tickets for repository work, deployments or when the owner asks for a ticket.",
           `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
           "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
         ].join(" "),
@@ -906,7 +985,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     const target = parsed.data.target ?? hubTargetName;
     if (target !== hubTargetName) {
       return {
-        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker through a task ticket (open_task_ticket), which the owner starts.`,
+        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker. Use propose_light_task for everyday work in 日常 or open_task_ticket for a visible ticket.`,
         isError: true,
       };
     }
@@ -1004,24 +1083,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        const material = parsed.data.material ?? [];
-        if (new Set(material.map((piece) => piece.name)).size !== material.length) {
-          return { text: "Nothing was opened: two pieces of material have the same name.", isError: true };
-        }
-        const attached = new Map<string, Attachment>();
-        for (const piece of material) {
-          if (piece.attachment === undefined) {
-            continue;
-          }
-          if (piece.text !== undefined) {
-            return { text: `Nothing was opened: the material ${piece.name} has both text and an attachment; give one.`, isError: true };
-          }
-          const chosen = options.attachments?.choose([piece.attachment]);
-          if (chosen === undefined || !chosen.ok || chosen.attachments[0] === undefined) {
-            return { text: `Nothing was opened: ${chosen?.ok === false ? chosen.reason : `there is no attachment ${piece.attachment}`}.`, isError: true };
-          }
-          attached.set(piece.name, chosen.attachments[0]);
-        }
+        const material = materialsOf(parsed.data.material ?? []);
+        if (!material.ok) return material.result;
         const turn = writeTurn();
         const opened = await tools.tasks.open({
           title: parsed.data.title,
@@ -1035,10 +1098,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           difficulty: parsed.data.difficulty,
           platform: parsed.data.platform,
           conversation: turn.conversation,
-          materials: material.map((piece) => {
-            const attachment = attached.get(piece.name);
-            return { name: piece.name, source: piece.source, text: piece.text ?? null, ...(attachment === undefined ? {} : { attachment }) };
-          }),
+          materials: material.materials,
         }, turn);
         if (!opened.ok) {
           return { text: opened.reason, isError: true };
@@ -1056,6 +1116,32 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
               : "The owner starts it with 开始 on its card in 工作台; tell them in Chinese what it is and that it waits for their start.",
           ].join("\n"),
         };
+      }
+      case "propose_light_task": {
+        if (tools.light === undefined) return undefined;
+        const parsed = ProposeLightArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const { material, confirmation, ...request } = parsed.data;
+        const chosen = materialsOf(material ?? []);
+        if (!chosen.ok) return chosen.result;
+        const proposal = tools.light.propose({ ...request, materials: chosen.materials }, confirmation, writeTurn());
+        return { text: `Proposal ${proposal}. The confirmation is already visible in chat. End this turn without repeating it. Wait for the owner's agreement before calling start_light_task.` };
+      }
+      case "start_light_task": {
+        if (tools.light === undefined) return undefined;
+        const parsed = StartLightArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const ticket = tools.light.start(parsed.data.proposal, parsed.data.engine, writeTurn());
+        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. ${ticket.state === "waiting"
+          ? "Tell the owner in one line that it will start automatically when a suitable machine is available."
+          : "The result arrives automatically in the conversation. A brief acknowledgment is enough."}` };
+      }
+      case "answer_light_task": {
+        if (tools.work === undefined) return undefined;
+        const parsed = TicketArgument.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const result = tools.work.answerLightQuestion(resolve(parsed.data.ticket), writeTurn());
+        return result.ok ? { text: "The owner's answer was forwarded to the worker. The result comes back here." } : { text: result.reason, isError: true };
       }
       case "list_tickets": {
         const parsed = ListArguments.safeParse(raw);
@@ -1123,7 +1209,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!chosen.ok) {
           return { text: `Nothing was sent: ${chosen.reason}.`, isError: true };
         }
-        const sent = tools.work.message(resolve(parsed.data.ticket), parsed.data.text, "brain", chosen.attachments, writeTurn());
+        const id = resolve(parsed.data.ticket);
+        const turn = writeTurn();
+        const ticket = tools.tickets.get(id);
+        if (ticket?.light !== undefined && ticket.conversation !== turn.conversation) return { text: "A light task can only be messaged from its own topic.", isError: true };
+        const sent = tools.work.message(id, parsed.data.text, "brain", chosen.attachments, turn);
         if (!sent.ok) {
           return { text: sent.reason, isError: true };
         }
@@ -1138,11 +1228,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        if (tools.tickets.get(resolve(parsed.data.ticket))?.state === "stuck") {
+        const id = resolve(parsed.data.ticket);
+        const turn = writeTurn();
+        const ticket = tools.tickets.get(id);
+        if (ticket?.light !== undefined && ticket.conversation !== turn.conversation) return { text: "A light task can only be stopped from its own topic.", isError: true };
+        if (ticket?.state === "stuck") {
           return { text: `Ticket ${parsed.data.ticket} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你, whether to resume it or give it up. Tell the owner.`, isError: true };
         }
-        const result = tools.tickets.stop(resolve(parsed.data.ticket), parsed.data.reason, writeTurn());
+        const result = tools.tickets.stop(id, parsed.data.reason, turn);
         if (result.ok) {
+          if (result.ticket.light !== undefined) return { text: "Stopped the light task. A short stop message is already visible in chat." };
           return { text: [`Stopped ticket ${ticketReference(result.ticket)}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
         }
         return result.error === "not_found"

@@ -438,7 +438,8 @@ describe("only the owner starts a chain", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     const names = ((await listed.json()) as { result: { tools: { name: string }[] } }).result.tools.map((tool) => tool.name);
-    expect(names.filter((name) => /start|begin/.test(name))).toEqual([]);
+    expect(names.filter((name) => /start|begin/.test(name))).toEqual(["start_light_task"]);
+    expect((await callBrainTool(running, "start_light_task", { proposal: "aa" })).isError).toBe(true);
     expect((await callBrainTool(running, "start_chain", { ticket: "aa" })).text).toBe("Unknown tool: start_chain");
     expect((await callBrainTool(running, "proceed_ticket", { ticket: "aa" })).isError).toBe(true);
     await unchanged(running);

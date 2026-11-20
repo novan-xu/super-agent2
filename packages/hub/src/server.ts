@@ -223,6 +223,7 @@ export interface HubServerOptions {
 
 export interface HubServer {
   readonly server: Server;
+  transferChanged(): void;
   listen(port: number, host: string): Promise<AddressInfo>;
   close(): Promise<void>;
 }
@@ -408,6 +409,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const previews = new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
+  const transferChanged = () => {
+    for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
+  };
 
   const authenticate = async (request: IncomingMessage): Promise<Identity | undefined> => {
     try {
@@ -616,9 +620,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path.startsWith("/api/transfer") && options.database !== undefined) {
-      const handled = await serveTransfer({ request, response, path, method, database: options.database, sameOrigin: isSameOrigin(request), readBody: () => readBody(request), changed: () => {
-        for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
-      } });
+      const handled = await serveTransfer({ request, response, path, method, database: options.database, sameOrigin: isSameOrigin(request), readBody: () => readBody(request), changed: transferChanged });
       if (handled) return;
     }
     if (path.startsWith(pushPath) && (await servePush(request, response, path, method))) {
@@ -1349,7 +1351,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       if (limit === undefined || (scope !== "open" && scope !== "all")) {
         return false;
       }
-      sendJson(response, 200, { tickets: tickets.list({ open: scope === "open", limit }) });
+      sendJson(response, 200, { tickets: tickets.list({ open: scope === "open", limit, visible: true }) });
       return true;
     }
     const fileRoute = ticketFileRoute.exec(path);
@@ -1601,7 +1603,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }) ?? (() => undefined);
     const unsubscribeWaiting =
       options.waiting?.subscribe((cards) => send({ type: "waiting", cards: [...cards] })) ?? (() => undefined);
-    const unsubscribeTickets = options.tickets?.subscribe((ticket) => send({ type: "ticket", ticket })) ?? (() => undefined);
+    const unsubscribeTickets = options.tickets?.subscribe((ticket) => { if (ticket.light === undefined) send({ type: "ticket", ticket }); }) ?? (() => undefined);
     const unsubscribeMemories = options.memories?.subscribe((list) => send({ type: "memories", ...list })) ?? (() => undefined);
     const unsubscribeAllowance = options.defaults?.subscribe(() => send({ type: "allowance", allowance: allowanceSnapshot(options.defaults!) })) ?? (() => undefined);
     const unsubscribeSettings = options.settings?.subscribe((settings) => send({ type: "settings", settings })) ?? (() => undefined);
@@ -1708,7 +1710,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       send({ type: "waiting", cards: options.waiting.cards() });
     }
     if (options.tickets !== undefined) {
-      send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit }), reviews: options.tickets.reviews() });
+      send({ type: "tickets", tickets: options.tickets.list({ open: true, limit: maximumListLimit, visible: true }), reviews: options.tickets.reviews() });
     }
     if (options.memories !== undefined) {
       send({ type: "memories", ...options.memories.snapshot() });
@@ -1774,6 +1776,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
 
   return {
     server,
+    transferChanged,
     listen: (port, host) =>
       new Promise((resolve, reject) => {
         const failed = (error: Error) => reject(error);

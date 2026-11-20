@@ -14,6 +14,7 @@ export interface StoredFile {
 
 export interface TicketFiles {
   staged(ticket: number, attempt: number, part: number): number;
+  stagedPath(ticket: number, attempt: number, part: number): string;
   append(ticket: number, attempt: number, part: number, offset: number, data: Buffer): number;
   keep(ticket: number, attempt: number, files: readonly DeliveredFile[]): void;
   drop(ticket: number, attempt: number): void;
@@ -53,6 +54,7 @@ export function createTicketFiles(database: HubDatabase, folder: string = ticket
 
   return {
     staged,
+    stagedPath: partPath,
     append: (ticket, attempt, part, offset, data) => {
       mkdirSync(attemptFolder(ticket, attempt), { recursive: true });
       const path = partPath(ticket, attempt, part);

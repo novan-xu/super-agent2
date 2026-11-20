@@ -1028,6 +1028,39 @@ describe("a task worker on the runner", () => {
     expect(parts.find((message) => message.name === "missing.bin")).toMatchObject({ data: null, problem: expect.stringContaining("missing.bin") as unknown as string });
   });
 
+  it("pauses a light worker for a question and resumes it with the owner's answer after a runner restart", async () => {
+    const task = { ...writingTask(24), light: true as const };
+    const first = start();
+    first.receive({ type: "work.task", task });
+    const before = await programs.prompted(1);
+    before.emit({ type: "session", session: "light-question-session" });
+    const paths = taskPaths(home, 24);
+    expect(before.prompts[0]).toContain(join(paths.folder, "question.json"));
+    writeFileSync(join(paths.folder, "question.json"), JSON.stringify({ question: "邮件收件人是谁？" }));
+    await finishTurn(first, before);
+    const question = events(24).find((message) => message.event.kind === "question")?.event;
+    expect(question).toMatchObject({ kind: "question", text: "邮件收件人是谁？" });
+    expect(first.held()).toMatchObject([{ live: true, ended: false }]);
+    expect(before.prompts).toHaveLength(1);
+    await first.close();
+    opened.splice(opened.indexOf(first), 1);
+
+    const restarted = start();
+    restarted.receive({ type: "work.task", task });
+    await restarted.idle();
+    const resumed = programs.last();
+    expect(resumed.options.session).toBe("light-question-session");
+    expect(resumed.prompts).toEqual([]);
+    expect(events(24).filter((message) => message.event.kind === "question").map((message) => message.event)).toEqual([question, question]);
+    restarted.receive({ type: "work.message", ticket: 24, attempt: 1, id: "answer", from: "owner", text: "给 Maya" });
+    await programs.changed.until(() => resumed.prompts.length === 1);
+    expect(resumed.prompts[0]).toContain("给 Maya");
+    expect(existsSync(join(paths.folder, "question.json"))).toBe(false);
+    writeFileSync(paths.handback, JSON.stringify({ report: { en: "Done", zh: "写好了" } }));
+    await finishTurn(restarted, resumed);
+    expect(await ended(24)).toMatchObject({ kind: "delivered", report: { zh: "写好了" } });
+  });
+
   it("stops and removes the scratch folder without touching Git, and lists the work after a restart", async () => {
     const first = start();
     first.receive({ type: "work.task", task: writingTask(24) });

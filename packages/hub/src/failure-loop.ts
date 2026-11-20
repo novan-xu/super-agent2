@@ -151,7 +151,11 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       return;
     }
     if (capReached(ticket.round, report.failure.kind, ticket.freeRetry)) {
-      stick(ticket, report);
+      if (ticket.light !== undefined) {
+        tickets.stop(ticket.id, { en: `Light task failed after its guided rounds: ${report.failure.detail}`, zh: text("notice.lightTaskFailed") });
+      } else {
+        stick(ticket, report);
+      }
       return;
     }
     const next = nextRound(ticket, report.failure);
@@ -166,7 +170,9 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         `[hub] ${described(ticket)} failed: ${failureWords[report.failure.kind]}.`,
         report.evidence,
         counting,
-        "Read the failure, then call guide_ticket with your guidance to the worker: what failed and why, and what to change. The worker tries again on the same branch. Do not do the worker's work yourself. Stop it with stop_ticket only if it cannot be done. Tell the owner in Chinese, in a line or two, what failed and what you told the worker.",
+        ticket.light === undefined
+          ? "Read the failure, then call guide_ticket with your guidance to the worker: what failed and why, and what to change. The worker tries again on the same branch. Do not do the worker's work yourself. Stop it with stop_ticket only if it cannot be done. Tell the owner in Chinese, in a line or two, what failed and what you told the worker."
+          : "Read the failure and call guide_ticket to retry the light task with guidance. The hub reports a terminal failure in the conversation. Do not send a progress reply or do the worker's work.",
       ].join("\n"),
     );
   };
@@ -274,7 +280,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
 
   const ownerStopped = (ticket: Ticket) => {
     const merged = ticket.repository !== null && ticket.pullRequests.some((pull) => pull.state === "merged");
-    if (closed || (!merged && ticket.decisions.length === 0)) {
+    if (closed || ticket.light !== undefined || (!merged && ticket.decisions.length === 0)) {
       return;
     }
     tell(
@@ -297,7 +303,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     tickets
       .list({ open: true, limit: everyTicket })
       .flatMap((ticket) => {
-        if (ticket.state !== "stuck" || ticket.stuck === null) {
+        if (ticket.light !== undefined || ticket.state !== "stuck" || ticket.stuck === null) {
           return [];
         }
         const last = tickets.rounds(ticket.id).at(-1);

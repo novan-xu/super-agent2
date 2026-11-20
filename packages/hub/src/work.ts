@@ -41,6 +41,7 @@ import type { HubDatabase } from "./database.js";
 import type { StartDefaults } from "./defaults.js";
 import { accountFor } from "./filing.js";
 import { createTicketFiles, type TicketFiles } from "./files.js";
+import type { LightTaskQuestions } from "./light-task-questions.js";
 import type { FailureReport } from "./failure-loop.js";
 import { clip, decisionLine, decisionReport, loopFailureWords, tail } from "./reports.js";
 import type { Runners, WorkMessageToRunner } from "./runners.js";
@@ -64,6 +65,9 @@ export interface WorkServiceOptions {
   readonly tell?: Tell;
   readonly files?: TicketFiles;
   readonly deliver?: (delivery: Delivery) => void;
+  readonly lightDelivery?: (ticket: Ticket, attempt: number, event: DeliveredEvent) => () => void;
+  readonly lightQuestions?: LightTaskQuestions;
+  readonly lightQuestion?: (ticket: Ticket, attempt: number, event: Extract<WorkEvent, { kind: "question" }>) => (() => void) | undefined;
   readonly branchSuffix?: () => string;
   readonly report?: (report: FailureReport) => void;
   readonly attachments?: AttachmentStore;
@@ -109,6 +113,7 @@ export interface WorkService extends TicketWork {
   again(ticket: number, note: string, reason?: GeneratedText, round?: GuidedRound, turn?: TicketTurn): WorkOutcome;
   onward(ticket: number, merged: MergedPiece): WorkOutcome;
   message(ticket: number, text: string, from: WorkSender, attachments?: readonly Attachment[], turn?: TicketTurn): MessageOutcome;
+  answerLightQuestion(ticket: number, turn: TicketTurn): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
   subscribe(listener: WorkListener): () => void;
@@ -403,6 +408,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     return {
       ticket: ticket.id,
+      ...(ticket.light === undefined ? {} : { light: true as const }),
       ticketReference: ticketReference(ticket),
       attempt: attempt.attempt,
       title: ticket.title.en,
@@ -704,20 +710,29 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const complete = (id: number, pending: Fetching) => {
     fetching.delete(id);
     let delivered: Ticket | undefined;
-    tickets.change((writes) => {
-      const attempt = attemptOf(id, pending.attempt);
-      if (attempt !== undefined && isActive(attempt.state)) {
-        end(id, pending.attempt, "finished", null, null);
-      }
-      const ticket = writes.get(id);
-      if (ticket !== undefined && ticket.form === "task" && ticket.state === "working") {
-        files.keep(id, pending.attempt, pending.event.files);
-        writes.setReport(id, pending.event.report);
-        delivered = writes.move(id, "delivered");
-      }
-      writes.touched(id);
-    });
-    if (delivered !== undefined) {
+    let publish: (() => void) | undefined;
+    try {
+      tickets.change((writes) => {
+        const attempt = attemptOf(id, pending.attempt);
+        if (attempt !== undefined && isActive(attempt.state)) {
+          end(id, pending.attempt, "finished", null, null);
+        }
+        const ticket = writes.get(id);
+        if (ticket !== undefined && ticket.form === "task" && ticket.state === "working") {
+          files.keep(id, pending.attempt, pending.event.files);
+          if (ticket.light !== undefined) publish = options.lightDelivery?.(ticket, pending.attempt, pending.event);
+          writes.setReport(id, pending.event.report);
+          delivered = writes.move(id, "delivered");
+        }
+        writes.touched(id);
+      });
+    } catch (error) {
+      fetching.set(id, pending);
+      loseDelivery(id, pending, `The hub could not store the delivered files: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    publish?.();
+    if (delivered !== undefined && delivered.light === undefined) {
       handIn(delivered, pending.event);
     }
     dispatch();
@@ -830,6 +845,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     let handedOver = false;
     let delivered: Ticket | undefined;
     let fetchFiles = false;
+    let publish: (() => void) | undefined;
     let id = 0;
     tickets.change((writes) => {
       id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
@@ -839,6 +855,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       const live = attempt.state === "preparing" || attempt.state === "running";
       switch (event.kind) {
+        case "question": {
+          const ticket = current && live ? writes.get(attempt.ticket_id) : undefined;
+          if (ticket?.light !== undefined && ticket.state === "working") publish = options.lightQuestion?.(ticket, attempt.attempt, event);
+          return;
+        }
         case "phase":
           if (attempt.state === "preparing" && (event.phase === "started" || event.phase === "resumed" || event.phase === "turn")) {
             updateState.run("running", attempt.ticket_id, attempt.attempt);
@@ -897,7 +918,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             writes.touched(attempt.ticket_id);
             return;
           }
-          if (accepted && event.files.length > 0) {
+          if (accepted && ticket.light !== "agent_wring" && event.files.length > 0) {
             fetchFiles = true;
             writes.touched(attempt.ticket_id);
             return;
@@ -906,6 +927,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             end(attempt.ticket_id, attempt.attempt, "finished", null, null);
           }
           if (accepted) {
+            if (ticket.light !== undefined) publish = options.lightDelivery?.(ticket, attempt.attempt, event);
             writes.setReport(ticket.id, event.report);
             delivered = writes.move(ticket.id, "delivered");
           }
@@ -953,6 +975,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           return;
       }
     });
+    publish?.();
     const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event };
     announce(stored);
     if (unavailable !== undefined) {
@@ -966,7 +989,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (options.defaults !== undefined && ((event.kind === "phase" && event.phase === "checking") || event.kind === "finished" || (event.kind === "delivered" && event.outcome !== "failed"))) {
       recoveredMark = options.defaults.recovered(attempt.engine, message.at);
     }
-    if (delivered !== undefined && event.kind === "delivered") {
+    if (delivered !== undefined && delivered.light === undefined && event.kind === "delivered") {
       handIn(delivered, event);
     }
     if (fetchFiles && event.kind === "delivered" && event.outcome !== "failed") {
@@ -1493,6 +1516,23 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
   });
 
+  const message = (id: number, body: string, from: WorkSender, attachments: readonly Attachment[] = [], turn?: TicketTurn, record?: () => void): MessageOutcome => {
+    const latest = latestOf(id);
+    const state = tickets.get(id)?.state;
+    const active = latest !== undefined && isActive(latest.state);
+    const between = state === "working" || state === "verifying";
+    if (latest === undefined || (!active && !between)) {
+      return { ok: false, reason: `Ticket ${tickets.reference(id) ?? "(unavailable)"} has no running worker` };
+    }
+    const message: WorkMessageToRunner = { type: "work.message", ticket: id, attempt: latest.attempt, id: randomUUID(), from, text: body, ...(attachments.length === 0 ? {} : { attachments: [...attachments] }) };
+    tickets.change(() => {
+      options.attachments?.grant(id, attachments);
+      messages.add(message);
+      record?.();
+    }, turn);
+    return { ok: true, id: message.id, delivered: active && send(latest.machine, message) };
+  };
+
   return {
     begin,
     stop: (ticket) => finish(tickets.get(ticket.id) ?? ticket),
@@ -1576,20 +1616,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const now = tickets.get(id);
       return now === undefined ? { ok: false, reason: `There is no ticket ${tickets.reference(id) ?? "(unavailable)"}` } : { ok: true, ticket: now };
     },
-    message: (id, body, from, attachments = [], turn) => {
-      const latest = latestOf(id);
-      const state = tickets.get(id)?.state;
-      const active = latest !== undefined && isActive(latest.state);
-      const between = state === "working" || state === "verifying";
-      if (latest === undefined || (!active && !between)) {
-        return { ok: false, reason: `Ticket ${tickets.reference(id) ?? "(unavailable)"} has no running worker` };
-      }
-      const message: WorkMessageToRunner = { type: "work.message", ticket: id, attempt: latest.attempt, id: randomUUID(), from, text: body, ...(attachments.length === 0 ? {} : { attachments: [...attachments] }) };
-      tickets.change(() => {
-        options.attachments?.grant(id, attachments);
-        messages.add(message);
-      }, turn);
-      return { ok: true, id: message.id, delivered: active && send(latest.machine, message) };
+    message,
+    answerLightQuestion: (id, turn) => {
+      const answer = options.lightQuestions?.answer(id, turn);
+      if (answer === undefined) return { ok: false, reason: "There is no unanswered question for this light task with a newer owner answer in this topic turn." };
+      tickets.versions.seen(turn, id);
+      return message(id, answer.text, "owner", answer.attachments, turn, answer.record);
     },
     events: (ticket, after = 0, limit = defaultEventLimit) =>
       selectEvents.all(ticket, after, limit).flatMap((row) => {

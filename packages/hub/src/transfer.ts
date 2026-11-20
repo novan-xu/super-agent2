@@ -1,22 +1,56 @@
-import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, linkSync, mkdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Attachment, DeliveredFile } from "@super-agent2/protocol";
 import { z } from "zod";
 import { createAttachmentStore } from "./attachments.js";
 import { serveAttachments } from "./attachments-api.js";
 import type { HubDatabase } from "./database.js";
 
 const input = z.object({ text: z.string(), device: z.enum(["phone", "desktop"]), files: z.array(z.string().regex(/^[0-9a-f]{32}$/)).max(30) });
-const row = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), created_at: z.number() });
+const row = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), created_at: z.number(), title: z.string().nullable() });
 const fileRow = z.object({ file: z.string() });
 const stores = new WeakMap<HubDatabase, ReturnType<typeof createAttachmentStore>>();
 
-export async function serveTransfer(g: { request: IncomingMessage; response: ServerResponse; path: string; method: string; database: HubDatabase; sameOrigin: boolean; readBody: () => Promise<string | undefined>; changed: () => void }): Promise<boolean> {
-  let store = stores.get(g.database);
+function storeFor(database: HubDatabase) {
+  let store = stores.get(database);
   if (store === undefined) {
-    store = createAttachmentStore(g.database, { now: () => Date.now() }, join(g.database.dataDir, "transfer"), "transfer_files");
-    stores.set(g.database, store);
+    store = createAttachmentStore(database, { now: () => Date.now() }, join(database.dataDir, "transfer"), "transfer_files");
+    stores.set(database, store);
   }
+  return store;
+}
+
+export function createLightTransfer(database: HubDatabase) {
+  const store = storeFor(database);
+  const insertEntry = database.connection.prepare("INSERT INTO transfer_entries (title, text, device, created_at, ticket) VALUES (?, ?, 'desktop', ?, ?)");
+  const insertFile = database.connection.prepare("INSERT INTO transfer_files (id, name, size, media_type, created_at) VALUES (?, ?, ?, ?, ?)");
+  const attach = database.connection.prepare("INSERT INTO transfer_entry_files (entry, file) VALUES (?, ?)");
+  return (ticket: number, attempt: number, title: string, text: string, files: readonly DeliveredFile[], pathOf: (part: number) => string, now: number): void => {
+    const seq = Number(insertEntry.run(title, text, now, ticket).lastInsertRowid);
+    const linked: string[] = [];
+    try {
+      for (const [part, file] of files.entries()) {
+        const id = createHash("sha256").update(`light-task:${ticket}:${attempt}:${part}`).digest("hex").slice(0, 32);
+        const attachment: Attachment = { id, ...file };
+        const path = store.path(attachment);
+        insertFile.run(id, file.name, file.size, file.mediaType, now);
+        mkdirSync(dirname(path), { recursive: true });
+        if (existsSync(path)) rmSync(path);
+        linkSync(pathOf(part), path);
+        linked.push(dirname(path));
+        attach.run(seq, id);
+      }
+    } catch (error) {
+      for (const path of linked) rmSync(path, { recursive: true, force: true });
+      throw error;
+    }
+  };
+}
+
+export async function serveTransfer(g: { request: IncomingMessage; response: ServerResponse; path: string; method: string; database: HubDatabase; sameOrigin: boolean; readBody: () => Promise<string | undefined>; changed: () => void }): Promise<boolean> {
+  const store = storeFor(g.database);
   const db = g.database.connection;
   const upload = /^\/api\/transfer\/files\/([0-9a-f]{32})\/upload$/.exec(g.path);
   if (upload !== null && g.method === "PUT" && db.prepare("SELECT 1 FROM transfer_entry_files WHERE file = ?").get(upload[1] ?? "") !== undefined) {
@@ -31,9 +65,9 @@ export async function serveTransfer(g: { request: IncomingMessage; response: Ser
   if (g.path === "/api/transfer" && g.method === "GET") {
     const before = new URL(g.request.url ?? "/", "http://hub").searchParams.get("before");
     if (before !== null && !/^[1-9]\d{0,14}$/.test(before)) { reply(400, { error: "bad_request" }); return true; }
-    const rows = db.prepare("SELECT seq, text, device, created_at FROM transfer_entries WHERE seq < ? ORDER BY seq DESC LIMIT 51").all(before === null ? Number.MAX_SAFE_INTEGER : Number(before)).map((x) => row.parse(x));
+    const rows = db.prepare("SELECT seq, text, device, created_at, title FROM transfer_entries WHERE seq < ? ORDER BY seq DESC LIMIT 51").all(before === null ? Number.MAX_SAFE_INTEGER : Number(before)).map((x) => row.parse(x));
     const more = rows.length > 50;
-    const items = rows.slice(0, 50).reverse().map((x) => ({ seq: x.seq, text: x.text, device: x.device, at: x.created_at, files: filesFor(x.seq) }));
+    const items = rows.slice(0, 50).reverse().map((x) => ({ seq: x.seq, text: x.text, device: x.device, at: x.created_at, ...(x.title === null ? {} : { title: x.title }), files: filesFor(x.seq) }));
     reply(200, { items, more }); return true;
   }
   const match = /^\/api\/transfer\/(\d+)$/.exec(g.path);

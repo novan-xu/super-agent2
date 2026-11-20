@@ -68,6 +68,7 @@ function requirePredecessor(ticket: Ticket | undefined): Ticket {
   if (ticket === undefined) {
     throw new TicketError(`the predecessor ticket could not be found.`);
   }
+  if (ticket.light !== undefined) throw new TicketError("A ticket cannot depend on a light task.");
   if (ticket.state === "stopped") {
     throw new TicketError(ticket.repairedBy === null ? `ticket ${ticketReference(ticket)} has stopped, so nothing can come after it.` : `ticket ${ticketReference(ticket)} has stopped; ticket ${ticket.repairedByReference ?? "(unavailable)"} repairs it, so come after that.`);
   }

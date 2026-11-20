@@ -939,6 +939,33 @@ export const migrations: readonly Migration[] = [
       ) STRICT, WITHOUT ROWID;
     `,
   },
+  {
+    version: 45,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN light TEXT CHECK (light IS NULL OR (
+        light IN ('transfer', 'agent_wring') AND form = 'task' AND repository IS NULL AND conversation_id IS NOT NULL
+      ));
+      ALTER TABLE conversation_entries ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1));
+      CREATE TABLE light_task_proposals (
+        id TEXT PRIMARY KEY REFERENCES conversation_entries(id),
+        topic TEXT NOT NULL REFERENCES conversations(id),
+        request TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        ticket INTEGER UNIQUE REFERENCES tickets(id)
+      ) STRICT;
+      CREATE INDEX light_proposals_by_topic ON light_task_proposals(topic, created_at);
+      CREATE TABLE light_task_questions (
+        entry TEXT PRIMARY KEY REFERENCES conversation_entries(id),
+        ticket INTEGER NOT NULL REFERENCES tickets(id),
+        attempt INTEGER NOT NULL,
+        answered_by TEXT REFERENCES conversation_entries(id)
+      ) STRICT;
+      CREATE INDEX light_questions_by_ticket ON light_task_questions(ticket, attempt);
+      ALTER TABLE transfer_entries ADD COLUMN title TEXT;
+      ALTER TABLE transfer_entries ADD COLUMN ticket INTEGER REFERENCES tickets(id);
+      CREATE UNIQUE INDEX transfer_ticket ON transfer_entries(ticket);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
