@@ -3638,6 +3638,11 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Why:** By then the other services are closing too, and the runner resends them through `work.sync` when it next says hello.
 - **Other options:** Write them during close, which could run after-commit work against services that are already closed.
 
+- **Chosen:** Every work event the hub drops or fails on is logged in one line through the hub's reporter, which writes to standard error and so to `docker logs`: an event rolled back to its savepoint, a batch whose transaction failed with the range of each attempt it covered, an after-commit step that threw, and the number of events still queued at close.
+  Each line names the machine, ticket, attempt, sequence number and event kind, or the ranges, and the error's name and the first line of its message, cut at 300 characters, and never the event's content, which can hold tool output and secrets.
+- **Why:** The owner must be able to see when the hub loses or half-handles a worker's event, even though the runner usually resends it.
+- **Other options:** Stay silent as before, which hid such losses; log the whole event, which could leak secrets into the log.
+
 - **Chosen:** The brain's streamed `text` and `tool.output` deltas keep one autocommitted `UPDATE` each, and so do a task ticket's progress notice and command output chunks.
 - **Why:** With `synchronous = NORMAL` such a commit does not wait for the disk, so these writes no longer hold the main thread for a sync.
   What each delta still costs is rewriting the entry's whole body, which grows with the entry and is work for the processor and the WAL, not a wait for the disk.

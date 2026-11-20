@@ -74,6 +74,7 @@ export interface WorkServiceOptions {
   readonly defaults?: StartDefaults;
   readonly ticker?: Ticker;
   readonly schedule?: (drain: () => void) => void;
+  readonly log?: (line: string) => void;
 }
 
 export const defaultProviderRetry = 30_000;
@@ -1034,8 +1035,34 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     return arrived.splice(0, end === -1 ? arrived.length : end);
   };
 
+  const log = options.log ?? (() => undefined);
+
+  const problemOf = (error: unknown): string => {
+    const name = error instanceof Error ? error.name : typeof error;
+    const line = (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
+    return `${name}: ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`;
+  };
+
+  const eventOf = (machine: string, message: RunnerWorkEvent): string =>
+    `machine ${machine}, ticket ${message.ticket}, attempt ${message.attempt}, seq ${message.seq}, kind ${message.event.kind}`;
+
+  const rangesOf = (batch: readonly { readonly message: RunnerWorkEvent }[]): string => {
+    const ranges = new Map<string, { readonly ticket: number; readonly attempt: number; low: number; high: number }>();
+    for (const { message } of batch) {
+      const key = `${message.ticket}:${message.attempt}`;
+      const range = ranges.get(key);
+      if (range === undefined) {
+        ranges.set(key, { ticket: message.ticket, attempt: message.attempt, low: message.seq, high: message.seq });
+      } else {
+        range.low = Math.min(range.low, message.seq);
+        range.high = Math.max(range.high, message.seq);
+      }
+    }
+    return [...ranges.values()].map((range) => `ticket ${range.ticket} attempt ${range.attempt} seq ${range.low}-${range.high}`).join("; ");
+  };
+
   const write = (batch: readonly { readonly machine: string; readonly message: RunnerWorkEvent }[]) => {
-    const effects: (() => void)[] = [];
+    const effects: { readonly machine: string; readonly message: RunnerWorkEvent; readonly effect: () => void }[] = [];
     try {
       tickets.change((writes) => {
         for (const { machine, message } of batch) {
@@ -1044,22 +1071,24 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             const effect = stage(machine, message, writes);
             connection.exec("RELEASE work_event");
             if (effect !== undefined) {
-              effects.push(effect);
+              effects.push({ machine, message, effect });
             }
-          } catch {
+          } catch (error) {
             connection.exec("ROLLBACK TO work_event");
             connection.exec("RELEASE work_event");
+            log(`Work event dropped, it failed and was rolled back (${eventOf(machine, message)}): ${problemOf(error)}`);
           }
         }
       });
-    } catch {
+    } catch (error) {
+      log(`Work events dropped, ${batch.length} in a batch whose transaction failed (${rangesOf(batch)}): ${problemOf(error)}`);
       return;
     }
-    for (const effect of effects) {
+    for (const { machine, message, effect } of effects) {
       try {
         effect();
-      } catch {
-        continue;
+      } catch (error) {
+        log(`Work event stored, but its after-commit step failed (${eventOf(machine, message)}): ${problemOf(error)}`);
       }
     }
   };
@@ -1733,6 +1762,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
     close: () => {
       closed = true;
+      if (arrived.length > 0) {
+        log(`Work events dropped, ${arrived.length} still queued when the work service closed (${rangesOf(arrived)}); runners resend them through work.sync`);
+      }
       arrived.length = 0;
       stopTicker?.();
       unsubscribeDefaults?.();

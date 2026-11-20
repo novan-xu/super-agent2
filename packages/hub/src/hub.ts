@@ -244,6 +244,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         defaults,
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
         schedule: options.workSchedule ?? scheduleWorkDrain,
+        log: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
         tell: told.tell,
         deliver: told.deliver,
         lightQuestions,

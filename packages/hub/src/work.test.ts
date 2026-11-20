@@ -758,3 +758,99 @@ describe("a burst of work events", () => {
     expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual([1, 2]);
   });
 });
+
+describe("work events the hub drops or fails on", () => {
+  let lines: string[];
+  let drains: (() => void)[];
+
+  const logging = (deferred: boolean, tell?: (ticket: number, notice: string, prompt: string) => void) => {
+    work.close();
+    lines = [];
+    drains = [];
+    work = createWorkService({
+      database,
+      clock,
+      tickets,
+      runners,
+      credentials: testCredentials,
+      branchSuffix: () => "beef",
+      log: (line) => void lines.push(line),
+      ...(deferred ? { schedule: (drain: () => void) => void drains.push(drain) } : {}),
+      ...(tell === undefined ? {} : { tell }),
+    });
+  };
+
+  it("logs an event that failed and was rolled back, with its identifiers and not its content", () => {
+    logging(false);
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "text", block: "b", delta: "fine" });
+    runners.link?.event("pc", { type: "work.event", ticket: ticket.id, attempt: 1, seq: 2, at: "later" as unknown as number, event: { kind: "text", block: "b", delta: "secret output" } });
+    expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual([1]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`Work event dropped, it failed and was rolled back (machine pc, ticket ${ticket.id}, attempt 1, seq 2, kind text): `);
+    expect(lines[0]).toContain("cannot store TEXT value in INTEGER column");
+    expect(lines[0]).not.toContain("secret output");
+  });
+
+  it("logs a batch whose transaction failed, with the range of each attempt and the error's first line", () => {
+    logging(true);
+    runners.connect("pc", 2);
+    const first = working([21]);
+    const second = working([22]);
+    work.begin(first);
+    work.begin(second);
+    emit("pc", first.id, 1, 1, { kind: "text", block: "b", delta: "one" });
+    emit("pc", first.id, 1, 2, { kind: "text", block: "b", delta: "two" });
+    emit("pc", second.id, 1, 1, { kind: "text", block: "b", delta: "three" });
+    const exec = database.connection.exec.bind(database.connection);
+    const failing = vi.spyOn(database.connection, "exec").mockImplementation((sql: string) => {
+      if (sql === "COMMIT") {
+        throw new Error(`disk I/O error\nsecond line ${"x".repeat(10)}`);
+      }
+      exec(sql);
+    });
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    failing.mockRestore();
+    expect(work.events(first.id)).toEqual([]);
+    expect(work.events(second.id)).toEqual([]);
+    expect(lines).toEqual([
+      `Work events dropped, 3 in a batch whose transaction failed (ticket ${first.id} attempt 1 seq 1-2; ticket ${second.id} attempt 1 seq 1-1): Error: disk I/O error`,
+    ]);
+  });
+
+  it("logs an after-commit step that failed, and still runs the later events' steps", () => {
+    logging(false, () => {
+      throw new Error("the brain is away");
+    });
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    const seen: number[] = [];
+    work.subscribe((stored) => seen.push(stored.seq));
+    emit("pc", ticket.id, 1, 1, { kind: "failed", failure: "program", reason: "boom" });
+    expect(current(ticket.id).work?.state).toBe("failed");
+    expect(seen).toEqual([1]);
+    expect(lines).toEqual([`Work event stored, but its after-commit step failed (machine pc, ticket ${ticket.id}, attempt 1, seq 1, kind failed): Error: the brain is away`]);
+  });
+
+  it("logs once how many events were still queued when the work service closed", () => {
+    logging(true);
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    for (const seq of [1, 2, 3]) {
+      emit("pc", ticket.id, 1, seq, { kind: "text", block: "b", delta: `part ${seq}` });
+    }
+    work.close();
+    work.close();
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    expect(work.events(ticket.id)).toEqual([]);
+    expect(lines).toEqual([`Work events dropped, 3 still queued when the work service closed (ticket ${ticket.id} attempt 1 seq 1-3); runners resend them through work.sync`]);
+  });
+});
