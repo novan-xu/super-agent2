@@ -3573,3 +3573,20 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** The hub keeps an id for as long as its owner entry exists, and an in-memory map of sends being routed only while they are routed.
 - **Why:** The entry is already the record of the send, so no separate store or expiry is needed.
 - **Other options:** Expire ids after a day, which would let a late retry place a second copy.
+
+## 2026-11-20 — Light tasks in daily conversations (#204)
+
+- Persist the brain's visible confirmation and the proposed work together.
+  The hub requires a newer owner input in the active turn of that daily topic and consumes the proposal atomically when it dispatches.
+  The brain reads agreement in context, and the proposal expires after 24 hours.
+- Reuse standalone task tickets and the daily code sequence for scheduling and debugging.
+  Keep the reference private and publish the result directly in the conversation.
+  The same start defaults resolve the choice when an eligible machine returns.
+- Reuse guided rounds and provider fallback privately.
+  At the cap, stop a light task and publish one conversation message.
+  A new attempt after the cap goes through a new confirmation.
+- Keep a worker's question in the topic and relay the owner's original later message and attachments through the existing worker inbox.
+  The brain matches the answer in context and can recognize a separate request to stop.
+- Link delivered worker files into the private transfer store after receiving them in parts.
+  The two downloads share the same bytes, and deleting a transfer entry leaves its conversation download available.
+  Agent_wring tasks use a library-only result mode and report the saved item in the conversation.

@@ -29,7 +29,10 @@ import { createTicketService, type TicketService, type TicketWork } from "./tick
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
+import { createLightTransfer } from "./transfer.js";
 import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
+import { createLightTaskQuestions } from "./light-task-questions.js";
+import { createLightTasks } from "./light-tasks.js";
 import { type AttachmentStore, attachmentsFolder, createAttachmentStore } from "./attachments.js";
 import type { Fetch } from "./github-api.js";
 import { type GeneratedText, ticketReference } from "@super-agent2/protocol";
@@ -164,7 +167,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     tell: (notice, prompt) => tellOwner(notice, prompt),
   });
   const files = createTicketFiles(database);
+  const storeLightTransfer = createLightTransfer(database);
+  const lightQuestions = createLightTaskQuestions(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
+  const lightTasks = createLightTasks(database, clock, tickets, () => conversations, (id, materials) => {
+    attachments.grant(id, materials.flatMap((piece) => piece.attachment == null ? [] : [piece.attachment]));
+  });
   const credentials = options.credentials ?? environmentCredentials(environment);
   const repositoryDiscovery = createRepositoryDiscovery({
     repositories,
@@ -201,6 +209,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const routingModels = config.routingModels;
     conversations = createConversationService({
       extraMcp: extraMcp.brain,
+      lightTaskContext: (topic, message) => lightTasks.context(topic, message) + lightQuestions.context(topic, message),
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
       routing: {
         primary: config.routingPrimary,
@@ -231,6 +240,30 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
         tell: told.tell,
         deliver: told.deliver,
+        lightQuestions,
+        lightQuestion: (ticket, attempt, event) => {
+          const topic = ticket.conversation;
+          if (topic === null) return undefined;
+          const entry = lightQuestions.ask(ticket.id, attempt, event.id, (id) => told.writeLightQuestion(topic, id, event.text));
+          return entry === undefined ? undefined : () => told.announceEntry(entry);
+        },
+        lightDelivery: (ticket, attempt, event) => {
+          if (ticket.conversation === null) throw new Error("A light task must have a conversation.");
+          const delivered = ticket.light === "agent_wring" ? [] : event.files;
+          if (delivered.length > 0) {
+            storeLightTransfer(ticket.id, attempt, ticket.title.zh, event.text ?? event.report.zh, delivered,
+              (part) => files.stagedPath(ticket.id, attempt, part), clock.now());
+          }
+          const entry = told.writeDelivery(ticket.conversation, {
+            ticket: ticket.id, title: ticket.title, report: event.report,
+            text: ticket.light === "agent_wring" && event.text !== null ? `${event.report.zh}\n\n${event.text}` : event.text,
+            files: delivered.map(({ name, size }) => ({ name, size })), light: true, prompt: "",
+          });
+          return () => {
+            told.announceEntry(entry);
+            if (delivered.length > 0) server?.transferChanged();
+          };
+        },
         report: (report) => loop?.failed(report),
         accountOf,
       });
@@ -347,6 +380,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         tickets: {
           tickets,
           tasks: taskTickets,
+          light: lightTasks,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,

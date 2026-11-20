@@ -59,7 +59,7 @@ import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
 import { artifactsVariable, type StorageSelection, ticketArtifacts } from "./storage.js";
 import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, trackingRemote, withRepository, type WorkPaths, workPaths } from "./workplace.js";
-import { checkTaskHandback, clearOutput, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
+import { checkTaskHandback, clearOutput, readTaskQuestion, taskQuestionPath, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
   HubToRunner,
@@ -168,6 +168,7 @@ const WorkRecord = z.object({
   folder: z.number().int().positive().nullable().default(null),
   workspace: WorkspaceLocation.nullable().optional(),
   handbackProgress: HandbackProgress.nullable().default(null),
+  question: z.object({ id: z.uuid(), text: z.string() }).nullable().default(null),
   ended: z.boolean(),
 });
 type WorkRecord = z.output<typeof WorkRecord>;
@@ -545,6 +546,14 @@ export function createWorks(options: WorksOptions): Works {
       phase: "checking",
       detail: work.assignment === undefined ? "Checking the hand-back and the pull request" : "Checking the hand-back and the files to deliver",
     });
+    const question = work.assignment?.light === true ? readTaskQuestion(work.paths) : undefined;
+    if (question !== undefined) {
+      const pending = { id: randomUUID(), text: question };
+      work.record = { ...work.record, question: pending };
+      save(work);
+      emit(work, { kind: "question", ...pending });
+      return;
+    }
     const outcome = await checked(work);
     if (outcome === undefined || generation !== work.generation || work.record.ended || work.stopping) {
       return;
@@ -832,6 +841,15 @@ export function createWorks(options: WorksOptions): Works {
       await end(work, { kind: "failed", failure: "program", reason: messageOf(error) });
       return;
     }
+    if (work.record.question !== null) {
+      emit(work, { kind: "question", ...work.record.question });
+      const queued = work.queue.splice(0);
+      if (queued.length > 0) {
+        const next = joined(queued);
+        startTurn(work, next.text, next.images);
+      }
+      return;
+    }
     const where = placeOf(work, task);
     const waiting = work.queue.splice(0);
     const credentialedNow = credentialedOf(task);
@@ -899,6 +917,7 @@ export function createWorks(options: WorksOptions): Works {
       folder: task.folder ?? null,
       workspace,
       handbackProgress: sameAttempt ? existing.record.handbackProgress : null,
+      question: sameAttempt ? existing.record.question : null,
       ended: false,
     };
     const work = blank(record, paths);
@@ -1063,8 +1082,17 @@ export function createWorks(options: WorksOptions): Works {
     if (!work.live || work.record.ended || work.record.attempt !== incoming.attempt) {
       return;
     }
+    const question = work.record.question;
+    if (question !== null && from === "owner") {
+      rmSync(taskQuestionPath(work.paths), { force: true });
+      work.record = { ...work.record, question: null };
+      save(work);
+    }
+    const answer = messageText(from, text, files);
+    const first = question !== null && from === "owner" && work.record.session === null && work.assignment !== undefined
+      ? `${taskBrief(work.assignment, placeOf(work, work.assignment))}\n\nYou asked: ${question.text}\n${answer}` : answer;
     const prompt: Prompt = {
-      text: messageText(from, text, files),
+      text: first,
       images: files
         .filter((file) => isNativeImage(file.attachment.mediaType))
         .map((file) => ({ path: file.path, mediaType: file.attachment.mediaType, size: file.attachment.size })),

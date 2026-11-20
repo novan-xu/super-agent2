@@ -82,6 +82,8 @@ function replaced(items: readonly LogItem[], index: number, item: LogItem): LogI
 function foldItems(items: readonly LogItem[], stored: StoredWorkEvent): readonly LogItem[] {
   const { event, attempt, at } = stored;
   switch (event.kind) {
+    case "question":
+      return [...items, { kind: "text", key: `${attempt}:question:${event.id}`, at, text: event.text }];
     case "text": {
       const key = `${attempt}:text:${event.block}`;
       const index = findFromEnd(items, key);

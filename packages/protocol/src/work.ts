@@ -51,6 +51,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("session"), session: z.string().min(1) }),
   z.object({ kind: z.literal("ran"), model: z.string().min(1), effort: z.string().min(1) }),
   z.object({ kind: z.literal("text"), block: z.string(), delta: z.string() }),
+  z.object({ kind: z.literal("question"), id: z.uuid(), text: z.string().trim().min(1) }),
   z.object({ kind: z.literal("tool.started"), call: z.string(), name: z.string(), input: z.string() }),
   z.object({ kind: z.literal("tool.output"), call: z.string(), delta: z.string() }),
   z.object({ kind: z.literal("tool.finished"), call: z.string(), output: z.string().nullable(), ok: z.boolean() }),
@@ -164,6 +165,7 @@ export type TaskCheckout = z.infer<typeof TaskCheckout>;
 
 export const TaskAssignment = z.object({
   ticket: Ticket,
+  light: z.literal(true).optional(),
   ticketReference: TicketReference.optional(),
   attempt: Attempt,
   title: z.string().min(1),

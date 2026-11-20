@@ -106,6 +106,9 @@ export interface ConversationService {
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
   deliver(delivery: Delivery): string;
+  writeDelivery(conversation: string, delivery: Delivery): string;
+  writeConfirmation(conversation: string, turn: string, message: string): string;
+  writeLightQuestion(conversation: string, id: string, message: string): void;
   linked(): boolean;
   brainReady(): boolean;
   providers(): BrainProviders | undefined;
@@ -150,6 +153,7 @@ export interface Delivery {
   readonly report?: GeneratedText | undefined;
   readonly files: readonly DeliveryFile[];
   readonly prompt: string;
+  readonly light?: true;
 }
 
 export interface ConversationServiceOptions {
@@ -162,6 +166,7 @@ export interface ConversationServiceOptions {
   readonly archiveMilliseconds?: number | undefined;
   readonly order?: () => readonly Provider[] | undefined;
   readonly routing?: RoutingOptions;
+  readonly lightTaskContext?: (topic: string, message: string) => string;
 }
 
 export interface MemoryBriefing {
@@ -226,6 +231,7 @@ const EntryRow = z.object({
   quote_id: z.string().nullable(),
   delivery_id: z.string().nullable(),
   created_at: z.number().int(),
+  hidden: z.number().int(),
   placement: OwnerEntry.shape.placement,
   routing_rule: RoutingProposal.shape.decided.shape.rule.nullish(),
 });
@@ -317,7 +323,7 @@ function toEntry(row: EntryRow): ConversationEntry {
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id,
         ...(body.ticket === undefined ? {} : { ticket: body.ticket }), ...(body.destination === undefined ? {} : { destination: body.destination }),
-        ...(body.start === true ? { start: true } : {}) });
+        ...(body.start === true ? { start: true } : {}), ...(body.worker === true ? { worker: true } : {}) });
     case "delivery":
       return ConversationEntry.parse({
         ...base,
@@ -325,6 +331,7 @@ function toEntry(row: EntryRow): ConversationEntry {
         turn: row.turn_id,
         ticket: body.ticket,
         title: body.title,
+        light: body.light,
         text: body.text ?? null,
         report: body.report ?? null,
         files: body.files,
@@ -357,7 +364,8 @@ function titleOf(message: string, attachments: readonly Attachment[] = []): stri
 function deliveryHistory(entry: DeliveryEntry, reference: string | undefined): string {
   const files = entry.files.length === 0 ? "" : ` Files: ${entry.files.map((file) => file.name).join(", ")}.`;
   const report = entry.report === null ? "" : ` The worker's report: ${entry.report.en}`;
-  return `[hub] The result of task ticket${reference === undefined ? "" : ` ${reference}`} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
+  const task = entry.light === true ? "light task" : `task ticket${reference === undefined ? "" : ` ${reference}`}`;
+  return `[hub] The result of ${task} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
 function historyItem(raw: unknown, reference: (id: number) => string | undefined): HistoryItem {
@@ -474,34 +482,40 @@ export function createConversationService(options: ConversationServiceOptions): 
   `);
   const selectEntries = connection.prepare(
     `SELECT e.*, ${placement} FROM ${entrySource}
-     WHERE e.conversation_id = ? AND (e.seq > ? OR e.turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY e.seq`,
+     WHERE e.conversation_id = ? AND e.hidden = 0 AND (e.seq > ? OR e.turn_id IN (SELECT id FROM turns WHERE conversation_id = ? AND state = 'running')) ORDER BY e.seq`,
   );
-  const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND (? OR taken IS NOT 0) ORDER BY seq");
+  const selectAfter = connection.prepare("SELECT * FROM conversation_entries WHERE conversation_id = ? AND seq > ? AND hidden = 0 AND (? OR taken IS NOT 0) ORDER BY seq");
   const selectWaiting = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.taken = 0 ORDER BY e.created_at, e.rowid`);
   const selectTopicWaiting = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.conversation_id = ? AND e.taken = 0 ORDER BY e.seq`);
   const selectLastSeq = connection.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM conversation_entries WHERE conversation_id = ?");
   const insertEntry = connection.prepare(
-    `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, stream_seq)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
+    `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, hidden, stream_seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
   const streamSelect = `SELECT e.*, ${routingColumns}, c.title AS topic_title, c.repository, c.needs_repository,
     CASE WHEN ${joinedByRouter} THEN NOT EXISTS (
       SELECT 1 FROM conversation_entries AS later WHERE later.conversation_id = e.conversation_id AND later.seq > e.seq AND later.kind = 'owner'
     ) END AS latest_owner
     FROM ${entrySource} JOIN conversations AS c ON c.id = e.conversation_id`;
-  const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ?`);
-  const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
+  const selectStreamEntry = connection.prepare(`${streamSelect} WHERE e.id = ? AND e.hidden = 0`);
+  const selectStreamPage = connection.prepare(`${streamSelect} WHERE e.hidden = 0 AND e.stream_seq < ? ORDER BY e.stream_seq DESC LIMIT ?`);
   const scopeFilter = `AND CASE ?
     WHEN 'code' THEN c.repository IS NOT NULL OR c.needs_repository = 1
     WHEN 'daily' THEN c.repository IS NULL AND c.needs_repository = 0
     ELSE c.repository = ? COLLATE NOCASE END`;
-  const selectStreamScoped = connection.prepare(`${streamSelect} WHERE e.stream_seq < ? ${scopeFilter} ORDER BY e.stream_seq DESC LIMIT ?`);
-  const selectStreamAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ORDER BY e.stream_seq`);
-  const selectScopedAfter = connection.prepare(`${streamSelect} WHERE e.stream_seq > ? ${scopeFilter} ORDER BY e.stream_seq`);
+  const selectStreamScoped = connection.prepare(`${streamSelect} WHERE e.hidden = 0 AND e.stream_seq < ? ${scopeFilter} ORDER BY e.stream_seq DESC LIMIT ?`);
+  const selectStreamAfter = connection.prepare(`${streamSelect} WHERE e.hidden = 0 AND e.stream_seq > ? ORDER BY e.stream_seq`);
+  const selectScopedAfter = connection.prepare(`${streamSelect} WHERE e.hidden = 0 AND e.stream_seq > ? ${scopeFilter} ORDER BY e.stream_seq`);
   const updateBody = connection.prepare("UPDATE conversation_entries SET body = ? WHERE id = ?");
   const markTaken = connection.prepare(
     "UPDATE conversation_entries SET taken = 1, turn_id = COALESCE(turn_id, ?) WHERE coalesce(delivery_id, id) = ? AND conversation_id = ? AND taken = 0 RETURNING id",
   );
+  const quietTurn = connection.prepare(`
+    SELECT 1 FROM conversation_entries WHERE turn_id = ? AND hidden = 1 AND taken = 1
+    AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE turn_id = ? AND hidden = 0 AND taken = 1)
+    LIMIT 1
+  `);
+  const isQuiet = (turn: string) => quietTurn.get(turn, turn) !== undefined;
   const selectSession = connection.prepare("SELECT session, through, memory_seen, memory_offered, board_seen FROM program_sessions WHERE conversation_id = ? AND provider = ?");
   const discardSession = connection.prepare("DELETE FROM program_sessions WHERE conversation_id = ? AND provider = ?");
   const upsertSession = connection.prepare(
@@ -569,6 +583,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     if (scope !== undefined) {
       for (const turn of selectRunningTurns.all().map(toTurn)) {
+        if (isQuiet(turn.id)) continue;
         const topic = get(turn.conversation);
         if (topic !== undefined && topicInScope(topic, scope)) {
           turns.set(turn.id, turn);
@@ -589,6 +604,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       return undefined;
     }
     const row = EntryRow.parse(found);
+    if (row.hidden === 1) return undefined;
     const entry = toEntry(row);
     let item: Exclude<HistoryItem, { kind: "tool" }>;
     switch (entry.kind) {
@@ -631,7 +647,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const emitTurn = (id: string) => {
     const turn = getTurn(id);
-    if (turn !== undefined) {
+    if (turn !== undefined && !isQuiet(id)) {
       emit({ type: "turn", turn });
     }
   };
@@ -655,6 +671,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     readonly prompt?: string;
     readonly at?: number;
     readonly quote?: string;
+    readonly hidden?: true;
   }
 
   const writeEntry = (entry: NewEntry): string => {
@@ -671,6 +688,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       entry.prompt === undefined ? null : 0,
       entry.at ?? clock.now(),
       entry.quote ?? null,
+      entry.hidden === true ? 1 : 0,
     );
     return id;
   };
@@ -729,7 +747,9 @@ export function createConversationService(options: ConversationServiceOptions): 
     const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
     const input: BrainInput = {
       id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
-      source: row.kind === "owner" ? "owner" : "hub", text: row.prompt, attachments: forBrain(attached),
+      source: row.kind === "owner" ? "owner" : "hub",
+      text: row.prompt + (row.kind === "owner" ? options.lightTaskContext?.(row.conversation_id, row.id) ?? "" : ""),
+      attachments: forBrain(attached),
       ...(body?.questionResponse === undefined ? {} : { questionResponse: body.questionResponse }),
     };
     const routing = routingNote(row, body?.possibleMatch);
@@ -892,11 +912,12 @@ export function createConversationService(options: ConversationServiceOptions): 
           }
         }
         emitTurn(message.turn);
-        updateConversation(message.conversation, { state: "working", provider: message.provider });
+        if (!isQuiet(message.turn)) updateConversation(message.conversation, { state: "working", provider: message.provider });
         return;
       }
       case "input.taken": {
         const turn = getTurn(message.turn);
+        const wasQuiet = isQuiet(message.turn);
         const entry = turn?.state === "running" && turn.conversation === message.conversation
           ? markTaken.get(message.turn, message.input, message.conversation) : undefined;
         if (turn !== undefined && entry !== undefined) {
@@ -904,6 +925,10 @@ export function createConversationService(options: ConversationServiceOptions): 
             seeMemory.run(message.memoryRevision, message.conversation, turn.provider);
           }
           emitEntry(z.string().parse(entry["id"]));
+          if (wasQuiet && !isQuiet(turn.id)) {
+            emitTurn(turn.id);
+            updateConversation(turn.conversation, { state: "working", provider: turn.provider });
+          }
         }
         return;
       }
@@ -921,6 +946,7 @@ export function createConversationService(options: ConversationServiceOptions): 
           return;
         }
         changeTurnProvider.run(message.to, message.model, message.turn);
+        if (isQuiet(message.turn)) return;
         emitTurn(message.turn);
         addEntry({
           conversation: message.conversation,
@@ -938,7 +964,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "text": {
-        if (!known(message.conversation, message.turn)) {
+        if (!known(message.conversation, message.turn) || isQuiet(message.turn)) {
           return;
         }
         const id = `${message.turn}:${message.block}`;
@@ -957,7 +983,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "tool.started": {
-        if (!known(message.conversation, message.turn)) {
+        if (!known(message.conversation, message.turn) || isQuiet(message.turn)) {
           return;
         }
         const id = `${message.turn}:${message.call}`;
@@ -1103,21 +1129,23 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   function tell(ticket: number | null, notice: string, prompt: string): string {
-    return postHubEntry({ conversation: noticeTarget(ticket), kind: "notice", turn: null, body: { text: notice }, prompt });
+    const light = ticket !== null && tickets.get(ticket)?.light !== undefined;
+    return postHubEntry({
+      conversation: noticeTarget(ticket), kind: "notice", turn: null, body: { text: light ? "" : notice },
+      prompt: light ? `${prompt}\nHandle this light task internally. The conversation shows the final result or failure automatically. Do not send a progress reply, expose a ticket code or ask the owner to use a ticket card.` : prompt,
+      ...(light ? { hidden: true as const } : {}),
+    });
   }
 
-  const deliverResult = (delivery: Delivery): string =>
-    postHubEntry({
-      conversation: noticeTarget(delivery.ticket),
-      kind: "delivery",
-      turn: null,
-      body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, report: delivery.report ?? null, files: delivery.files },
-      prompt: delivery.prompt,
-    });
+  const deliveryEntry = (conversation: string, delivery: Delivery): NewEntry => ({
+    conversation, kind: "delivery", turn: null,
+    body: { ticket: delivery.ticket, title: delivery.title, text: delivery.text, report: delivery.report ?? null, files: delivery.files, light: delivery.light },
+    ...(delivery.light === true ? {} : { prompt: delivery.prompt }),
+  });
 
   const taskProgress = (work: StoredWorkEvent) => {
     const ticket = tickets.get(work.ticket);
-    if (ticket?.form !== "task" || ticket.repository !== null || ticket.conversation === null) return;
+    if (ticket?.form !== "task" || ticket.light !== undefined || ticket.repository !== null || ticket.conversation === null) return;
     const event = work.event;
     if (event.kind !== "text" && !(event.kind === "phase" && (event.phase === "started" || event.phase === "resumed"))) return;
     const key = event.kind === "text" ? `text-${event.block}` : `phase-${work.seq}`;
@@ -1294,7 +1322,14 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     topics,
     tell,
-    deliver: deliverResult,
+    deliver: (delivery) => postHubEntry(deliveryEntry(noticeTarget(delivery.ticket), delivery)),
+    writeDelivery: (conversation, delivery) => writeEntry(deliveryEntry(conversation, delivery)),
+    writeConfirmation: (conversation, turn, message) => writeEntry({
+      conversation, turn, kind: "text", provider: providerOfTurn(turn), body: { text: message },
+    }),
+    writeLightQuestion: (conversation, id, message) => {
+      writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: message, worker: true } });
+    },
     get,
     announce,
     announceEntry: emitEntry,
@@ -1316,7 +1351,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       return {
         conversation,
-        turns: selectTurns.all(conversation.id).map(toTurn),
+        turns: selectTurns.all(conversation.id).map(toTurn).filter((turn) => !isQuiet(turn.id)),
         entries: selectEntries.all(conversation.id, 0, conversation.id).map((row) => toEntry(EntryRow.parse(row))),
       };
     },

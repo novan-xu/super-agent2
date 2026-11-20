@@ -9,7 +9,7 @@ import { Icon } from "../parts/icons.js";
 import { sizeOf } from "../live/size.js";
 import type { UploadApi } from "../live/upload.js";
 
-const itemSchema = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), at: z.number(), files: z.array(Attachment) });
+const itemSchema = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), at: z.number(), title: z.string().optional(), files: z.array(Attachment) });
 type Item = z.infer<typeof itemSchema>;
 const pageSchema = z.object({ items: z.array(itemSchema), more: z.boolean() });
 const filePath = (id: string) => `/api/transfer/files/${encodeURIComponent(id)}`;
@@ -44,7 +44,7 @@ export function RecentFiles({ items, open }: { readonly items: readonly Item[]; 
   return <ul className="conv-list">{files.map(({ file, item }) => <li key={file.id}>
     <a className="rail-item" href={filePath(file.id)} onClick={event => { event.preventDefault(); open(file); }}>
       <span className="ri-title od-truncate">{file.name}</span>
-      <span className="ri-meta"><span>{sizeOf(file.size)}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time><span>{item.device === "phone" ? t("transfer.phone") : t("transfer.desktop")}</span></span>
+      <span className="ri-meta"><span>{sizeOf(file.size)}</span><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time><span>{item.title ?? (item.device === "phone" ? t("transfer.phone") : t("transfer.desktop"))}</span></span>
     </a>
   </li>)}</ul>;
 }
@@ -114,7 +114,7 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
       <div className="stream-inner" role="log" aria-label={t("conversation.transfer")}>
       {more && items[0] !== undefined ? <button className="btn btn-sm stream-older" type="button" onClick={() => { const el = scroller.current; if (el !== null) { following.current = false; older.current = { height: el.scrollHeight, top: el.scrollTop }; } void load(items[0]?.seq); }}>{t("transfer.older")}</button> : null}
       {items.length === 0 ? <p className="rail-empty">{t("transfer.empty")}</p> : items.map((item) => <article className="msg msg--me" key={item.seq}>
-        <div className="msg-who"><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time><span>{item.device === "phone" ? t("transfer.phone") : t("transfer.desktop")}</span>
+        <div className="msg-who"><time dateTime={new Date(item.at).toISOString()}>{new Date(item.at).toLocaleString()}</time>{item.title === undefined ? <span>{item.device === "phone" ? t("transfer.phone") : t("transfer.desktop")}</span> : <strong>{item.title}</strong>}
           {item.text !== "" ? <button className="btn btn-sm" type="button" onClick={() => void navigator.clipboard.writeText(item.text).catch(() => setError(t("transfer.copyFailed")))}>{t("transfer.copy")}</button> : null}
           <button className="btn btn-sm" type="button" onClick={() => void remove(item.seq)}>{t("transfer.delete")}</button>
         </div>

@@ -14,6 +14,7 @@ import {
   type TaskMaterial,
   type TaskOutcome,
 } from "@super-agent2/protocol";
+import { z } from "zod";
 import type { Git } from "./git.js";
 import { checkWorktreePath, discardWorktree, prepareRepository, trackingRemote, type RemoteUrl, withClone, type WorkPaths } from "./workplace.js";
 import type { ArtifactFolder } from "./storage.js";
@@ -142,9 +143,24 @@ export function listOutput(paths: WorkPaths): string[] {
   });
 }
 
+export function taskQuestionPath(paths: WorkPaths): string {
+  return join(paths.folder, "question.json");
+}
+
+const QuestionFile = z.strictObject({ question: z.string().trim().min(1) });
+
+export function readTaskQuestion(paths: WorkPaths): string | undefined {
+  try {
+    return QuestionFile.parse(JSON.parse(readFileSync(taskQuestionPath(paths), "utf8").replace(/^\uFEFF/u, ""))).question;
+  } catch {
+    return undefined;
+  }
+}
+
 export function clearOutput(paths: WorkPaths): void {
   rmSync(outputFolder(paths), { recursive: true, force: true });
   rmSync(paths.handback, { force: true });
+  rmSync(taskQuestionPath(paths), { force: true });
 }
 
 const mediaTypes: Readonly<Record<string, string>> = {
@@ -277,6 +293,7 @@ export interface TaskPlace {
   readonly input: string;
   readonly output: string;
   readonly handback: string;
+  readonly question?: string;
   readonly checkout: string | null;
   readonly commit: string | null;
   readonly machine: string | undefined;
@@ -289,6 +306,7 @@ export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"]
     input: inputFolder(paths),
     output: outputFolder(paths),
     handback: paths.handback,
+    question: taskQuestionPath(paths),
     checkout: checkout === null ? null : paths.worktree,
     commit,
     machine,
@@ -312,6 +330,9 @@ export function assignmentText(task: TaskAssignment, place: TaskPlace): string {
       : [`Checkout of ${repository}: ${place.checkout}, at commit ${place.commit ?? "unknown"} (detached; you start there)`]),
     ...(task.deploys && place.checkout !== null ? [`Deployment recipe: ${join(place.checkout, deploymentFile)}`] : []),
     `Hand back by writing the JSON file at: ${place.handback}`,
+    ...(task.light === true && place.question !== undefined ? [
+      `If only the owner can resolve a blocker, ask one short question in Simplified Chinese by writing {"question":"..."} to ${place.question}, then end your turn without a hand-back. The runner sends it to the conversation and resumes you when the owner replies.`,
+    ] : []),
     "",
     "What to do:",
     "",

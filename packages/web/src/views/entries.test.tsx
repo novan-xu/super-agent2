@@ -57,6 +57,15 @@ describe("a delivery in the conversation", () => {
     expect(html).toContain('href="/api/tickets/4/files/notes.txt"');
   });
 
+  it("shows a light result and its optional log as a conversation reply", () => {
+    const html = renderToString(<StreamEntry item={{ kind: "entry", key: "light", entry: { ...delivery, light: true }, lead: false, live: false }} thisYear={2026} />);
+    expect(html).toContain('class="msg msg--brain"');
+    expect(html).toContain('href="/tickets/4" aria-label="查看运行日志"');
+    expect(html).toContain('download="译文 1.pdf"');
+    expect(html).not.toContain("workbench");
+    expect(html).not.toContain("工单");
+  });
+
   it("shows only the files when there is no text", () => {
     const html = renderToString(
       <StreamEntry item={{ kind: "entry", key: "d2", entry: { ...delivery, text: null, files: [{ name: "a.docx", size: 2048 }] }, lead: false, live: false }} thisYear={2026} />,

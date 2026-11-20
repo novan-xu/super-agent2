@@ -104,6 +104,7 @@ export function LiveStatus({ tool, idle, topic }: { readonly tool: { readonly na
 
 export interface DeliveryBodyProps {
   readonly ticket: number;
+  readonly light?: true | undefined;
   readonly title: string;
   readonly at: number;
   readonly text: string | null;
@@ -113,17 +114,18 @@ export interface DeliveryBodyProps {
   readonly action?: ReactNode;
 }
 
-export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text: body, report = null, files, topic, action }: DeliveryBodyProps) {
+export const DeliveryBody = memo(function DeliveryBody({ ticket, light, title, at, text: body, report = null, files, topic, action }: DeliveryBodyProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const close = useCallback(() => setSelected(null), []);
   const viewFiles = files.map(file => ({ ...file, mime: "", url: ticketFilePath(ticket, file.name) }));
   return (
-    <div className="msg delivery">
+    <div className={light === true ? "msg msg--brain" : "msg delivery"}>
       <div className="msg-who">
-        <Icon name="doc" />
+        {light === true ? null : <Icon name="doc" />}
         <strong>{title}</strong>
         <span className="num">{clockOf(at)}</span>
         {topic}
+        {light === true ? <a className="icon-btn message-quote" href={ticketAddress(ticket)} aria-label={text("notice.lightTaskLog")} title={text("notice.lightTaskLog")}><Icon name="doc" size={16} /></a> : null}
         {action}
       </div>
       {body === null ? report === null ? null : <div className="msg-text msg-plain">{report}</div> : <div className="msg-text msg-plain delivery-text">{body}</div>}
@@ -144,10 +146,16 @@ export const DeliveryBody = memo(function DeliveryBody({ ticket, title, at, text
 });
 
 function Delivery({ entry, topic, action }: { readonly entry: DeliveryEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
-  return <DeliveryBody ticket={entry.ticket} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} topic={topic} action={action} />;
+  return <DeliveryBody ticket={entry.ticket} light={entry.light} title={entry.title.zh} at={entry.at} text={entry.text} report={entry.report?.zh ?? null} files={entry.files} topic={topic} action={action} />;
 }
 
 function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
+  if (entry.worker === true) {
+    return <div className="msg msg--brain">
+      <div className="msg-who"><span className="num">{clockOf(entry.at)}</span>{topic}{action}</div>
+      <div className="msg-text msg-plain">{entry.text}</div>
+    </div>;
+  }
   return (
     <div className={`sysline sysline--note${entry.ticket !== undefined && entry.start !== true ? " sysline--progress" : ""}`}>
       <Icon name="swap" />

@@ -72,6 +72,7 @@ export interface DefaultsSpec {
 export type StateOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
 
 export interface ChainDefaults {
+  subscribe?(listener: () => void): () => void;
   resolve(ticket: Ticket, owner?: OwnerChoice): StartChoice;
   machinesFor(ticket: Ticket): MachineChoice[];
   machines(): MachineChoice[];
@@ -298,8 +299,15 @@ export function createChains(options: ChainsOptions): Chains {
         }
         const began = tickets.change((writes) =>
           ready.filter((id) => {
-            if (writes.get(id)?.state !== "waiting") {
+            const ticket = writes.get(id);
+            if (ticket?.state !== "waiting") {
               return false;
+            }
+            if (ticket.light !== undefined) {
+              const choice = defaults.resolve(ticket);
+              const run = isComplete(choice) ? chosenRun(choice) : undefined;
+              if (run === undefined) return false;
+              writes.choose(id, run);
             }
             writes.move(id, "working");
             insertBegin.run(id, clock.now());
@@ -347,6 +355,8 @@ export function createChains(options: ChainsOptions): Chains {
     }
   });
 
+  const unsubscribeDefaults = defaults.subscribe?.(() => queueMicrotask(advance));
+
   const isOwner = async (assertion: string | undefined): Promise<boolean> => {
     try {
       const result = await options.verify(assertion);
@@ -368,7 +378,7 @@ export function createChains(options: ChainsOptions): Chains {
     const chosen = new Set<number>();
     for (const item of given.chains) {
       const root = index.get(item.ticket);
-      if (root === undefined || root.state !== "pending") {
+      if (root === undefined || root.light !== undefined || root.state !== "pending") {
         return { ok: false, error: "conflict" };
       }
       if (fingerprintOf(item.ticket, list) !== item.fingerprint) {
@@ -947,7 +957,7 @@ export function createChains(options: ChainsOptions): Chains {
     const index = withBefore(list);
     const listIndex = indexOf(list);
     return list
-      .filter((ticket) => ticket.state === "pending")
+      .filter((ticket) => ticket.state === "pending" && ticket.light === undefined)
       .flatMap((ticket): StartCard[] => {
         const fingerprint = fingerprintOf(ticket.id, list);
         if (fingerprint === undefined) {
@@ -988,6 +998,7 @@ export function createChains(options: ChainsOptions): Chains {
     close: () => {
       closed = true;
       unsubscribe();
+      unsubscribeDefaults?.();
     },
   };
 }

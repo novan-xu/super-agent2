@@ -198,11 +198,15 @@ export const CommitRef = z
   .regex(/^[A-Za-z0-9._/-]+$/)
   .refine((ref) => !ref.startsWith("-") && !ref.includes(".."), { message: "is not a commit or a branch" });
 
+export const LightTaskMode = z.enum(["transfer", "agent_wring"]);
+export type LightTaskMode = z.infer<typeof LightTaskMode>;
+
 export const Ticket = z.object({
   id: TicketId,
   code: TicketCode,
   codeDate: TicketCodeDate,
   form: TicketForm.default("code"),
+  light: LightTaskMode.optional(),
   repository: RepositoryName.nullable(),
   issues: z.array(TicketIssue),
   title: GeneratedText,
