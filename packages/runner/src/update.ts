@@ -63,6 +63,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const files = entryFiles(options.home);
   const retry = options.retryMilliseconds ?? defaultRetryMilliseconds;
   let preparing: Promise<void> | undefined;
+  let prepareAgain: string | undefined;
   let ready: { readonly version: string; readonly main: string } | undefined;
   let wanted: string | undefined;
   let switched = false;
@@ -82,6 +83,18 @@ export function createUpdater(options: UpdaterOptions): Updater {
     const busy = options.busy();
     if (busy > 0) {
       once(`Version ${short(ready.version)} is ready; the runner switches to it once its ${busy} running piece(s) of work end`);
+      return;
+    }
+    const folder = versionFolder(files.versions, ready.version);
+    if (!existsSync(ready.main) || !existsSync(join(folder, readyFile))) {
+      const version = ready.version;
+      ready = undefined;
+      options.log(`The prepared version ${short(version)} is incomplete; preparing it again`);
+      if (preparing === undefined) {
+        startPrepare(version);
+      } else {
+        prepareAgain = version;
+      }
       return;
     }
     switched = true;
@@ -109,7 +122,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
     const final = versionFolder(files.versions, version);
     const archive = `${final}.tar.gz`;
     try {
-      if (!existsSync(join(final, readyFile))) {
+      if (!existsSync(join(final, readyFile)) || !existsSync(mainIn(final))) {
         rmSync(final, { recursive: true, force: true });
         rmSync(archive, { force: true });
         mkdirSync(final, { recursive: true });
@@ -137,12 +150,26 @@ export function createUpdater(options: UpdaterOptions): Updater {
     }
   };
 
+  const startPrepare = (version: string) => {
+    preparing = prepare(version).finally(() => {
+      preparing = undefined;
+      const again = prepareAgain;
+      prepareAgain = undefined;
+      if (again !== undefined && again === wanted && !switched) {
+        startPrepare(again);
+      }
+    });
+  };
+
   const prune = () => {
     const state = readState(files);
     if (state === undefined || preparing !== undefined || !existsSync(files.versions)) {
       return;
     }
     const kept = new Set([state.current, state.previous].filter((path): path is string => path !== undefined).map((path) => resolve(dirname(path), "..", "..", "..")));
+    if (ready !== undefined) {
+      kept.add(resolve(versionFolder(files.versions, ready.version)));
+    }
     for (const name of readdirSync(files.versions)) {
       const path = resolve(files.versions, name);
       if (!kept.has(path) && inside(files.versions, path)) {
@@ -176,9 +203,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
       if (preparing !== undefined) {
         return;
       }
-      preparing = prepare(version).finally(() => {
-        preparing = undefined;
-      });
+      startPrepare(version);
     },
     changed: trySwitch,
     confirmed: () => {
