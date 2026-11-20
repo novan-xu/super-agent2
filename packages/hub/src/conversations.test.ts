@@ -1,10 +1,11 @@
 import { ticketReference } from "@super-agent2/protocol";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, EntryResponse, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -598,6 +599,65 @@ describe("the topic stream", () => {
       { topic: { title: "Saved before restart", needsRepository: true }, entry: { id: "pending", text: "Saved before restart", taken: false } },
     ]);
     expect(running.database.connection.prepare("SELECT * FROM pending_topic_inputs").all()).toEqual([]);
+  });
+
+  it("places a repeated send once, answers each repeat with the same entry, and refuses its id with other content", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { messages } = connect(running);
+    const topic = service.create().id;
+    const other = service.create().id;
+    const headers = { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json" };
+    const post = (path: string, body: object) => fetch(`${base(running)}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const twice = async (path: string, body: object) => {
+      const answers = [await post(path, body), await post(path, body)];
+      expect(answers.map(({ status }) => status)).toEqual([202, 202]);
+      const [first, second] = await Promise.all(answers.map((answer) => answer.json()));
+      expect(second).toEqual(first);
+      return first as unknown;
+    };
+    const routed = randomUUID();
+    const direct = randomUUID();
+    const messagePath = `/api/conversations/${topic}/messages`;
+    expect(StreamEntry.parse(await twice("/api/stream", { id: routed, text: "Hello" })).entry).toMatchObject({ id: routed, text: "Hello" });
+    expect(EntryResponse.parse(await twice(messagePath, { id: direct, text: "Direct" })).entry)
+      .toMatchObject({ id: direct, conversation: topic, text: "Direct" });
+    const quoted = randomUUID();
+    expect(StreamEntry.parse(await twice("/api/stream", { id: quoted, text: "Quoting", quotedMessage: direct })).entry).toMatchObject({ id: quoted, conversation: topic, quotedMessage: direct });
+    service.tell(null, "A notice", "prompt");
+    const notice = String(running.database.connection.prepare("SELECT id FROM conversation_entries WHERE kind = 'notice'").get()?.["id"]);
+    for (const [path, body] of [
+      [messagePath, { id: direct, text: "Changed" }],
+      [messagePath, { id: direct, text: "Direct", quotedMessage: routed }],
+      [`/api/conversations/${other}/messages`, { id: direct, text: "Direct" }],
+      ["/api/stream", { id: direct, text: "Direct", topic: other }],
+      ["/api/stream", { id: quoted, text: "Quoting" }],
+      ["/api/stream", { id: routed, text: "Hello", quotedMessage: direct }],
+      ["/api/stream", { id: notice, text: "A notice" }],
+    ] as const) {
+      expect((await post(path, body)).status).toBe(409);
+    }
+    for (const id of ["pending", routed.toUpperCase(), "00000000-0000-0000-0000-000000000000"]) {
+      expect((await post("/api/stream", { id, text: "Hello" })).status).toBe(400);
+    }
+    const placed: string[] = [routed, direct, quoted];
+    expect(running.database.connection.prepare(`SELECT id FROM conversation_entries WHERE kind = 'owner' ORDER BY stream_seq`).all().map(({ id }) => id)).toEqual(placed);
+    expect(messages.flatMap((message) => message.type === "input" && placed.includes(message.input.id) ? [message.input.id] : [])).toEqual(placed);
+  });
+
+  it("answers a send repeated after a restart with the entry placed from its pending input", async () => {
+    const first = await start();
+    const id = randomUUID();
+    first.database.connection.prepare("INSERT INTO pending_topic_inputs (id, body, created_at) VALUES (?, ?, ?)").run(
+      id, JSON.stringify({ message: "Saved before restart", attachments: [], scope: { kind: "daily" } }), clock.now(),
+    );
+    await first.close();
+    const running = await start();
+    const again = await streamRequest(running, "", { id, text: "Saved before restart" });
+    expect(again.status).toBe(202);
+    expect(StreamEntry.parse(await again.json()).entry).toMatchObject({ id, text: "Saved before restart" });
+    expect(running.conversations.stream().entries.map(({ entry }) => entry.id)).toEqual([id]);
+    expect((await streamRequest(running, "", { id, text: "Something else" })).status).toBe(409);
   });
 
   it("watches all topics together, replays by global cursor and continues with deltas", async () => {

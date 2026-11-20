@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { type BrainInput, protocolVersion, type TopicScope } from "@super-agent2/protocol";
 import { dot, minute, type Scorer } from "@super-agent2/routing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Sleep } from "./clock.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import type { Hub } from "./hub.js";
-import { keySet, signingKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
+import { assertion, keySet, type SigningKey, signingKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { fakeTarget, testCredentials } from "./testing/commands.js";
 import { startTestHub } from "./testing/http.js";
 import { createTopicRouter, type ModelLoader, namedRepository, type RoutingMessage, type RoutingOptions } from "./topic-routing.js";
@@ -39,6 +40,42 @@ function fakeScorer(fails: (text: string) => boolean = () => false, identity = "
 }
 
 const fakeModel: ModelLoader = () => Promise.resolve(fakeScorer());
+
+function heldModel() {
+  const scorer = fakeScorer();
+  const started: string[] = [];
+  const held: (() => void)[] = [];
+  const starting: ((text: string) => void)[] = [];
+  const state = { holding: true };
+  const model: ModelLoader = () => Promise.resolve({
+    ...scorer,
+    represent: (text) => {
+      if (!state.holding) return scorer.represent(text);
+      started.push(text);
+      for (const notify of starting.splice(0)) notify(text);
+      return new Promise((resolve, reject) => held.push(() => void scorer.represent(text).then(resolve, reject)));
+    },
+  });
+  const nextStart = () => new Promise<string>((resolve) => starting.push(resolve));
+  const release = () => held.shift()?.();
+  const releaseThenNext = () => {
+    const next = nextStart();
+    release();
+    return next;
+  };
+  return { model, state, started, nextStart, release, releaseThenNext };
+}
+
+function manualSleep() {
+  const waits: { readonly milliseconds: number; readonly end: () => void }[] = [];
+  const sleep: Sleep = (milliseconds, signal) => new Promise<void>((resolve) => {
+    waits.push({ milliseconds, end: resolve });
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+  return { sleep, waits };
+}
+
+const never: Sleep = () => new Promise<void>(() => undefined);
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "hub-topic-routing-"));
@@ -486,6 +523,93 @@ describe("stored topic text vectors", () => {
   });
 });
 
+describe("the model's queue", () => {
+  const storedEntries = () => database.connection.prepare("SELECT entry FROM routing_vectors ORDER BY entry").all().map(({ entry }) => entry);
+
+  it("runs a send's computations before queued previews and refresh work, without interrupting the one running", async () => {
+    const held = heldModel();
+    const routing = await router({ model: held.model, sleep: never });
+    said(topic(60), "beta notes", 60);
+    said(topic(60), "gamma notes", 60);
+    const first = topic(50);
+    said(first, "alpha project plan", 50);
+    const running = held.nextStart();
+    routing.refresh();
+    expect(await running).toBe("alpha project plan");
+    const previews = Promise.all([routing.route(message("preview one")), routing.route(message("preview two"))]);
+    let previewed = false;
+    void previews.then(() => {
+      previewed = true;
+    });
+    const sent = routing.route(message("tell me about alpha"), { purpose: "send" });
+    expect(await held.releaseThenNext()).toBe("gamma notes");
+    expect(await held.releaseThenNext()).toBe("beta notes");
+    expect(await held.releaseThenNext()).toBe("tell me about alpha");
+    expect(await held.releaseThenNext()).toBe("preview one");
+    expect(await sent).toMatchObject({ fallback: null, decided: { configuration: "model", rule: "c", topic: first } });
+    expect(previewed).toBe(false);
+    expect(await held.releaseThenNext()).toBe("preview two");
+    held.release();
+    await previews;
+    await routing.settled();
+    expect(held.started).toEqual(["alpha project plan", "gamma notes", "beta notes", "tell me about alpha", "preview one", "preview two"]);
+  });
+
+  it("places a send with the bigram configuration when the model is not ready within the limit, and still stores what it started", async () => {
+    const held = heldModel();
+    const { sleep, waits } = manualSleep();
+    const routing = await router({ model: held.model, sleep });
+    const first = topic(60);
+    const plan = said(first, "alpha project plan", 60);
+    const running = held.nextStart();
+    const preview = routing.route(message("other words"));
+    expect(await running).toBe("other words");
+    const sent = routing.route(message("tell me about alpha"), { purpose: "send" });
+    expect(waits.map(({ milliseconds }) => milliseconds)).toEqual([2000]);
+    waits[0]!.end();
+    expect(await sent).toMatchObject({ fallback: "model busy", shadow: null, decided: { configuration: "bigram" } });
+    expect(held.started).toEqual(["other words"]);
+    expect(await held.releaseThenNext()).toBe("alpha project plan");
+    expect(await held.releaseThenNext()).toBe("tell me about alpha");
+    held.release();
+    await preview;
+    expect(storedEntries()).toEqual([plan]);
+    expect((await routing.route(message("tell me about alpha"), { purpose: "send" })).decided).toMatchObject({ configuration: "model", topic: first });
+    expect(held.started).toEqual(["other words", "alpha project plan", "tell me about alpha"]);
+
+    const shorter = manualSleep();
+    const quick = await router({ model: held.model, sleep: shorter.sleep, sendWaitMilliseconds: 50 });
+    void quick.route(message("one more"), { purpose: "send" });
+    expect(shorter.waits.map(({ milliseconds }) => milliseconds)).toEqual([50]);
+  });
+
+  it("skips a preview's computation once every caller has gone, but not one it shares with a send", async () => {
+    said(topic(60), "alpha project plan", 60);
+    (await router()).close();
+    const held = heldModel();
+    const routing = await router({ model: held.model, sleep: never });
+    const running = held.nextStart();
+    const busy = routing.route(message("first words"));
+    expect(await running).toBe("first words");
+    const dropped = new AbortController();
+    const shared = new AbortController();
+    const droppedPreview = routing.route(message("dropped words"), { signal: dropped.signal });
+    const sharedPreview = routing.route(message("shared words"), { signal: shared.signal });
+    const sent = routing.route(message("shared words"), { purpose: "send" });
+    dropped.abort();
+    shared.abort();
+    await expect(droppedPreview).rejects.toBe(dropped.signal.reason);
+    await expect(sharedPreview).rejects.toBe(shared.signal.reason);
+    await expect(routing.route(message("late words"), { signal: dropped.signal })).rejects.toBe(dropped.signal.reason);
+    expect(await held.releaseThenNext()).toBe("shared words");
+    held.release();
+    expect((await sent).decided.configuration).toBe("model");
+    await busy;
+    await routing.settled();
+    expect(held.started).toEqual(["first words", "shared words"]);
+  });
+});
+
 describe("repository of a new topic in all of code", () => {
   it("is set when the message names exactly one known repository", async () => {
     expect(namedRepository("deploy gamma please", ["owner/alpha", "Owner/Beta", "other/gamma"])).toBe("other/gamma");
@@ -514,14 +638,18 @@ describe("routing in the hub", () => {
     hub = undefined;
   });
 
-  async function start(): Promise<Hub> {
+  let key: SigningKey | undefined;
+
+  async function start({ model = fakeModel, sleep }: { model?: ModelLoader; sleep?: Sleep } = {}): Promise<Hub> {
+    key ??= await signingKey("key-1");
     hub = await startTestHub({
       config: testConfig(join(dataDir, "hub")),
-      keySource: staticKeySource(keySet(await signingKey("key-1"))),
+      keySource: staticKeySource(keySet(key)),
       clock,
       targets: [fakeTarget("hub")],
       credentials: testCredentials,
-      routingModel: fakeModel,
+      routingModel: model,
+      ...(sleep === undefined ? {} : { routingSleep: sleep }),
       report: (line) => lines.push(line),
     });
     await hub.conversations.routingSettled();
@@ -631,5 +759,95 @@ describe("routing in the hub", () => {
     expect(running.conversations.entries(topic).at(-1)).toMatchObject({ id: "pending", text: "ok" });
     expect(decisions(running)).toMatchObject([{ entry: "pending", configuration: "bigram", rule: "b", topic, fallback_reason: "recovered after a restart", shadow_rule: null }]);
     expect(running.database.connection.prepare("SELECT * FROM pending_topic_inputs").all()).toEqual([]);
+  });
+
+  async function primed(sleep: Sleep = never) {
+    const held = heldModel();
+    held.state.holding = false;
+    const running = await start({ model: held.model, sleep });
+    const service = running.conversations;
+    const topic = service.create().id;
+    service.send(topic, "alpha project plan");
+    await service.routingSettled();
+    held.state.holding = true;
+    const headers = { "Cf-Access-Jwt-Assertion": await assertion({ key: key!, clock }), "content-type": "application/json" };
+    const post = (path: string, body: object, signal?: AbortSignal) =>
+      fetch(`http://127.0.0.1:${running.address.port}${path}`, { method: "POST", headers, body: JSON.stringify(body), ...(signal === undefined ? {} : { signal }) });
+    return { held, running, service, topic, post };
+  }
+
+  const daily = { kind: "daily" } as const;
+
+  it("places a send with the bigram configuration and records why when the model is busy, and stores the vector it started", async () => {
+    const { sleep, waits } = manualSleep();
+    const { held, running, service } = await primed(sleep);
+    const occupied = held.nextStart();
+    const preview = service.previewStream({ text: "other words", scope: daily, attachmentNames: [] });
+    expect(await occupied).toBe("other words");
+    const sending = service.sendToStream(undefined, "tell me about alpha", []);
+    expect(waits.map(({ milliseconds }) => milliseconds)).toEqual([2000]);
+    waits[0]!.end();
+    const item = (await sending)!;
+    expect(decisions(running)).toMatchObject([{ entry: item.entry.id, configuration: "bigram", fallback_reason: "model busy", shadow_configuration: null }]);
+    expect(lines).toContainEqual(expect.stringContaining(`Topic routing decision ${item.entry.id}: bigram`));
+    expect(await held.releaseThenNext()).toBe("tell me about alpha");
+    held.release();
+    await preview;
+    await service.routingSettled();
+    expect(held.started).toEqual(["other words", "tell me about alpha"]);
+    expect(running.database.connection.prepare("SELECT 1 FROM routing_vectors WHERE entry = ?").all(item.entry.id)).toHaveLength(1);
+  });
+
+  it("skips the computation of a preview whose request has gone", async () => {
+    const { held, service, post } = await primed();
+    const occupied = held.nextStart();
+    const busy = service.previewStream({ text: "first words", scope: daily, attachmentNames: [] });
+    expect(await occupied).toBe("first words");
+    const reached = Promise.withResolvers<AbortSignal>();
+    const preview = service.previewStream;
+    service.previewStream = (request, signal) => {
+      reached.resolve(signal!);
+      return preview(request, signal);
+    };
+    const leaving = new AbortController();
+    const request = post("/api/stream/preview", { text: "dropped words", scope: daily, attachmentNames: [] }, leaving.signal);
+    const signal = await reached.promise;
+    leaving.abort();
+    await expect(request).rejects.toThrow();
+    if (!signal.aborted) await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+    held.release();
+    await busy;
+    await service.routingSettled();
+    expect(held.started).toEqual(["first words"]);
+  });
+
+  it("answers a send repeated while it is routed with the same entry, routes it once and refuses other content under its id", async () => {
+    const { held, running, service, topic, post } = await primed();
+    const reached = { count: 0, second: Promise.withResolvers<void>() };
+    const sendOwner = service.sendOwner;
+    service.sendOwner = (request) => {
+      reached.count += 1;
+      if (reached.count === 2) reached.second.resolve();
+      return sendOwner(request);
+    };
+    const id = randomUUID();
+    const message = { id, text: "tell me about alpha", scope: daily };
+    const occupied = held.nextStart();
+    const first = post("/api/stream", message);
+    expect(await occupied).toBe("tell me about alpha");
+    const second = post("/api/stream", message);
+    await reached.second.promise;
+    expect((await post("/api/stream", { ...message, text: "something else" })).status).toBe(409);
+    held.release();
+    const answers = await Promise.all([first, second]);
+    expect(answers.map(({ status }) => status)).toEqual([202, 202]);
+    const [one, two] = await Promise.all(answers.map((answer) => answer.json()));
+    expect(one).toMatchObject({ topic: { id: topic }, entry: { id, text: message.text } });
+    expect(two).toEqual(one);
+    await service.routingSettled();
+    expect(decisions(running)).toMatchObject([{ entry: id }]);
+    expect(service.entries(topic).filter(({ kind }) => kind === "owner")).toHaveLength(2);
+    expect(running.database.connection.prepare("SELECT * FROM pending_topic_inputs").all()).toEqual([]);
+    expect(held.started).toEqual(["tell me about alpha"]);
   });
 });

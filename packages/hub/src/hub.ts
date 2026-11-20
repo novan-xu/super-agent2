@@ -5,7 +5,7 @@ import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
-import { type Clock, systemClock } from "./clock.js";
+import { type Clock, type Sleep, systemClock } from "./clock.js";
 import { allowEverything, type CommandGate, type CommandService, createCommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import { type ConversationService, createConversationService } from "./conversations.js";
@@ -66,6 +66,7 @@ export interface HubOptions {
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
   readonly routingModel?: ModelLoader;
+  readonly routingSleep?: Sleep;
 }
 
 const accessCheckMilliseconds = 60 * 60 * 1000;
@@ -204,6 +205,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       routing: {
         primary: config.routingPrimary,
         model: options.routingModel ?? (routingModels === undefined ? undefined : () => modelScorer(bgeSmallZh, { directory: routingModels, offline: true })),
+        sleep: options.routingSleep,
         report: options.report ?? ((line) => process.stderr.write(`${line}
 `)),
       },

@@ -43,18 +43,23 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 
-export type Failure = Refusal["error"] | "network";
+export type Failure = Refusal["error"] | "network" | "timeout";
 
 export type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: Failure; readonly reason?: string };
 
-async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST"): Promise<Answer<T>> {
+export interface SendAttempt {
+  readonly id?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+
+async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST", signal?: AbortSignal): Promise<Answer<T>> {
   let response: Response;
   try {
     response = await fetch(
       path,
       body === undefined
         ? { headers: { accept: "application/json" }, cache: "no-store" }
-        : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) },
+        : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body), ...(signal === undefined ? {} : { signal }) },
     );
   } catch {
     return { ok: false, error: "network" };
@@ -100,12 +105,12 @@ export const hubApi = {
   rearrange: (repository: string | null | undefined) => call("/api/workbench/rearrange", ConversationResponse, { repository }),
   conversations: () => call("/api/conversations?all=1", ConversationList),
   detail: (id: string) => call(conversationPath(id), ConversationDetail),
-  send: (id: string, text: string, attachments: readonly string[] = [], quotedMessage?: string) =>
-    call(`${conversationPath(id)}/messages`, EntryResponse, { text, attachments, quotedMessage }),
+  send: (conversation: string, text: string, attachments: readonly string[] = [], quotedMessage?: string, { id, signal }: SendAttempt = {}) =>
+    call(`${conversationPath(conversation)}/messages`, EntryResponse, { id, text, attachments, quotedMessage }, "POST", signal),
   answerQuestions: (conversation: string, id: string, answers: readonly QuestionAnswer[]) => call(`${conversationPath(conversation)}/questions`, EntryResponse, { id, answers }),
-  previewStream: (request: StreamPreviewRequest) => call(streamPreviewPath, StreamPreview, request),
-  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope, destination?: ReviewedStreamDestination) =>
-    call(streamPath, StreamEntry, { text, attachments, quotedMessage, scope, ...destination }),
+  previewStream: (request: StreamPreviewRequest, signal?: AbortSignal) => call(streamPreviewPath, StreamPreview, request, "POST", signal),
+  sendToStream: (text: string, attachments: readonly string[], quotedMessage?: string, scope?: TopicScope, destination?: ReviewedStreamDestination, { id, signal }: SendAttempt = {}) =>
+    call(streamPath, StreamEntry, { id, text, attachments, quotedMessage, scope, ...destination }, "POST", signal),
   renameTopic: (source: string, title: string) => call(`${conversationPath(source)}/rename`, ConversationResponse, { title }),
   archiveTopic: (source: string) => call(`${conversationPath(source)}/archive`, ConversationResponse, {}),
   mergeTopic: (source: string, destination: string) => call(`${conversationPath(source)}/merge`, ConversationResponse, { destination }),

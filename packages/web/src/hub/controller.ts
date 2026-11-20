@@ -38,7 +38,10 @@ export interface ControllerOptions {
   readonly socket: Pick<HubSocketOptions, "url" | "create" | "schedule">;
   readonly onFailure: (failure: Failure) => void;
   readonly frame?: (run: () => void) => void;
+  readonly sendLimit?: number;
 }
+
+export const defaultSendLimit = 20_000;
 
 export class PageController {
   readonly store: PageStore = createPageStore();
@@ -440,21 +443,32 @@ export class PageController {
     }
   }
 
-  async previewStream(request: StreamPreviewRequest) {
-    const preview = await this.options.api.previewStream(request);
+  async previewStream(request: StreamPreviewRequest, signal?: AbortSignal) {
+    const preview = await this.options.api.previewStream(request, signal);
     return preview.ok ? preview.value : undefined;
   }
 
-  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened, scope = this.scope, destination?: ReviewedStreamDestination): Promise<boolean | "stale"> {
+  private async limited<T>(run: (signal: AbortSignal) => Promise<Answer<T>>): Promise<Answer<T>> {
+    const abort = new AbortController();
+    const cancel = this.options.socket.schedule(() => abort.abort(), this.options.sendLimit ?? defaultSendLimit);
+    const answer = await Promise.race([
+      run(abort.signal),
+      new Promise<Answer<T>>((resolve) => abort.signal.addEventListener("abort", () => resolve({ ok: false, error: "timeout" }), { once: true })),
+    ]);
+    cancel();
+    return answer;
+  }
+
+  async send(text: string, attachments: readonly string[] = [], quotedMessage?: string, conversation = this.opened, scope = this.scope, destination?: ReviewedStreamDestination, id?: string): Promise<boolean | "stale"> {
     if (conversation === null) {
-      const sent = await this.options.api.sendToStream(text, attachments, quotedMessage, scope, destination);
+      const sent = await this.limited((signal) => this.options.api.sendToStream(text, attachments, quotedMessage, scope, destination, { id, signal }));
       if (!sent.ok) {
         this.options.onFailure(sent.error);
         if (sent.error === "not_found" && destination?.topic !== undefined) return "stale";
       }
       return sent.ok;
     }
-    const sent = await this.options.api.send(conversation, text, attachments, quotedMessage);
+    const sent = await this.limited((signal) => this.options.api.send(conversation, text, attachments, quotedMessage, { id, signal }));
     if (!sent.ok) {
       this.options.onFailure(sent.error);
       return false;

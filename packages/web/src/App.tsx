@@ -224,11 +224,11 @@ export function App() {
   const openConversation = useCallback((conversation: string) => { if (inWorkbench) setWorkTopic(conversation); else navigate(topicRoute(conversation)); }, [inWorkbench, navigate, topicRoute]);
   const openStream = useCallback(() => { if (inWorkbench) setWorkTopic(null); else navigate(streamRoute); }, [inWorkbench, navigate, streamRoute]);
   const send = useCallback(
-    (message: string, attachments: readonly string[] = [], quotedMessage?: string, destination?: ReviewedStreamDestination) =>
-      controller.send(message, attachments, quotedMessage, conversationId, scope, destination),
+    (message: string, attachments: readonly string[] = [], quotedMessage?: string, destination?: ReviewedStreamDestination, id?: string) =>
+      controller.send(message, attachments, quotedMessage, conversationId, scope, destination, id),
     [controller, conversationId, scope],
   );
-  const previewStream = useCallback((request: StreamPreviewRequest) => controller.previewStream(request), [controller]);
+  const previewStream = useCallback((request: StreamPreviewRequest, signal?: AbortSignal) => controller.previewStream(request, signal), [controller]);
   const stop = useCallback(() => void controller.interrupt(), [controller]);
   const cardActions = useMemo(
     () => ({

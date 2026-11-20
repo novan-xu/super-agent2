@@ -27,6 +27,7 @@ const proposal = (topic: Conversation | null): StreamPreview => ({
 type Props = ComponentProps<typeof TopicComposer>;
 type Preview = NonNullable<Props["routing"]>["preview"];
 const ignore = () => undefined;
+const anyId = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 let root: Root;
 let host: HTMLDivElement;
 
@@ -95,7 +96,7 @@ describe("stream composer destinations", () => {
     expect(select.hidden).toBe(true);
     field().focus();
     await requestPreview();
-    expect(preview).toHaveBeenNthCalledWith(1, { scope: dailyScope, text: "", attachmentNames: [] });
+    expect(preview).toHaveBeenNthCalledWith(1, { scope: dailyScope, text: "", attachmentNames: [] }, expect.any(AbortSignal));
     expect(select.hidden).toBe(false);
     expect(select.options[select.selectedIndex]?.textContent).toBe(first.title);
     expect([...select.options].map(({ value }) => value)).toEqual([":new", first.id, second.id]);
@@ -105,11 +106,11 @@ describe("stream composer destinations", () => {
     await type("Details");
     expect(preview).toHaveBeenCalledTimes(1);
     await requestPreview();
-    expect(preview).toHaveBeenNthCalledWith(2, { scope: dailyScope, text: "Details", attachmentNames: [] });
+    expect(preview).toHaveBeenNthCalledWith(2, { scope: dailyScope, text: "Details", attachmentNames: [] }, expect.any(AbortSignal));
     expect(select.value).toBe(first.id);
     await type("More details");
     await requestPreview();
-    expect(preview).toHaveBeenNthCalledWith(3, { scope: dailyScope, text: "More details", attachmentNames: [] });
+    expect(preview).toHaveBeenNthCalledWith(3, { scope: dailyScope, text: "More details", attachmentNames: [] }, expect.any(AbortSignal));
     await act(async () => secondEdit.resolve(proposal(null)));
     await act(async () => firstEdit.resolve(proposal(second)));
     expect(picker()).toBe(select);
@@ -128,7 +129,7 @@ describe("stream composer destinations", () => {
     await submit();
     expect(send).toHaveBeenCalledWith("Updated draft", [], undefined, {
       ...(destination === null ? { newTopic: true } : { topic: destination.id }), proposal: proposal(destination).proposal,
-    });
+    }, anyId);
   });
 
   it.each([second.id, ":new"])("keeps the picked destination %s through typing and a reload", async (destination) => {
@@ -151,7 +152,7 @@ describe("stream composer destinations", () => {
     await submit();
     expect(send).toHaveBeenCalledWith("More to say", [], undefined, {
       ...(destination === ":new" ? { newTopic: true } : { topic: destination }), proposal: proposal(first).proposal,
-    });
+    }, anyId);
     expect(field().value).toBe("");
   });
 
@@ -164,28 +165,28 @@ describe("stream composer destinations", () => {
     expect(picker().hidden).toBe(true);
     expect(sendButton().disabled).toBe(false);
     await submit();
-    expect(send).toHaveBeenCalledWith("Send without waiting", [], undefined, undefined);
+    expect(send).toHaveBeenCalledWith("Send without waiting", [], undefined, undefined, anyId);
   });
 
-  it("keeps the draft and asks for a fresh preview after a stale topic is refused", async () => {
+  it("keeps the draft and asks for a fresh preview after a stale topic is refused, and can send before it arrives", async () => {
     const fresh = Promise.withResolvers<StreamPreview>();
     const preview = vi.fn<Preview>().mockResolvedValueOnce(proposal(first)).mockReturnValue(fresh.promise);
-    const send = vi.fn<Props["send"]>().mockResolvedValueOnce("stale").mockResolvedValue(true);
+    const send = vi.fn<Props["send"]>().mockResolvedValueOnce("stale").mockResolvedValueOnce("stale").mockResolvedValue(true);
     await render(preview, send);
     await requestPreview();
     await choose(second.id);
     await type("Keep this draft");
     await submit();
     expect(field().value).toBe("Keep this draft");
-    expect(sendButton().disabled).toBe(true);
-    await submit();
-    expect(send).toHaveBeenCalledTimes(1);
-    await requestPreview();
-    expect(preview).toHaveBeenLastCalledWith({ scope: dailyScope, text: "Keep this draft", attachmentNames: [] });
-    await act(async () => fresh.resolve(proposal(null)));
     expect(sendButton().disabled).toBe(false);
+    await requestPreview();
+    expect(preview).toHaveBeenLastCalledWith({ scope: dailyScope, text: "Keep this draft", attachmentNames: [] }, expect.any(AbortSignal));
     await submit();
-    expect(send).toHaveBeenLastCalledWith("Keep this draft", [], undefined, { newTopic: true, proposal: proposal(null).proposal });
+    expect(send).toHaveBeenLastCalledWith("Keep this draft", [], undefined, undefined, anyId);
+    await requestPreview();
+    await act(async () => fresh.resolve(proposal(null)));
+    await submit();
+    expect(send).toHaveBeenLastCalledWith("Keep this draft", [], undefined, { newTopic: true, proposal: proposal(null).proposal }, anyId);
   });
 
   it("keeps quoted replies and topic messages on the direct send path", async () => {
@@ -197,10 +198,61 @@ describe("stream composer destinations", () => {
     expect(preview).not.toHaveBeenCalled();
     expect(picker()).toBeNull();
     await submit();
-    expect(send).toHaveBeenLastCalledWith("A reply", [], "quoted", undefined);
+    expect(send).toHaveBeenLastCalledWith("A reply", [], "quoted", undefined, anyId);
     await render(preview, send, { routing: undefined });
     await type("Inside the topic");
     await submit();
-    expect(send).toHaveBeenLastCalledWith("Inside the topic", [], undefined, undefined);
+    expect(send).toHaveBeenLastCalledWith("Inside the topic", [], undefined, undefined, anyId);
+  });
+
+  it("aborts a preview when the draft changes, when sending and when the composer goes away", async () => {
+    const signals: AbortSignal[] = [];
+    const preview = vi.fn<Preview>((_request, signal) => {
+      signals.push(signal!);
+      return Promise.withResolvers<StreamPreview>().promise;
+    });
+    await render(preview, async () => true);
+    await type("First");
+    await requestPreview();
+    expect(signals.map(({ aborted }) => aborted)).toEqual([false]);
+    await type("First and more");
+    expect(signals.map(({ aborted }) => aborted)).toEqual([true]);
+    await requestPreview();
+    expect(signals.map(({ aborted }) => aborted)).toEqual([true, false]);
+    await submit();
+    expect(signals.map(({ aborted }) => aborted)).toEqual([true, true]);
+    await requestPreview();
+    expect(signals.map(({ aborted }) => aborted)).toEqual([true, true, false]);
+    await act(async () => root.unmount());
+    expect(signals.map(({ aborted }) => aborted)).toEqual([true, true, true]);
+    root = createRoot(host);
+  });
+
+  it("keeps the draft and its id after a send that gets no answer, sends the same id again after a reload, and a new one for a changed draft", async () => {
+    const preview = vi.fn<Preview>().mockReturnValue(Promise.withResolvers<StreamPreview>().promise);
+    const send = vi.fn<Props["send"]>().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await render(preview, send);
+    await type("Did this arrive?");
+    await submit();
+    expect(field().value).toBe("Did this arrive?");
+    expect(sendButton().disabled).toBe(false);
+    expect(sendButton().classList.contains("is-busy")).toBe(false);
+    const first = send.mock.lastCall?.[4];
+    expect(first).toEqual(anyId);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render(preview, send);
+    expect(field().value).toBe("Did this arrive?");
+    await submit();
+    expect(send.mock.lastCall?.[4]).toBe(first);
+    await type("Did this arrive at all?");
+    await submit();
+    const changed = send.mock.lastCall?.[4];
+    expect(changed).toEqual(anyId);
+    expect(changed).not.toBe(first);
+    expect(field().value).toBe("");
+    await type("Did this arrive at all?");
+    await submit();
+    expect(send.mock.lastCall?.[4]).not.toBe(changed);
   });
 });

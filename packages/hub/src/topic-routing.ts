@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Clock, systemClock } from "./clock.js";
+import { type Clock, type Sleep, systemClock, systemSleep } from "./clock.js";
 import { ticketReferences } from "./ticket-codes.js";
 import { openTicketStates, RoutingProposal, type TopicScope } from "@super-agent2/protocol";
 import {
@@ -35,6 +35,17 @@ export interface RoutingOptions {
   readonly model?: ModelLoader | undefined;
   readonly report?: ((line: string) => void) | undefined;
   readonly clock?: Clock | undefined;
+  readonly sendWaitMilliseconds?: number | undefined;
+  readonly sleep?: Sleep | undefined;
+}
+
+export const defaultSendWaitMilliseconds = 2000;
+
+export type RoutingPurpose = "send" | "preview";
+
+export interface RouteOptions {
+  readonly purpose?: RoutingPurpose | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface RoutingMessage {
@@ -52,7 +63,7 @@ export interface Routing extends RoutingProposal {
 }
 
 export interface TopicRouter {
-  route(message: RoutingMessage): Promise<Routing>;
+  route(message: RoutingMessage, options?: RouteOptions): Promise<Routing>;
   routeNow(message: RoutingMessage, reason: string): Routing;
   repositoryFor(text: string, scope: TopicScope): string | null;
   record(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, at: number, owner: { ownerChanged: boolean; ownerPlaced: boolean }): void;
@@ -70,7 +81,28 @@ type ModelState =
 
 const fallbackReasons = { missing: "model not configured", loading: "model loading", failed: "model failed to load" } as const;
 
+export const modelBusyReason = "model busy";
+
 const recentTextLimit = 128;
+
+type Priority = RoutingPurpose | "refresh";
+
+const ranks: Readonly<Record<Priority, number>> = { send: 0, preview: 1, refresh: 2 };
+
+interface Demand {
+  readonly priority: Priority;
+  readonly signal?: AbortSignal | undefined;
+}
+
+interface Computation {
+  readonly key: string;
+  readonly scorer: Scorer;
+  readonly text: string;
+  readonly result: PromiseWithResolvers<Vector>;
+  rank: number;
+  waiting: number;
+  started: boolean;
+}
 
 const TopicRow = z.object({ id: z.string(), repository: z.string().nullable(), activity: z.number().int() });
 const EntryRow = z.object({ id: z.string(), kind: z.string(), body: z.string() });
@@ -222,21 +254,19 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   `);
 
   const clock = options.clock ?? systemClock;
+  const sleep = options.sleep ?? systemSleep;
+  const sendWait = options.sendWaitMilliseconds ?? defaultSendWaitMilliseconds;
   const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
   const recent = new Map<string, Vector>();
-  const computing = new Map<string, Promise<Vector>>();
+  const computing = new Map<string, Computation>();
+  const queued: Computation[] = [];
   let model: ModelState = options.model === undefined ? { kind: "missing" } : { kind: "loading" };
-  let queue: Promise<unknown> = Promise.resolve();
+  let running = false;
+  let pumping = false;
   let closed = false;
   let refreshing: Promise<void> | undefined;
   let dirty = false;
   let loading: Promise<void> = Promise.resolve();
-
-  const embed = (scorer: Scorer, text: string): Promise<Vector> => {
-    const next = queue.then(() => scorer.represent(text));
-    queue = next.catch(() => undefined);
-    return next;
-  };
 
   const itemsOf = (topic: string): Item[] => {
     const rows = [...firstOwner.all(topic), ...recentOwners.all(topic).reverse(), ...recentReplies.all(topic).reverse()].map((row) => ItemRow.parse(row));
@@ -360,33 +390,119 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     }
   };
 
-  const textVector = (scorer: Scorer, text: string): Promise<Vector> => {
+  const startNext = () => {
+    if (running || queued.length === 0) {
+      return;
+    }
+    let chosen = 0;
+    for (let index = 1; index < queued.length; index += 1) {
+      if (queued[index]!.rank < queued[chosen]!.rank) {
+        chosen = index;
+      }
+    }
+    const [computation] = queued.splice(chosen, 1);
+    if (computation === undefined) {
+      return;
+    }
+    computation.started = true;
+    running = true;
+    let represented: Promise<Vector>;
+    try {
+      represented = Promise.resolve(computation.scorer.represent(computation.text));
+    } catch (error) {
+      represented = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    represented
+      .then(
+        (vector) => {
+          remember(computation.key, vector);
+          computing.delete(computation.key);
+          computation.result.resolve(vector);
+        },
+        (error: unknown) => {
+          computing.delete(computation.key);
+          computation.result.reject(error);
+        },
+      )
+      .finally(() => {
+        running = false;
+        pump();
+      });
+  };
+
+  const pump = () => {
+    if (running || pumping || queued.length === 0) {
+      return;
+    }
+    pumping = true;
+    queueMicrotask(() => {
+      pumping = false;
+      startNext();
+    });
+  };
+
+  const skip = (computation: Computation, reason: unknown) => {
+    const index = queued.indexOf(computation);
+    if (index >= 0) {
+      queued.splice(index, 1);
+    }
+    computing.delete(computation.key);
+    computation.result.reject(reason);
+  };
+
+  const join = (computation: Computation, signal: AbortSignal | undefined): Promise<Vector> => {
+    computation.waiting += 1;
+    if (signal === undefined) {
+      return computation.result.promise;
+    }
+    return new Promise<Vector>((resolve, reject) => {
+      const leave = () => {
+        computation.waiting -= 1;
+        if (computation.waiting === 0 && !computation.started) {
+          skip(computation, signal.reason);
+        }
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", leave, { once: true });
+      computation.result.promise.then(
+        (vector) => {
+          signal.removeEventListener("abort", leave);
+          resolve(vector);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", leave);
+          reject(error);
+        },
+      );
+    });
+  };
+
+  const textVector = (scorer: Scorer, text: string, demand: Demand): Promise<Vector> => {
+    if (demand.signal?.aborted === true) {
+      return Promise.reject(demand.signal.reason);
+    }
     const key = JSON.stringify([scorer.identity, text]);
     const known = recent.get(key);
     if (known !== undefined) {
       remember(key, known);
       return Promise.resolve(known);
     }
-    const running = computing.get(key);
-    if (running !== undefined) {
-      return running;
+    const rank = ranks[demand.priority];
+    let computation = computing.get(key);
+    if (computation === undefined) {
+      computation = { key, scorer, text, result: Promise.withResolvers<Vector>(), rank, waiting: 0, started: false };
+      computation.result.promise.catch(() => undefined);
+      computing.set(key, computation);
+      queued.push(computation);
+    } else if (!computation.started) {
+      computation.rank = Math.min(computation.rank, rank);
     }
-    const started = embed(scorer, text).then(
-      (vector) => {
-        remember(key, vector);
-        computing.delete(key);
-        return vector;
-      },
-      (error: unknown) => {
-        computing.delete(key);
-        throw error;
-      },
-    );
-    computing.set(key, started);
-    return started;
+    const waiting = join(computation, demand.signal);
+    pump();
+    return waiting;
   };
 
-  const modelVector = async (scorer: Scorer, item: Item): Promise<Vector> => {
+  const modelVector = async (scorer: Scorer, item: Item, demand: Demand): Promise<Vector> => {
     const known = vectors.get(item.id);
     if (known !== undefined && known.text === item.text) {
       return known.vector;
@@ -398,7 +514,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       vectors.set(item.id, { text: item.text, vector });
       return vector;
     }
-    const vector = await textVector(scorer, item.text);
+    const vector = await textVector(scorer, item.text, demand);
     if (closed) {
       return vector;
     }
@@ -408,18 +524,26 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return vector;
   };
 
-  const modelDecision = async (scorer: Scorer, context: Context): Promise<ConfigurationDecision> => {
+  const modelDecision = async (scorer: Scorer, context: Context, demand: Demand): Promise<ConfigurationDecision> => {
     if (context.topics.length === 0) {
       return evaluate(configurations.model, context, []);
     }
-    const messageVector = await textVector(scorer, context.message.text.slice(0, ownerTextLimit));
-    const itemVectors = new Map<string, Vector>();
-    for (const topic of context.topics) {
-      for (const item of topic.items) {
-        itemVectors.set(item.id, await modelVector(scorer, item));
-      }
+    const items = context.topics.flatMap((topic) => topic.items);
+    const [messageVector, ...found] = await Promise.all([
+      textVector(scorer, context.message.text.slice(0, ownerTextLimit), demand),
+      ...items.map((item) => modelVector(scorer, item, demand)),
+    ]);
+    const itemVectors = new Map(items.map((item, index) => [item.id, found[index]!]));
+    return evaluate(configurations.model, context, scoresOf(context, messageVector!, (item) => itemVectors.get(item.id)!, scorer.similarity));
+  };
+
+  const boundedDecision = async (decision: Promise<ConfigurationDecision>): Promise<ConfigurationDecision | undefined> => {
+    const stop = new AbortController();
+    try {
+      return await Promise.race([decision, sleep(sendWait, stop.signal).then(() => undefined)]);
+    } finally {
+      stop.abort();
     }
-    return evaluate(configurations.model, context, scoresOf(context, messageVector, (item) => itemVectors.get(item.id)!, scorer.similarity));
   };
 
   const repositoryFor = (text: string, scope: TopicScope, topics?: readonly { readonly repository: string | null }[]): string | null => {
@@ -465,7 +589,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
           return;
         }
         try {
-          await modelVector(scorer, item);
+          await modelVector(scorer, item, { priority: "refresh" });
         } catch (error) {
           report(`Topic routing could not embed a topic text in the background: ${error instanceof Error ? error.name : "unknown error"}`);
         }
@@ -513,7 +637,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
 
   return {
     repositoryFor,
-    route: async (message) => {
+    route: async (message, { purpose = "preview", signal } = {}) => {
+      signal?.throwIfAborted();
       const context = gather(message);
       const bigram = bigramDecision(context);
       let modelResult: ConfigurationDecision | undefined;
@@ -521,8 +646,16 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
       const state = model;
       if (state.kind === "ready") {
         try {
-          modelResult = await modelDecision(state.scorer, context);
+          const decision = modelDecision(state.scorer, context, { priority: purpose, signal });
+          if (purpose === "send") {
+            decision.catch(() => undefined);
+            modelResult = await boundedDecision(decision);
+            reason = modelResult === undefined ? modelBusyReason : null;
+          } else {
+            modelResult = await decision;
+          }
         } catch (error) {
+          signal?.throwIfAborted();
           reason = `embedding failed: ${error instanceof Error ? error.name : "unknown error"}`;
         }
       } else {

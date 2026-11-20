@@ -3521,3 +3521,55 @@ Streaming larger files was an alternative, but would require a separate resource
   Owner and question entries are items as soon as they are written, since their embedded text does not change.
 - **Why:** Each partial text of a streaming reply cost a computation that the next delta made useless.
 - **Other options:** Compute every partial text and replace its row; compute a streaming reply only after a pause in its deltas, which depends on time.
+
+## 2026-11-20 — Send path: model wait, stale previews and retried sends (#202)
+
+- **Chosen:** The router's model computes one text at a time from a queue ordered by priority: a send's texts first, then previews', then the background refresh's, and in arrival order within a priority.
+  A computation that has started is never interrupted.
+  A text several callers wait for takes the highest priority among them, so a preview's text that a send also needs moves up.
+  A routing decision asks for all its texts at once, so a send's texts are all queued before the next computation is chosen.
+  This replaces "All computations still share one serial queue" of #200.
+- **Why:** On 2026-11-20 a send waited behind every preview and the refresh, and the owner could not send for minutes.
+- **Other options:** Separate queues per purpose; interrupting a running computation, which the model library does not support.
+
+- **Chosen:** A send waits at most 2 s for the model's decision, set by the router option `sendWaitMilliseconds`.
+  After that the bigram configuration decides with no shadow, and the decision records the fallback reason `model busy`.
+  The texts the send started keep their place and are still computed and stored, so the next message finds them.
+  The page shows nothing more for such a send; the owner can move it as today.
+- **Why:** Placing the owner's message promptly matters more than the better configuration for one message.
+- **Other options:** No bound; dropping the started computations, which would make the next message wait for them again.
+
+- **Chosen:** The page aborts a preview request when the draft changes, when the owner sends, and when the composer goes away.
+  The hub ties an abort signal to the preview response closing before it is written, since a request's own `close` event also fires once its body is read.
+  A computation that has not started is skipped when every caller waiting for it has aborted; a send or the refresh never aborts, so a text they share goes ahead.
+  An aborted preview gets no answer, since its connection is gone.
+- **Why:** Each preview cost the model a computation even after the page had moved on.
+- **Other options:** A time limit on previews, which depends on time and still computes what nobody reads.
+
+- **Chosen:** The send button is enabled whenever the draft is not empty, also while a preview is missing and after a refused destination; without a destination the page sends no proposal and the hub routes the message.
+- **Why:** The owner should never wait for a preview to send.
+- **Other options:** Keep the button disabled until a preview arrives after a refused destination.
+
+- **Chosen:** A send from the page ends after 20 s without an answer, set by the page controller's option `sendLimit`.
+  The request is aborted, the button stops spinning, the draft stays, and the failure `timeout` shows a new text saying the hub did not answer, the message may still arrive, and sending again will not repeat it.
+- **Why:** The existing network failure text asks the owner to try again as if nothing had arrived, which is not true after a time-out.
+- **Other options:** Reuse the network failure text; no limit, which left the button spinning until Cloudflare cut the request after about 123 s.
+
+- **Chosen:** The page gives each send an id: a lowercase RFC 4122 version 4 UUID made from `crypto.getRandomValues`, sent as `id` to `POST /api/stream` and `POST /api/conversations/<id>/messages`.
+  The hub refuses any other form with 400, and uses the id as the owner entry's id and as the pending input's id.
+  The page keeps the id with the saved draft until the send succeeds, and makes a new one whenever the text, the attachments, the quote or the destination the owner chose differ from those it was made for; a destination that only a preview proposed does not count.
+- **Why:** A retry after a time-out, a lost answer or a reload must reach the hub as the same send, and `crypto.randomUUID` needs a secure context.
+- **Other options:** A table of send ids beside the entries; an id made by the hub, which a lost answer would never bring back.
+
+- **Chosen:** The same message means the same text after trimming, the same attachment ids in the same order, the same quoted message, and, when the request names a conversation (the messages path, or a stream send with `topic` and no proposal), the conversation the entry is in now, both resolved through merges.
+  A reviewed destination, a new topic request and the scope are routing inputs and are not compared, since a preview may arrive between two attempts.
+  A repeat of a placed send gets 202 with the entry as it is now, in the same shape as the first answer, and creates, delivers and records nothing.
+  A repeat of a send still being routed waits for the same routing.
+  A send left pending by a restart is placed at start under its id, so its repeat finds the entry.
+  The same id with other content, or the id of an entry that is not an owner entry, gets 409.
+- **Why:** The owner pressed send twice on 2026-11-20 and the brain received the message twice.
+- **Other options:** Compare the proposal too, which would refuse a retry made after a preview arrived; answer a mismatch with the placed entry.
+
+- **Chosen:** The hub keeps an id for as long as its owner entry exists, and an in-memory map of sends being routed only while they are routed.
+- **Why:** The entry is already the record of the send, so no separate store or expiry is needed.
+- **Other options:** Expire ids after a day, which would let a late retry place a second copy.

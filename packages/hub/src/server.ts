@@ -1165,8 +1165,20 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return true;
       }
       const preview = parseJson(await readBody(request), StreamPreviewRequest);
-      if (preview === undefined) sendJson(response, 400, { error: "bad_request" });
-      else sendJson(response, 200, await conversations.previewStream(preview));
+      if (preview === undefined) {
+        sendJson(response, 400, { error: "bad_request" });
+        return true;
+      }
+      const gone = new AbortController();
+      response.once("close", () => {
+        if (!response.writableEnded) gone.abort();
+      });
+      try {
+        sendJson(response, 200, await conversations.previewStream(preview, gone.signal));
+      } catch (error) {
+        if (!gone.signal.aborted) throw error;
+        response.destroy();
+      }
       return true;
     }
     if (path === streamPath && method === "GET") {
@@ -1241,18 +1253,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 409, { error: "conflict" });
         return true;
       }
-      if (id === undefined) {
-        const item = await conversations.sendToStream(message.topic, message.text, chosen.attachments, message);
-        if (item === undefined) {
-          return false;
-        }
-        sendJson(response, 202, item);
+      const sent = await conversations.sendOwner(id === undefined
+        ? { ...message, attachments: chosen.attachments }
+        : { id: message.id, conversation: id, text: message.text, attachments: chosen.attachments, quotedMessage: message.quotedMessage });
+      if (!sent.ok) {
+        if (sent.error === "not_found") return false;
+        sendJson(response, 409, { error: "conflict" });
       } else {
-        const entry = conversations.send(id, message.text, chosen.attachments, message.quotedMessage);
-        if (entry === undefined) {
-          return false;
-        }
-        sendJson(response, 202, { entry });
+        sendJson(response, 202, id === undefined ? sent.item : { entry: sent.item.entry });
       }
       return true;
     }

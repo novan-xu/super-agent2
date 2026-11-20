@@ -88,8 +88,9 @@ export interface ConversationService {
   askOwner(conversation: string, turn: string, questions: readonly Question[]): string | undefined;
   answerQuestions(conversation: string, id: string, answers: readonly QuestionAnswer[]): OwnerEntry | undefined;
   readonly topics: TopicContext;
-  previewStream(request: StreamPreviewRequest): Promise<StreamPreview>;
+  previewStream(request: StreamPreviewRequest, signal?: AbortSignal): Promise<StreamPreview>;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
+  sendOwner(request: OwnerSend): Promise<SendOutcome>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
   assignRepository(conversation: string, turn: string, repository: string | null, topic?: string): string | undefined;
   interrupt(id: string): Conversation | undefined;
@@ -121,6 +122,25 @@ interface StreamSendOptions {
   readonly scope?: TopicScope | undefined;
   readonly newTopic?: true | undefined;
   readonly proposal?: RoutingProposal | undefined;
+}
+
+export interface OwnerSend extends StreamSendOptions {
+  readonly id?: string | undefined;
+  readonly conversation?: string | undefined;
+  readonly topic?: string | undefined;
+  readonly text: string;
+  readonly attachments: readonly Attachment[];
+}
+
+export type SendOutcome = { readonly ok: true; readonly item: StreamEntry } | { readonly ok: false; readonly error: "not_found" | "conflict" };
+
+const notFound: SendOutcome = { ok: false, error: "not_found" };
+const conflict: SendOutcome = { ok: false, error: "conflict" };
+
+function sameMessage(stored: { readonly text: string; readonly attachments: readonly { readonly id: string }[]; readonly quote: string | null }, request: OwnerSend): boolean {
+  return stored.text === request.text && stored.quote === (request.quotedMessage ?? null)
+    && stored.attachments.length === request.attachments.length
+    && stored.attachments.every((attachment, index) => attachment.id === request.attachments[index]?.id);
 }
 
 export interface Delivery {
@@ -1145,7 +1165,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     });
   };
 
-  const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string): StreamEntry | undefined => {
+  const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string, id?: string): StreamEntry | undefined => {
     const explicit = topic === undefined ? undefined : get(topic);
     if (topic !== undefined && explicit === undefined) {
       return undefined;
@@ -1155,7 +1175,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       return undefined;
     }
     const conversation = explicit ?? (quote === undefined ? undefined : get(quote.conversation));
-    return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage }));
+    return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage, ...(id === undefined ? {} : { id }) }));
   };
 
   const routingCandidate = (topic: string | undefined, scope: TopicScope): Conversation | undefined => {
@@ -1198,6 +1218,67 @@ export function createConversationService(options: ConversationServiceOptions): 
     const body = PendingBody.parse(JSON.parse(row.body));
     finishRouting(row.id, row.created_at, body, router.routeNow({ text: body.message, attachments: body.attachments, scope: body.scope, at: row.created_at }, recoveredReason));
   }
+
+  const routingSends = new Map<string, { readonly body: z.infer<typeof PendingBody>; readonly result: Promise<StreamEntry | undefined> }>();
+
+  const streamSend = async (
+    id: string, topic: string | undefined, message: string, attachments: readonly Attachment[],
+    { quotedMessage, scope = { kind: "daily" } as const, newTopic, proposal }: StreamSendOptions = {},
+  ): Promise<StreamEntry | undefined> => {
+    if (!newTopic && proposal === undefined && (topic !== undefined || quotedMessage !== undefined)) {
+      return sendDirect(topic, message, attachments, quotedMessage, id);
+    }
+    const at = clock.now();
+    const body = { message, attachments: [...attachments], scope };
+    if (newTopic || proposal !== undefined) {
+      const destination = newTopic ? undefined : routingCandidate(topic, scope);
+      if (!newTopic && destination === undefined) return undefined;
+      return placeOwner(id, at, body, destination, {
+        repository: newTopic ? router.repositoryFor(message, scope) : null,
+        proposal, ownerChanged: proposal !== undefined && proposal.decided.topic !== (destination?.id ?? null),
+      });
+    }
+    savePending.run(id, JSON.stringify(body), at);
+    const result = router.route({ text: message, attachments, scope, at }, { purpose: "send" })
+      .then((routing) => closing ? undefined : finishRouting(id, at, body, routing));
+    routingSends.set(id, { body, result });
+    try {
+      return await result;
+    } finally {
+      routingSends.delete(id);
+    }
+  };
+
+  const repeatOf = (id: string, request: OwnerSend): SendOutcome | Promise<SendOutcome> | undefined => {
+    const named = request.conversation ?? (request.proposal === undefined && request.newTopic !== true ? request.topic : undefined);
+    const row = selectStreamEntry.get(id);
+    if (row !== undefined) {
+      const item = toStreamEntry(row);
+      const { entry } = item;
+      const same = entry.kind === "owner"
+        && sameMessage({ text: entry.text, attachments: entry.attachments, quote: entry.quotedMessage ?? null }, request)
+        && (named === undefined || corrections.resolve(named) === corrections.resolve(entry.conversation));
+      return same ? { ok: true, item } : conflict;
+    }
+    const routing = routingSends.get(id);
+    if (routing !== undefined) {
+      const same = named === undefined && sameMessage({ text: routing.body.message, attachments: routing.body.attachments, quote: null }, request);
+      return same ? routing.result.then((item): SendOutcome => (item === undefined ? notFound : { ok: true, item })) : conflict;
+    }
+    return undefined;
+  };
+
+  const sendOwner = async (request: OwnerSend): Promise<SendOutcome> => {
+    const repeat = request.id === undefined ? undefined : repeatOf(request.id, request);
+    if (repeat !== undefined) {
+      return repeat;
+    }
+    const id = request.id ?? randomUUID();
+    const item = request.conversation === undefined
+      ? await streamSend(id, request.topic, request.text, request.attachments, request)
+      : sendDirect(request.conversation, request.text, request.attachments, request.quotedMessage, id);
+    return item === undefined ? notFound : { ok: true, item };
+  };
 
   return {
     create,
@@ -1297,29 +1378,12 @@ export function createConversationService(options: ConversationServiceOptions): 
       const item = sendDirect(topic, message, attachments, quotedMessage);
       return item?.entry.kind === "owner" ? item.entry : undefined;
     },
-    previewStream: async ({ text, attachmentNames, scope }) => {
-      const routing = await router.route({ text, attachments: attachmentNames.map((name) => ({ name })), scope, at: clock.now() });
+    previewStream: async ({ text, attachmentNames, scope }, signal) => {
+      const routing = await router.route({ text, attachments: attachmentNames.map((name) => ({ name })), scope, at: clock.now() }, { purpose: "preview", signal });
       return { proposal: RoutingProposal.parse(routing), title: routing.topic === null || closing ? null : rawGet(routing.topic)?.title ?? null };
     },
-    sendToStream: async (topic, message, attachments, { quotedMessage, scope = { kind: "daily" } as const, newTopic, proposal } = {}) => {
-      if (!newTopic && proposal === undefined && (topic !== undefined || quotedMessage !== undefined)) {
-        return sendDirect(topic, message, attachments, quotedMessage);
-      }
-      const id = randomUUID();
-      const at = clock.now();
-      const body = { message, attachments: [...attachments], scope };
-      if (newTopic || proposal !== undefined) {
-        const destination = newTopic ? undefined : routingCandidate(topic, scope);
-        if (!newTopic && destination === undefined) return undefined;
-        return placeOwner(id, at, body, destination, {
-          repository: newTopic ? router.repositoryFor(message, scope) : null,
-          proposal, ownerChanged: proposal !== undefined && proposal.decided.topic !== (destination?.id ?? null),
-        });
-      }
-      savePending.run(id, JSON.stringify(body), at);
-      const routing = await router.route({ text: message, attachments, scope, at });
-      return closing ? undefined : finishRouting(id, at, body, routing);
-    },
+    sendToStream: (topic, message, attachments, options) => streamSend(randomUUID(), topic, message, attachments, options),
+    sendOwner,
     readQuote: (conversation, id, offset) => {
       const quote = hasQuote.get(conversation, id) === undefined ? undefined : quoteOf(id);
       if (quote === undefined || offset > quote.item.text.length) {

@@ -137,7 +137,8 @@ describe("PageController", () => {
     expect(await page.send("回复", [], "source")).toBe(true);
     page.open("c8");
     expect(await page.send("继续", [], "source", "c9")).toBe(true);
-    expect(sent).toEqual([["回复", [], "source", scope, undefined], ["c9", "继续", [], "source"]]);
+    const attempt = { id: undefined, signal: expect.any(AbortSignal) };
+    expect(sent).toEqual([["回复", [], "source", scope, undefined, attempt], ["c9", "继续", [], "source", attempt]]);
   });
 
   it("opens an existing topic and sends directly to it", async () => {
@@ -157,6 +158,44 @@ describe("PageController", () => {
     expect(await page.send("你好")).toBe(false);
     expect(failures).toEqual(["network"]);
     expect(page.store.getState().current?.entries).toEqual([]);
+  });
+
+  it.each([null, "c9"])("ends a send to %s that gets no answer within the limit, says so, and passes the send's id", async (topic) => {
+    const failures: Failure[] = [];
+    const limits: { readonly delay: number; readonly run: () => void; cancelled: boolean }[] = [];
+    const signals: AbortSignal[] = [];
+    const ids: (string | undefined)[] = [];
+    const never = <T,>(attempt: { id?: string | undefined; signal?: AbortSignal | undefined } = {}) => {
+      ids.push(attempt.id);
+      signals.push(attempt.signal!);
+      return new Promise<T>(() => undefined);
+    };
+    const page = new PageController({
+      api: api({ send: (...args) => never(args[4]), sendToStream: (...args) => never(args[5]) }),
+      socket: { url: "ws://hub/ws", create: () => ({ isOpen: () => false, send: () => undefined, close: () => undefined }), schedule: (run, delay) => {
+        const limit = { delay, run, cancelled: false };
+        limits.push(limit);
+        return () => {
+          limit.cancelled = true;
+        };
+      } },
+      onFailure: (failure) => failures.push(failure),
+    });
+    page.open(topic, topic === null);
+    const id = "4f0c1d2e-3b4a-4c5d-8e6f-708192a3b4c5";
+    const sending = page.send("你好", [], undefined, topic, undefined, undefined, id);
+    expect(limits.map(({ delay }) => delay)).toEqual([20_000]);
+    expect(ids).toEqual([id]);
+    expect(signals[0]?.aborted).toBe(false);
+    limits[0]!.run();
+    expect(await sending).toBe(false);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(failures).toEqual(["timeout"]);
+
+    const answered = controller(api(), failures);
+    answered.open(topic, topic === null);
+    expect(await answered.send("你好", [], undefined, topic, undefined, undefined, id)).toBe(true);
+    expect(failures).toEqual(["timeout"]);
   });
 
   it("interrupts the conversation that is open", async () => {

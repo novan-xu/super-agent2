@@ -156,6 +156,10 @@ A worker does the same, decided by the hub.
 - The hub loads the model in the background after it starts, from the files baked into its image (`HUB_ROUTING_MODELS`, see [deploy.md](deploy.md)), and never downloads it.
   It keeps a vector of every topic text a candidate could be scored on and refreshes them in the background when entries are written, so routing a message embeds only that message.
   While the model is loading or missing, if it failed to load, or if it fails to embed a message, the bigram configuration decides at once and the reason is recorded.
+- The model computes one text at a time.
+  A send's texts go first, then previews', then the background refresh's; a computation that has started is never interrupted.
+  A send waits at most 2 s for the model's decision; after that the bigram configuration decides, the decision records `model busy`, and the texts the send started are still computed and stored.
+  A preview whose request has gone is cancelled, and a text it alone waits for is never computed.
 - Every routing decision is stored in `routing_decisions` without the message's text: the owner's entry, scope, number of candidates, configuration, any fallback reason, rule, joined topic, the topic the entry was placed in, the best topic with the best and runner-up scores, and the shadow configuration's rule, topic and scores.
   Moving the entry later with 移到… records the destination and time beside the decision, so the owner's corrections become labels for the next evaluation.
   Brain handovers record their own destination and time.
@@ -172,6 +176,10 @@ A worker does the same, decided by the hub.
   The hub allows each message one brain handover and omits the routing note after it.
 - The hub keeps an input in `pending_topic_inputs` while it routes it.
   If the hub restarts before routing completes, the input is routed at startup with the bigram configuration and the decision records that it was recovered.
+- The page gives each send an id, which becomes the owner entry's id and the pending input's id.
+  A send repeated with the same id and the same text, attachments, quote and named topic gets the entry already placed, or waits for the one still being routed; the same id with other content is refused with 409.
+  The page keeps the id with the draft until the send succeeds, and makes a new one when the draft's content or the owner's destination differs.
+  A send that gets no answer within 20 s stops, the page says the message may still arrive, and the draft stays for a retry with the same id.
 - A move or handover changes where the original message belongs and queues it at the destination.
   Pending work on that message is removed from the source.
   If the source is answering it, that turn is interrupted before the destination handles it.
