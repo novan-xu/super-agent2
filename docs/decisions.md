@@ -3734,3 +3734,22 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** Deduplicate identical requests within a turn in hub memory, and use `ownerEngine` for an explicit provider override while retaining `engine` for the operation default.
 - **Why:** Retries during a running turn should not duplicate work, and the two engine choices have different meanings.
 - **Other options:** Persist deduplication across hub restarts, or make callers distinguish choices using a different schema.
+
+### Separate brain and worker provider orders (#249)
+
+The worker order in Settings starts with GPT, Claude and DeepSeek.
+The brain keeps its existing order, and both lists allow DeepSeek in any position.
+Each order is saved only when the owner changes it.
+
+- **Chosen:** Keep the existing brain order and start the worker order from its own default.
+  Older brain orders keep their listed positions, and a missing DeepSeek entry is appended on read.
+- **Why:** This preserves the owner's brain preference and gives workers the requested GPT-first default without a migration.
+- **Other options:** Copy the brain order into a worker setting or rewrite the original setting on upgrade.
+
+- **Chosen:** Use the worker order for new code and operation starts and for run-time fallback.
+  An unknown subscription reading and a low positive DeepSeek balance remain eligible.
+  An active unavailability mark, an exhausted subscription or a confirmed empty DeepSeek balance excludes the provider.
+  An approved start with all providers unavailable waits before assigning an engine.
+  Existing explicit owner choices still take precedence when starting a ticket.
+- **Why:** The same availability rules cover the first run and fallback, and a waiting ticket can use the latest order when a provider returns.
+- **Other options:** Reject the start until a provider returns, reserve the first unavailable engine, or keep the brain's engine selection.

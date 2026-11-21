@@ -146,7 +146,7 @@ export const hubApi = {
   addMachine: (name: string, system: MachineSystem) => call("/api/machines", MachineAdded, { name, system }),
   revokeMachine: (name: string) => call(`/api/machines/${encodeURIComponent(name)}/revoke`, MachineRevoked, {}),
   setMachineStorage: (name: string, storage: StorageSettings) => call(`/api/machines/${encodeURIComponent(name)}/storage`, StorageSettings, storage, "PUT"),
-  setOrder: (order: readonly Provider[]) => call("/api/brain/order", SettingsSnapshot, { order }, "PUT"),
+  setOrder: (role: "brain" | "worker", order: readonly Provider[]) => call(role === "brain" ? "/api/brain/order" : "/api/workers/order", SettingsSnapshot, { order }, "PUT"),
   setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
   setPinned: (repository: string, pinned: boolean) => call("/api/repositories/pin", SettingsSnapshot, { repository, pinned }),
   setAlias: (repository: string, alias: string | null) => call("/api/repositories/alias", SettingsSnapshot, { repository, alias }),

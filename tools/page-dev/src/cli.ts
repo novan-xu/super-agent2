@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
 import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
-import { type AccessKeySet, brainToolsPath, fullOrder, type Provider, startingOrder } from "@super-agent2/protocol";
+import { type AccessKeySet, brainToolsPath, type Provider, startingBrainOrder } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
@@ -201,7 +201,7 @@ async function startBrain(): Promise<(() => Promise<void>) | undefined> {
   const link = createHubLink({ hubUrl, token, report: (line) => process.stdout.write(`<link> ${line}\n`) });
   const brain = createBrain({
     adapters,
-    order: brainKind === "demo" ? fullOrder(startingOrder) : ["claude"],
+    order: brainKind === "demo" ? startingBrainOrder : ["claude"],
     transport: link,
     clock: systemClock,
     tools: { url: `${hubUrl}${brainToolsPath}`, token },

@@ -6,9 +6,11 @@ import {
   fullOrder,
   gitHubAccounts,
   Provider,
+  ProviderOrderChange,
   pushServiceOf,
   type SettingsSnapshot,
-  startingOrder,
+  startingBrainOrder,
+  startingWorkerOrder,
   type TableCell,
   unofferedChanges,
 } from "@super-agent2/protocol";
@@ -26,8 +28,9 @@ export type TableOutcome = { readonly ok: true; readonly table: EngineTable } | 
 
 export interface Settings {
   snapshot(): SettingsSnapshot;
-  order(): Provider[] | undefined;
-  setOrder(chosen: readonly Provider[]): Provider[];
+  brainOrder(): Provider[] | undefined;
+  workerOrder(): Provider[];
+  setOrder(role: "brain" | "worker", order: readonly Provider[]): void;
   setTable(table: EngineTable): TableOutcome;
   changed(): void;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
@@ -46,13 +49,13 @@ export interface SettingsOptions {
   readonly pushKey: string | undefined;
 }
 
-const orderKey = "brain_order";
+const orderKeys = { brain: "brain_order", worker: "worker_order" };
 
 const ValueRow = z.object({ value: z.string() });
 const DeviceRow = z.object({ endpoint: z.string(), created_at: z.number().int() });
 
 export function brainSettings(linked: boolean, stored: readonly Provider[] | undefined, reported: { readonly order: readonly Provider[]; readonly providers: BrainSettings["providers"] } | undefined): BrainSettings {
-  const order = stored !== undefined ? [...stored] : (reported === undefined ? fullOrder(startingOrder) : [...reported.order]);
+  const order = [...(stored ?? reported?.order ?? startingBrainOrder)];
   return { linked, order, providers: reported === undefined ? [] : [...reported.providers] };
 }
 
@@ -67,18 +70,26 @@ export function createSettings(options: SettingsOptions): Settings {
   let scheduled = false;
   let closed = false;
 
-  const order = (): Provider[] | undefined => {
-    const row = selectSetting.get(orderKey);
+  const readOrder = (role: keyof typeof orderKeys): Provider[] | undefined => {
+    const row = selectSetting.get(orderKeys[role]);
     if (row === undefined) {
       return undefined;
     }
     try {
-      const parsed = z.array(Provider).min(1).safeParse(JSON.parse(ValueRow.parse(row).value));
+      const value: unknown = JSON.parse(ValueRow.parse(row).value);
+      if (role === "worker") {
+        const parsed = ProviderOrderChange.safeParse({ order: value });
+        return parsed.success ? parsed.data.order : undefined;
+      }
+      const parsed = z.array(Provider).min(1).safeParse(value);
       return parsed.success ? fullOrder(parsed.data) : undefined;
     } catch {
       return undefined;
     }
   };
+
+  const brainOrder = () => readOrder("brain");
+  const workerOrder = () => readOrder("worker") ?? [...startingWorkerOrder];
 
   const devices = (): Device[] =>
     options.pushKey === undefined
@@ -96,7 +107,8 @@ export function createSettings(options: SettingsOptions): Settings {
       canAdd: { ...options.admin.canAdd },
       repositories: options.repositories.list(),
       accounts: gitHubAccounts.map((account) => ({ account, configured: options.credentials(account).ok })),
-      brain: brainSettings(conversations?.linked() ?? false, order(), conversations?.providers()),
+      brain: brainSettings(conversations?.linked() ?? false, brainOrder(), conversations?.providers()),
+      workerOrder: workerOrder(),
       table: options.defaults.table(),
       subscriptions: [subscriptions.codex, subscriptions.claude],
       unavailable: options.defaults.unavailable(),
@@ -139,13 +151,16 @@ export function createSettings(options: SettingsOptions): Settings {
       watchBrain();
       return snapshot();
     },
-    order,
-    setOrder: (chosen) => {
-      const full = fullOrder(chosen);
-      upsertSetting.run(orderKey, JSON.stringify(full), options.clock.now());
-      options.conversations()?.sendOrder(full);
-      changed();
-      return full;
+    brainOrder,
+    workerOrder,
+    setOrder: (role, order) => {
+      upsertSetting.run(orderKeys[role], JSON.stringify(order), options.clock.now());
+      if (role === "brain") {
+        options.conversations()?.sendOrder(order);
+        changed();
+      } else {
+        options.defaults.changed();
+      }
     },
     setTable: (table) => {
       const unoffered = unofferedChanges(table, options.defaults.table(), options.defaults.machines());

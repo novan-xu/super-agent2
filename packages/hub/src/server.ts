@@ -141,6 +141,7 @@ export const allowancePath = "/api/allowance";
 export const memoriesPath = "/api/memories";
 export const settingsPath = "/api/settings";
 export const brainOrderPath = "/api/brain/order";
+export const workerOrderPath = "/api/workers/order";
 export const repositoryAccountPath = "/api/repositories/account";
 export const repositoryPinPath = "/api/repositories/pin";
 export const repositoryAliasPath = "/api/repositories/alias";
@@ -644,7 +645,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       return;
     }
-    if (((path === brainOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath) && method === "POST")) {
+    if (((path === brainOrderPath || path === workerOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath) && method === "POST")) {
       await serveSettingChange(request, response, path);
       return;
     }
@@ -834,13 +835,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     const body = await readBody(request);
-    if (path === brainOrderPath) {
+    if (path === brainOrderPath || path === workerOrderPath) {
       const given = parseJson(body, ProviderOrderChange.strict());
       if (given === undefined) {
         sendJson(response, 400, { error: "bad_request" });
         return;
       }
-      settings.setOrder(given.order);
+      settings.setOrder(path === brainOrderPath ? "brain" : "worker", given.order);
       sendJson(response, 200, settings.snapshot());
       return;
     }

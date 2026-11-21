@@ -105,7 +105,6 @@ export interface DefaultsStatement {
   readonly difficulty: Difficulty | null;
   readonly difficultyReason: GeneratedText;
   readonly platform: Platform;
-  readonly brainEngine: ProgramId | null;
 }
 
 export interface ChosenRun {
@@ -715,7 +714,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateJoined = connection.prepare("UPDATE tickets SET joined_into = ? WHERE id = ?");
   const updateStopReason = connection.prepare("UPDATE tickets SET stop_reason_en = ?, stop_reason_zh = ? WHERE id = ?");
   const updateStatement = connection.prepare(
-    "UPDATE tickets SET kind = ?, difficulty = ?, difficulty_reason_en = ?, difficulty_reason_zh = ?, platform = ?, brain_engine = ? WHERE id = ?",
+    "UPDATE tickets SET kind = ?, difficulty = ?, difficulty_reason_en = ?, difficulty_reason_zh = ?, platform = ?, brain_engine = NULL WHERE id = ?",
   );
   const clearDefaults = connection.prepare(
     "UPDATE tickets SET difficulty_reason_en = NULL, difficulty_reason_zh = NULL, brain_engine = NULL, owner_machine = NULL, owner_engine = NULL, owner_model = NULL, owner_effort = NULL WHERE id = ?",
@@ -816,7 +815,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       waits,
       deployedAt: value.deployed_at,
       beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
-      startBlock: value.state === "waiting" ? z.object({ en: z.string(), zh: z.string() }).nullable().catch(null).parse(parsedJson((selectStartBlock.get(`start_block:${value.id}`) as { value: string } | undefined)?.value ?? "null")) : null,
+      startBlock: value.state === "waiting" ? Ticket.shape.startBlock.catch(null).parse(parsedJson((selectStartBlock.get(`start_block:${value.id}`) as { value: string } | undefined)?.value ?? "null")) : null,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
       joinedInto: value.joined_into,
       repairs,
@@ -1246,7 +1245,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (!fitsForm(current.form, statement.kind)) {
           throw new TicketError(`Ticket ${ticketReference(current)} is a ${current.form} ticket and cannot be of kind ${statement.kind}`);
         }
-        updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, statement.brainEngine, id);
+        updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, id);
         touch(id);
       },
       forgetDefaults: (id) => {

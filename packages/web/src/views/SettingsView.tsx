@@ -32,6 +32,7 @@ import {
   pairKey,
   pairOptions,
   type PairOption,
+  type ProviderRow,
   providerRows,
   settingsGroups,
   slotsOf,
@@ -51,7 +52,7 @@ export interface SettingsActions {
   readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | { readonly refused: string } | undefined>;
   readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
   readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
-  readonly setOrder: (order: readonly Provider[]) => Promise<boolean>;
+  readonly setOrder: (role: "brain" | "worker", order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
   readonly setAlias: (repository: string, alias: string | null) => Promise<boolean>;
@@ -471,40 +472,46 @@ function AntigravityModels({ settings, actions }: { readonly settings: SettingsS
   );
 }
 
+function ProviderOrderSection({ title, rows, moving, move }: { readonly title: string; readonly rows: readonly ProviderRow[]; readonly moving: boolean; readonly move: (provider: Provider) => void }) {
+  return (
+    <section className="section">
+      <div className="section-head">
+        <h2>{title}</h2>
+      </div>
+      <ol className="rows" aria-label={title}>
+        {rows.map((row, index) => (
+          <li className="srow" key={row.provider}>
+            <span className="order-num num">{index + 1}</span>
+            <div className="srow-text">
+              <span className="srow-title">{text(`provider.${row.provider}`)}</span>
+              {row.state === undefined ? null : <span className="srow-help mono">{`${row.state.model} · ${row.state.effort}`}</span>}
+            </div>
+            {index > 0 ? (
+              <div className="srow-ctl srow-ctl--end">
+                <button className="icon-btn" type="button" disabled={moving} aria-label={`${text(`provider.${row.provider}`)} ${text("models.earlier")}`} title={text("models.earlier")} onClick={() => move(row.provider)}>
+                  <Icon name="up" />
+                </button>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 function ModelsSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
   const [moving, setMoving] = useState(false);
-  const move = (provider: Provider) => {
-    if (moving) {
-      return;
-    }
+  const move = (role: "brain" | "worker", provider: Provider) => {
+    if (moving) return;
+    const order = role === "brain" ? settings.brain.order : settings.workerOrder;
     setMoving(true);
-    void actions.setOrder(movedEarlier(settings.brain.order, provider)).finally(() => setMoving(false));
+    void actions.setOrder(role, movedEarlier(order, provider)).finally(() => setMoving(false));
   };
   return (
     <>
-      <section className="section">
-        <div className="section-head">
-          <h2>{text("models.brain")}</h2>
-        </div>
-        <ol className="rows">
-          {providerRows(settings.brain).map((row, index) => (
-            <li className="srow" key={row.provider}>
-              <span className="order-num num">{index + 1}</span>
-              <div className="srow-text">
-                <span className="srow-title">{text(`provider.${row.provider}`)}</span>
-                {row.state === undefined ? null : <span className="srow-help mono">{`${row.state.model} · ${row.state.effort}`}</span>}
-              </div>
-              {row.movable ? (
-                <div className="srow-ctl srow-ctl--end">
-                  <button className="icon-btn" type="button" disabled={moving} aria-label={`${text(`provider.${row.provider}`)} ${text("models.earlier")}`} title={text("models.earlier")} onClick={() => move(row.provider)}>
-                    <Icon name="up" />
-                  </button>
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      </section>
+      <ProviderOrderSection title={text("models.worker")} rows={providerRows(settings.workerOrder)} moving={moving} move={(provider) => move("worker", provider)} />
+      <ProviderOrderSection title={text("models.brain")} rows={providerRows(settings.brain.order, settings.brain.providers)} moving={moving} move={(provider) => move("brain", provider)} />
       {tableRows(settings.table).map((group) => (
         <section className="section" key={group.engine}>
           <div className="section-head">
@@ -712,7 +719,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
               </div>
             </div>
           )}
-          {providerRows(settings.brain).map((row) => {
+          {providerRows(settings.brain.order, settings.brain.providers).map((row) => {
             const available = settings.brain.linked ? availableNow(row.state, now) : undefined;
             const subscription = subscriptionOf(settings.subscriptions, row.provider);
             const workers = workersOut(settings.unavailable, row.provider);

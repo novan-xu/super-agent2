@@ -18,7 +18,6 @@ import {
   noOwnerChoice,
   type OwnerChoice,
   ownerGivesUnoffered,
-  type ProgramId,
   type StartChoice,
   GeneratedText,
   inWorkingOrder,
@@ -33,6 +32,7 @@ import {
   type TicketKind,
   unmetWaits,
   waitEdges,
+  waitsForProvider,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import { scheduleAccess } from "./schedule-access.js";
@@ -67,7 +67,6 @@ export interface DefaultsSpec {
   readonly difficulty?: Difficulty | undefined;
   readonly reason: GeneratedText;
   readonly platform: Platform;
-  readonly engine?: ProgramId | undefined;
 }
 
 export type StateOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
@@ -144,6 +143,7 @@ export interface ChainsOptions {
 }
 
 const everyTicket = 100_000;
+const providerBlock = JSON.stringify({ en: "Waiting for a worker provider to become available.", zh: text("chains.missing.provider"), provider: true });
 
 export interface ShownChain {
   readonly ticket: Ticket;
@@ -217,6 +217,7 @@ export function createChains(options: ChainsOptions): Chains {
   const selectBlock = connection.prepare("SELECT value FROM hub_settings WHERE key = ?");
   const saveBlock = connection.prepare("INSERT INTO hub_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
   const deleteBlock = connection.prepare("DELETE FROM hub_settings WHERE key = ?");
+  const hasUnchosenWaiting = connection.prepare("SELECT 1 FROM tickets WHERE state = 'waiting' AND chosen_at IS NULL LIMIT 1");
   const markBegun = connection.prepare("UPDATE ticket_begins SET done_at = ? WHERE ticket_id = ? AND done_at IS NULL AND failed_at IS NULL");
   const markFailed = connection.prepare("UPDATE ticket_begins SET failed_at = ?, failure = ? WHERE ticket_id = ? AND done_at IS NULL AND failed_at IS NULL");
   const selectDue = connection.prepare(
@@ -313,27 +314,31 @@ export function createChains(options: ChainsOptions): Chains {
             if (ticket?.state !== "waiting") {
               return false;
             }
-            if (ticket.light !== undefined || (ticket.scheduleRun !== undefined && ticket.chosenAt === null)) {
+            if (ticket.chosenAt === null && (ticket.light !== undefined || ticket.scheduleRun !== undefined || ticket.startBlock != null)) {
               const choice = defaults.resolve(ticket);
-              const run = isComplete(choice) ? chosenRun(choice) : undefined;
+              const run = chosenRun(choice);
               if (run === undefined) {
                 const wanted = [ticket.platform ?? "any", choice.engine ?? "not set", choice.model ?? "not set", choice.effort ?? "not set"].join(" ");
                 const missing = choice.missing.join(", ");
                 const en = `missing ${missing}; wanted ${wanted}${ticket.requiredMachine === null ? "" : ` on ${ticket.requiredMachine}`}`;
-                const names = { defaults: "\u9ed8\u8ba4\u8bbe\u7f6e", machine: "\u673a\u5668", engine: "\u5f15\u64ce", model: "\u6a21\u578b", effort: "\u63a8\u7406\u5f3a\u5ea6" };
+                const names = { defaults: "\u9ed8\u8ba4\u8bbe\u7f6e", provider: "\u4f9b\u5e94\u5546", machine: "\u673a\u5668", engine: "\u5f15\u64ce", model: "\u6a21\u578b", effort: "\u63a8\u7406\u5f3a\u5ea6" };
                 const zh = `\u65e0\u6cd5\u5f00\u59cb\uff1a\u7f3a\u5c11 ${choice.missing.map((part) => names[part]).join("\u3001")}\uff1b\u9700\u8981 ${wanted}${ticket.requiredMachine === null ? "" : `\uff0c\u6307\u5b9a\u673a\u5668 ${ticket.requiredMachine}`}`;
                 const key = `start_block:${id}`;
                 const previous = selectBlock.get(key) as { value: string } | undefined;
                 const signature = JSON.stringify(choice.missing);
                 const old = previous === undefined ? null : JSON.parse(previous.value) as { signature?: string };
-                saveBlock.run(key, JSON.stringify({ en, zh, signature }), clock.now());
-                if (previous?.value !== JSON.stringify({ en, zh, signature })) writes.touched(id);
-                if (old?.signature !== signature) notices.push({ ticket, choice, reason: en, machines: defaults.machinesFor(ticket) });
+                const provider = waitsForProvider(choice);
+                const block = provider ? providerBlock : JSON.stringify({ en, zh, signature });
+                if (previous?.value !== block) {
+                  saveBlock.run(key, block, clock.now());
+                  writes.touched(id);
+                }
+                if (!provider && old?.signature !== signature) notices.push({ ticket, choice, reason: en, machines: defaults.machinesFor(ticket) });
                 return false;
               }
-              deleteBlock.run(`start_block:${id}`);
               writes.choose(id, run);
             }
+            if (ticket.startBlock != null) deleteBlock.run(`start_block:${id}`);
             writes.move(id, "working");
             insertBegin.run(id, clock.now());
             return true;
@@ -389,6 +394,10 @@ export function createChains(options: ChainsOptions): Chains {
   });
 
   const unsubscribeDefaults = defaults.subscribe?.(() => queueMicrotask(advance));
+  const retry = setInterval(() => {
+    if (hasUnchosenWaiting.get() !== undefined) advance();
+  }, 30_000);
+  retry.unref();
 
   const startScheduled = (run: string): number | undefined => {
     if (closed || !scheduled.mayStart(run)) return undefined;
@@ -402,8 +411,7 @@ export function createChains(options: ChainsOptions): Chains {
       for (const id of order) {
         const ticket = writes.get(id);
         if (ticket?.scheduleRun !== run || ticket.state !== "pending") continue;
-        const ready = ticket.difficultyReason !== null && ticket.difficulty !== null && ticket.platform !== null
-          && (ticket.kind === "writing" || ticket.brainEngine !== null);
+        const ready = ticket.difficultyReason !== null && ticket.difficulty !== null && ticket.platform !== null;
         if (!ready || ticket.waits.some((wait) => !wait.waived && writes.get(wait.ticket)?.state === "pending")) {
           blocked += 1;
           continue;
@@ -454,7 +462,7 @@ export function createChains(options: ChainsOptions): Chains {
     for (const id of order) {
       const ticket = index.get(id);
       const choice = ticket === undefined ? undefined : defaults.resolve(ticket);
-      if (choice === undefined || !isComplete(choice)) {
+      if (choice === undefined || (!isComplete(choice) && !waitsForProvider(choice))) {
         return { ok: false, error: "incomplete" };
       }
       choices.set(id, choice);
@@ -470,7 +478,9 @@ export function createChains(options: ChainsOptions): Chains {
           }
           const run = chosenRun(choices.get(id));
           if (run === undefined) {
-            throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} has no complete choice`);
+            saveBlock.run(`start_block:${id}`, providerBlock, clock.now());
+            writes.move(id, "waiting");
+            continue;
           }
           writes.choose(id, run);
           const lookup = new Map<number, ChainNode>();
@@ -637,17 +647,11 @@ export function createChains(options: ChainsOptions): Chains {
       if (difficulty === null) {
         return refuse(`ticket ${reference} needs a difficulty`);
       }
-      if (spec.kind !== "writing" && spec.engine !== "codex" && spec.engine !== "claude") {
-        return refuse(
-          `ticket ${reference} ${spec.kind === "operation" ? "is an operation on a machine" : "is code work"}: choose its engine, codex or claude, from what is left on each subscription`,
-        );
-      }
       statements.set(spec.ticket, {
         kind: spec.kind,
         difficulty,
         difficultyReason: { en: spec.reason.en.trim(), zh: spec.reason.zh.trim() },
         platform: spec.platform,
-        brainEngine: spec.kind === "writing" ? "antigravity" : (spec.engine ?? null),
       });
     }
     try {
@@ -1065,6 +1069,7 @@ export function createChains(options: ChainsOptions): Chains {
     },
     close: () => {
       closed = true;
+      clearInterval(retry);
       unsubscribe();
       unsubscribeDefaults?.();
     },

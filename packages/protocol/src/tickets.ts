@@ -246,7 +246,7 @@ export const Ticket = z.object({
   waits: z.array(TicketWait),
   deployedAt: z.number().int().nullable(),
   beginFailure: z.string().nullable(),
-  startBlock: z.object({ en: z.string(), zh: z.string() }).nullable().optional(),
+  startBlock: z.object({ en: z.string(), zh: z.string(), provider: z.literal(true).optional() }).nullable().optional(),
   stopReason: GeneratedText.nullable(),
   joinedInto: TicketId.nullable(),
   repairs: TicketId.nullable().default(null),

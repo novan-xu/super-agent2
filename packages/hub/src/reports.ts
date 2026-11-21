@@ -127,7 +127,7 @@ export function repairReport(ended: Ticket, repair: Ticket, followers: readonly 
     `Ticket ${ticketReference(ended)} ran on ${ranWords(ended)}.`,
     ...(stateDefaults
       ? [
-          `Now call choose_defaults for ticket ${ticketReference(repair)}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform, a one-line reason and its engine (codex or claude) as for any ticket. It failed on the run above, so usually prefer a different provider, or a stronger model (a higher difficulty gives one), than that one, by what is left on each subscription; read_allowance shows it. Say in the reason, in one line, why you chose it: the owner reads that line on the card, beside the choice. Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.`,
+          `Now call choose_defaults for ticket ${ticketReference(repair)}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform and a one-line reason as for any ticket. The hub uses the owner's worker order for the engine. Consider whether the failed run shows that the work needs a higher difficulty and explain the difficulty in the one-line reason on the card. Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.`,
         ]
       : []),
   ];
@@ -228,7 +228,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   }
   lines.push(
     `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}${ticket.requiredMachine === null ? "" : `; it runs only on ${ticket.requiredMachine}, the machine its deployment file names`}`,
-    `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}; engine you chose: ${chosen(ticket.brainEngine)}`,
+    `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}`,
     `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}${
       ticket.chosenBy === null
         ? ""

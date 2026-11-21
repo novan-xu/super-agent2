@@ -291,8 +291,8 @@ export class PageController {
     return true;
   }
 
-  setOrder(order: readonly Provider[]): Promise<boolean> {
-    return this.changeSettings(() => this.options.api.setOrder(order));
+  setOrder(role: "brain" | "worker", order: readonly Provider[]): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setOrder(role, order));
   }
 
   setAccount(repository: string, account: GitHubAccount): Promise<boolean> {

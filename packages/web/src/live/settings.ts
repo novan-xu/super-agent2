@@ -1,6 +1,5 @@
 import {
   type BrainSettings,
-  chosenProviders,
   type Difficulty,
   difficulties,
   type EngineTable,
@@ -59,20 +58,11 @@ export function nameProblem(name: string, machines: readonly MachineStatus[]): N
 }
 
 export function movedEarlier(order: readonly Provider[], provider: Provider): Provider[] {
-  const chosen = order.filter((item): item is (typeof chosenProviders)[number] => (chosenProviders as readonly string[]).includes(item));
-  for (const item of chosenProviders) {
-    if (!chosen.includes(item)) {
-      chosen.push(item);
-    }
-  }
-  const index = chosen.indexOf(provider as (typeof chosenProviders)[number]);
+  const chosen = fullOrder(order);
+  const index = chosen.indexOf(provider);
   if (index > 0) {
-    const before = chosen[index - 1];
-    const moved = chosen[index];
-    if (before !== undefined && moved !== undefined) {
-      chosen[index - 1] = moved;
-      chosen[index] = before;
-    }
+    chosen.splice(index, 1);
+    chosen.splice(index - 1, 0, provider);
   }
   return chosen;
 }
@@ -80,15 +70,12 @@ export function movedEarlier(order: readonly Provider[], provider: Provider): Pr
 export interface ProviderRow {
   readonly provider: Provider;
   readonly state: ProviderState | undefined;
-  readonly movable: boolean;
 }
 
-export function providerRows(brain: BrainSettings): ProviderRow[] {
-  const order = fullOrder(brain.order);
-  return order.map((provider, index) => ({
+export function providerRows(order: readonly Provider[], states: BrainSettings["providers"] = []): ProviderRow[] {
+  return fullOrder(order).map((provider) => ({
     provider,
-    state: brain.providers.find((state) => state.provider === provider),
-    movable: index > 0 && (chosenProviders as readonly string[]).includes(provider),
+    state: states.find((state) => state.provider === provider),
   }));
 }
 

@@ -142,7 +142,6 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let taskTickets: TaskTickets;
   let memories: MemoryService;
   let settings: Settings;
-  let storedOrder: () => ReturnType<Settings["order"]> = () => undefined;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
@@ -154,7 +153,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     clock,
     statuses: () => runners.statuses(),
     ...(config.deepseekLowBalance === undefined ? {} : { lowBalance: config.deepseekLowBalance }),
-    providerOrder: () => storedOrder(),
+    providerOrder: () => settings?.workerOrder(),
     ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
   runners.subscribe(() => defaults.changed());
@@ -226,7 +225,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       extraMcp: extraMcp.brain,
       lightTaskContext: (topic, message) => lightQuestions.context(topic, message),
       scheduleContext: (topic, message) => schedules?.context(topic, message) ?? "",
-      database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
+      database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => settings?.brainOrder(),
       routing: {
         primary: config.routingPrimary,
         model: options.routingModel ?? (routingModels === undefined ? undefined : () => modelScorer(bgeSmallZh, { directory: routingModels, offline: true })),
@@ -375,7 +374,6 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       pushKey: config.vapid?.publicKey,
     });
     const current = settings;
-    storedOrder = () => current.order();
     settingsChanged = () => current.changed();
     waiting = createWaiting({ commands, lock, tickets, starts: () => listed.cards(), stuck: () => failures.cards() });
     const refreshed = waiting;

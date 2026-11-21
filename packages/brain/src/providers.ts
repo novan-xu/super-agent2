@@ -15,11 +15,6 @@ export interface ProviderChoice {
   reasons(): ReadonlyMap<Provider, Unavailability>;
 }
 
-export function providerOrder(preferred: readonly Provider[], fallback: Provider): Provider[] {
-  const order = preferred.filter((provider, index) => provider !== fallback && preferred.indexOf(provider) === index);
-  return [...order, fallback];
-}
-
 export function createProviderChoice(initial: readonly Provider[], clock: Clock): ProviderChoice {
   const unavailable = new Map<Provider, Unavailability>();
   let order: readonly Provider[] = [...initial];

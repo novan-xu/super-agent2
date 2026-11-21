@@ -1,4 +1,4 @@
-import { GeneratedText, LightTaskMode, Platform, Difficulty, CodeEngineChoice, RepositoryName, TaskMaterial, type ProgramId, type Ticket } from "@super-agent2/protocol";
+import { GeneratedText, LightTaskMode, Platform, Difficulty, RepositoryName, TaskMaterial, type ProgramId, type Ticket } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 import { ownerConfirmation } from "./owner-confirmation.js";
@@ -16,7 +16,6 @@ export const LightTaskRequest = z.strictObject({
   platform: Platform.default("any"),
   difficulty: Difficulty.default("standard"),
   reason: GeneratedText,
-  engine: CodeEngineChoice.optional(),
 });
 export type LightTaskRequest = z.infer<typeof LightTaskRequest>;
 
@@ -26,12 +25,11 @@ export function createLightTasks(database: HubDatabase, tickets: TicketService, 
   const open = (request: LightTaskRequest, engine: ProgramId | undefined, turn: TicketTurn, dispatch = false) =>
     tickets.change((writes) => {
       if (engine === "antigravity" && request.kind === "operation") throw new TicketWriteRefused("An operation requires a code engine.");
-      if (request.kind === "operation" && request.engine === undefined) throw new TicketWriteRefused("Choose codex or claude for this operation using read_allowance.");
       const ticket = writes.open({
         form: "task", light: request.mode, repository: null, project: request.project, issues: [], title: request.title, summary: request.summary,
         kind: request.kind, conversation: turn.conversation, task: { task: request.task, materials: request.materials },
       });
-      writes.state(ticket, { kind: request.kind, difficulty: request.difficulty, difficultyReason: request.reason, platform: request.platform, brainEngine: request.engine ?? null });
+      writes.state(ticket, { kind: request.kind, difficulty: request.difficulty, difficultyReason: request.reason, platform: request.platform });
       if (engine !== undefined) writes.ownerChoice(ticket, { machine: null, engine, model: null, effort: null });
       grant(ticket, request.materials);
       if (dispatch) writes.move(ticket, "waiting");

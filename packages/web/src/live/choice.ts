@@ -1,4 +1,4 @@
-import { type ChoiceChange, engineOn, isComplete, type MachineChoice, offers, type ProgramId, type StartCard } from "@super-agent2/protocol";
+import { type ChoiceChange, engineOn, isComplete, type MachineChoice, offers, type ProgramId, type StartCard, waitsForProvider } from "@super-agent2/protocol";
 
 export interface ChoiceOptions {
   readonly machines: readonly string[];
@@ -83,5 +83,5 @@ export function changeOfEffort(effort: string): ChoiceChange {
 }
 
 export function canStartCard(card: StartCard): boolean {
-  return card.startable && isComplete(card.choice);
+  return card.startable && (isComplete(card.choice) || waitsForProvider(card.choice));
 }

@@ -22,7 +22,6 @@ const operation = {
   title: { en: "Save the video", zh: "保存视频" },
   task: "Find or ingest the given video and wait for the job in Agent_wring.",
   kind: "operation",
-  engine: "codex",
   mode: "agent_wring",
 };
 const article = {
@@ -36,6 +35,7 @@ const mac: MachineReport = {
   hostname: "mac", platform: "darwin", arch: "arm64", release: "1", user: "owner", slots: { total: 2, free: 2 },
   programs: [
     { id: "antigravity", installed: true, path: "agy", version: "1", models: startingEngineTable.antigravity.map(({ model, effort }) => ({ id: model, efforts: [effort] })), source: "program", problem: null },
+    { id: "dsh", installed: true, path: "dsh", version: "1", models: [{ id: startingEngineTable.dsh.standard.model, efforts: [startingEngineTable.dsh.standard.effort] }], source: "program", problem: null },
     { id: "codex", installed: true, path: "codex", version: "1", models: [{ id: startingEngineTable.codex.standard.model, efforts: [startingEngineTable.codex.standard.effort] }], source: "program", problem: null },
     { id: "claude", installed: true, path: "claude", version: "1", models: [{ id: startingEngineTable.claude.standard.model, efforts: [startingEngineTable.claude.standard.effort] }], source: "program", problem: null },
   ],
@@ -191,6 +191,16 @@ describe("light tasks", () => {
     expect(hub.waiting.cards()).toEqual([]);
   });
 
+  it.each([undefined, "claude"] as const)("runs an operation using the worker order or the owner's engine %s", async (ownerEngine) => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    hub.settings.setOrder("worker", ["deepseek", "gpt", "claude"]);
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, { ...operation, engine: "codex", ownerEngine });
+    expect(ticket).toMatchObject({ engine: ownerEngine ?? "dsh", brainEngine: null, chosenBy: { engine: ownerEngine === undefined ? "default" : "owner" } });
+    expect(run.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { engine: ownerEngine ?? "dsh" } }]);
+  });
+
   it("refuses a project task when conflicting work was filed in the same topic", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
@@ -247,12 +257,12 @@ describe("light tasks", () => {
 
     run.show(ticket.id, 2, { kind: "phase", phase: "started", detail: "The worker started" });
     run.show(ticket.id, 2, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
-    expect(starts()[2]).toMatchObject({ attempt: 3, engine: "claude", model: startingEngineTable.claude.standard.model });
-    expect(hub.defaults.resolve(ticket)).toMatchObject({ engine: "claude" });
+    expect(starts()[2]).toMatchObject({ attempt: 3, engine: "codex", model: startingEngineTable.codex.standard.model });
+    expect(hub.defaults.resolve(ticket)).toMatchObject({ engine: "codex" });
     expect(hub.tickets.get(ticket.id)).toMatchObject({ state: "working", machine: "mac", round: 0 });
     expect(hub.tickets.switches(ticket.id)).toMatchObject([
       { kind: "switched", from: "antigravity", fromModel: "gemini-4-hydrogen", to: "antigravity", model: "gemini-3.8-flash", machine: "mac", reason: "Gemini quota reached" },
-      { kind: "switched", from: "antigravity", fromModel: "gemini-3.8-flash", to: "claude", machine: "mac", reason: "Gemini quota reached" },
+      { kind: "switched", from: "antigravity", fromModel: "gemini-3.8-flash", to: "codex", machine: "mac", reason: "Gemini quota reached" },
     ]);
   });
 
@@ -346,7 +356,7 @@ describe("light tasks", () => {
     run.show(ticket.id, 1, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
     expect(starts()[1]).toMatchObject({ ...assignment, attempt: 2, engine: "antigravity", model: "gemini-3.8-flash", effort: "high" });
     run.show(ticket.id, 2, { kind: "unavailable", category: "problem", reason: "Sign in required", until: null, unsent: [] });
-    expect(starts()[2]).toMatchObject({ ...assignment, attempt: 3, engine: "claude" });
+    expect(starts()[2]).toMatchObject({ ...assignment, attempt: 3, engine: "codex" });
     run.show(ticket.id, 3, { kind: "delivered", text: "Article saved.", report, files: [{ name: "draft.md", size: 5, mediaType: "text/markdown" }] });
     expect(run.sent.some((message) => message.type === "work.file")).toBe(false);
     expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", files: [] });

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Subscription } from "./allowance.js";
 import { ProviderState } from "./brain.js";
 import { GitHubAccount } from "./commands.js";
-import { Provider } from "./conversations.js";
+import { Provider, providers, startingBrainOrder } from "./conversations.js";
 import { EngineTable, type MachineChoice, offers } from "./defaults.js";
 import { ProviderUnavailable } from "./providers.js";
 import { MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
@@ -80,21 +80,14 @@ export type RepositoryAliasChange = z.infer<typeof RepositoryAliasChange>;
 export const AccountState = z.object({ account: GitHubAccount, configured: z.boolean() });
 export type AccountState = z.infer<typeof AccountState>;
 
-export const chosenProviders = ["gpt", "claude"] as const;
-export const fallbackProvider: Provider = "deepseek";
+const ProviderOrder = z.array(Provider).length(providers.length)
+  .refine((order) => new Set(order).size === order.length, { error: "names each provider once" });
 
-export const startingOrder: readonly (typeof chosenProviders)[number][] = ["claude", "gpt"];
-
-export const ProviderOrderChange = z.object({
-  order: z
-    .array(z.enum(chosenProviders))
-    .length(chosenProviders.length)
-    .refine((order) => new Set(order).size === order.length, { error: "names each provider once" }),
-});
+export const ProviderOrderChange = z.object({ order: ProviderOrder });
 export type ProviderOrderChange = z.infer<typeof ProviderOrderChange>;
 
 export function fullOrder(chosen: readonly Provider[]): Provider[] {
-  return [...chosen.filter((provider, index) => provider !== fallbackProvider && chosen.indexOf(provider) === index), fallbackProvider];
+  return [...new Set([...chosen, ...startingBrainOrder])];
 }
 
 export const BrainSettings = z.object({
@@ -140,6 +133,7 @@ export const SettingsSnapshot = z.object({
   repositories: z.array(RepositoryAccount),
   accounts: z.array(AccountState),
   brain: BrainSettings,
+  workerOrder: ProviderOrder,
   table: EngineTable,
   subscriptions: z.array(Subscription),
   unavailable: z.array(ProviderUnavailable).default([]),

@@ -21,10 +21,10 @@ const fields = {
   recurrence: { cron: "0 3 * * 0" }, machine: "mac-mini",
 } satisfies ScheduleFields;
 const light = {
-  title, summary: title, task: "Check and report free space.", kind: "operation", platform: "macos", engine: "codex",
+  title, summary: title, task: "Check and report free space.", kind: "operation", platform: "macos",
   reason: { en: "A routine operation", zh: "例行操作" },
 };
-const standard = { difficulty: "standard", platform: "any", engine: "codex", reason: light.reason };
+const standard = { difficulty: "standard", platform: "any", reason: light.reason };
 
 let dataDir: string;
 let key: SigningKey;
@@ -122,8 +122,10 @@ function runner(name: string) {
   const link = hub.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined });
   link.receive({ type: "hello", protocol: protocolVersion, works: [], machine: {
     hostname: name, platform: "darwin", release: "1", arch: "arm64", user: "owner", slots: { total: 2, free: 2 }, allowances: [],
-    programs: [{ id: "codex", installed: true, path: "codex", version: "1", source: "program", problem: null,
-      models: [{ id: startingEngineTable.codex.standard.model, efforts: [startingEngineTable.codex.standard.effort] }] }],
+    programs: (["codex", "dsh"] as const).map((id) => ({
+      id, installed: true, path: id, version: "1", source: "program" as const, problem: null,
+      models: [{ id: startingEngineTable[id].standard.model, efforts: [startingEngineTable[id].standard.effort] }],
+    })),
   } });
   return { link, sent };
 }
@@ -153,6 +155,7 @@ describe("scheduled work", () => {
     expect(hub.tickets.list()).toEqual([]);
     const other = runner("other");
     const mac = runner("mac-mini");
+    hub.settings.setOrder("worker", ["deepseek", "gpt", "claude"]);
     const run = fire(schedule, inputs);
     expect(inputs.at(-1)).toMatchObject({ source: "hub", scheduleRun: run, text: expect.stringContaining(fields.instruction) });
     const scheduled = turn(link, topic, run);
@@ -162,7 +165,7 @@ describe("scheduled work", () => {
     expect(hub.chains.startScheduled(run)).toBeUndefined();
     scheduled.finish();
     expect(other.sent.filter((message) => message.type === "work.task")).toEqual([]);
-    expect(mac.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { checkout: null, light: true, ticket: ticket.id } }]);
+    expect(mac.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { checkout: null, light: true, ticket: ticket.id, engine: "dsh" } }]);
     expect(hub.waiting.cards()).toEqual([]);
     mac.link.receive({ type: "work.event", ticket: ticket.id, attempt: 1, seq: 1, at: clock.now(),
       event: { kind: "delivered", text: "Free space checked.", files: [], report: { en: "Done", zh: "完成" } } });
