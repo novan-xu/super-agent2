@@ -77,6 +77,15 @@ describe("the machine store", () => {
 });
 
 describe("creating an Access service token", () => {
+  it("tags inbox tokens separately from runner tokens", async () => {
+    let body = "";
+    const fake: typeof fetch = async (_url, init) => {
+      body = String(init?.body);
+      return Response.json({ success: true, result: { id: "token-id", client_id: "id.access", client_secret: "secret" } });
+    };
+    await cloudflareServiceTokens({ accountId: "account", apiToken: "api-token", fetch: fake }, "inbox").create("superagent2-inbox-shortcut");
+    expect(JSON.parse(body)).toMatchObject({ tags: { superagent2: "inbox" } });
+  });
   it("asks for a token that does not expire, tagged for the runner application's policy, with the API token", async () => {
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     const fake: typeof fetch = async (url, init) => {

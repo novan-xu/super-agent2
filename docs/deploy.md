@@ -172,16 +172,18 @@ Then:
 
 ## Cloudflare Access
 
-The host name has two Access applications.
+The host name has three Access applications.
 Nothing in them changes when a machine is added or revoked.
 
 | Application | Covers | Policy | Audience tag in `secrets/hub.env` |
 | --- | --- | --- | --- |
 | The host's own (exists) | The host name, empty path | Allow: the owner's email, through Google | `ACCESS_AUD` |
 | Super-agent2 runners (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
+| Super-agent2 inbox | The host name, path `inbox` | Service Auth: service token tag `superagent2` = `inbox` | `ACCESS_INBOX_AUD` |
 
 Cloudflare gives the more specific path precedence, and a path covers the paths below it, so `/runner/link`, `/runner/release` and `/runner/install` are decided by the runner application alone: a service token never reaches the owner's pages or API at Cloudflare, and the owner's sign-in never reaches the runner paths.
 The hub checks the same thing again: it takes an assertion for `ACCESS_RUNNER_AUD` only on `/runner/` and only as a service token, and one for `ACCESS_AUD` only elsewhere; and on `/runner/` it also needs the machine's own runner token, bound to that service token.
+The inbox application similarly admits only its tagged service tokens to `/inbox/`, and the hub verifies the separate `ACCESS_INBOX_AUD` and the source identity there.
 
 Steps, once, in the Cloudflare dashboard (Zero Trust):
 
@@ -214,6 +216,17 @@ Steps, once, in the Cloudflare dashboard (Zero Trust):
    If it exists: Access controls › Applications, find the application whose public hostname is the hub's host name with the path `runner/enroll` (usually named after enrolment), open it and delete it.
    Delete any policy that was made only for it under Access controls › Policies as well.
    Until it is deleted it would let anyone reach `/runner/enroll`, which the hub now refuses with 403.
+7. **The inbox application.**
+   Add another self-hosted application named `Super-agent2 inbox` on the same hostname with path `inbox`.
+   Add one Service Auth policy with an Include rule for Service Token Tag `superagent2` = `inbox`, and no other policies or Bypass rules.
+   Copy its Application Audience (AUD) Tag into `/share/Container/superagent2/secrets/hub.env` as `ACCESS_INBOX_AUD=<tag>` and recreate the hub with `bash /share/Container/superagent2/deploy.sh up`.
+   The inbox audience must differ from both the owner and runner audiences, and until it is configured the endpoint is disabled.
+   The same Cloudflare API token creates and deletes the source tokens, named `superagent2-inbox-<source>` and tagged `superagent2` = `inbox`.
+   In 设置 › 连接, create a source and save the displayed command and credentials immediately; the secret is shown only once.
+   To revoke a source, use its 撤销 button; if Cloudflare deletion fails, the hub still refuses it and the token must also be deleted in Cloudflare.
+   Send JSON to `/inbox/message` with `text` (up to 16,000 characters) and optional `title` and HTTP or HTTPS `link`.
+   A caller may provide `Idempotency-Key` for safe retries, and each source is limited to 60 new messages per minute per hub process.
+   Verify that an unauthenticated request is refused at Cloudflare, then use the displayed command and check 日常 and push notifications.
 
 To check, from a machine with no credentials: `curl -sS -o /dev/null -w '%{http_code}\n' https://<host>/runner/install` must not print 200 (Cloudflare refuses it before the hub sees it), and the same address opened in the owner's signed-in browser must not show a script either.
 A machine added after the set-up shows as online in 设置 once its install line has run.

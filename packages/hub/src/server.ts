@@ -117,6 +117,7 @@ import type { Waiting } from "./waiting.js";
 import type { MachineAdmin } from "./machine-admin.js";
 import type { RepositoryAccounts } from "./repositories.js";
 import type { Settings } from "./settings.js";
+import { InboxMessage, InboxName, type Inbox } from "./inbox.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
@@ -194,6 +195,8 @@ export interface HubServerOptions {
   readonly commands: CommandService;
   readonly verify: AccessVerifier;
   readonly verifyRunner?: AccessVerifier;
+  readonly verifyInbox?: AccessVerifier;
+  readonly inbox?: Inbox;
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
   readonly conversations?: ConversationService;
@@ -238,6 +241,7 @@ function pathOf(request: IncomingMessage): string {
 }
 
 type Body =
+  | Record<string, unknown>
   | StorageSettings
   | Health
   | Refusal
@@ -516,6 +520,30 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable", ...(options.version === undefined ? {} : { version: options.version }) }, method === "HEAD");
       return;
     }
+    if (path === "/inbox" || path.startsWith("/inbox/")) {
+      if (options.verifyInbox === undefined || options.inbox === undefined) {
+        request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+      }
+      const verified = await options.verifyInbox(headerValue(request)).catch(() => undefined);
+      if (verified === undefined || !verified.ok || verified.identity.kind !== "service") {
+        request.resume(); sendJson(response, 403, { error: "forbidden" }); return;
+      }
+      if (path !== "/inbox/message" || method !== "POST") {
+        request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+      }
+      if (declaresTooLarge(request)) { refuseTooLarge(request, response); return; }
+      const raw = await readBody(request, 100000);
+      const body = parseJson(raw, InboxMessage);
+      const key = request.headers["idempotency-key"];
+      if (body === undefined || (key !== undefined && (typeof key !== "string" || key.length === 0 || key.length > 256))) {
+        sendJson(response, 400, { error: "bad_request" }); return;
+      }
+      const result = options.inbox.receive(verified.identity.clientId, body, key);
+      if ("error" in result) {
+        sendJson(response, result.error === "forbidden" ? 403 : result.error === "conflict" ? 409 : 429, result); return;
+      }
+      sendJson(response, 202, { id: result.entry }); return;
+    }
     if (isBrainPath(path)) {
       if (!isBrain(request)) {
         request.resume();
@@ -555,6 +583,27 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path === sessionPath && method === "GET") {
       sendJson(response, 200, { protocol: protocolVersion, identity });
       return;
+    }
+    if (path === "/api/inbox/sources" || /^\/api\/inbox\/sources\/[0-9a-f-]+\/revoke$/.test(path)) {
+      const inbox = options.inbox;
+      if (inbox === undefined) { request.resume(); sendJson(response, 503, { error: "unavailable" }); return; }
+      if (method === "GET" && path === "/api/inbox/sources") { sendJson(response, 200, { sources: inbox.list() }); return; }
+      if (method !== "POST") { request.resume(); sendJson(response, 405, { error: "method_not_allowed" }); return; }
+      if (!ownerAction(request, response)) return;
+      const body = await readBody(request);
+      const id = /^\/api\/inbox\/sources\/([0-9a-f-]+)\/revoke$/.exec(path)?.[1];
+      if (id !== undefined) {
+        if (parseJson(body, z.object({}).strict()) === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+        const result = await inbox.revoke(id);
+        sendJson(response, result === undefined ? 404 : 200, result ?? { error: "not_found" }); return;
+      }
+      const given = parseJson(body, z.object({ name: InboxName }).strict());
+      if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+      try {
+        const result = await inbox.create(given.name);
+        if ("error" in result) { sendJson(response, result.error === "conflict" ? 409 : 503, result); return; }
+        sendJson(response, 201, result); return;
+      } catch { sendJson(response, 502, { error: "cloudflare_refused" }); return; }
     }
     if (path === holdsPath && method === "GET" && options.lock !== undefined) {
       const holds = options.lock.waiting().flatMap((hold) => {
