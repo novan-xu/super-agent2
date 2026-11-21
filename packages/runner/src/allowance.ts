@@ -13,7 +13,7 @@ import {
   unknownAllowance,
 } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { Prober } from "./programs.js";
+import type { CaptureOptions, Prober } from "./programs.js";
 
 export const allowanceRequestId = "superagent2-allowance";
 
@@ -153,20 +153,80 @@ export function claudeAllowance(output: string, readAt: number): SubscriptionRea
   return allowanceFrom("claude", readAt, windows, blocked);
 }
 
+const AntigravityUsage = z.object({
+  status: z.literal("SUCCESS"),
+  command: z.object({ name: z.literal("usage"), data: z.object({ groups: z.array(z.unknown()) }) }),
+});
+
+const AntigravityGeminiGroup = z.object({ name: z.literal("Gemini Models"), buckets: z.array(z.unknown()) });
+const AntigravityBucket = z.object({
+  window: z.enum(["weekly", "5h"]),
+  remaining_fraction: z.number().min(0).max(1),
+  reset_time: z.string().nullish().catch(null),
+});
+
+function supportsAntigravityUsage(version: string | null): boolean {
+  const parts = /\bv?(\d+)\.(\d+)\.(\d+)\b/.exec(version ?? "");
+  if (parts === null) return false;
+  const major = Number(parts[1]);
+  const minor = Number(parts[2]);
+  const patch = Number(parts[3]);
+  return major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 11)));
+}
+
+function antigravityAllowance(output: string, readAt: number): SubscriptionReading {
+  const unknown = unknownAllowance("antigravity", readAt, "Antigravity did not report Gemini Models quota");
+  try {
+    const parsed = AntigravityUsage.safeParse(JSON.parse(output));
+    if (!parsed.success) return unknown;
+    const windows = new Map<string, AllowanceWindow>();
+    for (const raw of parsed.data.command.data.groups) {
+      const group = AntigravityGeminiGroup.safeParse(raw);
+      if (!group.success) continue;
+      for (const entry of group.data.buckets) {
+        const bucket = AntigravityBucket.safeParse(entry);
+        if (!bucket.success) continue;
+        const { window, remaining_fraction, reset_time } = bucket.data;
+        const resetsAt = isoTime(reset_time);
+        windows.set(window, {
+          name: window === "weekly" ? "seven_day" : "five_hour",
+          usedPercent: 100 - remaining_fraction * 100,
+          durationMinutes: window === "weekly" ? 10080 : 300,
+          resetsAt: resetsAt !== null && resetsAt > 0 ? resetsAt : null,
+        });
+      }
+      break;
+    }
+    return windows.size === 0 ? unknown : allowanceFrom("antigravity", readAt, [...windows.values()], false);
+  } catch {
+    return unknown;
+  }
+}
+
 interface AllowanceSource {
   readonly program: AllowanceProgram;
   readonly args: readonly string[];
-  readonly input: string;
+  readonly options: CaptureOptions;
   readonly parse: (output: string, readAt: number) => AllowanceReading;
 }
 
+function allowanceStream(input: string): CaptureOptions {
+  return { input: `${input}\n`, until: (line) => line.includes(allowanceRequestId) && !line.includes("superagent2-initialize") };
+}
+
 export const allowanceSources: readonly AllowanceSource[] = [
-  { program: "codex", args: ["app-server"], input: `${codexAllowanceInput}\n`, parse: codexAllowance },
+  { program: "codex", args: ["app-server"], options: allowanceStream(codexAllowanceInput), parse: codexAllowance },
   {
     program: "claude",
     args: ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"],
-    input: `${claudeAllowanceInput}\n`,
+    options: allowanceStream(claudeAllowanceInput),
     parse: claudeAllowance,
+  },
+  {
+    program: "antigravity",
+    args: ["--settings", '{"disableSlashCommands":false}', "--print", "/usage", "--output-format", "json", "--print-timeout", "10s"],
+    options: { limitMilliseconds: 12_000 },
+    parse: antigravityAllowance,
   },
 ];
 
@@ -216,11 +276,11 @@ export async function readAllowances(prober: Prober, programs: readonly ProgramR
       if (program === undefined || !program.installed || program.path === null) {
         return unknownAllowance(source.program, now(), "the program is not installed here");
       }
+      if (source.program === "antigravity" && !supportsAntigravityUsage(program.version)) {
+        return unknownAllowance(source.program, now(), "the CLI version has no verified read-only /usage command");
+      }
       try {
-        const output = await prober.capture(program.path, source.args, {
-          input: source.input,
-          until: (line) => line.includes(allowanceRequestId) && !line.includes("superagent2-initialize"),
-        });
+        const output = await prober.capture(program.path, source.args, source.options);
         return source.parse(output, now());
       } catch (error) {
         return unknownAllowance(source.program, now(), messageOf(error));

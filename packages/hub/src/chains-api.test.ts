@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  allowanceFrom,
+  AllowanceReport,
   type AllowanceReading,
   brainToolsPath,
   type MachineReport,
@@ -746,7 +748,7 @@ describe("start defaults", () => {
     connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now()), reading("claude", "exhausted", clock.now())]));
     expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "dsh", model: "deepseek-flash", effort: "high", missing: [] });
     const allowance = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
-    expect(((await allowance.json()) as { subscriptions: { state: string }[] }).subscriptions.map((entry) => entry.state)).toEqual(["exhausted", "exhausted"]);
+    expect(AllowanceReport.parse(await allowance.json()).subscriptions.map((entry) => entry.state)).toEqual(["exhausted", "exhausted", "unknown"]);
     const told = await callBrainTool(running, "read_allowance", {});
     expect(told.text).toContain("GPT subscription (codex): used up");
     connect(running, "pc", machineReport("win32", [reading("codex", "exhausted", clock.now()), reading("claude", "available", clock.now())]));
@@ -770,7 +772,7 @@ describe("start defaults", () => {
       subscriptions: { program: string; state: string }[];
       unavailable: { program: string; reason: string; until: number; given: boolean }[];
     };
-    expect(allowance.subscriptions.map((entry) => entry.state)).toEqual(["unknown", "unknown"]);
+    expect(allowance.subscriptions.map((entry) => entry.state)).toEqual(["unknown", "unknown", "unknown"]);
     expect(allowance.unavailable).toEqual([{ program: "claude", reason: "You've hit your limit", since: clock.now(), until: clock.now() + 3_600_000, given: true }]);
     const told = await callBrainTool(running, "read_allowance", {});
     expect(told.text).toContain("Claude Code (Claude): You've hit your limit; until");
@@ -780,6 +782,28 @@ describe("start defaults", () => {
     expect(running.settings.snapshot().unavailable).toEqual([]);
     expect((await cardOf(running, 1)).choice.engine).toBe("claude");
     expect((await callBrainTool(running, "read_allowance", {})).text).toContain("No worker program is marked unavailable.");
+  });
+
+  it("reports the newest Gemini quota to the page and brain independently of Antigravity routing marks", async () => {
+    const running = await start();
+    const now = clock.now();
+    const weekly = { name: "seven_day", usedPercent: 10, durationMinutes: 10080, resetsAt: now + 7 * 86_400_000 };
+    const session = { name: "five_hour", usedPercent: 100, durationMinutes: 300, resetsAt: now + 5 * 3_600_000 };
+    connect(running, "pc", machineReport("win32", [allowanceFrom("antigravity", now - 10_000, [weekly, { ...session, usedPercent: 20 }], false)]));
+    connect(running, "mini", machineReport("darwin", [allowanceFrom("antigravity", now, [weekly, session], false)]));
+    expect(running.defaults.out().has("antigravity")).toBe(false);
+
+    const response = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    const allowance = AllowanceReport.parse(await response.json());
+    expect(allowance.subscriptions[2]).toMatchObject({ program: "antigravity", machine: "mini", state: "exhausted", windows: [weekly, session] });
+    const report = (await callBrainTool(running, "read_allowance", {})).text;
+    expect(report).toMatch(/Antigravity \(Gemini Models\): used up, weekly 90\.0% left .*5h 0\.0% left/);
+
+    running.defaults.markUnavailable("antigravity", "Sign in required", now + 3_600_000);
+    clock.advance(1000);
+    connect(running, "pc", machineReport("win32", [allowanceFrom("antigravity", clock.now(), [weekly, { ...session, usedPercent: 5 }], false)]));
+    expect(running.defaults.subscriptions().antigravity).toMatchObject({ machine: "pc", state: "available" });
+    expect(running.defaults.out().get("antigravity")).toMatchObject({ reason: "Sign in required" });
   });
 
   it("keeps the table of models in the hub, read by the owner and changed only from the owner's page", async () => {

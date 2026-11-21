@@ -304,14 +304,25 @@ export function choiceText(choice: StartChoice): string {
   return `It cannot start yet (missing: ${choice.missing.join(", ")}); so far: ${what}.${unavailable}`;
 }
 
-function subscriptionLine(name: string, subscription: Subscription): string {
+function subscriptionLine(name: string, subscription: Subscription, windows: readonly string[] = []): string {
   if (subscription.state === "unknown") {
     return `${name}: unknown (no current reading)`;
   }
   const left = subscription.remainingPercent === null ? "" : `, ${subscription.remainingPercent}% left`;
   const resets = subscription.resetsAt === null ? "" : `, resets ${new Date(subscription.resetsAt).toISOString()}`;
   const read = subscription.readAt === null ? "" : `, read ${new Date(subscription.readAt).toISOString()} on ${subscription.machine ?? "?"}`;
-  return `${name}: ${subscription.state === "exhausted" ? "used up" : "available"}${left}${resets}${read}`;
+  const details = windows.length === 0 ? `${left}${resets}` : `, ${windows.join(", ")}`;
+  return `${name}: ${subscription.state === "exhausted" ? "used up" : "available"}${details}${read}`;
+}
+
+function geminiWindows(subscription: Subscription): string[] {
+  return (subscription.windows ?? []).flatMap((window) => {
+    const label = window.name === "seven_day" ? "weekly" : window.name === "five_hour" ? "5h" : undefined;
+    if (label === undefined) return [];
+    const remaining = (100 - Math.min(100, window.usedPercent)).toFixed(1);
+    const reset = window.resetsAt === null ? "" : ` (resets ${new Date(window.resetsAt).toISOString()})`;
+    return [`${label} ${remaining}% left${reset}`];
+  });
 }
 
 const programWords: Readonly<Record<ProviderUnavailable["program"], string>> = {
@@ -325,7 +336,8 @@ export function allowanceReport(subscriptions: Subscriptions, machines: readonly
   const lines = [
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
-    "An unknown reading is not used up. dsh is the default only when both are used up.",
+    subscriptionLine("Antigravity (Gemini Models)", subscriptions.antigravity, geminiWindows(subscriptions.antigravity)),
+    "An unknown reading is not used up. dsh is the default only when the GPT and Claude subscriptions are both used up.",
   ];
   if (balance !== undefined) {
     const amounts = balance.wallets.map((wallet) => `${wallet.currency} ${wallet.total} (granted ${wallet.granted}, topped up ${wallet.toppedUp})`).join(", ");

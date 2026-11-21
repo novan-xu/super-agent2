@@ -9,6 +9,7 @@ export interface CaptureOptions {
   readonly input?: string;
   readonly until?: (line: string) => boolean;
   readonly stderr?: boolean;
+  readonly limitMilliseconds?: number;
 }
 
 export interface Prober {
@@ -294,7 +295,7 @@ export function systemProber(options: SystemProberOptions): Prober {
             reject(error);
           }
         };
-        const timer = setTimeout(() => finish(new Error(`${path} ${args.join(" ")} did not finish`)), limit);
+        const timer = setTimeout(() => finish(new Error(`${path} ${args.join(" ")} did not finish`)), Math.min(limit, captureOptions.limitMilliseconds ?? limit));
         child.stdout?.on("data", (data: Buffer) => {
           chunks.push(data);
           if (captureOptions.until !== undefined) {

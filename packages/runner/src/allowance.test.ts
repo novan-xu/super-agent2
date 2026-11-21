@@ -136,6 +136,7 @@ describe("reading every allowance", () => {
     expect(readings.filter((reading) => reading.program !== "dsh").map((reading) => [reading.program, reading.state, reading.remainingPercent])).toEqual([
       ["codex", "available", 60],
       ["claude", "unknown", null],
+      ["antigravity", "unknown", null],
     ]);
   });
 
@@ -143,6 +144,59 @@ describe("reading every allowance", () => {
     const prober: Prober = { find: () => undefined, capture: () => Promise.reject(new Error("codex exited with 1 before answering")) };
     const [codex] = await readAllowances(prober, programs, () => now);
     expect(codex).toMatchObject({ state: "unknown", problem: "codex exited with 1 before answering" });
+  });
+});
+
+describe("reading Antigravity's Gemini Models quota", () => {
+  const program: ProgramReport = { id: "antigravity", installed: true, path: "/bin/agy", version: "1.5.13", models: [], source: "program", problem: null };
+  const reset = "2027-01-16T08:00:00Z";
+  const group = {
+    name: "Gemini Models",
+    buckets: [
+      { window: "weekly", remaining_fraction: 0.85, reset_time: reset },
+      { window: "5h", remaining_fraction: 0.75, reset_time: "1970-01-01T00:00:00Z" },
+      { window: "monthly", remaining_fraction: 0.01 },
+    ],
+  };
+  const claude = { name: "Claude and GPT models", buckets: [{ window: "weekly", remaining_fraction: 0 }] };
+  const argon = { name: "Gemini 4 Argon", buckets: [{ window: "5h", remaining_fraction: 0.01 }] };
+  const outputOf = (groups: unknown[]) => JSON.stringify({ status: "SUCCESS", command: { name: "usage", data: { groups } }, num_turns: 0 });
+
+  it("runs the bounded read-only command and reports only the Gemini Models weekly and 5h windows", async () => {
+    const prober: Prober = {
+      find: () => "/bin/agy",
+      capture: async (path, args, options) => {
+        expect(path).toBe("/bin/agy");
+        expect(args).toEqual(["--settings", '{"disableSlashCommands":false}', "--print", "/usage", "--output-format", "json", "--print-timeout", "10s"]);
+        expect(options).toEqual({ limitMilliseconds: 12_000 });
+        return outputOf([claude, group, argon]);
+      },
+    };
+    const readings = await readAllowances(prober, [program], () => now);
+    expect(readings.find((reading) => reading.program === "antigravity")).toEqual({
+      program: "antigravity", readAt: now, state: "available", remainingPercent: 75, resetsAt: null, problem: null,
+      windows: [
+        { name: "seven_day", usedPercent: 15, durationMinutes: 10080, resetsAt: Date.parse(reset) },
+        { name: "five_hour", usedPercent: 25, durationMinutes: 300, resetsAt: null },
+      ],
+    });
+  });
+
+  it.each([
+    outputOf([claude, argon]),
+    outputOf([{ name: group.name, buckets: [{ window: "weekly", remaining_fraction: -1 }] }]),
+    JSON.stringify({ status: "SUCCESS", response: "Gemini Models weekly 100% left" }),
+    "not JSON",
+  ])("reports unknown for output without valid Gemini Models quota", async (output) => {
+    const readings = await readAllowances({ find: () => undefined, capture: async () => output }, [program], () => now);
+    expect(readings.find((reading) => reading.program === "antigravity")).toMatchObject({ state: "unknown", windows: [] });
+  });
+
+  it.each(["1.1.10", null])("skips the prompt on a CLI without a confirmed read-only command", async (version) => {
+    let calls = 0;
+    const readings = await readAllowances({ find: () => undefined, capture: async () => { calls++; return ""; } }, [{ ...program, version }], () => now);
+    expect(calls).toBe(0);
+    expect(readings.find((reading) => reading.program === "antigravity")).toMatchObject({ state: "unknown", windows: [] });
   });
 });
 

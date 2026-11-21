@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const allowancePrograms = ["codex", "claude"] as const;
+export const allowancePrograms = ["codex", "claude", "antigravity"] as const;
 export const AllowanceProgram = z.enum(allowancePrograms);
 export type AllowanceProgram = z.infer<typeof AllowanceProgram>;
 
@@ -125,5 +125,6 @@ export function subscriptionsOf(readings: readonly MachineReading[], now: number
   return {
     codex: currentSubscription("codex", readings, now, maxAge),
     claude: currentSubscription("claude", readings, now, maxAge),
+    antigravity: currentSubscription("antigravity", readings, now, maxAge),
   };
 }
