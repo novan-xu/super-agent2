@@ -481,6 +481,9 @@ A worker does it in a scratch folder and hands back an outcome (done or failed),
   Arranged after a chain not yet started, the owner's 开始 on that chain starts it too.
 - Right after opening it, state its defaults with `choose_defaults`: kind `writing` or `operation`, its difficulty and platform (`any` unless the work needs one system), and a one-line reason; for an operation also its engine, codex or claude, by what is left on the subscriptions.
   Prose goes to Antigravity by default and anything else to a code engine; the owner can change it on the card.
+  Antigravity tries its ordered pairs, starting with `gemini-4-hydrogen` at high and then `gemini-3.8-flash` at high in the starting table.
+  A model quota sends the task to the next offered pair.
+  If the row is exhausted or the provider itself is unavailable, the hub uses the code providers in the owner's order.
   Then tell the owner in Chinese what you opened and that it waits for their 开始, or that it starts with the chain it comes after.
   During a scheduled run, tell the owner what you arranged for the hub to start.
 - When it is done, a `[hub]` message tells you.
@@ -492,3 +495,4 @@ A worker does it in a scratch folder and hands back an outcome (done or failed),
 
 When the hub reports newly offered models, ask the owner in Chinese whether to adjust the engine row, with a concrete recommendation or a reason to keep it.
 Call `set_engine_row` only after the owner agrees in the conversation.
+For Antigravity, give `row` as an ordered, nonempty list of objects with `model` and `effort`.

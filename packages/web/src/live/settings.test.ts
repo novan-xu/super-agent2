@@ -107,13 +107,12 @@ describe("the model table", () => {
     expect(withChoice(options, { model: "gpt-6-luna", effort: "medium" })).toEqual(options);
   });
 
-  it("has a row per difficulty for each code engine and one for Antigravity", () => {
+  it("has a row per difficulty for each code engine", () => {
     const groups = tableRows(startingEngineTable);
     expect(groups.map((group) => [group.engine, group.rows.length])).toEqual([
       ["codex", 3],
       ["claude", 3],
       ["dsh", 3],
-      ["antigravity", 1],
     ]);
     expect(groups[0]?.rows[2]).toEqual({ engine: "codex", difficulty: "complex", current: startingEngineTable.codex.complex });
   });

@@ -563,6 +563,26 @@ describe("start defaults", () => {
     expect(running.defaults.table().claude).toEqual(row);
   });
 
+  it("reads a stored single Antigravity choice and validates the brain's ordered replacement", async () => {
+    const running = await start();
+    const hydrogen = { model: "gemini-4-hydrogen", effort: "high" };
+    const flash = { model: "gemini-3.8-flash", effort: "high" };
+    const legacy = { ...running.defaults.table(), antigravity: hydrogen };
+    running.database.connection.prepare("INSERT INTO hub_settings (key, value, updated_at) VALUES ('engine_table', ?, ?)").run(JSON.stringify(legacy), clock.now());
+    expect(running.defaults.table().antigravity).toEqual([hydrogen]);
+
+    const set = (row: unknown) => callBrainTool(running, "set_engine_row", { engine: "antigravity", row });
+    expect((await set([])).isError).toBe(true);
+    expect((await set([hydrogen, flash])).isError).toBe(true);
+    expect(running.defaults.table().antigravity).toEqual([hydrogen]);
+
+    const report = machineReport("darwin");
+    report.programs.push({ id: "antigravity", installed: true, path: "agy", version: "1", models: [{ id: flash.model, efforts: [flash.effort] }], source: "program", problem: null });
+    connect(running, "mac", report);
+    expect((await set([flash, hydrogen])).isError).toBe(false);
+    expect(running.defaults.table().antigravity).toEqual([flash, hydrogen]);
+  });
+
   it("offers a complex Windows chain on the runner with the complex row, its reason in Chinese, and starts what the card showed", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");

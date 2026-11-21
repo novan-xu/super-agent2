@@ -119,7 +119,7 @@ export function pairKey(model: string, effort: string): string {
   return `${model}\u0000${effort}`;
 }
 
-export function pairOptions(machines: readonly MachineChoice[], engine: TableEngine, current: { readonly model: string; readonly effort: string }): PairOption[] {
+export function pairOptions(machines: readonly MachineChoice[], engine: TableEngine, current?: { readonly model: string; readonly effort: string }): PairOption[] {
   const seen = new Set<string>();
   const options: PairOption[] = [];
   for (const machine of machines) {
@@ -135,7 +135,7 @@ export function pairOptions(machines: readonly MachineChoice[], engine: TableEng
       }
     }
   }
-  if (!seen.has(pairKey(current.model, current.effort))) {
+  if (current !== undefined && !seen.has(pairKey(current.model, current.effort))) {
     options.unshift({ model: current.model, effort: current.effort, offered: false });
   }
   return options;
@@ -147,18 +147,15 @@ export function withChoice(options: readonly PairOption[], chosen: { readonly mo
 }
 
 export interface TableRow {
-  readonly engine: TableEngine;
-  readonly difficulty: Difficulty | null;
+  readonly engine: Exclude<TableEngine, "antigravity">;
+  readonly difficulty: Difficulty;
   readonly current: { readonly model: string; readonly effort: string };
 }
 
-export function tableRows(table: EngineTable): { readonly engine: TableEngine; readonly rows: TableRow[] }[] {
-  return tableEngines.map((engine) => ({
+export function tableRows(table: EngineTable): { readonly engine: TableRow["engine"]; readonly rows: TableRow[] }[] {
+  return tableEngines.filter((engine) => engine !== "antigravity").map((engine) => ({
     engine,
-    rows:
-      engine === "antigravity"
-        ? [{ engine, difficulty: null, current: table.antigravity }]
-        : difficulties.map((difficulty) => ({ engine, difficulty, current: table[engine][difficulty] })),
+    rows: difficulties.map((difficulty) => ({ engine, difficulty, current: table[engine][difficulty] })),
   }));
 }
 

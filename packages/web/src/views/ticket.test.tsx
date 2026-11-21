@@ -245,6 +245,15 @@ describe("a ticket's detail", () => {
     expect(render({ ...base, switches: [{ ...entry, owner: true }] })).toContain("你选的 Codex 暂不可用，改用 Claude Code（claude-opus-5-5 · high）");
   });
 
+  it("identifies both Antigravity models when a quota switches away from the owner's model", () => {
+    const base = detailOf(running);
+    const entry = { ticket: 1, seq: 1, kind: "switched" as const, at: 12_000, from: "antigravity" as const, fromModel: "gemini-4-hydrogen", to: "antigravity" as const, machine: "pc", model: "gemini-3.8-flash", effort: "high", reason: "Quota reached", until: null, owner: true, attempt: 2 };
+    const html = render({ ...base, switches: [entry] });
+    expect(text(html)).toContain("|换了模型|");
+    expect(html).toContain("你选的 Antigravity（gemini-4-hydrogen） 暂不可用，改用 Antigravity（gemini-3.8-flash · high）");
+    expect(html).toContain("Quota reached");
+  });
+
   it("shows that the ticket waits for a provider, with when it will try again, and when the same one is back", () => {
     const waiting = detailOf({ ...running, work: workStatus({ state: "unavailable", reason: "limit" }) });
     const entry = { ticket: 1, seq: 1, kind: "waiting" as const, at: 12_000, from: "claude" as const, to: null, machine: null, model: null, effort: null, reason: "limit", until: 40_000, owner: false, attempt: 1 };

@@ -52,7 +52,7 @@ describe("the starting table", () => {
     expect(tableChoice(startingEngineTable, "codex", "complex")).toEqual({ model: "gpt-6.1-sol", effort: "high" });
     expect(tableChoice(startingEngineTable, "claude", "mechanical")).toEqual({ model: "claude-haiku-5-5", effort: "medium" });
     expect(tableChoice(startingEngineTable, "dsh", "complex")).toEqual({ model: "deepseek-flash", effort: "max" });
-    expect(tableChoice(startingEngineTable, "antigravity", null)).toEqual({ model: "gemini-3.8-flash", effort: "high" });
+    expect(tableChoice(startingEngineTable, "antigravity", null)).toEqual({ model: "gemini-4-hydrogen", effort: "high" });
     expect(tableChoice(startingEngineTable, "codex", null)).toBeNull();
   });
 

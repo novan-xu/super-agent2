@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { ClientMessage, type Conversation, type ServerMessage, type StreamEntry } from "@super-agent2/protocol";
+import { ClientMessage, type Conversation, EngineTableBody, type ServerMessage, type StreamEntry } from "@super-agent2/protocol";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -265,4 +265,46 @@ it("starts on archived repositories and updates the workbench rail after pinning
   expect(titles()).toEqual(["owner/one"]);
   await visit("/workbench");
   expect(rail()).not.toContain("Short name");
+});
+
+it("edits and saves Antigravity's model order on the Models page", async () => {
+  const hydrogen = { model: "gemini-4-hydrogen", effort: "high" };
+  const flash = { model: "gemini-3.8-flash", effort: "high" };
+  let snapshot = settingsSnapshot({
+    machines: [{
+      name: "mac", online: true, createdAt: at, lastSeenAt: at,
+      report: {
+        hostname: "mac", platform: "darwin", arch: "arm64", release: "1", user: "owner", slots: { total: 1, free: 1 }, allowances: [],
+        programs: [{ id: "antigravity", installed: true, path: "agy", version: "1", models: [{ id: hydrogen.model, efforts: [hydrogen.effort] }, { id: flash.model, efforts: [flash.effort] }], source: "program", problem: null }],
+      },
+    }],
+  });
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/settings") return Response.json(snapshot);
+    if (path === "/api/engine-table") {
+      const { table } = EngineTableBody.parse(JSON.parse(String(init?.body)));
+      snapshot = { ...snapshot, table };
+      return Response.json({ table });
+    }
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  window.history.replaceState(null, "", "/settings/models");
+  await act(async () => root.render(<App />));
+  await act(async () => {
+    TestSocket.current.open();
+    TestSocket.current.deliver({ type: "settings", settings: snapshot });
+  });
+
+  const section = [...host.querySelectorAll("section")].find((item) => item.querySelector("h2")?.textContent === "Antigravity")!;
+  const selected = () => [...section.querySelectorAll("select")].map((select) => select.options[select.selectedIndex]?.textContent);
+  const buttons = (label: string) => [...section.querySelectorAll("button")].filter((button) => (button.getAttribute("aria-label") ?? button.textContent) === label);
+  expect(selected()).toEqual(["gemini-4-hydrogen · high", "gemini-3.8-flash · high"]);
+  await act(async () => buttons(text("models.earlier"))[1]!.click());
+  expect(selected()).toEqual(["gemini-3.8-flash · high", "gemini-4-hydrogen · high"]);
+  await act(async () => buttons(text("models.remove"))[1]!.click());
+  expect(buttons(text("models.remove"))[0]?.disabled).toBe(true);
+  await act(async () => buttons(text("models.add"))[0]!.click());
+  await act(async () => buttons(text("models.save"))[0]!.click());
+  expect(snapshot.table.antigravity).toEqual([flash, hydrogen]);
 });

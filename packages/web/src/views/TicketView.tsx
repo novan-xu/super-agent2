@@ -163,11 +163,13 @@ function MoveEntry({ entry, now }: { readonly entry: Extract<TimelineEntry, { re
 
 function SwitchEntry({ entry, now }: { readonly entry: Extract<TimelineEntry, { readonly kind: "switch" }>; readonly now: number }) {
   const item = entry.entry;
-  const from = engineName(item.from);
+  const from = item.fromModel === undefined ? engineName(item.from) : `${engineName(item.from)}（${item.fromModel}）`;
   const to = item.to === null ? "" : engineName(item.to);
   const model = item.model ?? "";
   const effort = item.effort ?? "";
-  const head = item.kind === "switched" ? "timeline.switched" : item.kind === "waiting" ? "timeline.waitingProvider" : "timeline.providerBack";
+  const head = item.kind === "switched"
+    ? item.fromModel !== undefined && item.from === item.to && item.fromModel !== item.model ? "timeline.switchedModel" : "timeline.switched"
+    : item.kind === "waiting" ? "timeline.waitingProvider" : "timeline.providerBack";
   const body =
     item.kind === "switched"
       ? text(item.owner ? "timeline.switchedOwner" : "timeline.switchedBody", { from, to, model, effort })

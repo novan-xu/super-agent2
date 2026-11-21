@@ -28,7 +28,6 @@ describe("the model table", () => {
     const next = withCell(startingEngineTable, { engine: "codex", difficulty: "complex", model: "gpt-6.1-sol", effort: "xhigh" });
     expect(next.codex.complex).toEqual({ model: "gpt-6.1-sol", effort: "xhigh" });
     expect(next.codex.standard).toEqual(startingEngineTable.codex.standard);
-    expect(withCell(startingEngineTable, { engine: "antigravity", difficulty: null, model: "g", effort: "low" }).antigravity).toEqual({ model: "g", effort: "low" });
   });
 
   it("refuses only a changed cell no online machine offers", () => {
@@ -37,7 +36,14 @@ describe("the model table", () => {
     const unoffered = withCell(startingEngineTable, { engine: "codex", difficulty: "complex", model: "gpt-6.1-sol", effort: "low" });
     expect(unofferedChanges(unoffered, startingEngineTable, [machine])).toEqual([{ engine: "codex", difficulty: "complex", model: "gpt-6.1-sol", effort: "low" }]);
     expect(unofferedChanges(offered, startingEngineTable, [])).toHaveLength(1);
-    expect(tableCells(startingEngineTable)).toHaveLength(10);
+    expect(tableCells(startingEngineTable)).toHaveLength(11);
+  });
+
+  it("validates new Antigravity pairs and lets existing pairs be reordered while offline", () => {
+    const reordered = { ...startingEngineTable, antigravity: [...startingEngineTable.antigravity].reverse() };
+    expect(unofferedChanges(reordered, startingEngineTable, [])).toEqual([]);
+    const added = { ...reordered, antigravity: [...reordered.antigravity, { model: "unknown", effort: "high" }] };
+    expect(unofferedChanges(added, startingEngineTable, [machine])).toEqual([{ engine: "antigravity", difficulty: null, model: "unknown", effort: "high" }]);
   });
 });
 

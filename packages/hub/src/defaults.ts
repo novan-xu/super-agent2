@@ -11,6 +11,8 @@ import {
   machineChoices,
   machinesFor,
   type MachineStatus,
+  markActive,
+  markUntil,
   type OwnerChoice,
   type Provider,
   ProgramId,
@@ -40,10 +42,11 @@ export interface StartDefaults {
   balance(): Balance;
   unavailable(): ProviderUnavailable[];
   out(): Map<ProgramId, ProviderOut>;
+  antigravityOut(): Map<string, ProviderOut>;
   order(prose: boolean): ProgramId[];
-  markUnavailable(program: ProgramId, reason: string, until: number | null, category?: "limit" | "problem" | "overload"): void;
+  markUnavailable(program: ProgramId, reason: string, until: number | null, category?: "limit" | "problem" | "overload", model?: string): void;
   healthMarks(): { program: ProgramId; reason: string; since: number; category: "limit" | "problem" | "overload" | null }[];
-  recovered(program: ProgramId, at: number): boolean;
+  recovered(program: ProgramId, at: number, model?: string): boolean;
   machines(): MachineChoice[];
   machinesFor(ticket: Ticket): MachineChoice[];
   resolve(ticket: Ticket, owner?: OwnerChoice): StartChoice;
@@ -64,7 +67,7 @@ const tableKey = "engine_table";
 
 const ValueRow = z.object({ value: z.string() });
 
-const MarkRow = z.object({ program: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable(), category: z.enum(["limit", "problem", "overload"]).nullable() });
+const MarkRow = z.object({ program: z.string(), model: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable(), category: z.enum(["limit", "problem", "overload"]).nullable() });
 
 export function allowanceStatesOf(subscriptions: Subscriptions): AllowanceStates {
   return { codex: subscriptions.codex.state, claude: subscriptions.claude.state };
@@ -96,11 +99,12 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     }
   };
 
-  const selectMarks = connection.prepare("SELECT * FROM provider_marks ORDER BY program");
+  const selectMarks = connection.prepare("SELECT * FROM provider_marks WHERE model = '' ORDER BY program");
+  const selectAntigravityMarks = connection.prepare("SELECT * FROM provider_marks WHERE program = 'antigravity' AND model <> '' ORDER BY model");
   const upsertMark = connection.prepare(
-    "INSERT INTO provider_marks (program, reason, since, until, category) VALUES (?, ?, ?, ?, ?) ON CONFLICT (program) DO UPDATE SET reason = excluded.reason, since = excluded.since, until = excluded.until, category = excluded.category",
+    "INSERT INTO provider_marks (program, model, reason, since, until, category) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (program, model) DO UPDATE SET reason = excluded.reason, since = excluded.since, until = excluded.until, category = excluded.category",
   );
-  const deleteMark = connection.prepare("DELETE FROM provider_marks WHERE program = ? AND since < ?");
+  const deleteMark = connection.prepare("DELETE FROM provider_marks WHERE program = ? AND (model = '' OR model = ?) AND since < ?");
 
   const changed = () => {
     for (const listener of listeners) {
@@ -154,9 +158,20 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     return result;
   };
 
+  const antigravityOut = (): Map<string, ProviderOut> => {
+    const now = clock.now();
+    const result = new Map<string, ProviderOut>();
+    for (const row of selectAntigravityMarks.all()) {
+      const { model, reason, since, until } = MarkRow.parse(row);
+      const mark = { program: "antigravity" as const, reason, since, until };
+      if (markActive(mark, undefined, now)) result.set(model, { reason, until: markUntil(mark), given: until !== null });
+    }
+    return result;
+  };
+
   const order = (prose: boolean): ProgramId[] => engineOrder(options.providerOrder?.(), prose);
 
-  const contextOf = (): EngineContext => ({ out: new Set(out().keys()), order: order(false) });
+  const contextOf = (): EngineContext => ({ out: new Set(out().keys()), order: order(false), antigravityOut: new Set(antigravityOut().keys()) });
 
   const foldedStates = (): AllowanceStates => {
     const states = allowanceStatesOf(subscriptions());
@@ -176,6 +191,7 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     balance,
     unavailable,
     out,
+    antigravityOut,
     order,
     healthMarks: () => {
       const active = new Set(unavailable().map((mark) => mark.program));
@@ -185,13 +201,14 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
         return program.success && active.has(program.data) ? [{ program: program.data, reason: mark.reason, since: mark.since, category: mark.category }] : [];
       });
     },
-    markUnavailable: (program, reason, until, category) => {
+    markUnavailable: (program, reason, until, category, model) => {
       const now = clock.now();
-      upsertMark.run(program, reason, now, until !== null && until > now ? until : null, category ?? null);
+      const scope = program === "antigravity" && category === "limit" ? model ?? "" : "";
+      upsertMark.run(program, scope, reason, now, until !== null && until > now ? until : null, category ?? null);
       changed();
     },
-    recovered: (program, at) => {
-      if (Number(deleteMark.run(program, at).changes) === 0) {
+    recovered: (program, at, model) => {
+      if (Number(deleteMark.run(program, program === "antigravity" ? model ?? "" : "", at).changes) === 0) {
         return false;
       }
       changed();
