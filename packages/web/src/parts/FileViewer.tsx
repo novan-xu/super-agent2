@@ -18,13 +18,6 @@ function PdfView({ url, fail }: { url: string; fail: () => void }) {
   return <div id="file-viewer-pdf" className="fv-pdf-host" />;
 }
 
-const HTML_POLICY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:">`;
-
-function htmlDocument(source: string): string {
-  const doctype = source.match(/^\s*<!doctype\s+html[^>]*>/i)?.[0] ?? "";
-  return doctype + HTML_POLICY + source.slice(doctype.length);
-}
-
 function Content({ file, kind, source }: { file: ViewFile; kind: FileKind; source: boolean }) {
   const [data, setData] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -59,7 +52,7 @@ function Content({ file, kind, source }: { file: ViewFile; kind: FileKind; sourc
   if (kind === "office" && !officeReady) return null;
   if (kind === "pdf" || kind === "office") return <PdfView url={kind === "office" ? `${file.url}/preview` : file.url} fail={fail} />;
   if (data === null) return null;
-  if (kind === "html" && !source) return <iframe className="fv-html" title={file.name} sandbox="" srcDoc={htmlDocument(data)} />;
+  if (kind === "html" && !source) return <iframe className="fv-html" title={file.name} sandbox="" src={`${file.url}/render`} />;
   if (kind === "markdown") return <article className="fv-document"><Markdown text={data} /></article>;
   if (kind === "table") { const table = parseTable(data, delimiterOf(data, file.name)); return <div className="fv-table"><table><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => i === 0 ? <th key={j}>{cell}</th> : <td key={j}>{cell}</td>)}</tr>)}</tbody></table>{table.total > table.rows.length ? <p>{table.rows.length} / {table.total}</p> : null}</div>; }
   return <pre className="fv-text">{data}</pre>;

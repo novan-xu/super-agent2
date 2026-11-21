@@ -1,9 +1,10 @@
+import { renderHtml } from "./html-render.js";
 import { sendFile } from "./file-response.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { AttachmentCreate, attachmentsPath } from "@super-agent2/protocol";
 import type { AttachmentStore } from "./attachments.js";
 
-const attachmentRoute = /^\/api\/attachments\/([0-9a-f]{32})(\/upload)?$/;
+const attachmentRoute = /^\/api\/attachments\/([0-9a-f]{32})(\/upload|\/render)?$/;
 
 export interface AttachmentRequest {
   readonly request: IncomingMessage;
@@ -86,6 +87,10 @@ export async function serveAttachments(given: AttachmentRequest): Promise<boolea
   const attachment = store.get(id);
   if (attachment === undefined) {
     return false;
+  }
+  if (match[2] === "/render") {
+    if (method !== "GET" || !store.complete(id)) return false;
+    return renderHtml(response, { ...attachment, open: () => store.open(id)! });
   }
   if (match[2] === "/upload") {
     if (method === "GET") {

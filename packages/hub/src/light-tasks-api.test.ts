@@ -256,6 +256,22 @@ describe("light tasks", () => {
     ]);
   });
 
+  it("renders delivered ticket HTML through the isolated route", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic);
+    const html = "<style>body { background: rgb(1, 2, 3) }</style>中文";
+    const bytes = Buffer.from(html);
+    run.show(ticket.id, 1, { kind: "delivered", text: "Ready.", files: [{ name: "page.html", size: bytes.length, mediaType: "text/html" }], report });
+    run.runner.receive({ type: "work.file.part", ticket: ticket.id, attempt: 1, name: "page.html", offset: 0, data: bytes.toString("base64"), problem: null });
+    const response = await get(`/api/tickets/${ticket.id}/files/page.html/render`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'self'");
+    expect(await response.text()).toBe(html);
+    expect((await get(`/api/tickets/${ticket.id}/files/missing.html/render`)).status).toBe(404);
+  });
+
   it("stores a file larger than 100 MiB and over 30 files together in transfer and the reply", async () => {
     const { link } = connectBrain();
     const run = connectRunner();

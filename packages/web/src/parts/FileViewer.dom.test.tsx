@@ -14,9 +14,8 @@ it("renders a sandboxed HTML document and switches to its original source", asyn
     await act(async () => { root.render(<FileViewer files={[{ name: "page.html", mime: "text/html", size: source.length, url: "/page" }]} index={0} close={() => undefined} />); });
     const frame = host.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("");
-    expect(frame.srcdoc).toContain('<!doctype html><meta http-equiv="Content-Security-Policy"');
-    expect(frame.srcdoc).toContain("default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'");
-    expect(frame.srcdoc).toContain(source.slice("<!doctype html>".length));
+    expect(frame.getAttribute("src")).toBe("/page/render");
+    expect(frame.hasAttribute("srcdoc")).toBe(false);
     await act(async () => host.querySelector<HTMLButtonElement>(".fv-toggle")!.click());
     expect(host.querySelector("iframe")).toBeNull();
     expect(host.querySelector("pre")?.textContent).toBe(source);
