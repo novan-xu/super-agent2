@@ -132,6 +132,17 @@ describe("probing the programs", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it("reports filtered failure output when requested", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-probe-"));
+    try {
+      const prober = systemProber({ environment: { ...process.env, TEST_DIAGNOSTIC: "token=secret" }, cwd });
+      await expect(prober.capture(process.execPath, ["-e", "console.error('Sign in required'); process.exit(1)"], { failureOutput: true })).rejects.toThrow("exited with 1: Sign in required");
+      await expect(prober.capture(process.execPath, ["-e", "console.error(process.env.TEST_DIAGNOSTIC); process.exit(1)"], { failureOutput: true })).rejects.not.toThrow("token=secret");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("finding a program on the path", () => {

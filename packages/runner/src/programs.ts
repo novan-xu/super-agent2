@@ -10,6 +10,7 @@ export interface CaptureOptions {
   readonly until?: (line: string) => boolean;
   readonly stderr?: boolean;
   readonly limitMilliseconds?: number;
+  readonly failureOutput?: boolean;
 }
 
 export interface Prober {
@@ -260,6 +261,18 @@ export function findExecutable(executable: string, environment: Readonly<Record<
   return undefined;
 }
 
+function failureDiagnostic(output: string): string {
+  let text = output.trim();
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return "";
+    const record = parsed as Record<string, unknown>;
+    text = typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : "";
+  } catch { }
+  const safe = text.split(/\r?\n/).filter((line) => !/token|secret|password|credential|authorization|api.?key|bearer|cookie|https?:\/\//i.test(line) && !/[A-Za-z0-9_+/=-]{24,}/.test(line)).join(" ").trim().slice(-300);
+  return safe === "" ? "" : `: ${safe}`;
+}
+
 export function systemProber(options: SystemProberOptions): Prober {
   const platform = options.platform ?? process.platform;
   const limit = options.limitMilliseconds ?? 120000;
@@ -268,8 +281,10 @@ export function systemProber(options: SystemProberOptions): Prober {
     capture: (path, args, captureOptions = {}) =>
       new Promise((resolve, reject) => {
         mkdirSync(options.cwd, { recursive: true });
-        const child = spawn([quoted(path), ...args.map((arg) => platform === "win32" ? `"${arg.replaceAll('"', '""')}"` : `'${arg.replaceAll("'", "'\\''")}'`)].join(" "), {
-          shell: true,
+        const direct = platform === "win32" && /\.exe$/i.test(path);
+        const command = direct ? path : [quoted(path), ...args.map((arg) => platform === "win32" ? `"${arg.replaceAll('"', '""')}"` : `'${arg.replaceAll("'", "'\\''")}'`)].join(" ");
+        const child = spawn(command, direct ? [...args] : [], {
+          shell: !direct,
           cwd: options.cwd,
           env: { ...options.environment },
           detached: platform !== "win32",
@@ -277,6 +292,7 @@ export function systemProber(options: SystemProberOptions): Prober {
           stdio: ["pipe", "pipe", "pipe"],
         });
         const chunks: Buffer[] = [];
+        const errors: Buffer[] = [];
         let settled = false;
         let pending = "";
         const finish = (error: Error | undefined) => {
@@ -307,11 +323,10 @@ export function systemProber(options: SystemProberOptions): Prober {
             }
           }
         });
-        if (captureOptions.stderr === true) {
-          child.stderr?.on("data", (data: Buffer) => chunks.push(data));
-        } else {
-          child.stderr?.resume();
-        }
+        child.stderr?.on("data", (data: Buffer) => {
+          if (captureOptions.stderr === true) chunks.push(data);
+          if (captureOptions.failureOutput === true) errors.push(data);
+        });
         child.stdin?.on("error", () => undefined);
         if (captureOptions.input === undefined) {
           child.stdin?.end();
@@ -320,10 +335,11 @@ export function systemProber(options: SystemProberOptions): Prober {
         }
         child.once("error", (error) => finish(error));
         child.once("close", (code) => {
+          const diagnostic = captureOptions.failureOutput === true ? failureDiagnostic(Buffer.concat(errors).toString("utf8") || Buffer.concat(chunks).toString("utf8")) : "";
           if (code === 0 || captureOptions.until === undefined) {
-            finish(code === 0 ? undefined : new Error(`${path} ${args.join(" ")} exited with ${String(code)}`));
+            finish(code === 0 ? undefined : new Error(`${path} ${args.join(" ")} exited with ${String(code)}${diagnostic}`));
           } else {
-            finish(new Error(`${path} ${args.join(" ")} exited with ${String(code)} before answering`));
+            finish(new Error(`${path} ${args.join(" ")} exited with ${String(code)} before answering${diagnostic}`));
           }
         });
       }),

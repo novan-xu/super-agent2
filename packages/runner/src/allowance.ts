@@ -211,7 +211,7 @@ interface AllowanceSource {
 }
 
 function allowanceStream(input: string): CaptureOptions {
-  return { input: `${input}\n`, until: (line) => line.includes(allowanceRequestId) && !line.includes("superagent2-initialize") };
+  return { input: `${input}\n`, until: (line) => line.includes(allowanceRequestId) && !line.includes("superagent2-initialize"), failureOutput: true };
 }
 
 export const allowanceSources: readonly AllowanceSource[] = [
@@ -225,7 +225,7 @@ export const allowanceSources: readonly AllowanceSource[] = [
   {
     program: "antigravity",
     args: ["--settings", '{"disableSlashCommands":false}', "--print", "/usage", "--output-format", "json", "--print-timeout", "10s"],
-    options: { limitMilliseconds: 12_000 },
+    options: { limitMilliseconds: 12_000, failureOutput: true },
     parse: antigravityAllowance,
   },
 ];

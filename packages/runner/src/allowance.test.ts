@@ -168,7 +168,7 @@ describe("reading Antigravity's Gemini Models quota", () => {
       capture: async (path, args, options) => {
         expect(path).toBe("/bin/agy");
         expect(args).toEqual(["--settings", '{"disableSlashCommands":false}', "--print", "/usage", "--output-format", "json", "--print-timeout", "10s"]);
-        expect(options).toEqual({ limitMilliseconds: 12_000 });
+        expect(options).toEqual({ limitMilliseconds: 12_000, failureOutput: true });
         return outputOf([claude, group, argon]);
       },
     };
