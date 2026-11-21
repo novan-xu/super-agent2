@@ -76,10 +76,10 @@ export function classifyCodexError(error: { readonly message?: string | undefine
     return { kind: "limit", reason };
   }
   const status = statusOf(info);
-  if (status === 429) {
+  if (status === 429 || status === 402) {
     return { kind: "limit", reason };
   }
-  if ((typeof info === "string" && unavailableInfos.has(info)) || status === 401 || status === 402 || status === 403 || (status ?? 0) >= 500) {
+  if ((typeof info === "string" && unavailableInfos.has(info)) || status === 401 || status === 403 || (status ?? 0) >= 500) {
     return { kind: "unavailable", reason };
   }
   return { kind: "failed", reason };
@@ -267,7 +267,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
         if (outcome.kind === "failed") {
           listener({ type: "failed", reason: outcome.reason, lostSession: false });
         } else {
-          listener({ type: "unavailable", reason: outcome.reason, until: outcome.kind === "limit" ? limitUntil : null });
+          listener({ type: "unavailable", reason: outcome.reason, until: outcome.kind === "limit" ? limitUntil : null, category: outcome.kind === "limit" ? "limit" : turn.error?.codexErrorInfo === "serverOverloaded" ? "overload" : "problem" });
         }
         return;
       }

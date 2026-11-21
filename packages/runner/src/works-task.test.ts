@@ -220,8 +220,8 @@ describe("a task worker on the runner", () => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(25) });
     const handle = await programs.prompted(1);
-    handle.emit({ type: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000 });
-    expect(await ended(25)).toEqual({ kind: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000, unsent: [] });
+    handle.emit({ type: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000, category: "limit" });
+    expect(await ended(25)).toEqual({ kind: "unavailable", reason: "resource exhausted", until: 1_900_000_000_000, unsent: [], category: "limit" });
     expect(handle.closed).toBe(true);
     expect(works.held()).toEqual([{ ticket: 25, attempt: 1, last: events(25).length, live: false, ended: true }]);
   });

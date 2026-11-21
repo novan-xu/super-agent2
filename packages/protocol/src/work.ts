@@ -83,7 +83,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("settled") }),
   z.object({ kind: z.literal("failed"), failure: WorkFailure, reason: z.string(), report: GeneratedText.optional() }),
   z.object({ kind: z.literal("stopped"), saved: z.boolean(), detail: z.string() }),
-  z.object({ kind: z.literal("unavailable"), reason: z.string(), until: z.number().int().nullable(), unsent: z.array(z.string()).default([]) }),
+  z.object({ kind: z.literal("unavailable"), reason: z.string(), until: z.number().int().nullable(), category: z.enum(["limit", "problem", "overload"]).optional(), unsent: z.array(z.string()).default([]) }),
 ]);
 export type WorkEvent = z.infer<typeof WorkEvent>;
 

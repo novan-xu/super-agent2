@@ -48,6 +48,7 @@ import { bgeSmallZh, modelScorer } from "@super-agent2/routing";
 import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
 import { createInbox } from "./inbox.js";
+import { createHealthNotices } from "./health-notices.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -69,6 +70,7 @@ export interface HubOptions {
   readonly workTicker?: Ticker;
   readonly workSchedule?: (drain: () => void) => void;
   readonly scheduleTicker?: Ticker;
+  readonly healthTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly inboxServiceTokens?: AccessServiceTokens;
@@ -130,6 +132,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let lock: ConfirmationLock | undefined;
   let waiting: Waiting;
   let push: PushService | undefined;
+  let health: ReturnType<typeof createHealthNotices> | undefined;
   let server: HubServer;
   let chains: Chains;
   let schedules: Schedules;
@@ -382,6 +385,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       config.vapid === undefined
         ? undefined
         : createPushService({ database, clock, settings: config.vapid, fetch: options.pushFetch ?? fetch, waiting });
+    health = createHealthNotices({ database, clock, runners, defaults, conversations, push, ticker: options.healthTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
     server = createHubServer({
       ...(config.converterUrl === undefined ? {} : { converterUrl: config.converterUrl }),
       database,
@@ -446,6 +450,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
   } catch (error) {
+    health?.close();
     runners.close();
     database.close();
     throw error;
@@ -500,6 +505,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       attachments,
       address,
       close: async () => {
+        health?.close();
         clearInterval(accessCheck);
         clearInterval(repositoryRefresh);
         schedules.close();
@@ -526,6 +532,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    health?.close();
     runners.close();
     schedules?.close();
     taskTickets.close();

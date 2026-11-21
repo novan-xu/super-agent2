@@ -687,7 +687,7 @@ export function createWorks(options: WorksOptions): Works {
         return;
       case "unavailable": {
         const unsent = work.queue.splice(0).flatMap((prompt) => (prompt.id === undefined ? [] : [prompt.id]));
-        track(end(work, { kind: "unavailable", reason: event.reason, until: event.until, unsent }));
+        track(end(work, { kind: "unavailable", reason: event.reason, until: event.until, unsent, ...(event.category === undefined ? {} : { category: event.category }) }));
         return;
       }
     }

@@ -203,7 +203,7 @@ describe("a worker whose program becomes unavailable", () => {
     emit("pc", ticket.id, 2, { kind: "text", block: "b", delta: "Working on issue 22 with the new endpoint" });
     emit("pc", ticket.id, 2, { kind: "session", session: "claude-session" });
     const until = clock.now() + 3_600_000;
-    emit("pc", ticket.id, 2, limit(until));
+    emit("pc", ticket.id, 2, { kind: "unavailable", reason: "You've hit your limit", until, unsent: [], category: "limit" });
 
     const after = current(ticket.id);
     expect(after).toMatchObject({ state: "working", round: 0, freeRetry: false, engine: "codex", model: "gpt-6.1-sol", effort: "high", machine: "pc", work: { attempt: 3, engine: "codex", state: "preparing" } });
@@ -230,6 +230,7 @@ describe("a worker whose program becomes unavailable", () => {
       { ticket: ticket.id, seq: 1, kind: "switched", at: clock.now(), from: "claude", to: "codex", machine: "pc", model: "gpt-6.1-sol", effort: "high", reason: "You've hit your limit", until: null, owner: false, attempt: 3 },
     ]);
     expect(defaults.unavailable()).toEqual([{ program: "claude", reason: "You've hit your limit", since: clock.now(), until, given: true }]);
+    expect(defaults.healthMarks()).toMatchObject([{ program: "claude", category: "limit" }]);
     expect(tickets.detail(ticket.id)?.switches).toHaveLength(1);
   });
 

@@ -3705,3 +3705,20 @@ Streaming larger files was an alternative, but would require a separate resource
   Requests during a program update wait for its lock, and a recheck reads allowances without initiating an update.
 - **Why:** A report about an unrelated change cannot be mistaken for a completed probe, and the owner can see offline or slow machines in the same turn without interrupting workers.
 - **Other options:** Restart runners, accept the next ordinary report as confirmation, or trigger an automatic update as part of each recheck.
+
+## 2026-11-20 — Machine and provider problem notices
+
+- **Chosen:** Keep a separate repository-free System topic in 代码 and write each problem and recovery to both System topics in the same transaction as its incident state.
+  Send one push at incident start, with a ten-minute grace for disconnected machines and overloaded services.
+- **Why:** The owner can see the same incident in either view, and restarts cannot duplicate a recorded notice.
+  The grace period avoids alerts for brief restarts and transient overloads.
+- **Other options:** A pinned notice line in 代码, a single shared topic in both views, or immediate alerts for disconnects and overloads.
+
+- **Chosen:** Carry provider failure categories from worker adapters and use reason text as a compatibility fallback for older runners and existing marks.
+- **Why:** Explicit categories prevent opaque quota and rate-limit messages from producing unwanted alerts while retaining support during rolling updates.
+- **Other options:** Infer every event from free text, which cannot reliably classify opaque provider errors, or ignore old unclassified marks.
+
+- **Chosen:** Start a new offline grace period at hub startup when no disconnect was recorded, while preserving any previously recorded incident or pending grace period.
+- **Why:** The last runner report is not a heartbeat and may be old even when the machine was connected before the hub stopped.
+  Treating it as a disconnect time would cause false alerts during an ordinary hub restart.
+- **Other options:** Count from the last report, which can be stale, or suppress offline alerts until a machine reconnects once.

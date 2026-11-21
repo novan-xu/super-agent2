@@ -61,6 +61,7 @@ export const MachineReport = z.object({
   user: z.string(),
   slots: z.object({ total: z.number().int().nonnegative(), free: z.number().int().nonnegative() }),
   programs: z.array(ProgramReport),
+  updatingPrograms: z.boolean().optional(),
   allowances: z.array(AllowanceReading).default([]),
   storage: StorageReport.optional(),
   version: Revision.optional(),

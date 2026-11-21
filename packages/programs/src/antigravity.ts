@@ -56,7 +56,7 @@ export function antigravityFailure(reason: string): ProgramEvent {
     return { type: "failed", reason, lostSession: true };
   }
   if (limitWords.test(reason) || accessWords.test(reason)) {
-    return { type: "unavailable", reason, until: null };
+    return { type: "unavailable", reason, until: null, category: /capacity/i.test(reason) ? "overload" : limitWords.test(reason) ? "limit" : "problem" };
   }
   return { type: "failed", reason, lostSession: false };
 }

@@ -766,7 +766,7 @@ describe("the topic stream", () => {
 
     const report = (model: string) => MachineReport.parse({
       hostname: "pc", platform: "darwin", release: "", arch: "", user: "", slots: { total: 1, free: 1 },
-      programs: [{ id: "codex", installed: true, path: null, version: null, models: [{ id: model, efforts: ["high"] }], source: "program", problem: null }],
+      programs: [{ id: "codex", installed: true, path: "codex", version: "1.0.0", models: [{ id: model, efforts: ["high"] }], source: "program", problem: null }],
     });
     const runnerFor = (name: string, model: string) => {
       running.machines.add({ name, accessClientId: `${name}.access` });

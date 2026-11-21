@@ -9,7 +9,7 @@ export type ProgramEvent =
   | { readonly type: "tool.output"; readonly call: string; readonly delta: string }
   | { readonly type: "tool.finished"; readonly call: string; readonly output: string | null; readonly ok: boolean }
   | { readonly type: "turn.finished"; readonly outcome: "completed" | "interrupted" }
-  | { readonly type: "unavailable"; readonly reason: string; readonly until: number | null }
+  | { readonly type: "unavailable"; readonly reason: string; readonly until: number | null; readonly category?: "limit" | "problem" | "overload" }
   | { readonly type: "failed"; readonly reason: string; readonly lostSession: boolean };
 
 export type ProgramListener = (event: ProgramEvent) => void;

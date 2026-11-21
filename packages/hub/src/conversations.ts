@@ -106,6 +106,8 @@ export interface ConversationService {
   handover(source: string, turn: string, destination: HandoverDestination, message?: string, ownerRequested?: boolean): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
+  writeHealthNotice(notice: string): { topics: string[]; entries: string[] };
+  publishHealthNotice(result: { topics: string[]; entries: string[] }): void;
   inbox(topic: string | null, source: string, message: string): { topic: string; entry: string };
   deliver(delivery: Delivery): string;
   writeDelivery(conversation: string, delivery: Delivery): string;
@@ -181,11 +183,11 @@ export interface MemoryBriefing {
 
 type TitleOrigin = "automatic" | "brain" | "owner";
 
-export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean; needsRepository?: boolean; titleOrigin?: TitleOrigin } = {}): string {
+export function storeTopic(database: HubDatabase, now: number, title: string, options: { repository?: string | null; system?: boolean; codeSystem?: boolean; needsRepository?: boolean; titleOrigin?: TitleOrigin } = {}): string {
   const id = randomUUID();
   database.connection
-    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, needs_repository, title_origin) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?)")
-    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null, options.needsRepository === true ? 1 : 0, options.titleOrigin ?? "owner");
+    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, needs_repository, title_origin, code_system) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, title, now, now, options.system === true ? 1 : 0, options.repository ?? null, options.needsRepository === true ? 1 : 0, options.titleOrigin ?? "owner", options.codeSystem === true ? 1 : 0);
   return id;
 }
 
@@ -206,6 +208,7 @@ const ConversationRow = z.object({
   repository: z.string().nullable(),
   needs_repository: z.number().int(),
   system: z.number().int(),
+  code_system: z.number().int(),
   merged_into: z.string().nullable(),
   provider: z.string().nullable(),
   created_at: z.number().int(),
@@ -267,7 +270,7 @@ const SessionRow = z.object({ session: z.string().nullable(), through: z.number(
 const BrainCommandRow = z.object({ conversation_id: z.string(), held: z.number().int(), reported: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int() });
-const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable(), needs_repository: z.number().int(), latest_owner: z.number().nullable() });
+const StreamRow = EntryRow.extend({ stream_seq: z.number().int().positive(), topic_title: z.string(), repository: z.string().nullable(), needs_repository: z.number().int(), system: z.number().int(), code_system: z.number().int(), latest_owner: z.number().nullable() });
 
 function toConversation(row: unknown): Conversation {
   const value = ConversationRow.parse(row);
@@ -278,7 +281,7 @@ function toConversation(row: unknown): Conversation {
     topicState: value.topic_state,
     repository: value.repository,
     ...(value.needs_repository === 1 ? { needsRepository: true } : {}),
-    ...(value.system === 1 ? { system: true } : {}),
+    ...(value.system === 1 || value.code_system === 1 ? { system: true } : {}),
     ...(value.merged_into === null ? {} : { mergedInto: value.merged_into }),
     provider: value.provider,
     createdAt: value.created_at,
@@ -291,6 +294,7 @@ function toStreamEntry(row: unknown): StreamEntry {
   const topic = {
     id: value.conversation_id, title: value.topic_title, repository: value.repository,
     ...(value.needs_repository === 1 ? { needsRepository: true as const } : {}),
+    ...(value.system === 1 || value.code_system === 1 ? { system: true as const } : {}),
   };
   return {
     position: value.stream_seq, topic, entry: toEntry(value),
@@ -429,7 +433,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
   const assignTopicRepository = connection.prepare(`
     UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
-    WHERE id = ? AND system = 0 AND merged_into IS NULL
+    WHERE id = ? AND system = 0 AND code_system = 0 AND merged_into IS NULL
       AND (repository IS NULL OR ? IS NULL OR repository = ? COLLATE NOCASE)
       AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)
       AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
@@ -444,6 +448,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     LEFT JOIN turns t ON t.id = e.turn_id
     WHERE e.kind = 'notice' AND substr(e.prompt, 1, ?) = ? AND (e.taken = 0 OR t.state = 'running') LIMIT 1`);
   const selectSystem = connection.prepare("SELECT * FROM conversations WHERE system = 1");
+  const selectCodeSystem = connection.prepare("SELECT * FROM conversations WHERE code_system = 1");
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
   const selectTurns = connection.prepare("SELECT * FROM turns WHERE conversation_id = ? ORDER BY started_at, rowid");
   const selectRunningTurns = connection.prepare("SELECT * FROM turns WHERE state = 'running' ORDER BY rowid");
@@ -499,7 +504,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     `INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, quote_id, hidden, stream_seq)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`,
   );
-  const streamSelect = `SELECT e.*, ${routingColumns}, c.title AS topic_title, c.repository, c.needs_repository,
+  const streamSelect = `SELECT e.*, ${routingColumns}, c.title AS topic_title, c.repository, c.needs_repository, c.system, c.code_system,
     CASE WHEN ${joinedByRouter} THEN NOT EXISTS (
       SELECT 1 FROM conversation_entries AS later WHERE later.conversation_id = e.conversation_id AND later.seq > e.seq AND later.kind = 'owner'
     ) END AS latest_owner
@@ -1331,6 +1336,21 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     topics,
     tell,
+    writeHealthNotice: (notice) => {
+      const topics = [0, 1].map((code) => {
+        const row = code === 0 ? selectSystem.get() : selectCodeSystem.get();
+        return row === undefined ? storeTopic(options.database, clock.now(), "System", { system: code === 0, codeSystem: code === 1, needsRepository: code === 1 }) : toConversation(row).id;
+      });
+      const entries = topics.map((conversation) => {
+        writeConversation(conversation, { topic_state: "active" });
+        return writeEntry({ conversation, kind: "notice", turn: null, body: { text: notice } });
+      });
+      return { topics, entries };
+    },
+    publishHealthNotice: ({ topics, entries }) => {
+      for (const topic of topics) announce(topic);
+      for (const entry of entries) emitEntry(entry);
+    },
     inbox: (topic, source, message) => {
       const id = topic ?? create(source).id;
       updateConversation(id, { topic_state: "active" });

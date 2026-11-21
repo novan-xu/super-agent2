@@ -66,7 +66,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const archiveTopic = connection.prepare("UPDATE conversations SET topic_state = 'archived', updated_at = ? WHERE id = ? AND topic_state = 'active'");
   const archiveCandidates = connection.prepare(`
     SELECT c.id FROM conversations c
-    WHERE c.topic_state = 'active' AND c.system = 0 AND c.merged_into IS NULL AND max(c.activity_at, c.created_at) <= ?
+    WHERE c.topic_state = 'active' AND c.system = 0 AND c.code_system = 0 AND c.merged_into IS NULL AND max(c.activity_at, c.created_at) <= ?
       AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id AND t.state = 'running')
       AND NOT EXISTS (SELECT 1 FROM conversation_entries e WHERE e.conversation_id = c.id AND e.taken = 0)
       AND NOT EXISTS (SELECT 1 FROM topic_merges m WHERE m.source = c.id OR m.destination = c.id)
