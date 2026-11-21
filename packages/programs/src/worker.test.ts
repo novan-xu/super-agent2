@@ -1,6 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { antigravityAdapter, antigravityFailure, antigravityResult } from "./antigravity.js";
 import { claudeAdapter } from "./claude.js";
@@ -8,7 +12,7 @@ import { codexAdapter } from "./codex.js";
 import { dshAdapter, dshPatch } from "./dsh.js";
 import { invocationOf, npmShimTarget } from "./process.js";
 import type { OpenOptions, ProgramHandle } from "./program.js";
-import type { ProgramSettings } from "./settings.js";
+import { extraMcpVariable, type ProgramSettings } from "./settings.js";
 import { EventLog, fakeAntigravitySource, fakeClaudeSource, fakeCodexSource, fakeDshSource, readLog, writeFake } from "./testing/programs.js";
 import { descendantsOf } from "./tree.js";
 
@@ -119,6 +123,79 @@ describe("finding and stopping a program", () => {
 
 describe("Antigravity opened for a worker", () => {
   const fakeProgram = () => writeFake(directory, "agy.mjs", fakeAntigravitySource);
+
+  it("gives agy an isolated stdio server that uses an environment-only bearer token", async () => {
+    const token = "extra-example-secret";
+    const variable = extraMcpVariable(0);
+    const received: { method: string; authorized: boolean; session: string | undefined }[] = [];
+    const server = createServer(async (request, response) => {
+      if (request.method !== "POST") {
+        response.writeHead(405).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      received.push({ method: message.method, authorized: request.headers.authorization === `Bearer ${token}`, session: request.headers["mcp-session-id"] as string | undefined });
+      if (message.id === undefined) {
+        response.writeHead(202).end();
+        return;
+      }
+      const result = message.method === "initialize"
+        ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "Agent_wring", version: "1" } }
+        : message.method === "tools/list"
+          ? { tools: [{ name: "save_article", description: "Save an article.", inputSchema: { type: "object" } }] }
+          : { content: [{ type: "text", text: "Saved test article." }] };
+      response.writeHead(200, { "Content-Type": "application/json", "Mcp-Session-Id": "test-session" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected an HTTP listening address");
+    const url = `http://127.0.0.1:${address.port}/mcp`;
+    const client = new Client({ name: "test-agy", version: "1" });
+    try {
+      const source = fakeAntigravitySource.replace(
+        "record({ args, cwd: process.cwd() });",
+        `record({ args, tokenInEnvironment: Boolean(process.env[${JSON.stringify(variable)}]) });`,
+      );
+      const log = new EventLog();
+      const adapter = antigravityAdapter(settings(writeFake(directory, "agy-extra.mjs", source), "gemini-3.8-flash", "high"));
+      const handle = track(adapter.open({ ...workerOptions(), extraMcp: [{ name: "Agent_wring", url, token }] }, log.listener));
+      handle.start("hello");
+      await log.ended();
+      const entry = readLog(logFile)[0] as { args: string[]; tokenInEnvironment: boolean };
+      expect(entry.tokenInEnvironment).toBe(true);
+      expect(JSON.stringify(entry.args)).not.toContain(token);
+      const configRoot = entry.args[entry.args.indexOf("--add-dir") + 1]!;
+      const sessionSettings = JSON.parse(entry.args[entry.args.indexOf("--settings") + 1]!);
+      expect(sessionSettings).toEqual({ permissions: { allow: ["mcp(Agent_wring/*)"] } });
+      const path = join(configRoot, ".agents", "mcp_config.json");
+      const config = readFileSync(path, "utf8");
+      expect(config).not.toContain(token);
+      expect(existsSync(join(directory, ".agents"))).toBe(false);
+      const { command, args } = JSON.parse(config).mcpServers.Agent_wring;
+      expect(command).toBe(process.execPath);
+      expect(args.slice(1)).toEqual([url, variable]);
+
+      await client.connect(new StdioClientTransport({ command, args, env: { [variable]: token }, stderr: "pipe" }));
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["save_article"]);
+      expect(await client.callTool({ name: "save_article", arguments: { title: "Test article" } })).toMatchObject({ content: [{ type: "text", text: "Saved test article." }] });
+      expect(received).toEqual([
+        { method: "initialize", authorized: true, session: undefined },
+        { method: "notifications/initialized", authorized: true, session: "test-session" },
+        { method: "tools/list", authorized: true, session: "test-session" },
+        { method: "tools/call", authorized: true, session: "test-session" },
+      ]);
+      await handle.close();
+      expect(existsSync(configRoot)).toBe(false);
+    } finally {
+      await client.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 
   it("runs a turn per message in one process and reports its session, model, tools and text", async () => {
     const adapter = antigravityAdapter(settings(fakeProgram(), "gemini-3.8-flash", "high"));

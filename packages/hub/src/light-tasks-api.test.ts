@@ -20,9 +20,15 @@ const writing = {
 const operation = {
   ...writing,
   title: { en: "Save the video", zh: "保存视频" },
-  task: "Find or ingest the given video, wait for the job, read passages and save an article in Agent_wring.",
+  task: "Find or ingest the given video and wait for the job in Agent_wring.",
   kind: "operation",
   engine: "codex",
+  mode: "agent_wring",
+};
+const article = {
+  ...writing,
+  title: { en: "Write an article from the video", zh: "根据视频写文章" },
+  task: "Search Agent_wring first, read relevant passages and the article guide, and call save_article. Report the saved item.",
   mode: "agent_wring",
 };
 const report = { en: "Done", zh: "已完成" };
@@ -309,6 +315,25 @@ describe("light tasks", () => {
     });
     expect(run.sent.some((message) => message.type === "work.file")).toBe(false);
     expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", report: { zh: expect.stringContaining("Example Video") }, files: [] });
+    expect(await (await get(transferPath)).json()).toMatchObject({ items: [] });
+  });
+
+  it("writes Agent_wring articles on the ordered Antigravity models and hands off to a code engine when the provider is out", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    await hub.chains.idle();
+    const assignment = { task: article.task, extraMcp: [{ name: "Agent_wring", url: "http://worker/mcp", token: "example-token" }] };
+    const starts = () => run.sent.filter((message) => message.type === "work.task").map((message) => message.task);
+    expect(starts()).toMatchObject([{ ...assignment, attempt: 1, engine: "antigravity", model: "gemini-4-hydrogen", effort: "high" }]);
+    run.show(ticket.id, 1, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
+    expect(starts()[1]).toMatchObject({ ...assignment, attempt: 2, engine: "antigravity", model: "gemini-3.8-flash", effort: "high" });
+    run.show(ticket.id, 2, { kind: "unavailable", category: "problem", reason: "Sign in required", until: null, unsent: [] });
+    expect(starts()[2]).toMatchObject({ ...assignment, attempt: 3, engine: "claude" });
+    run.show(ticket.id, 3, { kind: "delivered", text: "Article saved.", report, files: [{ name: "draft.md", size: 5, mediaType: "text/markdown" }] });
+    expect(run.sent.some((message) => message.type === "work.file")).toBe(false);
+    expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", files: [] });
     expect(await (await get(transferPath)).json()).toMatchObject({ items: [] });
   });
 

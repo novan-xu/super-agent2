@@ -27,7 +27,6 @@ export function createLightTasks(database: HubDatabase, tickets: TicketService, 
     tickets.change((writes) => {
       if (engine === "antigravity" && request.kind === "operation") throw new TicketWriteRefused("An operation requires a code engine.");
       if (request.kind === "operation" && request.engine === undefined) throw new TicketWriteRefused("Choose codex or claude for this operation using read_allowance.");
-      if (request.mode === "agent_wring" && request.kind !== "operation") throw new TicketWriteRefused("Agent_wring work is an operation.");
       const ticket = writes.open({
         form: "task", light: request.mode, repository: null, project: request.project, issues: [], title: request.title, summary: request.summary,
         kind: request.kind, conversation: turn.conversation, task: { task: request.task, materials: request.materials },
