@@ -102,11 +102,13 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
   const work = ticket.work;
   switch (phase) {
     case "waiting": {
-      if (ticket.startBlock != null) return { kind: "beginFailed", reason: ticket.startBlock.zh };
       const before = unmetWaits(ticket, known).map((wait) => {
         const found = known.get(wait.ticket);
         return { id: wait.ticket, code: found?.code ?? wait.reference?.split("-")[0] ?? null, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
       });
+      if (before.length === 0 && ticket.startBlock != null) {
+        return { kind: ticket.startBlock.provider ? "providerWaiting" : "beginFailed", reason: ticket.startBlock.zh };
+      }
       return { kind: "waits", before };
     }
     case "beginFailed":

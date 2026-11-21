@@ -392,7 +392,6 @@ export function createHarness(options: HarnessOptions): Harness {
           issues: issues.map((number) => ({ number, difficulty: "mechanical" })),
           reason: { en: "A tiny test task", zh: "很小的测试任务" },
           platform: "any",
-          engine: engine.data === "claude" ? "claude" : "codex",
         },
       ],
     });
@@ -533,8 +532,8 @@ export function createHarness(options: HarnessOptions): Harness {
     }
     const stated = await callTool("choose_defaults", {
       chains: [
-        { ticket: chain.id, kind: "feature", issues: [{ number: nextIssue, difficulty: "standard" }], reason: { en: "A small change on one page", zh: "一个页面上的小改动" }, platform: "any", engine: "claude" },
-        { ticket: deployment, kind: "operation", difficulty: "mechanical", reason: { en: "A deployment by a known recipe", zh: "按现成配方部署" }, platform: "any", engine: "claude" },
+        { ticket: chain.id, kind: "feature", issues: [{ number: nextIssue, difficulty: "standard" }], reason: { en: "A small change on one page", zh: "一个页面上的小改动" }, platform: "any" },
+        { ticket: deployment, kind: "operation", difficulty: "mechanical", reason: { en: "A deployment by a known recipe", zh: "按现成配方部署" }, platform: "any" },
       ],
     });
     steps.push({ step: "choose_defaults", text: stated.text });
@@ -688,7 +687,6 @@ export function createHarness(options: HarnessOptions): Harness {
               issues: issues.map((issue) => ({ number: issue.number, difficulty: "standard" as const })),
               reason: { en: "Scripted work", zh: "脚本工作" },
               platform: "any",
-              engine: plan.engine === "claude" ? "claude" : "codex",
             },
       ]);
       if (!stated.ok) {

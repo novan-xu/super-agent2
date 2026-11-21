@@ -60,7 +60,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run" }),
     revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
     setMachineStorage: (name, storage) => answer(`setMachineStorage ${name}`, storage),
-    setOrder: (order) => answer(`setOrder ${order.join(",")}`, settingsSnapshot({ brain: { linked: true, order: [...order, "deepseek"], providers: [] } })),
+    setOrder: (role, order) => answer(`setOrder ${role} ${order.join(",")}`, settingsSnapshot(role === "brain" ? { brain: { linked: true, order: [...order], providers: [] } } : { workerOrder: [...order] })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
     setAlias: (repository, alias) => answer(`setAlias ${repository} ${alias}`, settingsSnapshot()),
     setPinned: (repository, pinned) => answer(`setPinned ${repository} ${pinned}`, settingsSnapshot()),
@@ -681,8 +681,10 @@ describe("PageController and the history", () => {
     const page = controller(hub);
     await page.loadSettings();
     expect(page.store.getState().settings?.brain.order).toEqual(["gpt", "claude", "deepseek"]);
-    expect(await page.setOrder(["claude", "gpt"])).toBe(true);
-    expect(page.store.getState().settings?.brain.order).toEqual(["claude", "gpt", "deepseek"]);
+    expect(await page.setOrder("brain", ["deepseek", "claude", "gpt"])).toBe(true);
+    expect(page.store.getState().settings?.brain.order).toEqual(["deepseek", "claude", "gpt"]);
+    expect(await page.setOrder("worker", ["claude", "deepseek", "gpt"])).toBe(true);
+    expect(page.store.getState().settings?.workerOrder).toEqual(["claude", "deepseek", "gpt"]);
     expect(await page.addMachine("studio", "macos")).toEqual({ name: "studio", system: "macos", command: "run" });
     expect(hub.calls).toContain("addMachine studio macos");
   });

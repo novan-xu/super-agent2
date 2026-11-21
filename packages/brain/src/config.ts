@@ -1,9 +1,8 @@
-import { type Provider, startingOrder } from "@super-agent2/protocol";
+import { Provider, startingBrainOrder } from "@super-agent2/protocol";
 import { defaultIdleMilliseconds } from "./brain.js";
 import { defaultSoftShare, fallbackInputCapacity } from "./seed.js";
 import { defaultAttachmentsFolder } from "./prompt.js";
 import { z } from "zod";
-import { providerOrder } from "./providers.js";
 
 export interface ProviderSettings {
   readonly program: string;
@@ -34,12 +33,12 @@ const text = z.string().trim().min(1, { error: "must not be empty" });
 
 const Preferred = z
   .string()
-  .default(startingOrder.join(","))
+  .default(startingBrainOrder.join(","))
   .transform((value) => value.split(",").map((item) => item.trim()).filter((item) => item !== ""))
   .pipe(
     z
-      .array(z.enum(["gpt", "claude"], { error: "must list gpt and claude, in the order they answer" }))
-      .min(1, { error: "must name at least one of gpt and claude" }),
+      .array(Provider)
+      .min(1, { error: "must name at least one provider" }),
   );
 
 const positiveInteger = z.string().regex(/^[1-9]\d*$/, { error: "must be a positive whole number" }).transform(Number).pipe(z.number().int().positive());
@@ -83,7 +82,7 @@ export function loadBrainConfig(env: Readonly<Record<string, string | undefined>
       tokenFile: value.BRAIN_TOKEN_FILE,
       workspace: value.BRAIN_WORKSPACE,
       attachments: value.BRAIN_ATTACHMENTS_DIR,
-      order: providerOrder(value.BRAIN_PROVIDERS, "deepseek"),
+      order: [...new Set<Provider>([...value.BRAIN_PROVIDERS, "deepseek"])],
       maximumOpen: value.BRAIN_MAX_OPEN,
       idleMilliseconds: value.BRAIN_IDLE_MS,
       seedSoftShare: value.BRAIN_SEED_SOFT_SHARE,

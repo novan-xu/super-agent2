@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AllowanceState } from "./allowance.js";
+import { type EngineContext, noEngineContext } from "./providers.js";
 import { MachinePlatform, type MachineStatus, ProgramId, ProgramModel } from "./runner.js";
 import {
   ChosenBy,
@@ -74,33 +74,10 @@ export const codeEngineChoices = ["codex", "claude"] as const;
 export const CodeEngineChoice = z.enum(codeEngineChoices);
 export type CodeEngineChoice = z.infer<typeof CodeEngineChoice>;
 
-export type AllowanceStates = Readonly<Record<"codex" | "claude", AllowanceState>>;
-
-export interface EngineContext {
-  readonly out: ReadonlySet<ProgramId>;
-  readonly order: readonly ProgramId[];
-  readonly antigravityOut?: ReadonlySet<string>;
-}
-
-export const noEngineContext: EngineContext = { out: new Set(), order: ["claude", "codex", "dsh"] };
-
-function proseFallback(allowance: AllowanceStates, context: EngineContext): ProgramId {
-  const free = context.order.find((engine) => engine !== "antigravity" && !context.out.has(engine) && !((engine === "codex" || engine === "claude") && allowance[engine] === "exhausted"));
-  return free ?? "antigravity";
-}
-
-export function defaultEngine(kind: TicketKind, brainEngine: ProgramId | null, allowance: AllowanceStates, context: EngineContext = noEngineContext): ProgramId | null {
-  if (kind === "writing") {
-    return context.out.has("antigravity") ? proseFallback(allowance, context) : "antigravity";
-  }
-  if (allowance.codex === "exhausted" && allowance.claude === "exhausted") {
-    return context.out.has("dsh") ? null : "dsh";
-  }
-  if (brainEngine !== "codex" && brainEngine !== "claude") {
-    return null;
-  }
-  const other = brainEngine === "codex" ? "claude" : "codex";
-  return allowance[brainEngine] === "exhausted" && allowance[other] !== "exhausted" ? other : brainEngine;
+export function defaultEngine(kind: TicketKind, context: EngineContext = noEngineContext): ProgramId | null {
+  if (kind === "writing" && !context.out.has("antigravity")) return "antigravity";
+  const first = context.order.find((engine) => engine !== "antigravity" && !context.out.has(engine));
+  return first ?? (kind === "writing" ? "antigravity" : null);
 }
 
 export const EngineOffer = z.object({ engine: ProgramId, models: z.array(ProgramModel) });
@@ -160,7 +137,7 @@ export function defaultMachine(platform: Platform, engine: ProgramId, machines: 
   return candidates[0]?.name ?? null;
 }
 
-export const missingParts = ["defaults", "machine", "engine", "model", "effort"] as const;
+export const missingParts = ["defaults", "provider", "machine", "engine", "model", "effort"] as const;
 export const MissingPart = z.enum(missingParts);
 export type MissingPart = z.infer<typeof MissingPart>;
 
@@ -179,19 +156,18 @@ export interface StartInput {
   readonly difficulty: Difficulty | null;
   readonly platform: Platform | null;
   readonly requiredMachine?: string | null;
-  readonly brainEngine: ProgramId | null;
   readonly stated: boolean;
   readonly owner: OwnerChoice;
 }
 
-export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], allowance: AllowanceStates, context: EngineContext = noEngineContext): StartChoice {
+export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], context: EngineContext = noEngineContext): StartChoice {
   const { owner } = input;
   const required = input.requiredMachine ?? null;
   const available = table.antigravity.filter((choice) => !context.antigravityOut?.has(choice.model));
   const startContext = input.kind === "writing" && available.length === 0
     ? { ...context, out: new Set([...context.out, "antigravity" as const]) }
     : context;
-  const automatic = input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance, startContext) : null;
+  const automatic = input.stated || input.kind === "writing" ? defaultEngine(input.kind, startContext) : null;
   const explicitAntigravity = input.kind === "writing" && table.antigravity.some((choice) => choice.model === owner.model);
   const engine = owner.engine ?? (explicitAntigravity ? "antigravity" : automatic);
   let fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
@@ -211,6 +187,8 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   const missing = new Set<MissingPart>();
   if (!input.stated) {
     missing.add("defaults");
+  } else if (engine === null) {
+    missing.add("provider");
   }
   const chosen = machine === null ? undefined : machines.find((entry) => entry.name === machine);
   if (machine === null) {
@@ -250,6 +228,10 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
 
 export function isComplete(choice: StartChoice): boolean {
   return choice.missing.length === 0 && choice.machine !== null && choice.engine !== null && choice.model !== null && choice.effort !== null;
+}
+
+export function waitsForProvider(choice: StartChoice): boolean {
+  return choice.missing.length === 1 && choice.missing[0] === "provider";
 }
 
 export const ChoiceChange = z.object({

@@ -470,6 +470,8 @@ describe("the other settings", () => {
       { account: "nuofan-island", configured: true },
     ]);
     expect(snapshot.brain).toEqual({ linked: false, order: ["claude", "gpt", "deepseek"], providers: [] });
+    expect(snapshot.workerOrder).toEqual(["gpt", "claude", "deepseek"]);
+    expect(running.database.connection.prepare("SELECT key FROM hub_settings WHERE key IN ('brain_order', 'worker_order')").all()).toEqual([]);
     expect(snapshot.repositories).toEqual([{ repository: "novan-xu/super-agent2", account: "novan-xu", chosen: false, pinned: false }]);
     expect((await fetch(`${base(running)}/api/settings`)).status).toBe(403);
   });
@@ -480,14 +482,41 @@ describe("the other settings", () => {
     const link = running.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
     link.receive({ type: "hello", protocol: protocolVersion, running: [] });
     expect(sent.filter((message) => message.type === "order")).toEqual([]);
-    expect((await owner(running, "/api/brain/order", "PUT", { order: ["gpt", "gpt"] })).status).toBe(400);
-    const response = await owner(running, "/api/brain/order", "PUT", { order: ["claude", "gpt"] });
-    expect(SettingsSnapshot.parse(await response.json()).brain.order).toEqual(["claude", "gpt", "deepseek"]);
-    expect(sent.filter((message) => message.type === "order")).toEqual([{ type: "order", order: ["claude", "gpt", "deepseek"] }]);
+    expect((await owner(running, "/api/brain/order", "PUT", { order: ["gpt", "gpt", "deepseek"] })).status).toBe(400);
+    const response = await owner(running, "/api/brain/order", "PUT", { order: ["deepseek", "claude", "gpt"] });
+    expect(SettingsSnapshot.parse(await response.json())).toMatchObject({
+      brain: { order: ["deepseek", "claude", "gpt"] }, workerOrder: ["gpt", "claude", "deepseek"],
+    });
+    expect(sent.filter((message) => message.type === "order")).toEqual([{ type: "order", order: ["deepseek", "claude", "gpt"] }]);
     link.detach();
     const again: HubToBrain[] = [];
     running.conversations.attach({ send: (message) => again.push(message), close: () => undefined }).receive({ type: "hello", protocol: protocolVersion, running: [] });
-    expect(again.filter((message) => message.type === "order")).toEqual([{ type: "order", order: ["claude", "gpt", "deepseek"] }]);
+    expect(again.filter((message) => message.type === "order")).toEqual([{ type: "order", order: ["deepseek", "claude", "gpt"] }]);
+  });
+
+  it("keeps a legacy brain order independent of worker settings across restarts", async () => {
+    const running = await start();
+    running.database.connection.prepare("INSERT INTO hub_settings (key, value, updated_at) VALUES ('brain_order', ?, ?)").run(JSON.stringify(["gpt", "claude"]), clock.now());
+    const sent: HubToBrain[] = [];
+    running.conversations.attach({ send: (message) => sent.push(message), close: () => undefined }).receive({ type: "hello", protocol: protocolVersion, running: [] });
+    expect(sent.filter((message) => message.type === "order")).toEqual([{ type: "order", order: ["gpt", "claude", "deepseek"] }]);
+    expect(running.settings.snapshot().workerOrder).toEqual(["gpt", "claude", "deepseek"]);
+    expect((await owner(running, "/api/workers/order", "PUT", { order: ["deepseek", "gpt"] })).status).toBe(400);
+    const change = { order: ["deepseek", "gpt", "claude"] };
+    expect((await owner(running, "/api/workers/order", "PUT", change, { origin: "https://untrusted.example" })).status).toBe(403);
+    const response = await owner(running, "/api/workers/order", "PUT", change);
+    expect(SettingsSnapshot.parse(await response.json())).toMatchObject({
+      brain: { order: ["gpt", "claude", "deepseek"] }, workerOrder: change.order,
+    });
+    expect(sent.filter((message) => message.type === "order")).toHaveLength(1);
+    expect(running.defaults.order(false)).toEqual(["dsh", "codex", "claude"]);
+    await running.close();
+    const restarted = await start();
+    const snapshot = await fetch(`${base(restarted)}/api/settings`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    expect(SettingsSnapshot.parse(await snapshot.json())).toMatchObject({
+      brain: { order: ["gpt", "claude", "deepseek"] }, workerOrder: change.order,
+    });
+    expect(restarted.defaults.order(false)).toEqual(["dsh", "codex", "claude"]);
   });
 
   it("shows what the brain says about its providers while it is linked", async () => {

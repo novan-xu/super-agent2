@@ -8,6 +8,9 @@ export const providers = ["gpt", "claude", "deepseek"] as const;
 export const Provider = z.enum(providers);
 export type Provider = z.infer<typeof Provider>;
 
+export const startingBrainOrder: readonly Provider[] = ["claude", "gpt", "deepseek"];
+export const startingWorkerOrder: readonly Provider[] = ["gpt", "claude", "deepseek"];
+
 export const ConversationId = z.string().regex(/^[0-9A-Za-z-]{1,64}$/);
 export const MessageId = z.string().min(1).max(256);
 

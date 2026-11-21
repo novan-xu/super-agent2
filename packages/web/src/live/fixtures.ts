@@ -214,6 +214,7 @@ export function settingsSnapshot(overrides: Partial<SettingsSnapshot> = {}): Set
       { account: "nuofan-island", configured: false },
     ],
     brain: { linked: true, order: ["gpt", "claude", "deepseek"], providers: [] },
+    workerOrder: ["gpt", "claude", "deepseek"],
     table: startingEngineTable,
     subscriptions: [],
     unavailable: [],

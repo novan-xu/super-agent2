@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type AllowanceStates,
   type MachineChoice,
   type OwnerChoice,
   resolveStart,
@@ -32,7 +31,6 @@ const made: Chains[] = [];
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "hub-chains-"));
   clock = new TestClock();
-  allowance = { codex: "available", claude: "available" };
 });
 
 afterEach(async () => {
@@ -72,25 +70,21 @@ const testMachines: MachineChoice[] = [
   { name: "mini", platform: "darwin", free: 1, engines: [{ engine: "codex", models: [{ id: "gpt-6.1-sol", efforts: ["high"] }] }] },
 ];
 
-let allowance: AllowanceStates = { codex: "available", claude: "available" };
-
 function testDefaults(lenient: boolean, machines = testMachines): ChainDefaults {
   return {
     resolve: (ticket: Ticket, owner: OwnerChoice = ticket.ownerChoice) =>
       resolveStart(
         lenient
-          ? { kind: ticket.kind, difficulty: ticket.difficulty ?? "standard", platform: ticket.platform ?? "any", brainEngine: ticket.brainEngine ?? "codex", stated: true, owner }
+          ? { kind: ticket.kind, difficulty: ticket.difficulty ?? "standard", platform: ticket.platform ?? "any", stated: true, owner }
           : {
               kind: ticket.kind,
               difficulty: ticket.difficulty,
               platform: ticket.platform,
-              brainEngine: ticket.brainEngine,
               stated: ticket.difficultyReason !== null && ticket.difficulty !== null && ticket.platform !== null,
               owner,
             },
         startingEngineTable,
         machines,
-        allowance,
       ),
     machines: () => machines,
     machinesFor: () => machines,
@@ -488,7 +482,7 @@ describe("an incomplete automatic start", () => {
     const topic = storeTopic(opened[0]!, clock.now(), "Test");
     const ticket = first.tickets.open({ form: "task", light: "transfer", task: { task: "Do it", materials: [] }, repository: null, issues: [], title, summary: title, kind: "operation", conversation: topic });
     first.tickets.change((writes) => {
-      writes.state(ticket.id, { kind: "operation", difficulty: "standard", difficultyReason: title, platform: "macos", brainEngine: "codex" });
+      writes.state(ticket.id, { kind: "operation", difficulty: "standard", difficultyReason: title, platform: "macos" });
       writes.ownerChoice(ticket.id, { machine: null, engine: "dsh", model: null, effort: null });
       writes.move(ticket.id, "waiting");
     });

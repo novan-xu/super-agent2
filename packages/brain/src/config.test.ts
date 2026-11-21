@@ -27,9 +27,11 @@ describe("loadBrainConfig", () => {
     });
   });
 
-  it("takes the order of GPT and Claude from the configuration and keeps DeepSeek last", () => {
+  it("honors the configured order and appends DeepSeek to older two-provider lists", () => {
     const result = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "gpt, claude" });
     expect(result.ok && result.config.order).toEqual(["gpt", "claude", "deepseek"]);
+    const reordered = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "deepseek, claude, gpt" });
+    expect(reordered.ok && reordered.config.order).toEqual(["deepseek", "claude", "gpt"]);
   });
 
   it("reads lifecycle and model capacity overrides", () => {
@@ -38,9 +40,9 @@ describe("loadBrainConfig", () => {
     expect(loadBrainConfig({ ...valid, BRAIN_MAX_OPEN: "0", BRAIN_SEED_SOFT_SHARE: "2", BRAIN_CLAUDE_INPUT_CAPACITY: "1e10" })).toMatchObject({ ok: false });
   });
 
-  it("refuses DeepSeek in the order, an unknown provider and a missing hub address, naming each", () => {
-    const deepseek = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "deepseek" });
-    expect(deepseek.ok).toBe(false);
+  it("refuses an unknown provider or a missing hub address", () => {
+    const unknown = loadBrainConfig({ ...valid, BRAIN_PROVIDERS: "gemini" });
+    expect(unknown.ok).toBe(false);
     const missing = loadBrainConfig({ BRAIN_TOKEN_FILE: "x", BRAIN_WORKSPACE: "y" });
     expect(missing.ok ? [] : missing.problems.map((problem) => problem.split(" ")[0])).toEqual(["BRAIN_HUB_URL"]);
     const ftp = loadBrainConfig({ ...valid, BRAIN_HUB_URL: "ftp://hub" });
