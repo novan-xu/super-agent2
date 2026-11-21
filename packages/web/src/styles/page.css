@@ -399,7 +399,7 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .fv-header button, .fv-prev, .fv-next { font-size: 1.8rem; cursor: pointer; }
 .fv-header .fv-toggle { font-size: inherit; white-space: nowrap; }
 .fv-body { min-height: 0; flex: 1; overflow: auto; display: flex; justify-content: center; align-items: safe center; }
-.fv-html { width: 100%; height: 100%; border: 0; background: white; }
+.fv-html { width: 100%; height: 100%; border: 0; color-scheme: light dark; }
 .fv-image { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
 .fv-image.actual { max-width: none; max-height: none; cursor: zoom-out; }
 .fv-body video { max-width: 100%; max-height: 100%; }
