@@ -57,6 +57,7 @@ describe("the brain's provider order", () => {
     expect(brain.status()).toEqual({
       type: "providers",
       order: ["gpt", "claude", "deepseek"],
+      model: "gpt-model",
       providers: [
         { provider: "gpt", model: "gpt-model", effort: "high", available: true, until: null },
         { provider: "claude", model: "claude-model", effort: "high", available: true, until: null },
@@ -71,6 +72,30 @@ describe("the brain's provider order", () => {
     expect(status[0]).toMatchObject({ providers: [{ provider: "gpt", available: false, until: clock.now() + 60_000 }, { available: true }, { available: true }] });
     brain.receive({ type: "order", order: ["claude", "gpt", "nobody" as Provider] });
     expect(brain.status().order).toEqual(["claude", "gpt"]);
+    await brain.close();
+  });
+
+  it("reports the newest active model, provider fallback, and the idle model", async () => {
+    const { brain, sent, programs, clock } = setup(["gpt", "claude", "deepseek"]);
+    const shown = () => sent.findLast((message) => message.type === "providers")?.model;
+    const input = (conversation: string) => brain.receive({ type: "input", conversation, input: { id: conversation, source: "owner", text: "hello", attachments: [] } });
+    input("first");
+    const first = (await programs.gpt.next()).handle;
+    first.emit({ type: "model", model: "gpt-actual-first", effort: null });
+    expect(shown()).toBe("gpt-actual-first");
+    input("second");
+    const second = (await programs.gpt.next()).handle;
+    second.emit({ type: "model", model: "gpt-actual-second", effort: null });
+    expect(shown()).toBe("gpt-actual-second");
+    second.finish();
+    expect(shown()).toBe("gpt-actual-first");
+    first.emit({ type: "unavailable", reason: "limit", until: clock.now() + 60_000 });
+    const fallback = (await programs.claude.next()).handle;
+    expect(shown()).toBe("claude-model");
+    fallback.emit({ type: "model", model: "claude-actual", effort: null });
+    expect(shown()).toBe("claude-actual");
+    fallback.finish();
+    expect(shown()).toBe("claude-model");
     await brain.close();
   });
 });

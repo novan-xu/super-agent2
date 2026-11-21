@@ -324,7 +324,7 @@ export function App() {
   );
   const known = useMemo(() => new Map(page.tickets.open.map((ticket) => [ticket.id, ticket])), [page.tickets.open]);
 
-  const model = page.current?.turns.at(-1)?.model ?? null;
+  const { linked, model } = page.brain;
   const conversationTabs = <ConversationTabs scope={scope} transfer={inTransfer} repositories={repositories} navigate={navigate} />;
 
   return (
@@ -335,7 +335,7 @@ export function App() {
       destinationOf={destinationOf}
       hrefOf={hrefOf}
       status={page.status}
-      linked={page.linked}
+      linked={linked}
       model={model}
       fill={inConversation || inTransfer || inWorkbench}
       subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
@@ -361,7 +361,7 @@ export function App() {
           stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
           list={page.list}
           status={page.status}
-          linked={page.linked}
+          linked={linked}
           model={model}
           hrefOf={conversationHref}
           open={openConversation}
@@ -398,7 +398,7 @@ export function App() {
           panel={workTicket === null ? <ConversationView
             compact conversation={conversationId} scope={scope} state={currentTopic}
             stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
-            list={page.list} status={page.status} linked={page.linked} model={model}
+            list={page.list} status={page.status} linked={linked} model={model}
             hrefOf={conversationHref} open={openConversation} streamHref={pagePath(streamRoute)} openStream={openStream}
             send={send} previewStream={previewStream} stop={stop} topicActions={topicActions} loadOlder={() => controller.loadOlderStream()} now={now}
           /> : <TicketView detail={page.detail} known={known} actions={ticketActions} origin="workbench"

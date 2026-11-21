@@ -83,6 +83,7 @@ A worker does the same, decided by the hub.
 
 - The owner talks to the brain in one continuous stream.
   The hub records owner messages on arrival and appends answers as they arrive from parallel topics.
+  The sidebar shows the model selected most recently among active turns and the next turn's model when the brain is idle.
   A routed message appears in the stream once its topic is known.
   A topic view shows the messages and work for that topic alone.
 - Each topic has its own long-lived program session.

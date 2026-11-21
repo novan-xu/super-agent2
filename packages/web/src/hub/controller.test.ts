@@ -1,4 +1,4 @@
-import type { CommandRecord, Conversation, OwnerEntry, Ticket, TicketHistory } from "@super-agent2/protocol";
+import type { CommandRecord, Conversation, ConversationList, OwnerEntry, Ticket, TicketHistory } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { Answer, Failure, HubApi } from "./api.js";
 import { holdCard, settingsSnapshot, startCard, ticket, workEvent } from "../live/fixtures.js";
@@ -23,7 +23,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
   return {
     calls,
     rearrange: () => answer("rearrange", { conversation }),
-    conversations: () => answer("conversations", { brain: { linked: true }, conversations: [] }),
+    conversations: () => answer("conversations", { brain: { linked: true, model: null }, conversations: [] }),
     detail: (id) => answer(`detail ${id}`, { conversation, turns: [], entries: [] }),
     answerQuestions: (id) => answer(`questions ${id}`, { entry }),
     send: (id, text) => answer(`send ${id} ${text}`, { entry }),
@@ -82,6 +82,16 @@ function controller(hub: HubApi, failures: Failure[] = []): PageController {
 }
 
 describe("PageController", () => {
+  it("preserves a live brain model update that arrives during a list refresh", async () => {
+    const pending = Promise.withResolvers<Answer<ConversationList>>();
+    const page = controller(api({ conversations: () => pending.promise }));
+    const refresh = page.refresh();
+    page.store.dispatch({ type: "server", message: { type: "brain", brain: { linked: true, model: "current-model" } } });
+    pending.resolve({ ok: true, value: { brain: { linked: true, model: "earlier-model" }, conversations: [conversation] } });
+    await refresh;
+    expect(page.store.getState()).toMatchObject({ brain: { linked: true, model: "current-model" }, list: [conversation] });
+  });
+
   it("refreshes a scoped stream when a topic moves into or out of it", () => {
     for (const scope of [{ kind: "daily" } as const, { kind: "repository", repository: "owner/project" } as const]) {
       let events: SocketEvents | undefined;
@@ -94,7 +104,7 @@ describe("PageController", () => {
         }, schedule: () => () => undefined },
         onFailure: () => undefined,
       });
-      page.store.dispatch({ type: "list", list: { brain: { linked: true }, conversations: [conversation] } });
+      page.store.dispatch({ type: "list", list: { brain: { linked: true, model: null }, conversations: [conversation] } });
       page.start();
       page.open(null, true, scope);
       events?.message(JSON.stringify({ type: "conversation", conversation: { ...conversation, repository: "owner/project", updatedAt: 2 } }));

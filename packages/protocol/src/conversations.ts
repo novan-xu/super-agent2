@@ -129,6 +129,7 @@ export type ConversationEntry = z.infer<typeof ConversationEntry>;
 
 export const BrainStatus = z.object({
   linked: z.boolean(),
+  model: z.string().min(1).nullable().default(null),
 });
 export type BrainStatus = z.infer<typeof BrainStatus>;
 

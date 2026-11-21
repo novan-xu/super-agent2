@@ -5,7 +5,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
-import { brainLinkPath, brainToolsPath, ConversationResponse, ConversationState, EntryResponse, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
+import { brainLinkPath, brainToolsPath, ConversationList, ConversationResponse, ConversationState, EntryResponse, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -308,6 +308,34 @@ describe("conversations for the page", () => {
       ["text", null],
     ]);
     expect(running.conversations.detail(watched.id)?.entries[1]).toMatchObject({ text: "你好！" });
+  });
+
+  it("publishes the global brain model to both the conversation list and unwatched sockets", async () => {
+    const running = await start();
+    const topic = running.conversations.create();
+    const { socket, received } = await pageSocket(running);
+    const brain = connect(running).link;
+    const hasModel = (model: string | null, linked = true) => received.some((event) => event.type === "brain" && event.brain.model === model && event.brain.linked === linked);
+    await until(() => hasModel(null), socket);
+    const turn = { conversation: topic.id, turn: "model-turn" };
+    brain.receive({ type: "turn.started", ...turn, provider: "gpt", model: "gpt-started", inputs: [] });
+    await until(() => hasModel("gpt-started"), socket);
+    brain.receive({ type: "provider.changed", ...turn, from: "gpt", to: "claude", model: "claude-fallback", reason: "quota" });
+    await until(() => hasModel("claude-fallback"), socket);
+
+    brain.receive({ type: "providers", model: "claude-actual", order: ["claude"], providers: [] });
+    await until(() => hasModel("claude-actual"), socket);
+    const response = await fetch(`${base(running)}/api/conversations`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    expect(ConversationList.parse(await response.json()).brain).toEqual({ linked: true, model: "claude-actual" });
+    const late = await pageSocket(running);
+    await until(() => late.received.some((event) => event.type === "brain" && event.brain.model === "claude-actual"), late.socket);
+
+    const beforeDetach = received.length;
+    brain.detach();
+    await until(() => received.slice(beforeDetach).some((event) => event.type === "brain" && !event.brain.linked && event.brain.model === null), socket);
+    expect(running.conversations.brainStatus()).toEqual({ linked: false, model: null });
+    connect(running);
+    expect(running.conversations.brainStatus()).toEqual({ linked: true, model: null });
   });
 
   it("delivers a result as an entry the page watches and an input for the brain, and keeps it in the history for another model", async () => {

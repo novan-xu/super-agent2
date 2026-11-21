@@ -161,11 +161,12 @@ export class PageController {
   }
 
   async refresh(): Promise<void> {
-    const known = this.store.getState().list;
+    const { list: known, brain } = this.store.getState();
     const list = await this.options.api.conversations();
     if (list.ok) {
-      const previous = this.store.getState().list;
-      this.store.dispatch({ type: "list", list: list.value, ...(list.value.repositories === undefined ? {} : { known }) });
+      const current = this.store.getState();
+      const previous = current.list;
+      this.store.dispatch({ type: "list", list: list.value, preserveBrain: current.brain !== brain, ...(list.value.repositories === undefined ? {} : { known }) });
       this.recheckStream(previous, this.store.getState().list);
     }
     if (this.opened !== null) {

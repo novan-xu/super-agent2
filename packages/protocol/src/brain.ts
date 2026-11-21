@@ -199,6 +199,7 @@ export const BrainProviders = z.object({
   type: z.literal("providers"),
   order: z.array(Provider),
   providers: z.array(ProviderState),
+  model: z.string().min(1).nullable().optional(),
 });
 export type BrainProviders = z.infer<typeof BrainProviders>;
 

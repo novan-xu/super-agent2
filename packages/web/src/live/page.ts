@@ -1,4 +1,4 @@
-import type { AllowanceReport, Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
+import type { AllowanceReport, BrainStatus, Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
@@ -11,7 +11,7 @@ import { initialWaiting, type WaitingAction, type WaitingState, waitingReducer }
 
 export interface PageState {
   readonly status: SocketStatus;
-  readonly linked: boolean;
+  readonly brain: BrainStatus;
   readonly list: readonly Conversation[];
   readonly repositories: readonly string[];
   readonly current: ConversationState | null;
@@ -31,7 +31,7 @@ export interface PageState {
 export type PageAction =
   | { readonly type: "status"; readonly status: SocketStatus }
   | { readonly type: "server"; readonly message: ServerMessage }
-  | { readonly type: "list"; readonly list: ConversationList; readonly known?: readonly Conversation[] }
+  | { readonly type: "list"; readonly list: ConversationList; readonly known?: readonly Conversation[]; readonly preserveBrain?: boolean }
   | { readonly type: "detail"; readonly detail: ConversationDetail; readonly requested?: string }
   | { readonly type: "open"; readonly conversation: string | null }
   | { readonly type: "own"; readonly entry: ConversationEntry }
@@ -51,7 +51,11 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", linked: false, list: [], repositories: [], current: null, topicRedirect: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
+export const initialPage: PageState = { status: "connecting", brain: { linked: false, model: null }, list: [], repositories: [], current: null, topicRedirect: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
+
+function updatedBrain(current: BrainStatus, update: BrainStatus): BrainStatus {
+  return current.linked === update.linked && current.model === update.model ? current : update;
+}
 
 function withDetail(state: PageState, detail: DetailState | null): PageState {
   return detail === state.detail ? state : { ...state, detail };
@@ -73,7 +77,8 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
       const known = new Set(action.known);
       const present = new Set(action.list.conversations.map((topic) => topic.id));
       const retained = state.list.filter((topic) => present.has(topic.id) || !known.has(topic));
-      return { ...state, linked: action.list.brain.linked, list: mergeConversations(retained, action.list.conversations), repositories: action.list.repositories ?? [] };
+      const brain = action.preserveBrain ? state.brain : updatedBrain(state.brain, action.list.brain);
+      return { ...state, brain, list: mergeConversations(retained, action.list.conversations), repositories: action.list.repositories ?? [] };
     }
     case "detail": {
       const list = upsertConversation(state.list, action.detail.conversation);
@@ -167,7 +172,8 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         return { ...state, memory: receiveMemories(message) };
       }
       if (message.type === "brain") {
-        return message.brain.linked === state.linked ? state : { ...state, linked: message.brain.linked };
+        const brain = updatedBrain(state.brain, message.brain);
+        return brain === state.brain ? state : { ...state, brain };
       }
       const list = message.type === "conversation" ? upsertConversation(state.list, message.conversation) : state.list;
       const stream = state.streaming ? receiveStream(state.stream, message) : state.stream;

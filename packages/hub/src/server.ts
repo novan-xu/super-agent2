@@ -1297,7 +1297,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return false;
       }
       sendJson(response, 200, {
-        brain: { linked: conversations.linked() }, conversations: conversations.list(limit),
+        brain: conversations.brainStatus(), conversations: conversations.list(limit),
         ...(all ? { repositories: options.repositories?.conversationNames() ?? [] } : {}),
       });
       return true;
@@ -1800,6 +1800,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
     });
     send({ type: "hello", protocol: protocolVersion, identity });
+    if (options.conversations !== undefined) send({ type: "brain", brain: options.conversations.brainStatus() });
     if (options.defaults !== undefined) send({ type: "allowance", allowance: allowanceSnapshot(options.defaults) });
     if (options.waiting !== undefined) {
       send({ type: "waiting", cards: options.waiting.cards() });
