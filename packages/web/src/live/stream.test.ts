@@ -1,4 +1,4 @@
-import type { ConversationEntry, StreamEntry, TextEntry, Turn } from "@super-agent2/protocol";
+import type { ConversationEntry, QuestionEntry, StreamEntry, TextEntry, Turn } from "@super-agent2/protocol";
 import { describe, expect, it } from "vitest";
 import type { ConversationState } from "./conversation.js";
 import { combinedStreamItems, streamItems } from "./stream.js";
@@ -22,6 +22,10 @@ function text(seq: number, time: number, turnId = "t1"): TextEntry {
 
 function tool(seq: number, time: number, state: "running" | "done" = "done"): ConversationEntry {
   return { id: `k${seq}`, conversation: id, seq, at: time, kind: "tool", turn: "t1", name: "run", input: "ls", output: "", state };
+}
+
+function question(seq: number, time: number, answer: QuestionEntry["answer"] = null): QuestionEntry {
+  return { id: `q${seq}`, conversation: id, seq, at: time, kind: "question", turn: "t1", questions: [{ id: "q", prompt: "选择", required: true, multiple: false, options: [{ id: "a", label: "甲" }, { id: "b", label: "乙" }] }], answer };
 }
 
 function state(entries: ConversationEntry[], turns: Turn[], working = false): ConversationState {
@@ -81,6 +85,17 @@ describe("streamItems", () => {
   it("ignores hidden tools when deciding which text needs a header", () => {
     const items = streamItems(state([tool(1, at(17, 9)), text(2, at(17, 9)), tool(3, at(17, 9)), text(4, at(17, 9)), text(5, at(17, 9), "t2")], [turn()]), now);
     expect(items.filter((item) => item.kind === "entry").map((item) => [item.key, item.lead])).toEqual([["x2", true], ["x4", false], ["x5", true]]);
+  });
+
+  it("hides answered questions without losing turn endings, grouping or day separators", () => {
+    const time = at(17, 9);
+    const entries = [question(1, at(16, 9), { kind: "message", text: "自选" }), text(2, time), question(3, time, { kind: "card", answers: [{ question: "q", options: ["a"], text: "" }] }), text(4, time), question(5, time), question(6, time, { kind: "message", text: "自选" }), owner(7, at(17, 11))];
+    const turns = [turn({ state: "interrupted" })];
+    const topic = state(entries, turns);
+    for (const items of [streamItems(topic, now), combinedStreamItems(entries, turns, now)]) {
+      expect(items.map((item) => item.key)).toEqual(["day-x2", "x2", "x4", "q5", "ended-t1", "o7"]);
+      expect(items.find((item) => item.key === "x4")).toMatchObject({ lead: false });
+    }
   });
 });
 
@@ -155,9 +170,9 @@ it("keeps the history cursor when resuming and removes live statuses for turns t
 });
 
 it("replays an unanswered card after reconnect so its answer is not missed", () => {
-  const question: ConversationEntry = { id: "q1", conversation: id, seq: 1, at: now, kind: "question", turn: "t1", questions: [{ id: "q", prompt: "选择", required: true, multiple: false, options: [{ id: "a", label: "甲" }, { id: "b", label: "乙" }] }], answer: null };
-  const page = receiveStream(initialTopicStream, { type: "stream.page", entries: [{ position: 5, entry: question, topic: { id, title: "", repository: null } }], turns: [], before: null });
+  const card = question(1, now);
+  const page = receiveStream(initialTopicStream, { type: "stream.page", entries: [{ position: 5, entry: card, topic: { id, title: "", repository: null } }], turns: [], before: null });
   expect(resumeStream(page)).toBe(4);
-  const answered = receiveStream(page, { type: "stream.entry", position: 5, entry: { ...question, answer: { kind: "message", text: "自选" } }, topic: { id, title: "", repository: null } });
+  const answered = receiveStream(page, { type: "stream.entry", position: 5, entry: { ...card, answer: { kind: "message", text: "自选" } }, topic: { id, title: "", repository: null } });
   expect(resumeStream(answered)).toBe(5);
 });

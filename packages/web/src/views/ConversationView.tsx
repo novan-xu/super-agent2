@@ -438,6 +438,7 @@ export function TopicStream({ streamKey, focusEntry, state, stream, scope, list,
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const focused = useRef<string | undefined>(undefined);
+  const [submittedQuestions, setSubmittedQuestions] = useState<ReadonlySet<string>>(() => new Set());
   const current = state?.conversation;
   const topics = useMemo(() => {
     const found = new Map(stream?.entries.map(({ topic }) => [topic.id, topic]));
@@ -460,14 +461,14 @@ export function TopicStream({ streamKey, focusEntry, state, stream, scope, list,
   const olderOwners = useMemo(() => new Set(stream?.entries.flatMap(({ entry, latestOwner }) => latestOwner === false ? [entry.id] : [])), [stream]);
   const items = useMemo(() => {
     if (stream === null) {
-      return state === null ? [] : streamItems(state, now);
+      return state === null ? [] : streamItems(state, now, submittedQuestions);
     }
     const turns = stream.turns.filter((turn) => {
       const topic = topics.get(turn.conversation);
       return topic !== undefined && topicInScope(topic, scope);
     });
-    return combinedStreamItems(entries, turns, now);
-  }, [state, stream, entries, topics, scope, now]);
+    return combinedStreamItems(entries, turns, now, submittedQuestions);
+  }, [state, stream, entries, topics, scope, now, submittedQuestions]);
   const thisYear = new Date(now).getFullYear();
 
   useLayoutEffect(() => {
@@ -546,6 +547,7 @@ export function TopicStream({ streamKey, focusEntry, state, stream, scope, list,
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
           return <div key={item.key} id={entry === undefined ? undefined : `entry-${entry.id}`} className="stream-item"><StreamEntry item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
+            onQuestionSubmitted={(id) => setSubmittedQuestions((current) => new Set(current).add(id))}
             quote={entry === undefined || entry.kind === "question" ? undefined : () => selectQuote(entry)}
             move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
             split={canSplit ? () => move(entry.conversation, entry.id, null) : undefined}
