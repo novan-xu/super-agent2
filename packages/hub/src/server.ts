@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
 import {
   type AllowanceList,
+  allowancePrograms,
   BrainMessage,
   brainLinkPath,
   ChainChoice,
@@ -1017,7 +1018,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (dsh !== undefined && !unavailable.some((mark) => mark.program === "dsh")) {
       unavailable.push({ program: "dsh", reason: dsh.reason, since: balance.readAt, until: dsh.until, given: dsh.given });
     }
-    return { subscriptions: [subscriptions.codex, subscriptions.claude], balance, unavailable };
+    return { subscriptions: allowancePrograms.map((program) => subscriptions[program]), balance, unavailable };
   };
 
   const serveDefaults = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, defaults: StartDefaults): Promise<boolean> => {

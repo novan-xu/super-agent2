@@ -16,12 +16,11 @@ export function createAllowanceForcing(): AllowanceForcing {
   const forced = new Map<AllowanceProgram, AllowanceState>();
   return {
     adjust: (subscriptions: Subscriptions): Subscriptions => {
-      const codex = forced.get("codex");
-      const claude = forced.get("claude");
-      return {
-        codex: codex === undefined ? subscriptions.codex : { ...subscriptions.codex, state: codex, remainingPercent: codex === "exhausted" ? 0 : subscriptions.codex.remainingPercent },
-        claude: claude === undefined ? subscriptions.claude : { ...subscriptions.claude, state: claude, remainingPercent: claude === "exhausted" ? 0 : subscriptions.claude.remainingPercent },
-      };
+      const adjusted = { ...subscriptions };
+      for (const [program, state] of forced) {
+        adjusted[program] = { ...subscriptions[program], state, remainingPercent: state === "exhausted" ? 0 : subscriptions[program].remainingPercent };
+      }
+      return adjusted;
     },
     force: (program, state) => {
       if (state === null) {
@@ -731,14 +730,14 @@ export function createHarness(options: HarnessOptions): Harness {
       }
       const state = AllowanceState.safeParse(given);
       if (given !== "read" && !state.success) {
-        json(response, 400, { error: "give codex= and claude= as available, exhausted, unknown, or read to use the real reading" });
+        json(response, 400, { error: "give codex=, claude= or antigravity= as available, exhausted, unknown, or read to use the real reading" });
         return;
       }
       options.allowance.force(program, state.success ? state.data : null);
     }
     options.hub.waiting.refresh();
     const subscriptions = options.hub.defaults.subscriptions();
-    json(response, 200, { forced: options.allowance.forced(), subscriptions: [subscriptions.codex, subscriptions.claude] });
+    json(response, 200, { forced: options.allowance.forced(), subscriptions: allowancePrograms.map((program) => subscriptions[program]) });
   };
 
   const newDevice = async (response: ServerResponse): Promise<void> => {

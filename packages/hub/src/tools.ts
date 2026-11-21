@@ -413,7 +413,7 @@ function defaultsDefinitions() {
       name: "read_allowance",
       title: "Read provider allowances",
       description:
-        "Read what is left on the GPT subscription (Codex) and the Claude subscription (Claude Code), and the DeepSeek balance from dsh, as the runners last read it from the programs themselves, the worker programs the hub has marked unavailable because they reported it when really called, and the work machines online with their system, programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
+        "Read the latest GPT and Claude subscription allowances, the Antigravity Gemini Models quota and the DeepSeek balance from the runners. See which worker programs reported themselves unavailable and which work machines are online with their programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {

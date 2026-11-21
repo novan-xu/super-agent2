@@ -879,6 +879,9 @@ The work is tracked as GitHub issues under five milestones.
 
 The runner checks worker programs at startup and every six hours.
 The brain can call `recheck_machines` for one machine or all registered machines to request a fresh probe and allowance reading without restarting the runner.
+Runners get Antigravity's Gemini Models weekly and five-hour quota from the CLI's read-only `/usage` command.
+The allowance panel shows the newest current reading after Claude and before DeepSeek.
+The Gemini Models reading is informational and the hub uses worker-reported limits for Antigravity routing.
 The tool waits up to 30 seconds for a correlated report and identifies offline machines and timeouts.
 A request during a program update waits for the update lock, and a recheck neither interrupts workers nor starts an update.
 For an npm global installation whose resolved executable belongs to the expected package, it compares the installed version with npm's stable `latest` and updates while the machine is idle.

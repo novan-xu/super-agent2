@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AllowanceProgram, AllowanceState } from "./allowance.js";
+import type { AllowanceState } from "./allowance.js";
 import { MachinePlatform, type MachineStatus, ProgramId, ProgramModel } from "./runner.js";
 import {
   ChosenBy,
@@ -74,7 +74,7 @@ export const codeEngineChoices = ["codex", "claude"] as const;
 export const CodeEngineChoice = z.enum(codeEngineChoices);
 export type CodeEngineChoice = z.infer<typeof CodeEngineChoice>;
 
-export type AllowanceStates = Readonly<Record<AllowanceProgram, AllowanceState>>;
+export type AllowanceStates = Readonly<Record<"codex" | "claude", AllowanceState>>;
 
 export interface EngineContext {
   readonly out: ReadonlySet<ProgramId>;

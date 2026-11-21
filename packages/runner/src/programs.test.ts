@@ -13,6 +13,7 @@ import {
   type Prober,
   probePrograms,
   programDefinitions,
+  systemProber,
 } from "./programs.js";
 
 describe("reading what each program offers", () => {
@@ -118,6 +119,18 @@ describe("probing the programs", () => {
     const [, claude] = await probePrograms(programDefinitions({ claude: [{ id: "claude-opus-5-5", efforts: ["high"] }] }), prober);
     expect(claude).toMatchObject({ version: "2.1.326", models: [{ id: "claude-opus-5-5", efforts: ["high"] }], source: "configuration" });
     expect(prober.calls).toEqual(["/bin/claude --version"]);
+  });
+
+  it("preserves an inline Antigravity session setting across the probe shell", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-probe-"));
+    const settings = '{"disableSlashCommands":false}';
+    try {
+      const prober = systemProber({ environment: process.env, cwd });
+      const output = await prober.capture(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "--", settings]);
+      expect(output).toBe(settings);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 
