@@ -60,7 +60,10 @@ export function nameProblem(name: string, machines: readonly MachineStatus[]): N
 export function movedEarlier(order: readonly Provider[], provider: Provider): Provider[] {
   const chosen = fullOrder(order);
   const index = chosen.indexOf(provider);
-  if (index > 0) chosen.splice(index - 1, 0, ...chosen.splice(index, 1));
+  if (index > 0) {
+    chosen.splice(index, 1);
+    chosen.splice(index - 1, 0, provider);
+  }
   return chosen;
 }
 

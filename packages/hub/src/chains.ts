@@ -143,7 +143,7 @@ export interface ChainsOptions {
 }
 
 const everyTicket = 100_000;
-const providerBlock = JSON.stringify({ en: "Waiting for a worker provider to become available.", zh: text("chains.missing.provider"), provider: true, signature: ["provider"] });
+const providerBlock = JSON.stringify({ en: "Waiting for a worker provider to become available.", zh: text("chains.missing.provider"), provider: true });
 
 export interface ShownChain {
   readonly ticket: Ticket;
