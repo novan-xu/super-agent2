@@ -407,6 +407,41 @@ describe("the brain's session", () => {
     expect(afterMachine.text).toContain("Owner: 记住：我的猫叫 Mochi。");
   });
 
+  it("runs a scheduled input in its own turn between owner messages", async () => {
+    const running = await startHub();
+    startBrain();
+    const topic = await newConversation();
+    await say(topic.id, "安排一次空间检查。");
+    const request = await programs.gpt.next();
+    const planned = await callTool(request.handle.options, "propose_schedule", {
+      title: "空间检查",
+      instruction: "Check available disk space.",
+      recurrence: { at: clock.now() + 60_000 },
+      confirmation: "一分钟后检查磁盘空间，可以吗？",
+    });
+    const proposal = /Schedule proposal ([a-f0-9-]+)/.exec(planned)?.[1];
+    if (proposal === undefined) throw new Error(planned);
+    request.handle.finish("等你确认。");
+    await turnEnded(topic.id, 1);
+
+    await say(topic.id, "好。");
+    const approval = await programs.gpt.next();
+    expect(await callTool(approval.handle.options, "create_schedule", { proposal })).toContain("was saved");
+    clock.advance(60_000);
+    running.schedules.tick();
+    await say(topic.id, "解释一下这个设置。");
+    expect(approval.handle.steers).toEqual([]);
+    approval.handle.finish("定时任务已启用。");
+    const scheduled = await programs.gpt.next();
+    expect(scheduled.text).toContain("Check available disk space.");
+    expect(scheduled.text).not.toContain("解释一下这个设置。");
+    scheduled.handle.finish("磁盘空间充足。");
+    const owner = await programs.gpt.next();
+    expect(owner.text.endsWith("解释一下这个设置。")).toBe(true);
+    owner.handle.finish("这个设置控制运行时间。");
+    await turnEnded(topic.id, 4);
+  });
+
   it("closes a topic at its idle deadline and sends a seed when resuming the same saved session", async () => {
     await startHub();
     let timer: { callback: () => void; deadline: number } | undefined;

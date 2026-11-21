@@ -107,6 +107,8 @@ import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
 import type { MemoryService, OwnerMemoryError } from "./memories.js";
+import { ScheduleAction, ScheduleId, ScheduleSave, type ScheduleHistory, type ScheduleList } from "@super-agent2/protocol";
+import { ScheduleRefused, type Schedules } from "./schedules.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
@@ -218,6 +220,7 @@ export interface HubServerOptions {
   readonly version?: string;
   readonly release?: ReleaseSource;
   readonly memories?: MemoryService;
+  readonly schedules?: Schedules;
   readonly settings?: Settings;
   readonly admin?: MachineAdmin;
   readonly repositories?: RepositoryAccounts;
@@ -270,6 +273,8 @@ type Body =
   | AllowanceList
   | { readonly requested: number }
   | MemoryList
+  | ScheduleList
+  | ScheduleHistory
   | SettingsSnapshot
   | MachineAdded
   | MachineRevoked;
@@ -668,6 +673,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { cards: options.waiting.cards() });
       return;
     }
+    if (path.startsWith("/api/schedules") && options.schedules !== undefined
+      && await serveSchedules(request, response, path, method, options.schedules)) return;
     if (path.startsWith("/api/transfer") && options.database !== undefined) {
       const handled = await serveTransfer({ request, response, path, method, database: options.database, sameOrigin: isSameOrigin(request), readBody: () => readBody(request), changed: transferChanged });
       if (handled) return;
@@ -1100,6 +1107,44 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return true;
     }
     sendJson(response, 200, outcome.list);
+    return true;
+  };
+
+  const serveSchedules = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, schedules: Schedules): Promise<boolean> => {
+    const parts = /^\/api\/schedules(?:\/([^/]+)(?:\/(pause|resume|delete))?)?$/.exec(path);
+    if (parts === null) return false;
+    const id = ScheduleId.safeParse(parts[1]);
+    if (parts[1] !== undefined && !id.success) return false;
+    const action = ScheduleAction.safeParse(parts[2]);
+    if (method === "GET" && !action.success) {
+      const result = id.success ? schedules.history(id.data) : schedules.list();
+      if (result === undefined) sendJson(response, 404, { error: "not_found" });
+      else sendJson(response, 200, result);
+      return true;
+    }
+    const saving = (method === "POST" && !id.success) || (method === "PUT" && id.success && !action.success);
+    if (!saving && !(method === "POST" && id.success && action.success)) return false;
+    if (!ownerAction(request, response)) return true;
+    const body = await readBody(request);
+    try {
+      if (saving) {
+        const given = parseJson(body, ScheduleSave);
+        if (given === undefined) {
+          sendJson(response, 400, { error: "bad_request" });
+          return true;
+        }
+        schedules.save(given.fields, id.data, given.revision);
+      } else if (id.success && action.success && parseJson(body, z.strictObject({})) !== undefined) {
+        schedules.change(id.data, action.data);
+      } else {
+        sendJson(response, 400, { error: "bad_request" });
+        return true;
+      }
+      sendJson(response, 200, schedules.list());
+    } catch (error) {
+      if (!(error instanceof ScheduleRefused)) throw error;
+      sendJson(response, 422, { error: "bad_request" });
+    }
     return true;
   };
 

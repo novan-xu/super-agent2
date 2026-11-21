@@ -35,6 +35,7 @@ import {
   waitEdges,
 } from "@super-agent2/protocol";
 import { z } from "zod";
+import { scheduleAccess } from "./schedule-access.js";
 import type { AccessVerifier } from "./access.js";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
@@ -124,6 +125,7 @@ export type Tell = (ticket: number, notice: string, prompt: string) => void;
 export interface Chains {
   readonly arranger: ChainArranger;
   readonly starter: ChainStarter;
+  startScheduled(run: string): number | undefined;
   cards(): StartCard[];
   resume(): void;
   idle(): Promise<void>;
@@ -198,6 +200,7 @@ function described(ticket: Ticket): string {
 export function createChains(options: ChainsOptions): Chains {
   const { tickets, clock } = options;
   const { connection } = options.database;
+  const scheduled = scheduleAccess(options.database);
   const owner = options.ownerEmail.toLowerCase();
   const tell: Tell = options.tell ?? (() => undefined);
   const work = options.work;
@@ -218,6 +221,9 @@ export function createChains(options: ChainsOptions): Chains {
   );
 
   const openTickets = (): Ticket[] => tickets.list({ open: true, limit: everyTicket });
+
+  const ownerStartList = (list: readonly Ticket[]): Ticket[] =>
+    list.filter((ticket) => ticket.state !== "pending" || ticket.scheduleRun === undefined || !scheduled.pending(ticket.scheduleRun));
 
   const withBefore = (list: readonly Ticket[]): Map<number, Ticket> => {
     const index = indexOf(list);
@@ -303,7 +309,7 @@ export function createChains(options: ChainsOptions): Chains {
             if (ticket?.state !== "waiting") {
               return false;
             }
-            if (ticket.light !== undefined) {
+            if (ticket.light !== undefined || (ticket.scheduleRun !== undefined && ticket.chosenAt === null)) {
               const choice = defaults.resolve(ticket);
               const run = isComplete(choice) ? chosenRun(choice) : undefined;
               if (run === undefined) return false;
@@ -357,6 +363,30 @@ export function createChains(options: ChainsOptions): Chains {
 
   const unsubscribeDefaults = defaults.subscribe?.(() => queueMicrotask(advance));
 
+  const startScheduled = (run: string): number | undefined => {
+    if (closed || !scheduled.mayStart(run)) return undefined;
+    const list = openTickets();
+    const pending = list.filter((ticket) => ticket.scheduleRun === run && ticket.state === "pending");
+    if (pending.length === 0) return 0;
+    const order = inWorkingOrder(pending.map((ticket) => ticket.id), indexOf(list));
+    return tickets.change((writes) => {
+      if (!scheduled.mayStart(run)) return undefined;
+      let blocked = 0;
+      for (const id of order) {
+        const ticket = writes.get(id);
+        if (ticket?.scheduleRun !== run || ticket.state !== "pending") continue;
+        const ready = ticket.difficultyReason !== null && ticket.difficulty !== null && ticket.platform !== null
+          && (ticket.kind === "writing" || ticket.brainEngine !== null);
+        if (!ready || ticket.waits.some((wait) => !wait.waived && writes.get(wait.ticket)?.state === "pending")) {
+          blocked += 1;
+          continue;
+        }
+        writes.move(id, "waiting");
+      }
+      return blocked;
+    });
+  };
+
   const isOwner = async (assertion: string | undefined): Promise<boolean> => {
     try {
       const result = await options.verify(assertion);
@@ -374,6 +404,7 @@ export function createChains(options: ChainsOptions): Chains {
       return { ok: false, error: "conflict" };
     }
     const list = openTickets();
+    const candidates = ownerStartList(list);
     const index = indexOf(list);
     const chosen = new Set<number>();
     for (const item of given.chains) {
@@ -381,10 +412,10 @@ export function createChains(options: ChainsOptions): Chains {
       if (root === undefined || root.light !== undefined || root.state !== "pending") {
         return { ok: false, error: "conflict" };
       }
-      if (fingerprintOf(item.ticket, list) !== item.fingerprint) {
+      if (fingerprintOf(item.ticket, candidates) !== item.fingerprint) {
         return { ok: false, error: "conflict" };
       }
-      for (const id of arrangedAfter([item.ticket], list)) {
+      for (const id of arrangedAfter([item.ticket], candidates)) {
         chosen.add(id);
       }
     }
@@ -532,6 +563,7 @@ export function createChains(options: ChainsOptions): Chains {
 
   const state = (specs: readonly DefaultsSpec[], turn?: TicketTurn): StateOutcome => {
     const refuse = (reason: string): StateOutcome => ({ ok: false, reason: `Nothing was changed: ${reason}` });
+    const scheduledRun = turn === undefined ? undefined : scheduled.forTurn(turn);
     if (specs.length === 0) {
       return refuse("no chain was named");
     }
@@ -543,6 +575,9 @@ export function createChains(options: ChainsOptions): Chains {
       const ticket = tickets.get(spec.ticket);
       if (ticket === undefined) {
         return refuse(`there is no ticket ${tickets.reference(spec.ticket) ?? "(unavailable)"}`);
+      }
+      if (scheduledRun !== undefined && (!scheduledRun.authorized || ticket.scheduleRun !== scheduledRun.id)) {
+        return refuse("a scheduled run can choose defaults only for work it opened.");
       }
       const reference = ticketReference(ticket);
       if (ticket.state !== "pending") {
@@ -614,6 +649,7 @@ export function createChains(options: ChainsOptions): Chains {
 
   const arrange = (specs: readonly ChainSpec[], turn?: TicketTurn): ArrangeOutcome => {
     const refuse = (reason: string): ArrangeOutcome => ({ ok: false, reason: `Nothing was changed: ${reason}` });
+    const scheduledRun = turn === undefined ? undefined : scheduled.forTurn(turn);
     if (specs.length === 0) {
       return refuse("the arrangement names no chain");
     }
@@ -667,6 +703,9 @@ export function createChains(options: ChainsOptions): Chains {
         }
         if (ticket.repairs !== null) {
           return refuse(`issue ${spec.repository}#${number} is on ticket ${ticketReference(ticket)}, a repair ticket that continues the work of ticket ${tickets.reference(ticket.repairs) ?? "(unavailable)"} on its branch; it cannot be regrouped, and the owner starts it as it is`);
+        }
+        if (scheduledRun !== undefined && (!scheduledRun.authorized || ticket.scheduleRun !== scheduledRun.id)) {
+          return refuse("a scheduled run can arrange only work it opened.");
         }
         const issue = ticket.issues.find((entry) => entry.number === number && entry.repository.toLowerCase() === spec.repository.toLowerCase());
         if (issue === undefined) {
@@ -954,12 +993,13 @@ export function createChains(options: ChainsOptions): Chains {
 
   const cards = (): StartCard[] => {
     const list = openTickets();
+    const candidates = ownerStartList(list);
     const index = withBefore(list);
     const listIndex = indexOf(list);
-    return list
+    return candidates
       .filter((ticket) => ticket.state === "pending" && ticket.light === undefined)
       .flatMap((ticket): StartCard[] => {
-        const fingerprint = fingerprintOf(ticket.id, list);
+        const fingerprint = fingerprintOf(ticket.id, candidates);
         if (fingerprint === undefined) {
           return [];
         }
@@ -985,6 +1025,7 @@ export function createChains(options: ChainsOptions): Chains {
   return {
     arranger: { arrange, state, deployed, proceed },
     starter: { start, choose, reassign },
+    startScheduled,
     cards,
     resume: () => {
       begin(selectDue.all().map((row) => BeginRow.parse(row).ticket_id));

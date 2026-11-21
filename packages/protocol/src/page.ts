@@ -1,13 +1,13 @@
-import { ConversationId, type TopicScope } from "./conversations.js";
+import { ConversationId, MessageId, type TopicScope } from "./conversations.js";
 import { RepositoryName } from "./repositories.js";
 import { SettingsSection } from "./settings.js";
 
-export const pageViews = ["workbench", "conversations", "history", "memory", "settings"] as const;
+export const pageViews = ["workbench", "conversations", "history", "memory", "schedules", "settings"] as const;
 export type PageView = (typeof pageViews)[number];
 
 export type PageRoute =
   | { readonly view: "home" }
-  | { readonly view: "conversations"; readonly conversation: string | null; readonly scope?: TopicScope | undefined }
+  | { readonly view: "conversations"; readonly conversation: string | null; readonly scope?: TopicScope | undefined; readonly entry?: string | undefined }
   | { readonly view: "transfer" }
   | { readonly view: "ticket"; readonly ticket: number }
   | { readonly view: "settings"; readonly section: SettingsSection }
@@ -61,9 +61,10 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
     }
     const params = new URLSearchParams(search);
     const repository = RepositoryName.safeParse(params.get("repository"));
+    const entry = MessageId.safeParse(params.get("entry"));
     const scope: TopicScope | undefined = repository.success ? { kind: "repository", repository: repository.data }
       : params.get("scope") === "code" ? { kind: "code" } : params.get("scope") === "daily" ? { kind: "daily" } : undefined;
-    return { view, conversation: conversation ?? null, ...(scope === undefined ? {} : { scope }) };
+    return { view, conversation: conversation ?? null, ...(scope === undefined ? {} : { scope }), ...(conversation !== undefined && entry.success ? { entry: entry.data } : {}) };
   }
   if (view === "settings" && conversation !== undefined) {
     const section = SettingsSection.safeParse(conversation);
@@ -79,10 +80,14 @@ export function pagePath(route: PageRoute): string {
     case "conversations": {
       const path = route.conversation === null ? "/conversations" : `/conversations/${route.conversation}`;
       const scope = route.scope;
+      const params = new URLSearchParams();
       if (scope?.kind === "repository") {
-        return `${path}?${new URLSearchParams({ repository: scope.repository })}`;
+        params.set("repository", scope.repository);
+      } else if (scope !== undefined) {
+        params.set("scope", scope.kind);
       }
-      return scope?.kind === "code" || scope?.kind === "daily" ? `${path}?scope=${scope.kind}` : path;
+      if (route.entry !== undefined && route.conversation !== null) params.set("entry", route.entry);
+      return params.size === 0 ? path : `${path}?${params}`;
     }
     case "ticket":
       return ticketAddress(route.ticket);

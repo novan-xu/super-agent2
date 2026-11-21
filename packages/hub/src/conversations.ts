@@ -110,6 +110,8 @@ export interface ConversationService {
   deliver(delivery: Delivery): string;
   writeDelivery(conversation: string, delivery: Delivery): string;
   writeConfirmation(conversation: string, turn: string, message: string): string;
+  writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string): void;
+  publishScheduleNotice(id: string): void;
   writeLightQuestion(conversation: string, id: string, message: string): void;
   linked(): boolean;
   brainReady(): boolean;
@@ -169,6 +171,7 @@ export interface ConversationServiceOptions {
   readonly order?: () => readonly Provider[] | undefined;
   readonly routing?: RoutingOptions;
   readonly lightTaskContext?: (topic: string, message: string) => string;
+  readonly scheduleContext?: (topic: string, message: string) => string;
 }
 
 export interface MemoryBriefing {
@@ -479,6 +482,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
   const routingColumns = `${placement}, CASE WHEN ${originalPlacement} AND r.owner_placed = 0 THEN r.rule END AS routing_rule`;
   const selectEntry = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.id = ?`);
+  const scheduledInput = connection.prepare("SELECT id FROM schedule_runs WHERE entry = ? AND state = 'pending'");
   const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND owner_placed IS NOT 1 AND moved_at IS NULL AND brain_moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
@@ -748,11 +752,13 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     const body = row.kind === "owner" ? Body.parse(JSON.parse(row.body)) : undefined;
     const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
+    const scheduleRun = row.kind === "notice" ? scheduledInput.get(row.id)?.id : undefined;
     const input: BrainInput = {
       id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
       source: row.kind === "owner" ? "owner" : "hub",
-      text: row.prompt + (row.kind === "owner" ? options.lightTaskContext?.(row.conversation_id, row.id) ?? "" : ""),
+      text: row.prompt + (row.kind === "owner" ? (options.lightTaskContext?.(row.conversation_id, row.id) ?? "") + (options.scheduleContext?.(row.conversation_id, row.id) ?? "") : ""),
       attachments: forBrain(attached),
+      ...(typeof scheduleRun === "string" ? { scheduleRun } : {}),
       ...(body?.questionResponse === undefined ? {} : { questionResponse: body.questionResponse }),
     };
     const routing = routingNote(row, body?.possibleMatch);
@@ -1336,6 +1342,16 @@ export function createConversationService(options: ConversationServiceOptions): 
     writeConfirmation: (conversation, turn, message) => writeEntry({
       conversation, turn, kind: "text", provider: providerOfTurn(turn), body: { text: message },
     }),
+    writeScheduleNotice: (id, conversation, notice, prompt) => {
+      writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice }, ...(prompt === undefined ? {} : { prompt }) });
+    },
+    publishScheduleNotice: (id) => {
+      const row = EntryRow.optional().parse(selectEntry.get(id));
+      if (row === undefined) return;
+      updateConversation(row.conversation_id, { topic_state: "active" });
+      emitEntry(id);
+      deliver(row);
+    },
     writeLightQuestion: (conversation, id, message) => {
       writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: message, worker: true } });
     },

@@ -53,6 +53,8 @@ import { allowanceReport, chainProgress, choiceText, clip, commandReport, comman
 import type { TicketService } from "./tickets.js";
 import { type TicketTurn, TicketWriteRefused } from "./ticket-versions.js";
 import { LightTaskRequest, type LightTasks } from "./light-tasks.js";
+import { ScheduleFields, ScheduleId } from "@super-agent2/protocol";
+import { ScheduleRefused, type Schedules } from "./schedules.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
@@ -149,10 +151,19 @@ const TaskArguments = z.object({
   platform: Platform.optional(),
 });
 
-const ProposeLightArguments = LightTaskRequest.omit({ materials: true }).extend({
+const ScheduledLightArguments = LightTaskRequest.omit({ materials: true }).extend({
   material: z.array(MaterialArgument).optional(),
+});
+const ProposeLightArguments = ScheduledLightArguments.extend({
   confirmation: z.string().trim().min(1),
 });
+
+const ScheduleProposalArguments = ScheduleFields.extend({
+  confirmation: z.string().trim().min(1).max(2_000),
+  schedule: ScheduleId.optional(),
+});
+const ScheduleConfirmArguments = z.strictObject({ proposal: MessageId });
+const ScheduleIdArguments = z.strictObject({ schedule: ScheduleId });
 
 const StartLightArguments = z.strictObject({ proposal: MessageId, engine: ProgramId.optional() });
 
@@ -273,6 +284,7 @@ export interface TicketTools {
   readonly filer: IssueFiler;
   readonly tasks?: TaskTickets;
   readonly light?: LightTasks;
+  readonly schedules?: Schedules;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
   readonly work?: WorkService;
@@ -446,12 +458,12 @@ function defaultsDefinitions() {
   ];
 }
 
-function statedText(outcome: StateOutcome, defaults: StartDefaults): ToolResult {
+function statedText(outcome: StateOutcome, defaults: StartDefaults, scheduled: boolean): ToolResult {
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
   const lines = outcome.tickets.map((ticket) => `Ticket ${ticketReference(ticket)}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${choiceText(defaults.resolve(ticket))}`);
-  lines.push("The owner sees these on the cards in 工作台 and can change them before the start.");
+  lines.push(scheduled ? "The hub will use these defaults when it starts the scheduled work after this turn." : "The owner sees these on the cards in 工作台 and can change them before the start.");
   return { text: lines.join("\n") };
 }
 
@@ -528,7 +540,7 @@ function chainDefinitions() {
   ];
 }
 
-function arrangedText(outcome: ArrangeOutcome, reference: TicketService["reference"]): ToolResult {
+function arrangedText(outcome: ArrangeOutcome, reference: TicketService["reference"], scheduled: boolean): ToolResult {
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
@@ -543,7 +555,9 @@ function arrangedText(outcome: ArrangeOutcome, reference: TicketService["referen
   if (outcome.joined.length > 0) {
     lines.push(`Closed as joined into other chains: ${outcome.joined.map((id) => `ticket ${reference(id) ?? "(unavailable)"}`).join(", ")}.`);
   }
-  lines.push("They wait for the owner to start them with 开始 on their cards in 工作台. Tell the owner, in Chinese, how the work is arranged.");
+  lines.push(scheduled
+    ? "State the defaults for each chain and arrange any deployment in this turn. The hub will start scheduled work when the turn completes."
+    : "They wait for the owner to start them with 开始 on their cards in 工作台. Tell the owner, in Chinese, how the work is arranged.");
   return { text: lines.join("\n") };
 }
 
@@ -776,6 +790,36 @@ function ticketDefinitions() {
   ];
 }
 
+function scheduleDefinitions() {
+  return [
+    {
+      name: "propose_schedule",
+      description: "Show a short Chinese confirmation with the schedule's work, timing and scope. Write the instruction in English and use five numeric cron fields in the hub time zone, or an epoch timestamp in milliseconds for one run. Supply schedule to propose replacing an existing plan. End the turn and wait for the owner's agreement in this topic.",
+      inputSchema: z.toJSONSchema(ScheduleProposalArguments, { io: "input" }),
+    },
+    {
+      name: "create_schedule",
+      description: "Activate the current proposed schedule or save its proposed revision after the owner explicitly agrees in a newer message in this topic within 24 hours. This confirmation covers all of its future runs.",
+      inputSchema: z.toJSONSchema(ScheduleConfirmArguments, { io: "input" }),
+    },
+    {
+      name: "list_schedules",
+      description: "Read schedules, their IDs and the hub time zone.",
+      inputSchema: z.toJSONSchema(z.strictObject({}), { io: "input" }),
+    },
+    ...(["pause", "resume", "delete"] as const).map((action) => ({
+      name: `${action}_schedule`,
+      description: `${action} a schedule when the owner asks in the current turn.`,
+      inputSchema: z.toJSONSchema(ScheduleIdArguments, { io: "input" }),
+    })),
+    {
+      name: "run_scheduled_light_task",
+      description: "Open a quiet light task in the current confirmed scheduled run. Scope and instructions work like propose_light_task. Use a project for repository-related work in scratch. The hub starts it after the turn and publishes the result in its topic.",
+      inputSchema: z.toJSONSchema(ScheduledLightArguments, { io: "input" }),
+    },
+  ];
+}
+
 function filingText(outcome: FilingOutcome): ToolResult {
   if (!outcome.ok) {
     return {
@@ -938,6 +982,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         inputSchema: z.toJSONSchema(HandoverArguments, { io: "input" }),
       },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),
+      ...(options.tickets?.schedules === undefined ? [] : scheduleDefinitions()),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
@@ -1054,6 +1099,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         throw new TicketWriteRefused("Ticket changes require an active topic turn.");
       }
       tools.tickets.versions.requireActive(scope);
+      if (tools.tickets.scheduleForTurn(scope)?.authorized === false) throw new TicketWriteRefused("This scheduled run is no longer authorized.");
       return scope;
     };
     const resolve = (reference: string): number => {
@@ -1116,11 +1162,51 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             ticketReport(ticket),
             ...opened.notes,
             `Now state its defaults with choose_defaults (kind ${ticket.kind}, its difficulty and platform, a one-line reason${ticket.kind === "writing" ? "" : ", and its engine"}).`,
-            pendingBefore
+            ticket.scheduleRun !== undefined
+              ? "This work starts after this scheduled turn with its defaults."
+              : pendingBefore
               ? "It is arranged after a ticket that is not started: the owner's 开始 on that ticket's card starts both, and this one begins once what it waits for has merged. Tell the owner in Chinese what you arranged; do not ask for a second start."
               : "The owner starts it with 开始 on its card in 工作台; tell them in Chinese what it is and that it waits for their start.",
           ].join("\n"),
         };
+      }
+      case "list_schedules": {
+        return tools.schedules === undefined ? undefined : { text: JSON.stringify(tools.schedules.list()) };
+      }
+      case "propose_schedule": {
+        if (tools.schedules === undefined) return undefined;
+        const parsed = ScheduleProposalArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const { confirmation, schedule, ...fields } = parsed.data;
+        const proposal = tools.schedules.propose(fields, confirmation, writeTurn(), schedule);
+        return { text: `Schedule proposal ${proposal}. The confirmation is visible in the topic. End this turn and wait for the owner's agreement.` };
+      }
+      case "create_schedule": {
+        if (tools.schedules === undefined) return undefined;
+        const parsed = ScheduleConfirmArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const schedule = tools.schedules.confirm(parsed.data.proposal, writeTurn());
+        return { text: `Schedule ${schedule} was saved. The hub launches each run automatically. Confirm this briefly to the owner in Chinese.` };
+      }
+      case "pause_schedule":
+      case "resume_schedule":
+      case "delete_schedule": {
+        if (tools.schedules === undefined) return undefined;
+        const parsed = ScheduleIdArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const action = name === "pause_schedule" ? "pause" : name === "resume_schedule" ? "resume" : "delete";
+        tools.schedules.changeFromTurn(parsed.data.schedule, action, writeTurn());
+        return { text: `Schedule ${parsed.data.schedule}: ${action} applied.` };
+      }
+      case "run_scheduled_light_task": {
+        if (tools.schedules === undefined || tools.light === undefined) return undefined;
+        const parsed = ScheduledLightArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const { material, ...request } = parsed.data;
+        const chosen = materialsOf(material ?? []);
+        if (!chosen.ok) return chosen.result;
+        tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
+        return { text: "The light task is ready for this run. Its result arrives in the topic after the turn." };
       }
       case "propose_light_task": {
         if (tools.light === undefined) return undefined;
@@ -1311,7 +1397,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (!parsed.success) {
           return invalid(parsed.error);
         }
-        return statedText(tools.chains.state(parsed.data.chains.map((chain) => ({ ...chain, ticket: resolve(chain.ticket) })), writeTurn()), tools.defaults);
+        const turn = writeTurn();
+        const scheduled = tools.tickets.scheduleForTurn(turn) !== undefined;
+        return statedText(tools.chains.state(parsed.data.chains.map((chain) => ({ ...chain, ticket: resolve(chain.ticket) })), turn), tools.defaults, scheduled);
       }
       case "guide_ticket": {
         if (tools.loop === undefined) {
@@ -1366,6 +1454,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return invalid(parsed.error);
         }
         const names = new Set(parsed.data.chains.map((chain) => chain.name));
+        const turn = writeTurn();
         return arrangedText(
           chains.arrange(
             parsed.data.chains.map((chain) => ({
@@ -1380,9 +1469,10 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
               difficulty: chain.difficulty,
               platform: chain.platform,
             })),
-            writeTurn(),
+            turn,
           ),
           tickets.reference,
+          tickets.scheduleForTurn(turn) !== undefined,
         );
       }
       case "report_deployment": {
@@ -1412,7 +1502,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     let result: ToolResult;
     switch (parsed.data.name) {
       case "run_command":
-        result = await run(parsed.data.arguments ?? {}, conversation, aborted);
+        result = conversation !== undefined && turn !== undefined && options.tickets?.tickets.scheduleForTurn({
+          conversation, id: turn, available: () => !aborted.aborted && conversations.brainReady(),
+        })?.authorized === false
+          ? { text: "This scheduled run is no longer authorized.", isError: true }
+          : await run(parsed.data.arguments ?? {}, conversation, aborted);
         break;
       case "read_command":
         result = read(parsed.data.arguments ?? {});
@@ -1482,7 +1576,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           topicCall(conversations.topics, options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation) ??
           (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
           (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, scope).catch((error: unknown) => {
-            if (error instanceof TicketWriteRefused) {
+            if (error instanceof TicketWriteRefused || error instanceof ScheduleRefused) {
               return { text: error.message, isError: true };
             }
             throw error;

@@ -70,6 +70,19 @@ describe("openDatabase", () => {
 });
 
 describe("applyMigrations", () => {
+  it("adds schedule storage to a database that already has inbox sources", () => {
+    using connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    applyMigrations(connection, migrations.filter(({ version }) => version <= 47), clock);
+    connection.exec("INSERT INTO inbox_sources (id, name, client_id, token_id) VALUES ('inbox', 'Alerts', 'client', 'token')");
+
+    applyMigrations(connection, migrations, clock);
+
+    expect(connection.prepare("SELECT name FROM inbox_sources WHERE id = 'inbox'").get()).toEqual({ name: "Alerts" });
+    expect(connection.prepare("SELECT id FROM schedules").all()).toEqual([]);
+    expect(connection.prepare("SELECT schedule_run FROM tickets").all()).toEqual([]);
+  });
+
   it("backfills codes in local creation order and preserves the old work branch", () => {
     using connection = new DatabaseSync(":memory:");
     const clock = new TestClock();

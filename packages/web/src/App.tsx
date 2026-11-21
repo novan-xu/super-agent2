@@ -25,6 +25,7 @@ import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
 import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
 import { type SettingsActions, SettingsView } from "./views/SettingsView.js";
+import { SchedulesView } from "./views/SchedulesView.js";
 import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
 const toastDuration = 4000;
@@ -270,6 +271,10 @@ export function App() {
     [navigate],
   );
   const openLinked = useCallback((ticket: number) => navigate({ view: "ticket", ticket }), [navigate]);
+  const fromSchedules = useCallback((destination: PageRoute) => {
+    if (destination.view === "ticket") setOrigin("schedules");
+    navigate(destination);
+  }, [navigate]);
   const backFromTicket = useCallback(() => navigate({ view: origin }), [navigate, origin]);
   const searchHistory = useCallback((query: string) => void controller.searchHistory(query), [controller]);
   const moreHistory = useCallback(() => void controller.moreHistory(), [controller]);
@@ -350,6 +355,7 @@ export function App() {
       {inConversation ? (
         <ConversationView
           conversation={conversationId}
+          focusEntry={route.view === "conversations" ? route.entry : undefined}
           scope={scope}
           state={currentTopic}
           stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
@@ -413,6 +419,8 @@ export function App() {
         />
       ) : route.view === "memory" ? (
         <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
+      ) : route.view === "schedules" ? (
+        <SchedulesView navigate={fromSchedules} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
       ) : route.view === "settings" ? (

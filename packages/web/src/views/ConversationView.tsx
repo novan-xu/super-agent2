@@ -264,6 +264,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
 
 export interface ConversationViewProps {
   readonly conversation: string | null;
+  readonly focusEntry?: string | undefined;
   readonly scope: TopicScope;
   readonly state: ConversationState | null;
   readonly stream: TopicStreamState | null;
@@ -371,7 +372,7 @@ export function ConversationView(props: ConversationViewProps) {
             </span>
           </div>
         </div>
-        <TopicStream streamKey={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now}
+        <TopicStream streamKey={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now} focusEntry={props.focusEntry}
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
@@ -418,6 +419,7 @@ function toneOf(id: string): number {
 
 interface TopicStreamProps {
   readonly streamKey: string;
+  readonly focusEntry?: string | undefined;
   readonly state: ConversationState | null;
   readonly stream: TopicStreamState | null;
   readonly scope: TopicScope;
@@ -433,9 +435,10 @@ interface TopicStreamProps {
   readonly openEdit: (topic: TopicEdit) => void;
 }
 
-export function TopicStream({ streamKey, state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
+export function TopicStream({ streamKey, focusEntry, state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit }: TopicStreamProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const focused = useRef<string | undefined>(undefined);
   const current = state?.conversation;
   const topics = useMemo(() => {
     const found = new Map(stream?.entries.map(({ topic }) => [topic.id, topic]));
@@ -471,6 +474,7 @@ export function TopicStream({ streamKey, state, stream, scope, list, online, now
   useLayoutEffect(() => {
     following.current = true;
     older.current = null;
+    focused.current = undefined;
   }, [following, streamKey]);
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -484,6 +488,15 @@ export function TopicStream({ streamKey, state, stream, scope, list, online, now
       element.scrollTop = element.scrollHeight;
     }
   }, [items, stream?.loading, following, streamKey]);
+
+  useLayoutEffect(() => {
+    if (focusEntry === undefined || focused.current === focusEntry) return;
+    const entry = document.getElementById(`entry-${focusEntry}`);
+    if (entry === null || !scroller.current?.contains(entry)) return;
+    following.current = false;
+    focused.current = focusEntry;
+    entry.scrollIntoView?.({ block: "center" });
+  }, [focusEntry, items, following, streamKey]);
 
   useEffect(() => {
     const element = scroller.current;
@@ -533,7 +546,7 @@ export function TopicStream({ streamKey, state, stream, scope, list, online, now
           const canSplit = joined && entry.seq === latestOwner.get(entry.conversation) && !olderOwners.has(entry.id);
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
-          return <StreamEntry key={item.key} item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
+          return <div key={item.key} id={entry === undefined ? undefined : `entry-${entry.id}`} className="stream-item"><StreamEntry item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
             quote={entry === undefined || entry.kind === "question" ? undefined : () => selectQuote(entry)}
             move={entry?.kind !== "owner" ? undefined : () => openEdit({ source: entry.conversation, message: entry.id })}
             split={canSplit ? () => move(entry.conversation, entry.id, null) : undefined}
@@ -544,7 +557,7 @@ export function TopicStream({ streamKey, state, stream, scope, list, online, now
               <button className="possible-match od-truncate" type="button" onClick={() => void move(entry.conversation, entry.id, match)}>
                 {text("conversation.possibleMatch", { topic: titleOf(topics.get(match)) })}
               </button>
-            )} />;
+            )} /></div>;
         })}
       </div>
     </div>

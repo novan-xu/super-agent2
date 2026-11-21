@@ -991,6 +991,45 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 48,
+    sql: `
+      CREATE TABLE schedules (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL REFERENCES conversations(id),
+        fields TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('active', 'paused', 'completed', 'deleted')),
+        next_at INTEGER,
+        confirmed_at INTEGER NOT NULL,
+        confirmed_by TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1
+      ) STRICT;
+      CREATE INDEX schedules_due ON schedules(next_at) WHERE state = 'active';
+      CREATE TABLE schedule_proposals (
+        id TEXT PRIMARY KEY REFERENCES conversation_entries(id),
+        topic TEXT NOT NULL REFERENCES conversations(id),
+        fields TEXT NOT NULL,
+        target TEXT REFERENCES schedules(id),
+        target_revision INTEGER,
+        created_at INTEGER NOT NULL,
+        confirmed_schedule TEXT REFERENCES schedules(id)
+      ) STRICT;
+      CREATE INDEX schedule_proposals_topic ON schedule_proposals(topic, created_at);
+      CREATE TABLE schedule_runs (
+        id TEXT PRIMARY KEY,
+        schedule TEXT NOT NULL REFERENCES schedules(id),
+        revision INTEGER NOT NULL,
+        due_at INTEGER NOT NULL,
+        entry TEXT NOT NULL UNIQUE REFERENCES conversation_entries(id),
+        result_entry TEXT REFERENCES conversation_entries(id),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'completed', 'skipped', 'failed', 'interrupted', 'cancelled'))
+      ) STRICT;
+      CREATE INDEX schedule_runs_recent ON schedule_runs(schedule, due_at DESC);
+      CREATE INDEX schedule_runs_pending ON schedule_runs(state) WHERE state = 'pending';
+      ALTER TABLE tickets ADD COLUMN schedule_run TEXT REFERENCES schedule_runs(id);
+      CREATE INDEX tickets_schedule_run ON tickets(schedule_run) WHERE schedule_run IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

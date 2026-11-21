@@ -15,6 +15,7 @@ const shapes = {
     </>
   ),
   memory: <path d="M6.5 3.5h11v17L12 16.5l-5.5 4z" />,
+  calendar: <><rect x="4" y="5.5" width="16" height="14" rx="2" /><path d="M4 10h16M8 3.5v4m8-4v4m-7 6h3v3" /></>,
   compose: (
     <>
       <path d="M4 20h4L19 9l-4-4L4 16z" />
