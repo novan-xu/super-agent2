@@ -97,13 +97,13 @@ describe("a ticket's detail", () => {
     const repair = render(detailOf({ ...running, repairs: 5, repairsReference: "ae-2026-11-18" }));
     expect(text(repair)).toContain("|补救|");
     expect(repair).toContain('href="/tickets/5"');
-    expect(text(repair)).toContain("接着工单 ae");
+    expect(text(repair)).toContain("接着工单 AE");
     expect(repair).not.toContain("接手");
-    expect(repair).toContain('<span class="chip chip--mono">aa</span>');
+    expect(repair).toContain('<span class="chip chip--mono">AA</span>');
     expect(repair).not.toContain("2026-11-18");
     const ended = render(detailOf(ticket(5, { state: "stopped", repairedBy: 9, repairedByReference: "ai-2026-11-20", work: null })));
     expect(ended).toContain('href="/tickets/9"');
-    expect(text(ended)).toContain("由工单 ai 接着做");
+    expect(text(ended)).toContain("由工单 AI 接着做");
     expect(text(ended)).not.toContain("|补救|");
     const plain = render(detailOf(running));
     expect(text(plain)).not.toContain("补救");

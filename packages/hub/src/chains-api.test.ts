@@ -224,9 +224,9 @@ async function fileThree(running: Hub): Promise<void> {
     ],
   });
   expect(arranged.isError).toBe(false);
-  expect(arranged.text).toContain("Chain parser is ticket aa-2026-11-17");
-  expect(arranged.text).toContain("Chain guide is ticket ac-2026-11-17");
-  expect(arranged.text).toContain("Closed as joined into other chains: ticket ab-2026-11-17.");
+  expect(arranged.text).toContain("Chain parser is ticket AA-2026-11-17");
+  expect(arranged.text).toContain("Chain guide is ticket AC-2026-11-17");
+  expect(arranged.text).toContain("Closed as joined into other chains: ticket AB-2026-11-17.");
 }
 
 class Inbox {
@@ -350,7 +350,7 @@ describe("chains from filing to start", () => {
         { name: "client", repository: other, issues: [1], after: ["server"] },
       ],
     });
-    expect(arranged.text).toContain("Chain client is ticket ab-2026-11-17 in novan-xu/other-sandbox: #1; after ticket aa-2026-11-17.");
+    expect(arranged.text).toContain("Chain client is ticket AB-2026-11-17 in novan-xu/other-sandbox: #1; after ticket AA-2026-11-17.");
     const cards = await startCards(running);
     expect(cards.find((card) => card.ticket.id === 2)).toMatchObject({ before: [{ id: 1, title: { zh: "加接口" }, state: "pending" }], startable: false });
     expect((await startCall(running, { body: await startBody(running, 1) })).status).toBe(202);
@@ -378,7 +378,7 @@ describe("chains from filing to start", () => {
     const waitingTopic = running.tickets.get(2)?.conversation;
     expect(waitingTopic).toBeTruthy();
     const notices = running.conversations.entries(waitingTopic ?? "").filter((entry) => entry.kind === "notice");
-    expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual(["工单 aa 停止了，排在它后面的工单 ab 由大脑决定是否继续"]);
+    expect(notices.map((entry) => entry.kind === "notice" && entry.text)).toEqual(["工单 AA 停止了，排在它后面的工单 AB 由大脑决定是否继续"]);
     expect(running.conversations.entries(conversation.id)).toEqual([]);
     const proceeded = await callBrainTool(running, "proceed_ticket", { ticket: "ab" });
     expect(proceeded.isError).toBe(false);

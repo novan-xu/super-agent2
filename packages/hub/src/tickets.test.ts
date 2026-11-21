@@ -57,14 +57,14 @@ describe("tickets", () => {
     const tickets = createTicketService({ database, clock });
     const first = tickets.open(request(1));
     const second = tickets.open(request(2, { ...writing, task: { task: "Translate.", materials: [] } }));
-    expect([ticketReference(first), ticketReference(second)]).toEqual(["aa-2026-07-18", "ab-2026-07-18"]);
+    expect([ticketReference(first), ticketReference(second)]).toEqual(["AA-2026-07-18", "AB-2026-07-18"]);
     const rest = Array.from({ length: 25 }, (_, index) => tickets.open(request(index + 3)).code);
     expect(rest.slice(-2)).toEqual(["az", "ba"]);
     database.connection.prepare("UPDATE tickets SET code = 'zz' WHERE code = 'ba'").run();
     expect(() => tickets.open(request(28))).toThrow(/All 676 ticket codes for 2026-07-18 have been used/);
     clock.advance(1);
-    expect(ticketReference(tickets.open(request(28)))).toBe("aa-2026-07-19");
-    expect(ticketReference(tickets.open(request(29)))).toBe("ab-2026-07-19");
+    expect(ticketReference(tickets.open(request(28)))).toBe("AA-2026-07-19");
+    expect(ticketReference(tickets.open(request(29)))).toBe("AB-2026-07-19");
   });
 
   it("opens a pending ticket with its issue, records that it was filed, and announces it", () => {

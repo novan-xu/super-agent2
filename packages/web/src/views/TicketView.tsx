@@ -219,7 +219,7 @@ function ProblemBox({ problem, now }: { readonly problem: TicketProblem; readonl
         {problem.before.map((entry) => (
           <span key={entry.id} className="chain-before-item">
             <span className={`dot dot--${entry.state === "working" || entry.state === "verifying" ? "ok" : "mute"}`} />
-            <span>{entry.title ?? (entry.code ?? text("ticket.missing"))}</span>
+            <span>{entry.title ?? (entry.code?.toUpperCase() ?? text("ticket.missing"))}</span>
           </span>
         ))}
       </div>
@@ -752,7 +752,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
         {backLink}
         <div className="meta-row">
           <PhaseStatus phase={ticketPhase(ticket)} />
-          <span className="chip chip--mono">{ticket.code}</span>
+          <span className="chip chip--mono">{ticket.code.toUpperCase()}</span>
           {repository === null ? null : (
             <span className="chip chip--mono">
               <Icon name="repo" />
