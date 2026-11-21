@@ -246,6 +246,7 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .srow-ctl--wide { flex: 1 1 auto; }
 .srow-ctl--wide .field { flex: 1 1 auto; }
 .srow-ctl .field { width: auto; max-width: 100%; }
+.model-order .field { min-width: 0; }
 .srow-facts { color: var(--fg-2); font-size: var(--text-sm); gap: var(--space-3); }
 .repository-tabs { justify-self: start; }
 .repository-actions { flex-wrap: wrap; }

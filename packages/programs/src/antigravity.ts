@@ -47,17 +47,19 @@ const Result = z.looseObject({
   }),
 });
 
-const limitWords = /quota|rate.?limit|resource.?exhausted|credits|spend.?cap|balance|too many requests|\b429\b|capacity/i;
+const limitWords = /quota|rate.?limit|resource.?exhausted|too many requests|\b429\b/i;
 
 const accessWords = /not signed in|sign in|sign-in|log in|login|authenticat|unauthori[sz]ed|forbidden|\b401\b|\b403\b/i;
+
+const accountWords = /credits|spend.?cap|balance|(?:account|global|service)[ -](?:quota|rate.?limit)/i;
 
 export function antigravityFailure(reason: string): ProgramEvent {
   if (/conversation .* not found/i.test(reason)) {
     return { type: "failed", reason, lostSession: true };
   }
-  if (limitWords.test(reason) || accessWords.test(reason)) {
-    return { type: "unavailable", reason, until: null, category: /capacity/i.test(reason) ? "overload" : limitWords.test(reason) ? "limit" : "problem" };
-  }
+  if (accessWords.test(reason) || accountWords.test(reason)) return { type: "unavailable", reason, until: null, category: "problem" };
+  if (/capacity/i.test(reason)) return { type: "unavailable", reason, until: null, category: "overload" };
+  if (limitWords.test(reason)) return { type: "unavailable", reason, until: null, category: "limit" };
   return { type: "failed", reason, lostSession: false };
 }
 

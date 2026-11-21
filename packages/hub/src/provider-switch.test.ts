@@ -563,14 +563,27 @@ describe("when every provider is unavailable", () => {
     expect(switches(ticket.id).map((entry) => entry.kind)).toEqual(["switched", "waiting"]);
   });
 
-  it("sends prose that Antigravity cannot take to the code providers in the owner's order", () => {
+  it("sends prose directly to the code providers in the owner's order on an Antigravity login problem", () => {
     machine("pc", "win32", { ...complex, antigravity: ["gemini-3.8-flash", "high"] });
     const ticket = working({ form: "task", engine: "antigravity" });
     work.begin(ticket);
     started("pc", ticket.id, 1);
-    emit("pc", ticket.id, 1, limit(null, "RESOURCE_EXHAUSTED"));
+    emit("pc", ticket.id, 1, { kind: "unavailable", category: "problem", reason: "You are not signed in", until: null, unsent: [] });
     expect(current(ticket.id)).toMatchObject({ engine: "claude", model: "claude-opus-5-5", work: { attempt: 2, engine: "claude" } });
     expect(defaults.unavailable().map((mark) => mark.program)).toEqual(["antigravity"]);
+  });
+
+  it("clears a model mark only when that model succeeds later or its hold expires", () => {
+    const hydrogen = "gemini-4-hydrogen";
+    const flash = "gemini-3.8-flash";
+    const until = clock.now() + 1_000;
+    defaults.markUnavailable("antigravity", "Quota reached", until, "limit", hydrogen);
+    defaults.markUnavailable("antigravity", "Quota reached", null, "limit", flash);
+    clock.advance(100);
+    expect(defaults.recovered("antigravity", clock.now(), flash)).toBe(true);
+    expect([...defaults.antigravityOut()]).toEqual([[hydrogen, { reason: "Quota reached", until, given: true }]]);
+    clock.advance(900);
+    expect(defaults.antigravityOut().size).toBe(0);
   });
 });
 

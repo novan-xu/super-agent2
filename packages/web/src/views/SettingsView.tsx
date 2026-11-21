@@ -9,6 +9,7 @@ import {
   machineAccessWarning,
   machineSystems,
   type MachineSystem,
+  type ModelChoice,
   type PageRoute,
   pagePath,
   type Provider,
@@ -30,6 +31,7 @@ import {
   onlineCount,
   pairKey,
   pairOptions,
+  type PairOption,
   providerRows,
   settingsGroups,
   slotsOf,
@@ -359,7 +361,28 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
   );
 }
 
-function TableRowControl({ row, settings, actions, title }: { readonly row: TableRow; readonly settings: SettingsSnapshot; readonly actions: SettingsActions; readonly title: string | null }) {
+function ModelPairSelect({ choice, options, label, disabled, change }: { readonly choice: ModelChoice; readonly options: readonly PairOption[]; readonly label: string; readonly disabled?: boolean; readonly change: (choice: ModelChoice) => void }) {
+  return (
+    <select
+      className="field"
+      aria-label={label}
+      value={pairKey(choice.model, choice.effort)}
+      disabled={disabled || options.length < 2}
+      onChange={(event) => {
+        const option = options.find((item) => pairKey(item.model, item.effort) === event.target.value);
+        if (option !== undefined) change({ model: option.model, effort: option.effort });
+      }}
+    >
+      {options.map((option) => (
+        <option key={pairKey(option.model, option.effort)} value={pairKey(option.model, option.effort)}>
+          {`${option.model} · ${option.effort}`}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function TableRowControl({ row, settings, actions, title }: { readonly row: TableRow; readonly settings: SettingsSnapshot; readonly actions: SettingsActions; readonly title: string }) {
   const currentKey = pairKey(row.current.model, row.current.effort);
   const [picked, setPicked] = useState(row.current);
   const [state, setState] = useState<"idle" | "sending" | "unsupported">("idle");
@@ -369,7 +392,7 @@ function TableRowControl({ row, settings, actions, title }: { readonly row: Tabl
   const options = withChoice(pairOptions(machineChoices(settings.machines), row.engine, row.current), picked);
   const chosen = pairKey(picked.model, picked.effort);
   const dirty = chosen !== currentKey;
-  const label = text("models.choice", { name: title === null ? text(`engine.${row.engine}`) : `${text(`engine.${row.engine}`)} ${title}` });
+  const label = text("models.choice", { name: `${text(`engine.${row.engine}`)} ${title}` });
   const save = () => {
     if (!dirty || state === "sending") {
       return;
@@ -379,31 +402,11 @@ function TableRowControl({ row, settings, actions, title }: { readonly row: Tabl
   };
   return (
     <div className="srow">
-      {title === null ? null : (
-        <div className="srow-text">
-          <span className="srow-title">{title}</span>
-        </div>
-      )}
-      <div className={title === null ? "srow-ctl srow-ctl--wide" : "srow-ctl"}>
-        <select
-          className="field"
-          aria-label={label}
-          value={chosen}
-          disabled={options.length < 2}
-          onChange={(event) => {
-            const option = options.find((item) => pairKey(item.model, item.effort) === event.target.value);
-            if (option !== undefined) {
-              setPicked({ model: option.model, effort: option.effort });
-              setState("idle");
-            }
-          }}
-        >
-          {options.map((option) => (
-            <option key={pairKey(option.model, option.effort)} value={pairKey(option.model, option.effort)}>
-              {`${option.model} · ${option.effort}`}
-            </option>
-          ))}
-        </select>
+      <div className="srow-text">
+        <span className="srow-title">{title}</span>
+      </div>
+      <div className="srow-ctl">
+        <ModelPairSelect choice={picked} options={options} label={label} change={(choice) => { setPicked(choice); setState("idle"); }} />
         <button className={`btn btn-sm${dirty ? " btn-primary" : ""}${state === "sending" ? " is-busy" : ""}`} type="button" disabled={!dirty || state === "sending"} aria-busy={state === "sending"} onClick={save}>
           {text("models.save")}
         </button>
@@ -414,6 +417,57 @@ function TableRowControl({ row, settings, actions, title }: { readonly row: Tabl
         </p>
       ) : null}
     </div>
+  );
+}
+
+function AntigravityModels({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
+  const current = settings.table.antigravity;
+  const currentKey = JSON.stringify(current);
+  const [pairs, setPairs] = useState(current);
+  const [state, setState] = useState<"idle" | "sending" | "unsupported">("idle");
+  useEffect(() => { setPairs(current); }, [currentKey]);
+  const options = pairOptions(machineChoices(settings.machines), "antigravity");
+  const extra = options.find((option) => !pairs.some((pair) => pair.model === option.model && pair.effort === option.effort));
+  const dirty = JSON.stringify(pairs) !== currentKey;
+  const sending = state === "sending";
+  const update = (next: ModelChoice[]) => { setPairs(next); setState("idle"); };
+  const earlier = (index: number) => {
+    const previous = pairs[index - 1];
+    const pair = pairs[index];
+    if (previous !== undefined && pair !== undefined) {
+      const next = [...pairs];
+      next[index - 1] = pair;
+      next[index] = previous;
+      update(next);
+    }
+  };
+  const save = async () => {
+    setState("sending");
+    const outcome = await actions.setTable({ ...settings.table, antigravity: pairs });
+    setState(outcome === "unsupported" ? "unsupported" : "idle");
+  };
+  return (
+    <section className="section">
+      <div className="section-head"><h2>{text("engine.antigravity")}</h2></div>
+      <ol className="rows">
+        {pairs.map((pair, index) => (
+          <li className="srow" key={index}>
+            <div className="srow-ctl srow-ctl--wide model-order">
+              <ModelPairSelect choice={pair} options={withChoice(options, pair)} label={text("models.choice", { name: `${text("engine.antigravity")} ${index + 1}` })} disabled={sending} change={(choice) => update(pairs.map((item, position) => position === index ? choice : item))} />
+              <button className="icon-btn" type="button" aria-label={text("models.earlier")} title={text("models.earlier")} disabled={sending || index === 0} onClick={() => earlier(index)}><Icon name="up" /></button>
+              <button className="icon-btn" type="button" aria-label={text("models.remove")} title={text("models.remove")} disabled={sending || pairs.length === 1} onClick={() => update(pairs.filter((_, position) => position !== index))}><Icon name="x" /></button>
+            </div>
+          </li>
+        ))}
+        <li className="srow">
+          <div className="srow-ctl">
+            <button className="btn btn-sm" type="button" disabled={sending || extra === undefined} onClick={() => { if (extra !== undefined) update([...pairs, { model: extra.model, effort: extra.effort }]); }}><Icon name="plus" />{text("models.add")}</button>
+            <button className={`btn btn-sm${dirty ? " btn-primary" : ""}${sending ? " is-busy" : ""}`} type="button" disabled={!dirty || sending} aria-busy={sending} onClick={() => void save()}>{text("models.save")}</button>
+          </div>
+          {state === "unsupported" ? <p className="field-err srow-err" role="alert">{text("models.unofferedRow")}</p> : null}
+        </li>
+      </ol>
+    </section>
   );
 }
 
@@ -458,11 +512,12 @@ function ModelsSection({ settings, actions }: { readonly settings: SettingsSnaps
           </div>
           <div className="rows">
             {group.rows.map((row) => (
-              <TableRowControl key={`${row.engine}-${row.difficulty ?? "all"}`} row={row} settings={settings} actions={actions} title={row.difficulty === null ? null : text(`ticket.difficulty.${row.difficulty}`)} />
+              <TableRowControl key={row.difficulty} row={row} settings={settings} actions={actions} title={text(`ticket.difficulty.${row.difficulty}`)} />
             ))}
           </div>
         </section>
       ))}
+      <AntigravityModels settings={settings} actions={actions} />
     </>
   );
 }

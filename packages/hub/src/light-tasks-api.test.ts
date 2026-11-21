@@ -29,8 +29,9 @@ const report = { en: "Done", zh: "已完成" };
 const mac: MachineReport = {
   hostname: "mac", platform: "darwin", arch: "arm64", release: "1", user: "owner", slots: { total: 2, free: 2 },
   programs: [
-    { id: "antigravity", installed: true, path: "agy", version: "1", models: [{ id: startingEngineTable.antigravity.model, efforts: [startingEngineTable.antigravity.effort] }], source: "program", problem: null },
+    { id: "antigravity", installed: true, path: "agy", version: "1", models: startingEngineTable.antigravity.map(({ model, effort }) => ({ id: model, efforts: [effort] })), source: "program", problem: null },
     { id: "codex", installed: true, path: "codex", version: "1", models: [{ id: startingEngineTable.codex.standard.model, efforts: [startingEngineTable.codex.standard.effort] }], source: "program", problem: null },
+    { id: "claude", installed: true, path: "claude", version: "1", models: [{ id: startingEngineTable.claude.standard.model, efforts: [startingEngineTable.claude.standard.effort] }], source: "program", problem: null },
   ],
   allowances: [],
 };
@@ -206,7 +207,7 @@ describe("light tasks", () => {
     await hub.chains.idle();
     const calls = run.sent.filter((message) => message.type === "work.task");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.task).toMatchObject({ light: true, checkout: null, engine: "antigravity" });
+    expect(calls[0]?.task).toMatchObject({ light: true, checkout: null, engine: "antigravity", model: "gemini-4-hydrogen", effort: "high" });
     const started = calls[0];
     if (started === undefined) throw new Error("The worker was not started");
     const ticket = started.task.ticket;
@@ -221,6 +222,32 @@ describe("light tasks", () => {
     expect(await (await get("/api/tickets")).json()).toEqual({ tickets: [] });
     expect(hub.tickets.history().tickets).toEqual([]);
     expect(await (await get(transferPath)).json()).toMatchObject({ items: [] });
+  });
+
+  it("starts on Hydrogen, continues on Flash, and falls back to code only after both hit quota", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const ticket = await agreed(link, hub.conversations.create().id);
+    await hub.chains.idle();
+    const starts = () => run.sent.filter((message) => message.type === "work.task").map((message) => message.task);
+    expect(starts()).toMatchObject([{ attempt: 1, engine: "antigravity", model: "gemini-4-hydrogen", effort: "high" }]);
+    run.show(ticket.id, 1, { kind: "phase", phase: "started", detail: "The worker started" });
+    run.show(ticket.id, 1, { kind: "session", session: "hydrogen-session" });
+    run.show(ticket.id, 1, { kind: "text", block: "draft", delta: "The first draft" });
+    run.show(ticket.id, 1, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
+    expect(starts()[1]).toMatchObject({ attempt: 2, engine: "antigravity", model: "gemini-3.8-flash", effort: "high", session: null, takeover: true, note: expect.stringContaining("The first draft") });
+    expect(hub.defaults.unavailable()).toEqual([]);
+    expect(hub.defaults.resolve(ticket)).toMatchObject({ engine: "antigravity", model: "gemini-3.8-flash" });
+
+    run.show(ticket.id, 2, { kind: "phase", phase: "started", detail: "The worker started" });
+    run.show(ticket.id, 2, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
+    expect(starts()[2]).toMatchObject({ attempt: 3, engine: "claude", model: startingEngineTable.claude.standard.model });
+    expect(hub.defaults.resolve(ticket)).toMatchObject({ engine: "claude" });
+    expect(hub.tickets.get(ticket.id)).toMatchObject({ state: "working", machine: "mac", round: 0 });
+    expect(hub.tickets.switches(ticket.id)).toMatchObject([
+      { kind: "switched", from: "antigravity", fromModel: "gemini-4-hydrogen", to: "antigravity", model: "gemini-3.8-flash", machine: "mac", reason: "Gemini quota reached" },
+      { kind: "switched", from: "antigravity", fromModel: "gemini-3.8-flash", to: "claude", machine: "mac", reason: "Gemini quota reached" },
+    ]);
   });
 
   it("stores a file larger than 100 MiB and over 30 files together in transfer and the reply", async () => {

@@ -284,6 +284,7 @@ export const TicketSwitch = z.object({
   kind: TicketSwitchKind,
   at: z.number().int(),
   from: ProgramId,
+  fromModel: z.string().optional(),
   to: ProgramId.nullable(),
   machine: z.string().nullable(),
   model: z.string().nullable(),

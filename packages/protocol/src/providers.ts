@@ -90,6 +90,7 @@ export interface RouteInput {
   readonly table: EngineTable;
   readonly machines: readonly MachineChoice[];
   readonly out: ReadonlyMap<ProgramId, ProviderOut>;
+  readonly antigravityOut?: ReadonlyMap<string, ProviderOut>;
 }
 
 export interface RoutedRun {
@@ -104,33 +105,38 @@ export type Routing =
   | { readonly kind: "wait"; readonly engines: readonly ProgramId[]; readonly until: number | null }
   | { readonly kind: "none" };
 
-function placeFor(input: RouteInput, engine: ProgramId): RoutedRun | undefined {
+function placesFor(input: RouteInput, engine: ProgramId): RoutedRun[] {
   const choice = tableChoice(input.table, engine, input.difficulty);
-  if (choice === null) {
-    return undefined;
-  }
+  const choices = engine === "antigravity" ? input.table.antigravity : choice === null ? [] : [choice];
   const fitting = machinesFor(input.platform, input.machines, input.requiredMachine)
     .filter((machine) => input.canMove || machine.name === input.machine)
     .sort((a, b) => Number(b.name === input.machine) - Number(a.name === input.machine) || b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const found = fitting.find((machine) => offers(machine, engine, choice.model, choice.effort));
-  return found === undefined ? undefined : { machine: found.name, engine, model: choice.model, effort: choice.effort };
+  return choices.flatMap((pair) => {
+    const found = fitting.find((machine) => offers(machine, engine, pair.model, pair.effort));
+    return found === undefined ? [] : [{ machine: found.name, engine, ...pair }];
+  });
+}
+
+export function outFor(out: ReadonlyMap<ProgramId, ProviderOut>, antigravityOut: ReadonlyMap<string, ProviderOut> | undefined, engine: ProgramId, model: string): ProviderOut | undefined {
+  const provider = out.get(engine);
+  const pair = engine === "antigravity" ? antigravityOut?.get(model) : undefined;
+  if (provider === undefined || pair === undefined) return provider ?? pair;
+  return { reason: provider.reason, until: later(provider.until, pair.until), given: provider.given || pair.given };
 }
 
 export function routeProvider(input: RouteInput): Routing {
-  const candidates = input.order.flatMap((engine) => {
-    const place = placeFor(input, engine);
-    return place === undefined ? [] : [place];
-  });
+  const candidates = input.order.flatMap((engine) => placesFor(input, engine));
   if (candidates.length === 0) {
     return { kind: "none" };
   }
-  const usable = candidates.find((candidate) => !input.out.has(candidate.engine));
+  const markOf = (candidate: RoutedRun) => outFor(input.out, input.antigravityOut, candidate.engine, candidate.model);
+  const usable = candidates.find((candidate) => markOf(candidate) === undefined);
   if (usable !== undefined) {
     return { kind: "run", ...usable };
   }
   const untils = candidates.flatMap((candidate) => {
-    const until = input.out.get(candidate.engine)?.until;
+    const until = markOf(candidate)?.until;
     return until === null || until === undefined ? [] : [until];
   });
-  return { kind: "wait", engines: candidates.map((candidate) => candidate.engine), until: untils.length === 0 ? null : Math.min(...untils) };
+  return { kind: "wait", engines: [...new Set(candidates.map((candidate) => candidate.engine))], until: untils.length === 0 ? null : Math.min(...untils) };
 }

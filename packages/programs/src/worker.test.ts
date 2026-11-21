@@ -224,8 +224,11 @@ describe("Antigravity opened for a worker", () => {
 
   it("classifies failures by their text", () => {
     expect(antigravityFailure("conversation x not found")).toMatchObject({ type: "failed", lostSession: true });
-    expect(antigravityFailure("RESOURCE_EXHAUSTED")).toMatchObject({ type: "unavailable" });
-    expect(antigravityFailure("You are not signed in")).toMatchObject({ type: "unavailable" });
+    expect(antigravityFailure("RESOURCE_EXHAUSTED")).toMatchObject({ type: "unavailable", category: "limit" });
+    expect(antigravityFailure("You are not signed in")).toMatchObject({ type: "unavailable", category: "problem" });
+    expect(antigravityFailure("403 Forbidden while checking quota")).toMatchObject({ type: "unavailable", category: "problem" });
+    expect(antigravityFailure("Account quota exceeded")).toMatchObject({ type: "unavailable", category: "problem" });
+    expect(antigravityFailure("No capacity available")).toMatchObject({ type: "unavailable", category: "overload" });
     expect(antigravityFailure("something else")).toMatchObject({ type: "failed", lostSession: false });
     expect(antigravityResult("SUCCESS", undefined, undefined)).toEqual({ type: "turn.finished", outcome: "completed" });
     expect(antigravityResult("SUCCESS", undefined, "interrupted")).toEqual({ type: "turn.finished", outcome: "interrupted" });

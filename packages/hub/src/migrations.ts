@@ -1045,6 +1045,24 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 50,
+    sql: `
+      ALTER TABLE provider_marks RENAME TO provider_marks_previous;
+      CREATE TABLE provider_marks (
+        program TEXT NOT NULL,
+        model TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        since INTEGER NOT NULL,
+        until INTEGER,
+        category TEXT,
+        PRIMARY KEY (program, model)
+      ) STRICT;
+      INSERT INTO provider_marks SELECT program, '', reason, since, until, category FROM provider_marks_previous;
+      DROP TABLE provider_marks_previous;
+      ALTER TABLE ticket_switches ADD COLUMN from_model TEXT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -70,6 +70,19 @@ describe("openDatabase", () => {
 });
 
 describe("applyMigrations", () => {
+  it("preserves provider-wide holds when adding model-scoped holds", () => {
+    using connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    applyMigrations(connection, migrations.filter(({ version }) => version <= 49), clock);
+    connection.exec("INSERT INTO provider_marks (program, reason, since, until, category) VALUES ('antigravity', 'Sign in required', 1, 2, 'problem')");
+
+    applyMigrations(connection, migrations, clock);
+
+    expect(connection.prepare("SELECT * FROM provider_marks").all()).toEqual([
+      { program: "antigravity", model: "", reason: "Sign in required", since: 1, until: 2, category: "problem" },
+    ]);
+  });
+
   it("adds schedule storage to a database that already has inbox sources", () => {
     using connection = new DatabaseSync(":memory:");
     const clock = new TestClock();

@@ -3,8 +3,8 @@ import {
   CodeEngineChoice,
   LightTaskMode,
   ProgramId,
+  AntigravityRow,
   DifficultyRow,
-  ModelChoice,
   unofferedChanges,
   codeEngineChoices,
   codeKinds,
@@ -396,7 +396,18 @@ function defaultsDefinitions() {
       name: "set_engine_row",
       title: "Change one start-defaults row",
       description: "Change one engine row only after the owner agrees in this conversation. Changed model and effort pairs must be offered by an online machine.",
-      inputSchema: { type: "object", properties: { engine: { type: "string", enum: ["codex", "claude", "dsh", "antigravity"] }, row: { type: "object", description: "For codex, claude or dsh: mechanical, standard and complex, each with model and effort. For antigravity: model and effort." } }, required: ["engine", "row"], additionalProperties: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          engine: { type: "string", enum: ["codex", "claude", "dsh", "antigravity"] },
+          row: {
+            description: "For code engines, give the mechanical, standard and complex choices. For Antigravity, give pairs in the order they should be tried.",
+            anyOf: [z.toJSONSchema(DifficultyRow), z.toJSONSchema(AntigravityRow)],
+          },
+        },
+        required: ["engine", "row"],
+        additionalProperties: false,
+      },
     },
     {
       name: "read_allowance",
@@ -1359,7 +1370,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const args = z.object({ engine: ProgramId, row: z.unknown() }).strict().safeParse(raw);
         if (!args.success) return invalid(args.error);
         const { engine, row } = args.data;
-        const parsed = (engine === "antigravity" ? ModelChoice : DifficultyRow).safeParse(row);
+        const parsed = (engine === "antigravity" ? AntigravityRow : DifficultyRow).safeParse(row);
         if (!parsed.success) return invalid(parsed.error);
         const current = tools.defaults.table();
         const next = { ...current, [engine]: parsed.data };

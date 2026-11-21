@@ -19,6 +19,7 @@ import {
   mergedCommit,
   type ProgramId,
   routeProvider,
+  outFor,
   type TicketSwitchKind,
   type RunnerWorkEvent,
   StoredWorkEvent,
@@ -218,7 +219,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     "SELECT 1 AS found FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? AND json_extract(event, '$.kind') IN ('text', 'tool.started') LIMIT 1",
   );
   const insertSwitch = connection.prepare(
-    "INSERT INTO ticket_switches (ticket_id, seq, kind, at, from_engine, to_engine, machine, model, effort, reason, until, owner, attempt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO ticket_switches (ticket_id, seq, kind, at, from_engine, from_model, to_engine, machine, model, effort, reason, until, owner, attempt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const selectTicketMessages = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND json_extract(event, '$.kind') = 'message' ORDER BY id");
   const updateState = connection.prepare("UPDATE ticket_attempts SET state = ? WHERE ticket_id = ? AND attempt = ?");
@@ -493,7 +494,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (report === undefined) {
         continue;
       }
-      const out = options.defaults?.out().get(attempt.engine);
+      const defaults = options.defaults;
+      const out = defaults === undefined ? undefined : outFor(defaults.out(), defaults.antigravityOut(), attempt.engine, attempt.model);
       if (out !== undefined) {
         touch(ticket.id, () => end(ticket.id, attempt.attempt, "unavailable", null, out.reason));
         const ended = attemptOf(ticket.id, attempt.attempt);
@@ -603,7 +605,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const machine = ticket.machine;
     const sameMachine = previous?.machine === machine;
-    const resume = previous !== undefined && sameMachine && previous.engine === engine.data ? (previous.session ?? previous.resume_session) : null;
+    const resume = previous !== undefined && sameMachine && previous.engine === engine.data && (engine.data !== "antigravity" || previous.model === ticket.model)
+      ? previous.session ?? previous.resume_session : null;
     const moving = previous !== undefined && !sameMachine;
     const handover = moving && (isActive(previous.state) || (previous.state === "unavailable" && CountRow.parse(countStartedOn.get(ticket.id, previous.machine)).count > 0));
     const number = (previous?.attempt ?? 0) + 1;
@@ -985,14 +988,14 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       announce(stored);
       if (unavailable !== undefined) {
         messages.undelivered(attempt.ticket_id, unavailable.unsent);
-        options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until, unavailable.category);
+        options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until, unavailable.category, attempt.model);
         const ended = attemptOf(attempt.ticket_id, attempt.attempt);
         if (current && ended !== undefined) {
           switchAway(attempt.ticket_id, ended);
         }
       }
       if (options.defaults !== undefined && ((event.kind === "phase" && event.phase === "checking") || event.kind === "finished" || (event.kind === "delivered" && event.outcome !== "failed"))) {
-        recoveredMark = options.defaults.recovered(attempt.engine, message.at);
+        recoveredMark = options.defaults.recovered(attempt.engine, message.at, attempt.model);
       }
       if (delivered !== undefined && delivered.light === undefined && event.kind === "delivered") {
         handIn(delivered, event);
@@ -1360,15 +1363,16 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     ticket: Ticket,
     earlier: Attempt,
     previous: Attempt,
-    to: { readonly machine: string; readonly engine: ProgramId },
+    to: { readonly machine: string; readonly engine: ProgramId; readonly model: string },
     reason: string,
   ): { readonly note: string; readonly files: readonly Attachment[] } => {
     const waiting = messages.waiting(ticket.id);
     const given = earlierMessages([ticket.id], new Set(waiting.map((message) => message.id)));
     const where = earlier.machine === to.machine ? "" : `, on ${earlier.machine}, from where the folder reached you through the branch`;
+    const scope = previous.engine === "antigravity" && previous.engine === to.engine && previous.model !== to.model ? "model" : "provider";
     const lines = [
       previous.started_at !== null
-        ? `You are taking over this ticket from an earlier worker. That worker ran on ${programOf(earlier)}, in this same folder${where}, and stopped because its provider became unavailable: ${reason === "" ? "no reason was given" : reason}. It did not finish. You cannot continue its session: this note and the folder are what you have of it. You are ${programNames[to.engine]}.`
+        ? `You are taking over this ticket from an earlier worker. That worker ran on ${programOf(earlier)}, in this same folder${where}, and stopped because its ${scope} became unavailable: ${reason === "" ? "no reason was given" : reason}. It did not finish. You cannot continue its session: this note and the folder are what you have of it. You are ${programNames[to.engine]}.`
         : `You are taking over this ticket from an earlier worker. That worker ran on ${programOf(earlier)}, in this same folder${where}, and ended; what it did is in its output below. The program chosen for the next attempt, ${programNames[previous.engine]}, was unavailable (${reason === "" ? "no reason was given" : reason}), so you, on ${programNames[to.engine]}, have it. You cannot continue the earlier session: this note and the folder are what you have of it.`,
     ];
     if (ticket.form === "code") {
@@ -1408,6 +1412,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     entry: {
       readonly kind: TicketSwitchKind;
       readonly from: ProgramId;
+      readonly fromModel?: string;
       readonly to: ProgramId | null;
       readonly machine: string | null;
       readonly model: string | null;
@@ -1419,7 +1424,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
   ) => {
     const seq = (SeqRow.parse(selectLastSwitchSeq.get(ticket)).seq ?? 0) + 1;
-    insertSwitch.run(ticket, seq, entry.kind, clock.now(), entry.from, entry.to, entry.machine, entry.model, entry.effort, entry.reason, entry.until, entry.owner ? 1 : 0, entry.attempt);
+    insertSwitch.run(ticket, seq, entry.kind, clock.now(), entry.from, entry.fromModel ?? null, entry.to, entry.machine, entry.model, entry.effort, entry.reason, entry.until, entry.owner ? 1 : 0, entry.attempt);
   };
 
   const failProvider = (ticket: Ticket, previous: Attempt, reason: string) => {
@@ -1456,7 +1461,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     touch(ticket.id, () =>
-      recordSwitch(ticket.id, { kind: "waiting", from: previous.engine, to: null, machine: null, model: null, effort: null, reason: previous.reason ?? "", until, owner: false, attempt: previous.attempt }),
+      recordSwitch(ticket.id, { kind: "waiting", from: previous.engine, ...(previous.engine === "antigravity" ? { fromModel: previous.model } : {}), to: null, machine: null, model: null, effort: null, reason: previous.reason ?? "", until, owner: false, attempt: previous.attempt }),
     );
     const out = options.defaults?.out();
     tell(
@@ -1492,6 +1497,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       table: defaults.table(),
       machines,
       out: defaults.out(),
+      antigravityOut: defaults.antigravityOut(),
     });
     if (routing.kind === "none") {
       if (online) {
@@ -1503,8 +1509,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       waitForProvider(ticket, previous, routing.engines, routing.until);
       return;
     }
-    const resumed = routing.engine === previous.engine && routing.machine === previous.machine;
-    const owner = ticket.chosenBy?.engine === "owner" && ticket.engine === previous.engine && !resumed;
+    const resumed = routing.engine === previous.engine && routing.machine === previous.machine && (previous.engine !== "antigravity" || routing.model === previous.model);
+    const owner = !resumed && ticket.engine === previous.engine && (ticket.chosenBy?.engine === "owner" || (previous.engine === "antigravity" && ticket.chosenBy?.model === "owner"));
     const reason = previous.reason ?? "";
     const earlierRow = selectWorked.get(id);
     const earlier = earlierRow === undefined ? undefined : Attempt.parse(earlierRow);
@@ -1546,6 +1552,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             recordSwitch(id, {
               kind: resumed ? "resumed" : "switched",
               from: previous.engine,
+              ...(previous.engine === "antigravity" ? { fromModel: previous.model } : {}),
               to: routing.engine,
               machine: routing.machine,
               model: routing.model,

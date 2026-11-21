@@ -18,11 +18,13 @@ export type ModelChoice = z.infer<typeof ModelChoice>;
 export const DifficultyRow = z.object({ mechanical: ModelChoice, standard: ModelChoice, complex: ModelChoice });
 export type DifficultyRow = z.infer<typeof DifficultyRow>;
 
+export const AntigravityRow = z.array(ModelChoice).min(1);
+
 export const EngineTable = z.object({
   codex: DifficultyRow,
   claude: DifficultyRow,
   dsh: DifficultyRow,
-  antigravity: ModelChoice,
+  antigravity: z.union([AntigravityRow, ModelChoice.transform((choice) => [choice])]),
 });
 export type EngineTable = z.infer<typeof EngineTable>;
 
@@ -42,7 +44,10 @@ export const startingEngineTable: EngineTable = {
     standard: { model: "deepseek-flash", effort: "high" },
     complex: { model: "deepseek-flash", effort: "max" },
   },
-  antigravity: { model: "gemini-3.8-flash", effort: "high" },
+  antigravity: [
+    { model: "gemini-4-hydrogen", effort: "high" },
+    { model: "gemini-3.8-flash", effort: "high" },
+  ],
 };
 
 export const EngineTableBody = z.object({ table: EngineTable });
@@ -50,7 +55,7 @@ export type EngineTableBody = z.infer<typeof EngineTableBody>;
 
 export function tableChoice(table: EngineTable, engine: ProgramId, difficulty: Difficulty | null): ModelChoice | null {
   if (engine === "antigravity") {
-    return table.antigravity;
+    return table.antigravity[0] ?? null;
   }
   return difficulty === null ? null : table[engine][difficulty];
 }
@@ -74,6 +79,7 @@ export type AllowanceStates = Readonly<Record<AllowanceProgram, AllowanceState>>
 export interface EngineContext {
   readonly out: ReadonlySet<ProgramId>;
   readonly order: readonly ProgramId[];
+  readonly antigravityOut?: ReadonlySet<string>;
 }
 
 export const noEngineContext: EngineContext = { out: new Set(), order: ["claude", "codex", "dsh"] };
@@ -180,9 +186,25 @@ export interface StartInput {
 
 export function resolveStart(input: StartInput, table: EngineTable, machines: readonly MachineChoice[], allowance: AllowanceStates, context: EngineContext = noEngineContext): StartChoice {
   const { owner } = input;
-  const engine = owner.engine ?? (input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance, context) : null);
   const required = input.requiredMachine ?? null;
-  const fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
+  const available = table.antigravity.filter((choice) => !context.antigravityOut?.has(choice.model));
+  const startContext = input.kind === "writing" && available.length === 0
+    ? { ...context, out: new Set([...context.out, "antigravity" as const]) }
+    : context;
+  const automatic = input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance, startContext) : null;
+  const explicitAntigravity = input.kind === "writing" && table.antigravity.some((choice) => choice.model === owner.model);
+  const engine = owner.engine ?? (explicitAntigravity ? "antigravity" : automatic);
+  let fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
+  if (engine === "antigravity") {
+    const candidates = machinesFor(input.platform, machines, owner.machine ?? required);
+    if (owner.model === null) {
+      const choices = available.length === 0 ? table.antigravity : available;
+      fromTable = choices.find((choice) => candidates.some((machine) => offers(machine, engine, choice.model, owner.effort ?? choice.effort)))
+        ?? choices[0] ?? null;
+    } else {
+      fromTable = table.antigravity.find((choice) => choice.model === owner.model) ?? fromTable;
+    }
+  }
   const model = owner.model ?? fromTable?.model ?? null;
   const effort = owner.effort ?? fromTable?.effort ?? null;
   const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines, model, effort) : null);

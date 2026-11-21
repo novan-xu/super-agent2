@@ -21,7 +21,7 @@ export interface TableCell {
 export function tableCells(table: EngineTable): TableCell[] {
   return tableEngines.flatMap((engine): TableCell[] => {
     if (engine === "antigravity") {
-      return [{ engine, difficulty: null, ...table.antigravity }];
+      return table.antigravity.map((choice) => ({ engine, difficulty: null, ...choice }));
     }
     return difficulties.map((difficulty) => ({ engine, difficulty, ...table[engine][difficulty] }));
   });
@@ -29,9 +29,7 @@ export function tableCells(table: EngineTable): TableCell[] {
 
 export function withCell(table: EngineTable, cell: TableCell): EngineTable {
   const choice = { model: cell.model, effort: cell.effort };
-  if (cell.engine === "antigravity" || cell.difficulty === null) {
-    return cell.engine === "antigravity" ? { ...table, antigravity: choice } : table;
-  }
+  if (cell.engine === "antigravity" || cell.difficulty === null) return table;
   return { ...table, [cell.engine]: { ...table[cell.engine], [cell.difficulty]: choice } };
 }
 
@@ -41,11 +39,10 @@ export function offeredAnywhere(machines: readonly MachineChoice[], engine: Prog
 
 export function unofferedChanges(next: EngineTable, current: EngineTable, machines: readonly MachineChoice[]): TableCell[] {
   const before = tableCells(current);
-  return tableCells(next).filter((cell, index) => {
-    const old = before[index];
-    const changed = old === undefined || old.model !== cell.model || old.effort !== cell.effort;
-    return changed && !offeredAnywhere(machines, cell.engine, cell.model, cell.effort);
-  });
+  return tableCells(next).filter((cell) =>
+    !before.some((old) => old.engine === cell.engine && old.difficulty === cell.difficulty && old.model === cell.model && old.effort === cell.effort)
+    && !offeredAnywhere(machines, cell.engine, cell.model, cell.effort),
+  );
 }
 
 export const settingsSections = ["machines", "repositories", "models", "appearance", "connections"] as const;

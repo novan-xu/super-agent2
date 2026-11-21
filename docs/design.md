@@ -73,7 +73,11 @@ A worker does the same, decided by the hub.
 - The owner's explicit choice of provider is switched away from too, and the ticket's timeline says so, with the reason.
 - Claude Code and Codex both unavailable falls to `dsh`.
   When `dsh` is unavailable too, the ticket waits and tries again by itself when the earliest time passes or a reading shows one back; the brain is told once that it waits.
-  Antigravity unavailable for prose falls to the code providers in the owner's order.
+  Antigravity quota and rate limits apply to the model selected for that run, so prose continues on the next offered model in the Antigravity row.
+  Model switches use a new session with the earlier worker's output and the same task folder.
+  A model mark clears when its hold expires or a later run on that model succeeds.
+  When all models in the row are marked, or when a provider-wide problem such as a failed login marks Antigravity itself, prose falls to the code providers in the owner's order.
+  The timeline names the previous model and the reason for the switch, including when the owner chose that model.
 
 ## The brain's topics
 
@@ -519,7 +523,9 @@ These are the starting values, taken from the first Super-agent's settings; the 
 | Standard | `gpt-6.1-terra`, high | `claude-sonnet-5-5`, high | `deepseek-flash`, high |
 | Complex | `gpt-6.1-sol`, high | `claude-opus-5-5`, high | `deepseek-flash`, max |
 
-Antigravity runs `gemini-3.8-flash` at high for every difficulty.
+Antigravity uses the same ordered model and effort pairs for every difficulty.
+The starting order is `gemini-4-hydrogen` at high, followed by `gemini-3.8-flash` at high.
+A saved single pair is read as a list of one, and the owner can add, remove, and reorder pairs in Settings.
 
 The brain's own starting values:
 
@@ -529,7 +535,8 @@ The brain's own starting values:
 | Claude Code | `claude-opus-5-5` | high |
 | dsh | `deepseek-flash` | high |
 
-A model and effort the chosen machine's program does not offer is refused, never replaced by a neighbour.
+An explicit model and effort the chosen machine's program does not offer is refused.
+For automatic Antigravity starts, the hub tries the ordered pairs that an eligible machine offers.
 
 ## Memory
 
