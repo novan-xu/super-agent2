@@ -17,6 +17,7 @@ const props: CanvasWorkbenchProps = {
 let host: HTMLDivElement;
 let root: Root;
 let layoutWidth: number;
+let layoutHeight: number;
 let gridWidth: number;
 let observers: Array<() => void>;
 
@@ -24,6 +25,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   localStorage.clear();
   layoutWidth = 1200;
+  layoutHeight = 1000;
   gridWidth = 700;
   observers = [];
   vi.stubGlobal("ResizeObserver", class {
@@ -36,6 +38,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
     return this.classList.contains("wb-layout") ? layoutWidth : gridWidth;
   });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("wb-layout") ? layoutHeight : 100; });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     const left = this.closest('[data-ticket="2"]') ? gridWidth / 2 : 0;
     const width = this.classList.contains("wb-repos") ? 180 : this.classList.contains("wb-card") ? gridWidth / 2 - 10 : gridWidth;
@@ -144,6 +147,45 @@ describe("workbench panel resizing", () => {
     localStorage.setItem("workbench.panelWidth", "500");
     await render();
     expect(width()).toBe("500px");
+  });
+
+  it("switches orientation live and resizes and remembers the portrait panel independently", async () => {
+    let portrait = false;
+    let onChange: (() => void) | undefined;
+    vi.mocked(window.matchMedia).mockImplementation((query) => query.includes("orientation")
+      ? { get matches() { return portrait; }, addEventListener: (_: string, callback: () => void) => { onChange = callback; }, removeEventListener: noop } as unknown as MediaQueryList
+      : { matches: false } as MediaQueryList);
+    localStorage.setItem("workbench.panelWidth", "500");
+    await render();
+    expect(host.querySelector(".wb-layout--portrait")).toBeNull();
+    portrait = true;
+    await act(async () => onChange?.());
+    const layout = host.querySelector<HTMLElement>(".wb-layout")!;
+    expect(layout.classList.contains("wb-layout--portrait")).toBe(true);
+    expect(splitter().getAttribute("aria-orientation")).toBe("horizontal");
+    expect(splitter().getAttribute("aria-valuenow")).toBe("496");
+    await act(async () => splitter().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" })));
+    expect(localStorage.getItem("workbench.panelHeight")).toBe("520");
+    splitter().setPointerCapture = vi.fn();
+    await act(async () => {
+      splitter().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, button: 0, clientY: 500 }));
+      splitter().dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 400 }));
+      splitter().dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    });
+    expect(localStorage.getItem("workbench.panelHeight")).toBe("620");
+    layoutHeight = 700;
+    await act(async () => window.dispatchEvent(new Event("resize")));
+    expect(splitter().getAttribute("aria-valuenow")).toBe("492");
+    portrait = false;
+    await act(async () => onChange?.());
+    expect(width()).toBe("500px");
+    portrait = true;
+    layoutHeight = 1000;
+    await act(async () => onChange?.());
+    expect(splitter().getAttribute("aria-valuenow")).toBe("620");
+    await act(async () => splitter().dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(splitter().getAttribute("aria-valuenow")).toBe("496");
+    expect(localStorage.getItem("workbench.panelHeight")).toBeNull();
   });
 
   it("recomputes canvas columns and dependency paths when the grid changes width", async () => {

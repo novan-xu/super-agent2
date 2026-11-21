@@ -3,6 +3,7 @@ import { chineseOf, type Conversation, type StartCard as StartData, type Ticket,
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
 import { canStartCard } from "../live/choice.js";
+import { clampPanelHeight, loadPanelHeight, minPanelHeight, panelHeightMaximum, savePanelHeight } from "../live/panel-height.js";
 import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
 import { offersSwitch, type PushPhase } from "../live/push.js";
 import { kindKey, phaseLooks, ticketPhase, whereOf } from "../live/phase.js";
@@ -44,30 +45,43 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   const [pane, setPane] = useState<"canvas" | "panel">("canvas");
   const layout = useRef<HTMLDivElement>(null);
   const railElement = useRef<HTMLElement>(null);
-  const drag = useRef<{ pointer: number; x: number; width: number } | null>(null);
+  const drag = useRef<{ pointer: number; position: number; size: number; portrait: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preferredWidth, setPreferredWidth] = useState(loadPanelWidth);
   const [maximum, setMaximum] = useState(defaultPanelWidth);
+  const [portrait, setPortrait] = useState(false);
+  const [preferredHeight, setPreferredHeight] = useState(loadPanelHeight);
+  const [layoutHeight, setLayoutHeight] = useState(0);
+  const heightMaximum = panelHeightMaximum(layoutHeight);
+  const panelHeight = clampPanelHeight(preferredHeight ?? (layoutHeight - 8) / 2, heightMaximum);
   const panelWidth = clampPanelWidth(preferredWidth, maximum);
   useLayoutEffect(() => {
     const element = layout.current;
     const rail = railElement.current;
     if (element === null || rail === null) return;
+    const query = window.matchMedia("(orientation: portrait) and (min-width: 768px)");
     const measure = () => {
-      if (window.matchMedia("(max-width: 767px)").matches) return;
-      setMaximum(panelMaximum(element.clientWidth, rail.getBoundingClientRect().width));
+      setPortrait(query.matches);
+      setLayoutHeight(element.clientHeight);
+      if (!window.matchMedia("(max-width: 767px)").matches) setMaximum(panelMaximum(element.clientWidth, rail.getBoundingClientRect().width));
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(element);
     observer?.observe(rail);
     window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+    query.addEventListener?.("change", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); query.removeEventListener?.("change", measure); };
   }, []);
   const changeWidth = (width: number) => {
     const next = clampPanelWidth(width, maximum);
     setPreferredWidth(next);
     savePanelWidth(next);
+  };
+  const changeHeight = (height: number) => {
+    const next = clampPanelHeight(height, heightMaximum);
+    setPreferredHeight(next);
+    savePanelHeight(next);
   };
   const dialog = useRef<HTMLDialogElement>(null);
   const source = useRef<HTMLElement | null>(null);
@@ -128,7 +142,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       <span className={`dot dot--${waitingHere ? "warn" : running ? "ok" : "mute"}`} role="img" aria-label={text(waitingHere ? "workbench.mark.waits" : running ? "workbench.mark.runs" : "workbench.mark.idle")} /><span className="od-truncate">{label}</span><span className="count">{matching.length}</span>
     </button>;
   };
-  return <div ref={layout} className={`wb-layout${dragging ? " wb-layout--dragging" : ""}`} style={{ "--wb-panel-width": `${panelWidth}px` } as CSSProperties}>
+  return <div ref={layout} className={`wb-layout${portrait ? " wb-layout--portrait" : ""}${dragging ? " wb-layout--dragging" : ""}`} style={{ "--wb-panel-width": `${panelWidth}px`, "--wb-panel-height": `${panelHeight}px` } as CSSProperties}>
     <aside ref={railElement} className="wb-repos" aria-label={text("conversation.repository")}>
       {rail(undefined, text("workbench.all"))}{repositories.map((row) => rail(row.repository, row.alias ?? row.repository))}{rail(null, text("conversation.daily"))}
     </aside>
@@ -143,25 +157,31 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
         <CanvasGrid chains={repository === null ? canvas[section].flatMap((chain) => chain.map((node) => [node])) : canvas[section]} daily={repository === null} starts={starts} stuck={stuck} waiting={waiting} actions={actions} selected={props.selected} select={select} openStart={openStart} ticketHref={props.ticketHref} />
       </section>)}
     </main>
-    <div className="wb-splitter" role="separator" aria-label={text("workbench.resizePanel")} aria-orientation="vertical"
-      aria-valuemin={minPanelWidth} aria-valuemax={maximum} aria-valuenow={panelWidth} tabIndex={0}
+    <div className="wb-splitter" role="separator" aria-label={text("workbench.resizePanel")} aria-orientation={portrait ? "horizontal" : "vertical"}
+      aria-valuemin={portrait ? minPanelHeight : minPanelWidth} aria-valuemax={portrait ? heightMaximum : maximum} aria-valuenow={portrait ? panelHeight : panelWidth} tabIndex={0}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { pointer: event.pointerId, x: event.clientX, width: panelWidth };
+        drag.current = { pointer: event.pointerId, position: portrait ? event.clientY : event.clientX, size: portrait ? panelHeight : panelWidth, portrait };
         setDragging(true);
       }}
       onPointerMove={(event) => {
-        if (drag.current?.pointer === event.pointerId) changeWidth(drag.current.width + drag.current.x - event.clientX);
+        if (drag.current?.pointer === event.pointerId && drag.current.portrait === portrait) {
+          const size = drag.current.size + drag.current.position - (portrait ? event.clientY : event.clientX);
+          if (portrait) changeHeight(size); else changeWidth(size);
+        }
       }}
       onPointerUp={(event) => { if (drag.current?.pointer === event.pointerId) { drag.current = null; setDragging(false); } }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
-      onDoubleClick={() => changeWidth(defaultPanelWidth)}
+      onDoubleClick={() => { if (portrait) { setPreferredHeight(null); savePanelHeight(null); } else changeWidth(defaultPanelWidth); }}
       onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        const increase = portrait ? "ArrowUp" : "ArrowLeft";
+        const decrease = portrait ? "ArrowDown" : "ArrowRight";
+        if (event.key !== increase && event.key !== decrease) return;
         event.preventDefault();
-        changeWidth(panelWidth + (event.key === "ArrowLeft" ? 24 : -24));
+        const delta = event.key === increase ? 24 : -24;
+        if (portrait) changeHeight(panelHeight + delta); else changeWidth(panelWidth + delta);
       }}
     />
     <aside className={`wb-panel ${pane === "canvas" ? "wb-mobile-hidden" : ""}`}>{props.panel}</aside>
