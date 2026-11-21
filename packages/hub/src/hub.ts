@@ -406,6 +406,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,
+          runners,
           verification,
           loop: failures,
           ...(work === undefined ? {} : { work }),

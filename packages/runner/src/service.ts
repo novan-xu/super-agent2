@@ -113,10 +113,12 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     ...options.work,
   });
   let requestAllowance: () => void = () => undefined;
+  let requestPrograms: (id: string) => void = () => undefined;
   const link = createRunnerLink({
     config,
     setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
+    refreshPrograms: (id) => requestPrograms(id),
     report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
@@ -155,6 +157,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   }
   const prober = options.prober ?? systemProber({ environment: options.environment, cwd: files.probe });
   const definitions = programDefinitions(config.models);
+  let probing = false;
   const probe = async () => {
     programs = await probePrograms(definitions, prober);
     log(
@@ -164,10 +167,11 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     );
     link.update();
   };
+  let flushPrograms: () => void = () => undefined;
   if (options.environment.SUPERAGENT2_PROGRAM_AUTO_UPDATE !== "0") {
     programUpdater = createProgramUpdater({
       steps: options.programUpdateSteps ?? systemProgramUpdateSteps(prober),
-      busy: () => works.busy(),
+      busy: () => works.busy() + (probing ? 1 : 0),
       report: () => programs,
       publish: (reports) => { programs = reports; link.update(); },
       reprobe: probe,
@@ -175,7 +179,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
         updatingPrograms = active;
         link.update();
         if (!active) for (const message of queued.splice(0)) works.receive(message);
-        if (!active) updater?.changed();
+        if (!active) { updater?.changed(); flushPrograms(); }
       },
       log,
     });
@@ -186,27 +190,57 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   storageTimer.unref();
   const probed = probe().then(() => programUpdater?.check()).catch((error: unknown) => log(`Could not list the programs: ${error instanceof Error ? error.message : String(error)}`));
   const timer = setInterval(() => {
-    if (!updatingPrograms) void probe().then(() => programUpdater?.check()).catch(() => undefined);
+    if (!updatingPrograms && !probing) {
+      probing = true;
+      void probe().then(() => programUpdater?.check()).catch(() => undefined).finally(() => {
+        probing = false;
+        flushPrograms();
+        programUpdater?.changed();
+      });
+    }
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
-  let reading = false;
-  const readAllowance = async () => {
-    if (reading) {
-      return;
-    }
-    reading = true;
-    try {
-      allowances = await readAllowances(prober, programs, now);
-      log(
-        `Allowance: ${allowances
-          .map((entry) => (entry.program === "dsh" ? `dsh ${entry.available === null ? "unknown" : "read"}` : entry.state === "unknown" ? `${entry.program} unknown` : `${entry.program} ${entry.state} with ${entry.remainingPercent ?? "?"}% left`))
-          .join(", ")}`,
-      );
-      link.update();
-    } finally {
-      reading = false;
-    }
+  let reading: Promise<void> | undefined;
+  const readAllowance = (): Promise<void> => {
+    if (reading !== undefined) return reading;
+    reading = (async () => {
+      try {
+        allowances = await readAllowances(prober, programs, now);
+        log(
+          `Allowance: ${allowances
+            .map((entry) => (entry.program === "dsh" ? `dsh ${entry.available === null ? "unknown" : "read"}` : entry.state === "unknown" ? `${entry.program} unknown` : `${entry.program} ${entry.state} with ${entry.remainingPercent ?? "?"}% left`))
+            .join(", ")}`,
+        );
+        link.update();
+      } finally {
+        reading = undefined;
+      }
+    })();
+    return reading;
   };
+  const pendingPrograms: string[] = [];
+  flushPrograms = () => {
+    if (updatingPrograms || probing || pendingPrograms.length === 0) return;
+    probing = true;
+    void (async () => {
+      const ids = pendingPrograms.splice(0);
+      try {
+        await probed;
+        if (updatingPrograms) { pendingPrograms.unshift(...ids); return; }
+        await probe();
+        if (reading !== undefined) await reading;
+        await readAllowance();
+        for (const id of ids) link.send({ type: "report", machine: { ...machineReport(config.slots, programs, process.platform, allowances, works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }, refreshId: id });
+      } catch (error) {
+        log(`Could not recheck the programs: ${String(error)}`);
+      } finally {
+        probing = false;
+        flushPrograms();
+        programUpdater?.changed();
+      }
+    })();
+  };
+  requestPrograms = (id) => { pendingPrograms.push(id); flushPrograms(); };
   requestAllowance = () => { void probed.then(readAllowance).catch(() => undefined); };
   const allowanceRead = probed.then(readAllowance).catch((error: unknown) => log(`Could not read the allowance: ${error instanceof Error ? error.message : String(error)}`));
   const allowanceTimer = setInterval(() => {

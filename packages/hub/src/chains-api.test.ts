@@ -689,6 +689,33 @@ describe("start defaults", () => {
     expect(latest?.type === "allowance" && latest.allowance.subscriptions[0]?.windows).toEqual([window]);
   });
 
+  it("rechecks the requested or all machines and reports offline machines", async () => {
+    const running = await start();
+    running.machines.add({ name: "offline", accessClientId: "offline-client" });
+    const machine = running.machines.active("pc")!;
+    const fresh = machineReport("win32");
+    fresh.programs[0]!.version = "2.0";
+    fresh.programs[0]!.problem = "listing failed";
+    let link: import("./runners.js").RunnerLink;
+    const requested: string[] = [];
+    link = running.runners.attach(machine, { send: (message) => {
+      if (message.type === "programs.refresh") {
+        requested.push(message.id);
+        queueMicrotask(() => link.receive({ type: "report", machine: fresh, refreshId: message.id }));
+      }
+    }, close: () => undefined });
+    link.receive({ type: "hello", protocol: protocolVersion, machine: machineReport("win32"), works: [] });
+    const named = await callBrainTool(running, "recheck_machines", { machine: "pc" });
+    expect(named.text).toContain("pc: refreshed");
+    expect(named.text).toContain("codex: version 2.0, 3 models, problem: listing failed");
+    expect(named.text).not.toContain("offline");
+    const all = await callBrainTool(running, "recheck_machines", {});
+    expect(all.text).toContain("offline: not reached");
+    expect(all.text).toContain("pc: refreshed");
+    expect(requested).toHaveLength(2);
+    expect((await callBrainTool(running, "recheck_machines", { machine: "missing" })).text).toContain("missing: not reached");
+  });
+
   it("chooses dsh only when both subscriptions are used up by a current reading", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");

@@ -229,6 +229,7 @@ Do it without being asked, right after `arrange_chains`, and again for any chain
 - Platform: `macos` or `windows` when the work needs that system (building or testing something that only runs there), otherwise `any`.
 - Engine: read what is left on the GPT and Claude subscriptions with `read_allowance`, and choose `codex` (GPT) or `claude` (Claude Code) by it, sparing the one with less left.
   An unknown reading is not used up: it mostly means no machine could ask, not that the subscription is empty.
+  When the owner asks to recheck worker programs, call `recheck_machines` with a machine name or without one for all machines, and report any machine not reached or timed out.
   `read_allowance` also reports the DeepSeek balance and lists the worker programs the hub has marked unavailable because one of them reported it when a worker really called it (a used-up subscription, a rate limit, a failed login, an overloaded service); a marked program counts as used up, and the hub's default follows.
   You never choose `dsh`: the hub uses it only when both Codex and Claude Code are used up or marked, and it follows the owner's order of providers (Claude, then GPT, then DeepSeek, unless the owner changed the first two).
 - A provider that becomes unavailable while a worker runs is not your concern: the hub switches that worker to the next provider by itself, see "When a provider is unavailable" below.

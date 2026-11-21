@@ -59,6 +59,7 @@ import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
+import type { Runners } from "./runners.js";
 
 export const supportedMcpVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
@@ -287,6 +288,7 @@ export interface TicketTools {
   readonly schedules?: Schedules;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
+  readonly runners?: Runners;
   readonly work?: WorkService;
   readonly verification?: VerificationService;
   readonly loop?: FailureLoop;
@@ -403,6 +405,12 @@ function defaultsDefinitions() {
       description:
         "Read what is left on the GPT subscription (Codex) and the Claude subscription (Claude Code), and the DeepSeek balance from dsh, as the runners last read it from the programs themselves, the worker programs the hub has marked unavailable because they reported it when really called, and the work machines online with their system, programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "recheck_machines",
+      title: "Recheck worker programs",
+      description: "Ask one machine or all machines to probe their worker programs again, then return their versions, model counts and problems. Offline or unresponsive machines are reported.",
+      inputSchema: { type: "object", properties: { machine: { type: "string", minLength: 1 } }, additionalProperties: false },
     },
     {
       name: "choose_defaults",
@@ -1388,6 +1396,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return undefined;
         }
         return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines(), tools.defaults.unavailable(), tools.defaults.balance()) };
+      }
+      case "recheck_machines": {
+        if (tools.runners === undefined) return undefined;
+        const parsed = z.strictObject({ machine: z.string().trim().min(1).optional() }).safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const results = await tools.runners.refreshPrograms(parsed.data.machine);
+        if (results.length === 0) return { text: "No machines are registered." };
+        return { text: results.map((result) => result.report === undefined
+          ? `${result.name}: ${result.status}.`
+          : `${result.name}: refreshed\n${result.report.programs.map((program) => `- ${program.id}: ${program.installed ? `version ${program.version ?? "unknown"}, ${program.models.length} models${program.problem === null ? "" : `, problem: ${program.problem}`}` : "not installed"}`).join("\n")}`).join("\n") };
       }
       case "choose_defaults": {
         if (tools.defaults === undefined || tools.chains === undefined) {

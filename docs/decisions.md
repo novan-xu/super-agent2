@@ -3698,3 +3698,10 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Chosen:** Use a named machine for work from the run, with deployment targets taken from the deployment recipe.
 - **Why:** Machine-specific chores need a fixed target, and deployments must follow their project's recorded recipe.
 - **Other options:** Give the brain an advisory machine name only or use the schedule's machine for deployments too.
+
+## 2026-11-20 — On-demand program checks
+
+- **Chosen:** The brain can request a fresh program probe on one machine or all machines, and the hub waits up to 30 seconds for a response tied to each request.
+  Requests during a program update wait for its lock, and a recheck reads allowances without initiating an update.
+- **Why:** A report about an unrelated change cannot be mistaken for a completed probe, and the owner can see offline or slow machines in the same turn without interrupting workers.
+- **Other options:** Restart runners, accept the next ordinary report as confirmation, or trigger an automatic update as part of each recheck.
