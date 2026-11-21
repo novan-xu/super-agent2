@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filePartBytes, type RunnerWorkEvent, type StoredWorkEvent, type Ticket, type WorkEvent } from "@super-agent2/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Delivery } from "./conversations.js";
 import { type HubDatabase, openDatabase } from "./database.js";
 import { createTicketFiles, type StoredFile, type TicketFiles } from "./files.js";
@@ -58,10 +58,10 @@ afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function working(issues: readonly number[] = [21], machine = "pc", engine: "codex" | "claude" | "dsh" = "codex"): Ticket {
+function working(issues: readonly number[] = [21], machine = "pc", engine: "codex" | "claude" | "dsh" = "codex", service: TicketService = tickets): Ticket {
   const title = { en: "Add a greeting", zh: "加一句问候" };
   const summary = { en: "Print hello", zh: "打印问候" };
-  const opened = tickets.open({
+  const opened = service.open({
     repository,
     issues: issues.map((number) => ({ repository, number, url: `https://github.com/${repository}/issues/${number}`, title: { en: `Issue ${number}`, zh: `问题 ${number}` }, summary })),
     title,
@@ -69,11 +69,11 @@ function working(issues: readonly number[] = [21], machine = "pc", engine: "code
     kind: "feature",
     conversation: "c-1",
   });
-  tickets.change((writes) => {
+  service.change((writes) => {
     writes.choose(opened.id, { machine, engine, model: "gpt-6-luna", effort: "low", by: { machine: "default", engine: "default", model: "default", effort: "default" } });
     writes.move(opened.id, "working");
   });
-  const ticket = tickets.get(opened.id);
+  const ticket = service.get(opened.id);
   if (ticket === undefined) {
     throw new Error("ticket missing");
   }
@@ -565,5 +565,292 @@ describe("work for a task ticket", () => {
     expect(current(ticket.id).state).toBe("working");
     expect(delivered).toEqual([]);
     expect(files.list(ticket.id)).toEqual([]);
+  });
+});
+
+interface Replayed {
+  readonly arrived: number;
+  readonly commits: number;
+  readonly rows: unknown[];
+  readonly attempts: unknown[];
+  readonly tickets: unknown[];
+  readonly announced: unknown[];
+  readonly ticketStates: Record<number, string[]>;
+  readonly sent: unknown[];
+  readonly told: unknown[];
+}
+
+const burstStart = Date.parse("2026-11-20T21:31:10Z");
+
+function burst(a: number, b: number, c: number): RunnerWorkEvent[] {
+  const next = new Map<number, number>();
+  const messages: RunnerWorkEvent[] = [];
+  const add = (ticket: number, event: WorkEvent, seq = (next.get(ticket) ?? 0) + 1, at: number = burstStart + messages.length) => {
+    next.set(ticket, Math.max(next.get(ticket) ?? 0, seq));
+    messages.push({ type: "work.event", ticket, attempt: 1, seq, at, event });
+  };
+  for (const ticket of [a, b, c]) {
+    add(ticket, { kind: "phase", phase: "started", detail: "Started" });
+  }
+  add(a, { kind: "session", session: "thread-a" });
+  add(b, { kind: "session", session: "thread-b" });
+  add(c, { kind: "tool.started", call: "c-1", name: "shell", input: "pnpm test" });
+  for (let index = 0; index < 30; index += 1) {
+    add(a, { kind: "text", block: "a", delta: `a${index} ` });
+    add(b, { kind: "tool.output", call: "b-1", delta: `b${index}\n` });
+    add(c, { kind: "tool.output", call: "c-1", delta: `c${index}\n` });
+  }
+  add(b, { kind: "text", block: "b", delta: "a duplicate" }, next.get(b));
+  const skipped = (next.get(c) ?? 0) + 1;
+  add(c, { kind: "text", block: "c", delta: "ahead" }, skipped + 1);
+  add(c, { kind: "text", block: "c", delta: "resent" }, skipped);
+  add(c, { kind: "text", block: "c", delta: "ahead" }, skipped + 1);
+  add(a, { kind: "finished", pullRequest: 77, url: `https://github.com/${repository}/pull/77`, report: { en: "Done", zh: "完成了" } });
+  for (let index = 0; index < 10; index += 1) {
+    add(b, { kind: "text", block: "b", delta: `after a ${index} ` });
+    add(c, { kind: "text", block: "c", delta: `after a ${index} ` });
+  }
+  add(b, { kind: "failed", failure: "program", reason: "boom" });
+  const broken = (next.get(c) ?? 0) + 1;
+  add(c, { kind: "text", block: "c", delta: "unstorable" }, broken, "later" as unknown as number);
+  add(c, { kind: "text", block: "c", delta: "lost one" }, broken + 1);
+  add(c, { kind: "text", block: "c", delta: "lost two" }, broken + 2);
+  add(c, { kind: "text", block: "c", delta: "stored again" }, broken);
+  add(c, { kind: "text", block: "c", delta: "lost one" }, broken + 1);
+  add(c, { kind: "text", block: "c", delta: "lost two" }, broken + 2);
+  for (let index = 0; index < 5; index += 1) {
+    add(c, { kind: "text", block: "c", delta: ` tail ${index}` });
+  }
+  return messages;
+}
+
+function replay(batched: boolean): Replayed {
+  const directory = mkdtempSync(join(tmpdir(), "hub-work-burst-"));
+  const replayClock = new TestClock();
+  const store = openDatabase({ dataDir: directory, clock: replayClock });
+  const fake = new FakeRunners();
+  const notices: { readonly ticket: number; readonly notice: string; readonly prompt: string }[] = [];
+  const drains: (() => void)[] = [];
+  let bound: WorkService | undefined;
+  const service = createTicketService({
+    database: store,
+    clock: replayClock,
+    work: { begin: (ticket) => bound?.begin(ticket), stop: (ticket) => bound?.stop(ticket), reassign: (ticket) => bound?.reassign(ticket) },
+  });
+  const worker = createWorkService({
+    database: store,
+    clock: replayClock,
+    tickets: service,
+    runners: fake,
+    credentials: testCredentials,
+    tell: (ticket, notice, prompt) => notices.push({ ticket, notice, prompt }),
+    branchSuffix: () => "beef",
+    ...(batched ? { schedule: (drain: () => void) => void drains.push(drain) } : {}),
+  });
+  bound = worker;
+  try {
+    fake.connect("pc", 3);
+    const [a, b, c] = [21, 22, 23].map((issue) => {
+      const ticket = working([issue], "pc", "codex", service);
+      worker.begin(ticket);
+      return ticket.id;
+    });
+    if (a === undefined || b === undefined || c === undefined) {
+      throw new Error("tickets missing");
+    }
+    const announced: unknown[] = [];
+    worker.subscribe((event) => announced.push({ id: event.id, ticket: event.ticket, seq: event.seq, kind: event.event.kind }));
+    const ticketStates: Record<number, string[]> = {};
+    service.subscribe((ticket) => {
+      const states = (ticketStates[ticket.id] ??= []);
+      const state = `${ticket.state}/${ticket.work?.state ?? "none"}`;
+      if (states.at(-1) !== state) {
+        states.push(state);
+      }
+    });
+    const sentBefore = fake.sent.length;
+    const exec = vi.spyOn(store.connection, "exec");
+    const messages = burst(a, b, c);
+    for (const message of messages) {
+      fake.link?.event("pc", message);
+    }
+    expect(drains).toHaveLength(batched ? 1 : 0);
+    expect(store.connection.prepare("SELECT COUNT(*) AS count FROM ticket_work_events").get()).toEqual({ count: batched ? 0 : 128 });
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    const commits = exec.mock.calls.filter(([sql]) => sql === "COMMIT").length;
+    exec.mockRestore();
+    return {
+      arrived: messages.length,
+      commits,
+      rows: store.connection.prepare("SELECT id, ticket_id, attempt, seq, at, event FROM ticket_work_events ORDER BY id").all(),
+      attempts: store.connection.prepare("SELECT ticket_id, attempt, state, last_seq, session, failure, reason, ended_at FROM ticket_attempts ORDER BY ticket_id, attempt").all(),
+      tickets: [a, b, c].map((id) => {
+        const ticket = service.get(id);
+        return { state: ticket?.state, pullRequest: ticket?.pullRequest, report: ticket?.report, work: ticket?.work };
+      }),
+      announced,
+      ticketStates,
+      sent: fake.sent.slice(sentBefore),
+      told: notices,
+    };
+  } finally {
+    worker.close();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+describe("a burst of work events", () => {
+  it("is written in a few transactions with the same rows, sequence numbers, announcements and outcomes as one transaction per event", () => {
+    const one = replay(false);
+    const batched = replay(true);
+    expect(one.commits).toBe(one.arrived);
+    expect(batched.commits).toBe(5);
+    expect({ ...batched, commits: 0 }).toEqual({ ...one, commits: 0 });
+  });
+
+  it("finishes and fails tickets in the middle of the burst, asks again after a gap or an unstorable event, and keeps the other tickets' events", () => {
+    const batched = replay(true);
+    const rows = batched.rows as { readonly ticket_id: number; readonly seq: number }[];
+    const seqs = (ticket: number) => rows.filter((row) => row.ticket_id === ticket).map((row) => row.seq);
+    expect(seqs(1)).toEqual(Array.from({ length: 33 }, (_, index) => index + 1));
+    expect(seqs(2)).toEqual(Array.from({ length: 43 }, (_, index) => index + 1));
+    expect(seqs(3)).toEqual(Array.from({ length: 52 }, (_, index) => index + 1));
+    expect(batched.attempts).toMatchObject([
+      { ticket_id: 1, state: "finished", last_seq: 33, session: "thread-a" },
+      { ticket_id: 2, state: "failed", last_seq: 43, session: "thread-b", failure: "program", reason: "boom" },
+      { ticket_id: 3, state: "running", last_seq: 52 },
+    ]);
+    expect(batched.tickets).toMatchObject([{ state: "verifying", pullRequest: 77 }, { state: "working" }, { state: "working" }]);
+    expect(batched.ticketStates).toEqual({
+      1: ["working/running", "verifying/finished"],
+      2: ["working/running", "working/failed"],
+      3: ["working/running"],
+    });
+    expect(batched.sent).toEqual([
+      { machine: "pc", message: { type: "work.sync", ticket: 3, attempt: 1, after: 32 } },
+      { machine: "pc", message: { type: "work.sync", ticket: 3, attempt: 1, after: 44 } },
+      { machine: "pc", message: { type: "work.sync", ticket: 3, attempt: 1, after: 44 } },
+    ]);
+    expect(batched.told).toHaveLength(1);
+    expect(batched.told[0]).toMatchObject({ ticket: 2 });
+    expect((batched.told[0] as { readonly prompt: string }).prompt).toContain("after a 9");
+  });
+
+  it("writes the queued events before it handles the runner's next hello", () => {
+    work.close();
+    const drains: (() => void)[] = [];
+    work = createWorkService({ database, clock, tickets, runners, credentials: testCredentials, branchSuffix: () => "beef", schedule: (drain) => void drains.push(drain) });
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
+    emit("pc", ticket.id, 1, 2, { kind: "text", block: "b", delta: "Reading" });
+    expect(work.events(ticket.id)).toEqual([]);
+    runners.connect("pc", 2, [{ ticket: ticket.id, attempt: 1, last: 2, live: true, ended: false }]);
+    expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual([1, 2]);
+    expect(runners.of("work.sync")).toEqual([{ type: "work.sync", ticket: ticket.id, attempt: 1, after: 2 }]);
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual([1, 2]);
+  });
+});
+
+describe("work events the hub drops or fails on", () => {
+  let lines: string[];
+  let drains: (() => void)[];
+
+  const logging = (deferred: boolean, tell?: (ticket: number, notice: string, prompt: string) => void) => {
+    work.close();
+    lines = [];
+    drains = [];
+    work = createWorkService({
+      database,
+      clock,
+      tickets,
+      runners,
+      credentials: testCredentials,
+      branchSuffix: () => "beef",
+      log: (line) => void lines.push(line),
+      ...(deferred ? { schedule: (drain: () => void) => void drains.push(drain) } : {}),
+      ...(tell === undefined ? {} : { tell }),
+    });
+  };
+
+  it("logs an event that failed and was rolled back, with its identifiers and not its content", () => {
+    logging(false);
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "text", block: "b", delta: "fine" });
+    runners.link?.event("pc", { type: "work.event", ticket: ticket.id, attempt: 1, seq: 2, at: "later" as unknown as number, event: { kind: "text", block: "b", delta: "secret output" } });
+    expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual([1]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`Work event dropped, it failed and was rolled back (machine pc, ticket ${ticket.id}, attempt 1, seq 2, kind text): `);
+    expect(lines[0]).toContain("cannot store TEXT value in INTEGER column");
+    expect(lines[0]).not.toContain("secret output");
+  });
+
+  it("logs a batch whose transaction failed, with the range of each attempt and the error's first line", () => {
+    logging(true);
+    runners.connect("pc", 2);
+    const first = working([21]);
+    const second = working([22]);
+    work.begin(first);
+    work.begin(second);
+    emit("pc", first.id, 1, 1, { kind: "text", block: "b", delta: "one" });
+    emit("pc", first.id, 1, 2, { kind: "text", block: "b", delta: "two" });
+    emit("pc", second.id, 1, 1, { kind: "text", block: "b", delta: "three" });
+    const exec = database.connection.exec.bind(database.connection);
+    const failing = vi.spyOn(database.connection, "exec").mockImplementation((sql: string) => {
+      if (sql === "COMMIT") {
+        throw new Error(`disk I/O error\nsecond line ${"x".repeat(10)}`);
+      }
+      exec(sql);
+    });
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    failing.mockRestore();
+    expect(work.events(first.id)).toEqual([]);
+    expect(work.events(second.id)).toEqual([]);
+    expect(lines).toEqual([
+      `Work events dropped, 3 in a batch whose transaction failed (ticket ${first.id} attempt 1 seq 1-2; ticket ${second.id} attempt 1 seq 1-1): Error: disk I/O error`,
+    ]);
+  });
+
+  it("logs an after-commit step that failed, and still runs the later events' steps", () => {
+    logging(false, () => {
+      throw new Error("the brain is away");
+    });
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    const seen: number[] = [];
+    work.subscribe((stored) => seen.push(stored.seq));
+    emit("pc", ticket.id, 1, 1, { kind: "failed", failure: "program", reason: "boom" });
+    expect(current(ticket.id).work?.state).toBe("failed");
+    expect(seen).toEqual([1]);
+    expect(lines).toEqual([`Work event stored, but its after-commit step failed (machine pc, ticket ${ticket.id}, attempt 1, seq 1, kind failed): Error: the brain is away`]);
+  });
+
+  it("logs once how many events were still queued when the work service closed", () => {
+    logging(true);
+    runners.connect("pc", 2);
+    const ticket = working();
+    work.begin(ticket);
+    for (const seq of [1, 2, 3]) {
+      emit("pc", ticket.id, 1, seq, { kind: "text", block: "b", delta: `part ${seq}` });
+    }
+    work.close();
+    work.close();
+    for (const drain of drains.splice(0)) {
+      drain();
+    }
+    expect(work.events(ticket.id)).toEqual([]);
+    expect(lines).toEqual([`Work events dropped, 3 still queued when the work service closed (ticket ${ticket.id} attempt 1 seq 1-3); runners resend them through work.sync`]);
   });
 });

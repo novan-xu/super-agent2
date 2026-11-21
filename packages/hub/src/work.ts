@@ -48,7 +48,7 @@ import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { AttachmentStore } from "./attachments.js";
 import { mergedCommitFor, short } from "./task-tickets.js";
 import { createWorkerMessages } from "./worker-messages.js";
-import { switchOf, type TicketService, type TicketWork } from "./tickets.js";
+import { switchOf, type TicketService, type TicketWork, type TicketWrites } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
 import { intervalTicker, type Ticker } from "./verification.js";
 
@@ -73,6 +73,8 @@ export interface WorkServiceOptions {
   readonly attachments?: AttachmentStore;
   readonly defaults?: StartDefaults;
   readonly ticker?: Ticker;
+  readonly schedule?: (drain: () => void) => void;
+  readonly log?: (line: string) => void;
 }
 
 export const defaultProviderRetry = 30_000;
@@ -824,17 +826,19 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
   };
 
-  const apply = (machine: string, message: RunnerWorkEvent) => {
+  const stage = (machine: string, message: RunnerWorkEvent, writes: TicketWrites): (() => void) | undefined => {
     const attempt = attemptOf(message.ticket, message.attempt);
     if (attempt === undefined || attempt.machine !== machine) {
-      return;
+      return undefined;
     }
     if (message.seq <= attempt.last_seq) {
-      return;
+      return undefined;
     }
     if (message.seq > attempt.last_seq + 1) {
-      send(machine, { type: "work.sync", ticket: attempt.ticket_id, attempt: attempt.attempt, after: attempt.last_seq });
-      return;
+      const sync: WorkMessageToRunner = { type: "work.sync", ticket: attempt.ticket_id, attempt: attempt.attempt, after: attempt.last_seq };
+      return () => {
+        send(machine, sync);
+      };
     }
     const event = message.event;
     const latest = latestOf(attempt.ticket_id);
@@ -847,7 +851,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     let fetchFiles = false;
     let publish: (() => void) | undefined;
     let id = 0;
-    tickets.change((writes) => {
+    ((): void => {
       id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
       updateSeq.run(message.seq, attempt.ticket_id, attempt.attempt);
       if (event.kind === "message") {
@@ -974,36 +978,143 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         default:
           return;
       }
-    });
-    publish?.();
-    const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event };
-    announce(stored);
-    if (unavailable !== undefined) {
-      messages.undelivered(attempt.ticket_id, unavailable.unsent);
-      options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until);
-      const ended = attemptOf(attempt.ticket_id, attempt.attempt);
-      if (current && ended !== undefined) {
-        switchAway(attempt.ticket_id, ended);
+    })();
+    return () => {
+      publish?.();
+      const stored: StoredWorkEvent = { id, ticket: attempt.ticket_id, attempt: attempt.attempt, seq: message.seq, at: message.at, event };
+      announce(stored);
+      if (unavailable !== undefined) {
+        messages.undelivered(attempt.ticket_id, unavailable.unsent);
+        options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until);
+        const ended = attemptOf(attempt.ticket_id, attempt.attempt);
+        if (current && ended !== undefined) {
+          switchAway(attempt.ticket_id, ended);
+        }
+      }
+      if (options.defaults !== undefined && ((event.kind === "phase" && event.phase === "checking") || event.kind === "finished" || (event.kind === "delivered" && event.outcome !== "failed"))) {
+        recoveredMark = options.defaults.recovered(attempt.engine, message.at);
+      }
+      if (delivered !== undefined && delivered.light === undefined && event.kind === "delivered") {
+        handIn(delivered, event);
+      }
+      if (fetchFiles && event.kind === "delivered" && event.outcome !== "failed") {
+        fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
+      }
+      if (told !== undefined) {
+        const ticket = tickets.get(attempt.ticket_id);
+        const now = attemptOf(attempt.ticket_id, attempt.attempt);
+        if (ticket !== undefined && now !== undefined && !isFinal(ticket)) {
+          failed(ticket, now, told.failure, told.reason, told.report);
+        }
+      }
+      if (handedOver || event.kind === "finished" || event.kind === "settled" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped" || event.kind === "unavailable" || recoveredMark) {
+        dispatch();
+      }
+    };
+  };
+
+  const settles = (event: WorkEvent): boolean =>
+    event.kind === "finished" ||
+    event.kind === "settled" ||
+    event.kind === "delivered" ||
+    event.kind === "failed" ||
+    event.kind === "stopped" ||
+    event.kind === "unavailable" ||
+    (event.kind === "phase" && event.phase === "checking");
+
+  const arrived: { readonly machine: string; readonly message: RunnerWorkEvent }[] = [];
+  const schedule = options.schedule ?? ((drain: () => void) => drain());
+  let scheduled = false;
+
+  const nextBatch = () => {
+    const first = arrived[0];
+    if (first === undefined || settles(first.message.event)) {
+      return arrived.splice(0, 1);
+    }
+    const end = arrived.findIndex((entry) => settles(entry.message.event));
+    return arrived.splice(0, end === -1 ? arrived.length : end);
+  };
+
+  const log = options.log ?? (() => undefined);
+
+  const problemOf = (error: unknown): string => {
+    const name = error instanceof Error ? error.name : typeof error;
+    const line = (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
+    return `${name}: ${line.length > 300 ? `${line.slice(0, 300)}...` : line}`;
+  };
+
+  const eventOf = (machine: string, message: RunnerWorkEvent): string =>
+    `machine ${machine}, ticket ${message.ticket}, attempt ${message.attempt}, seq ${message.seq}, kind ${message.event.kind}`;
+
+  const rangesOf = (batch: readonly { readonly message: RunnerWorkEvent }[]): string => {
+    const ranges = new Map<string, { readonly ticket: number; readonly attempt: number; low: number; high: number }>();
+    for (const { message } of batch) {
+      const key = `${message.ticket}:${message.attempt}`;
+      const range = ranges.get(key);
+      if (range === undefined) {
+        ranges.set(key, { ticket: message.ticket, attempt: message.attempt, low: message.seq, high: message.seq });
+      } else {
+        range.low = Math.min(range.low, message.seq);
+        range.high = Math.max(range.high, message.seq);
       }
     }
-    if (options.defaults !== undefined && ((event.kind === "phase" && event.phase === "checking") || event.kind === "finished" || (event.kind === "delivered" && event.outcome !== "failed"))) {
-      recoveredMark = options.defaults.recovered(attempt.engine, message.at);
+    return [...ranges.values()].map((range) => `ticket ${range.ticket} attempt ${range.attempt} seq ${range.low}-${range.high}`).join("; ");
+  };
+
+  const write = (batch: readonly { readonly machine: string; readonly message: RunnerWorkEvent }[]) => {
+    const effects: { readonly machine: string; readonly message: RunnerWorkEvent; readonly effect: () => void }[] = [];
+    try {
+      tickets.change((writes) => {
+        for (const { machine, message } of batch) {
+          connection.exec("SAVEPOINT work_event");
+          try {
+            const effect = stage(machine, message, writes);
+            connection.exec("RELEASE work_event");
+            if (effect !== undefined) {
+              effects.push({ machine, message, effect });
+            }
+          } catch (error) {
+            connection.exec("ROLLBACK TO work_event");
+            connection.exec("RELEASE work_event");
+            log(`Work event dropped, it failed and was rolled back (${eventOf(machine, message)}): ${problemOf(error)}`);
+          }
+        }
+      });
+    } catch (error) {
+      log(`Work events dropped, ${batch.length} in a batch whose transaction failed (${rangesOf(batch)}): ${problemOf(error)}`);
+      return;
     }
-    if (delivered !== undefined && delivered.light === undefined && event.kind === "delivered") {
-      handIn(delivered, event);
-    }
-    if (fetchFiles && event.kind === "delivered" && event.outcome !== "failed") {
-      fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
-    }
-    if (told !== undefined) {
-      const ticket = tickets.get(attempt.ticket_id);
-      const now = attemptOf(attempt.ticket_id, attempt.attempt);
-      if (ticket !== undefined && now !== undefined && !isFinal(ticket)) {
-        failed(ticket, now, told.failure, told.reason, told.report);
+    for (const { machine, message, effect } of effects) {
+      try {
+        effect();
+      } catch (error) {
+        log(`Work event stored, but its after-commit step failed (${eventOf(machine, message)}): ${problemOf(error)}`);
       }
     }
-    if (handedOver || event.kind === "finished" || event.kind === "settled" || event.kind === "delivered" || event.kind === "failed" || event.kind === "stopped" || event.kind === "unavailable" || recoveredMark) {
-      dispatch();
+  };
+
+  let draining = false;
+
+  const drain = () => {
+    scheduled = false;
+    if (draining) {
+      return;
+    }
+    draining = true;
+    try {
+      while (!closed && arrived.length > 0) {
+        write(nextBatch());
+      }
+    } finally {
+      draining = false;
+    }
+  };
+
+  const receive = (machine: string, message: RunnerWorkEvent) => {
+    arrived.push({ machine, message });
+    if (!scheduled && !draining) {
+      scheduled = true;
+      schedule(drain);
     }
   };
 
@@ -1473,26 +1584,30 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   runners.bindWork({
     hello: (machine, held) => {
+      drain();
       if (!closed) {
         hello(machine, held);
       }
     },
     event: (machine, message) => {
       if (!closed) {
-        apply(machine, message);
+        receive(machine, message);
       }
     },
     part: (machine, message) => {
+      drain();
       if (!closed) {
         receivePart(machine, message);
       }
     },
     attachment: (machine, message) => {
+      drain();
       if (!closed) {
         void serveAttachment(machine, message);
       }
     },
     closed: (machine) => {
+      drain();
       if (closed) {
         return;
       }
@@ -1647,6 +1762,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
     close: () => {
       closed = true;
+      if (arrived.length > 0) {
+        log(`Work events dropped, ${arrived.length} still queued when the work service closed (${rangesOf(arrived)}); runners resend them through work.sync`);
+      }
+      arrived.length = 0;
       stopTicker?.();
       unsubscribeDefaults?.();
       unsubscribeTickets();

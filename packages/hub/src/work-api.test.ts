@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
-import type { Hub } from "./hub.js";
+import { type Hub, type HubOptions, scheduleWorkDrain } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { testCredentials } from "./testing/commands.js";
@@ -52,8 +52,8 @@ interface Started {
   readonly sent: HubToRunner[];
 }
 
-async function start(): Promise<Started> {
-  const running = await startTestHub({ config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials });
+async function start(extra: Partial<HubOptions> = {}): Promise<Started> {
+  const running = await startTestHub({ config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials, ...extra });
   hub = running;
   running.machines.add({ name: "pc", accessClientId: "pc.access" });
   const machine = running.machines.get("pc");
@@ -138,6 +138,37 @@ describe("a ticket's worker for the page and the brain", () => {
     const work = received.flatMap((message) => (message.type === "work" ? [message.event] : []));
     expect(work.map((entry) => entry.seq)).toEqual([1, 2, 3]);
     expect(received.some((message) => message.type === "tickets" && message.tickets.some((entry) => entry.work?.state === "running"))).toBe(true);
+  });
+
+  it("writes a burst from the runner once it has arrived, in one transaction, and announces every event in order", async () => {
+    const { running, ticket, runner } = await start({ workSchedule: scheduleWorkDrain });
+    const work = running.work;
+    if (work === undefined) {
+      throw new Error("no work service");
+    }
+    const exec = vi.spyOn(running.database.connection, "exec");
+    const commits = () => exec.mock.calls.filter(([sql]) => sql === "COMMIT").length;
+    const before = commits();
+    const announced: { readonly seq: number; readonly commits: number }[] = [];
+    const all = new Promise<void>((resolve) => {
+      work.subscribe((stored) => {
+        announced.push({ seq: stored.seq, commits: commits() });
+        if (stored.seq === 50) {
+          resolve();
+        }
+      });
+    });
+    for (let seq = 1; seq <= 50; seq += 1) {
+      event(runner, ticket.id, seq, { kind: "tool.output", call: "c-1", delta: `line ${seq}
+` });
+    }
+    expect(work.events(ticket.id)).toEqual([]);
+    await all;
+    exec.mockRestore();
+    expect(announced.map((entry) => entry.seq)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
+    expect(new Set(announced.map((entry) => entry.commits)).size).toBe(1);
+    expect(announced[0]?.commits).toBeGreaterThan(before);
+    expect(work.events(ticket.id).map((stored) => stored.seq)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
   });
 
   it("passes the owner's message to the running worker, with the owner's checks", async () => {
