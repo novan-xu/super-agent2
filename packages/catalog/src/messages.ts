@@ -386,6 +386,8 @@ export const messages = {
   "ticket.defaultModel": "按默认",
   "ticket.reply": "发给工作者的消息",
   "ticket.timeline": "时间线",
+  "ticket.jumpTop": "回到顶部",
+  "ticket.jumpBottom": "回到底部",
   "ticket.working": "工作者正在工作",
   "timeline.filed": "建立",
   "timeline.started": "开始",

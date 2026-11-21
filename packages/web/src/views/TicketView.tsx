@@ -672,20 +672,24 @@ function Reply({ ticket, send }: { readonly ticket: number; readonly send: (text
 export function TicketView({ detail, known, actions, origin, backHref, back, ticketHref, openTicket, now }: TicketViewProps) {
   const entries = useMemo(() => (detail === null ? [] : timeline(detail)), [detail]);
   const following = useRef(false);
+  const [ends, setEnds] = useState({ top: true, bottom: true });
   const list = useRef<HTMLOListElement>(null);
   const ticket = detail?.ticket ?? null;
   const id = detail?.id ?? null;
 
   useLayoutEffect(() => {
-    following.current = false;
+    following.current = true;
     const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
     if (main === null) {
       return;
     }
-    main.scrollTop = 0;
+    main.scrollTop = main.scrollHeight;
     const scrolled = () => {
-      following.current = main.scrollHeight - main.clientHeight > nearBottom && main.scrollHeight - main.scrollTop - main.clientHeight < nearBottom;
+      const distance = main.scrollHeight - main.scrollTop - main.clientHeight;
+      following.current = distance < nearBottom;
+      setEnds({ top: main.scrollTop <= 1, bottom: distance <= 1 });
     };
+    scrolled();
     main.addEventListener("scroll", scrolled, { passive: true });
     return () => main.removeEventListener("scroll", scrolled);
   }, [id, origin]);
@@ -694,6 +698,7 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
     const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
     if (main !== null && following.current) {
       main.scrollTop = main.scrollHeight;
+      setEnds({ top: main.scrollTop <= 1, bottom: main.scrollHeight - main.scrollTop - main.clientHeight <= 1 });
     }
   }, [entries, origin]);
 
@@ -707,10 +712,19 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
       if (following.current) {
         main.scrollTop = main.scrollHeight;
       }
+      setEnds({ top: main.scrollTop <= 1, bottom: main.scrollHeight - main.scrollTop - main.clientHeight <= 1 });
     });
     observer.observe(element);
     return () => observer.disconnect();
   }, [ticket !== null, origin]);
+
+  const jump = (end: "top" | "bottom") => {
+    const main = (origin === "workbench" ? document.querySelector<HTMLElement>(".wb-panel") : null) ?? document.getElementById("main");
+    if (main === null || ends[end]) return;
+    following.current = end === "bottom";
+    main.scrollTop = end === "top" ? 0 : main.scrollHeight;
+    setEnds({ top: main.scrollTop <= 1, bottom: main.scrollHeight - main.scrollTop - main.clientHeight <= 1 });
+  };
 
   const send = useCallback(
     async (message: string, attachments: readonly string[]) => {
@@ -795,6 +809,10 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
           {offers.reply ? <Reply key={ticket.id} ticket={ticket.id} send={send} /> : null}
         </div>
         <Panel ticket={ticket} known={known} actions={actions} now={now} />
+      </div>
+      <div className="ticket-jump">
+        <button className="icon-btn" type="button" aria-label={text("ticket.jumpTop")} aria-disabled={ends.top} onClick={() => jump("top")}><Icon name="up" /></button>
+        <button className="icon-btn" type="button" aria-label={text("ticket.jumpBottom")} aria-disabled={ends.bottom} onClick={() => jump("bottom")}><Icon name="down" /></button>
       </div>
     </div>
   );

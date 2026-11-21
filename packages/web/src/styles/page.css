@@ -430,3 +430,7 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .schedule-fields { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); }
 .schedule-editor .schedule-actions { justify-content: flex-end; }
 .schedule-chip { margin-inline-start: var(--space-1); }
+
+.ticket-jump { position: sticky; bottom: calc(96px + env(safe-area-inset-bottom)); height: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 2; transform: translateY(-100px); pointer-events: none; }
+.ticket-jump .icon-btn { width: 44px; height: 44px; min-height: 44px; pointer-events: auto; background: var(--surface); }
+.ticket-jump .icon-btn[aria-disabled="true"] { opacity: 0.4; cursor: default; color: var(--fg-2); border-color: transparent; }
