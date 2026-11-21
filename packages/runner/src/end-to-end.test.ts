@@ -12,6 +12,7 @@ import { formatSettings, runnerFiles } from "./config.js";
 import { entryFiles, installEntry, readState } from "./entry.js";
 import { type Connect, connectWithWs } from "./link.js";
 import type { Prober } from "./programs.js";
+import type { ProgramUpdateSteps } from "./program-update.js";
 import { type RunnerService, startRunnerService } from "./service.js";
 import { outputFolder, taskPaths } from "./task.js";
 import { mainIn, type UpdateSteps } from "./update.js";
@@ -153,7 +154,7 @@ function untilLog(predicate: (line: string) => boolean, after = 0): Promise<stri
   return until(() => logs.slice(after).find(predicate));
 }
 
-async function startRunner(running: Hub, token: string, version: string): Promise<RunnerService> {
+async function startRunner(running: Hub, token: string, version: string, prober: Prober = noPrograms, programUpdateSteps?: ProgramUpdateSteps): Promise<RunnerService> {
   if (!running.machines.setStorage("pc", {})) throw new Error("The test machine is missing");
   const files = runnerFiles(home);
   writeFileSync(
@@ -180,12 +181,13 @@ async function startRunner(running: Hub, token: string, version: string): Promis
   installEntry(home, mainPath, version);
   const started = await startRunnerService({
     files,
-    environment: process.env,
+    environment: prober === noPrograms || programUpdateSteps !== undefined ? process.env : { ...process.env, SUPERAGENT2_PROGRAM_AUTO_UPDATE: "0" },
+    ...(programUpdateSteps === undefined ? {} : { programUpdateSteps }),
     log: (line) => {
       logs.push(line);
       changed();
     },
-    prober: noPrograms,
+    prober,
     connect,
     retryDelay: () => 20,
     work: { adapters: adapter, findProgram: (executable) => `/programs/${executable}` },
@@ -248,6 +250,51 @@ function untilState(running: Hub, ticket: number, state: Ticket["state"]): Promi
     check();
   });
 }
+
+it("rechecks a changed program without restarting the runner", { timeout: 30000 }, async () => {
+  const running = await startTestHub(hubOptions(0, versionA));
+  hub = running;
+  const { token } = running.machines.add({ name: "pc", accessClientId: clientId });
+  let version = "1.0.0";
+  const prober: Prober = {
+    find: (name) => name === "codex" ? "/codex" : undefined,
+    capture: async (_path, args) => args[0] === "--version" ? `codex-cli ${version}` : args[0] === "debug" ? JSON.stringify({ models: [{ slug: version, supported_reasoning_levels: [{ effort: "high" }] }] }) : "",
+  };
+  const runner = await startRunner(running, token, versionA, prober);
+  await runner.allowanceRead;
+  expect(running.runners.report("pc")?.programs[0]?.version).toBe("1.0.0");
+  version = "2.0.0";
+  const results = await running.runners.refreshPrograms("pc");
+  expect(results[0]).toMatchObject({ name: "pc", status: "refreshed" });
+  expect(results[0]?.report?.programs[0]).toMatchObject({ id: "codex", version: "2.0.0", models: [{ id: "2.0.0" }] });
+  expect(running.runners.report("pc")?.programs[0]?.version).toBe("2.0.0");
+});
+
+it("waits until a program update releases its lock before rechecking", { timeout: 30000 }, async () => {
+  const running = await startTestHub(hubOptions(0, versionA));
+  hub = running;
+  const { token } = running.machines.add({ name: "pc", accessClientId: clientId });
+  let release: () => void = () => undefined;
+  let checking = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let version = "1.0.0";
+  const prober: Prober = {
+    find: (name) => name === "codex" ? "/codex" : undefined,
+    capture: async (_path, args) => args[0] === "--version" ? `codex-cli ${version}` : args[0] === "debug" ? JSON.stringify({ models: [{ slug: version }] }) : "",
+  };
+  const updater: ProgramUpdateSteps = { check: async () => { checking = true; changed(); await gate; return undefined; } };
+  const runner = await startRunner(running, token, versionA, prober, updater);
+  await until(() => checking ? true : undefined);
+  version = "2.0.0";
+  const pending = running.runners.refreshPrograms("pc");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(running.runners.report("pc")?.programs[0]?.version).toBe("1.0.0");
+  release();
+  const [result] = await pending;
+  expect(result?.status).toBe("refreshed");
+  expect(result?.report?.programs[0]?.version).toBe("2.0.0");
+  expect(runner.link.connected()).toBe(true);
+});
 
 describe("a task ticket whose work restarts the hub under it", { timeout: 30000 }, () => {
   it("keeps the worker running while the hub is replaced, delivers its hand-back to the new hub, and then moves the runner to the new hub's version", async () => {

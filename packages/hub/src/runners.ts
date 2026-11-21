@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type HubToRunner,
   type Identity,
@@ -38,6 +39,7 @@ export interface Runners {
   bindWork(link: WorkLink): void;
   sendWork(machine: string, message: WorkMessageToRunner): boolean;
   refreshAllowance(): number;
+  refreshPrograms(machine?: string): Promise<{ name: string; report?: MachineReport; status: "refreshed" | "not reached" | "timed out" }[]>;
   report(machine: string): MachineReport | undefined;
   setStorage(machine: string, storage: StorageSettings): boolean;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
@@ -64,6 +66,7 @@ interface Link {
 export function createRunners(options: RunnersOptions): Runners {
   const { machines } = options;
   const links = new Map<string, Link>();
+  const refreshes = new Map<string, { name: string; finish: (report?: MachineReport) => void }>();
   let work: WorkLink | undefined;
   const tellWork = (body: (link: WorkLink) => void) => {
     if (work === undefined) {
@@ -153,6 +156,24 @@ export function createRunners(options: RunnersOptions): Runners {
       }
       return count;
     },
+    refreshPrograms: async (name) => {
+      const names = name === undefined ? statuses().map((status) => status.name) : [name];
+      return Promise.all(names.map(async (machine) => {
+        const link = links.get(machine);
+        if (link?.report === undefined) return { name: machine, status: "not reached" as const };
+        const id = randomUUID();
+        return new Promise<{ name: string; report?: MachineReport; status: "refreshed" | "timed out" }>((resolve) => {
+          const finish = (report?: MachineReport) => {
+            clearTimeout(timer);
+            refreshes.delete(id);
+            resolve(report === undefined ? { name: machine, status: "timed out" } : { name: machine, status: "refreshed", report });
+          };
+          const timer = setTimeout(() => finish(), 30000);
+          refreshes.set(id, { name: machine, finish });
+          link.connection.send({ type: "programs.refresh", id });
+        });
+      }));
+    },
     report: (name) => links.get(name)?.report,
     setStorage: (name, storage) => {
       if (!machines.setStorage(name, storage)) {
@@ -191,6 +212,10 @@ export function createRunners(options: RunnersOptions): Runners {
             const first = link.report === undefined;
             link.report = message.machine;
             machines.seen(machine.name, message.machine);
+            if (message.type === "report" && message.refreshId !== undefined) {
+              const refresh = refreshes.get(message.refreshId);
+              if (refresh?.name === machine.name) refresh.finish(message.machine);
+            }
             if (first) {
               connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name, ...(options.version === undefined ? {} : { version: options.version }) });
               if (message.machine.storage !== undefined) {
@@ -238,6 +263,7 @@ export function createRunners(options: RunnersOptions): Runners {
     },
     close: () => {
       clearInterval(timer);
+      for (const refresh of refreshes.values()) refresh.finish();
       listeners.clear();
       for (const link of [...links.values()]) {
         drop(link, runnerCloseCodes.closing, "hub closing");

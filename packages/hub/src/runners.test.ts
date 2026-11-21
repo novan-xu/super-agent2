@@ -12,7 +12,7 @@ import {
   runnerReleasePath,
   runnerTokenHeader,
 } from "@super-agent2/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
@@ -150,6 +150,28 @@ describe("a runner's link", () => {
     const runner = new FakeRunner().connect(running, "pc");
     expect(running.runners.refreshAllowance()).toBe(1);
     expect(runner.sent.at(-1)).toEqual({ type: "allowance.refresh" });
+  });
+
+  it("waits for the matching refresh report, rather than an unrelated report, and times out older runners", async () => {
+    const running = await start();
+    running.machines.add({ name: "pc", accessClientId: clientId });
+    const runner = new FakeRunner().connect(running, "pc");
+    vi.useFakeTimers();
+    try {
+      const pending = running.runners.refreshPrograms("pc");
+      const request = runner.sent.at(-1);
+      if (request?.type !== "programs.refresh") throw new Error("No refresh request");
+      runner.link?.receive({ type: "report", machine: report });
+      runner.link?.receive({ type: "report", machine: report, refreshId: "00000000-0000-4000-8000-000000000000" });
+      await vi.advanceTimersByTimeAsync(29999);
+      runner.link?.receive({ type: "report", machine: report, refreshId: request.id });
+      expect(await pending).toMatchObject([{ name: "pc", status: "refreshed" }]);
+      const timeout = running.runners.refreshPrograms("pc");
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(await timeout).toEqual([{ name: "pc", status: "timed out" }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is no target for a command: a command named after a machine fails, and nothing reaches the runner", async () => {

@@ -78,6 +78,7 @@ export type RunnerHello = z.infer<typeof RunnerHello>;
 export const RunnerReport = z.object({
   type: z.literal("report"),
   machine: MachineReport,
+  refreshId: z.string().uuid().optional(),
 });
 export type RunnerReport = z.infer<typeof RunnerReport>;
 
@@ -94,7 +95,9 @@ export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 
 export const RefreshAllowance = z.object({ type: z.literal("allowance.refresh") });
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
+export const RefreshPrograms = z.object({ type: z.literal("programs.refresh"), id: z.string().uuid() });
+
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, RefreshPrograms, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {
