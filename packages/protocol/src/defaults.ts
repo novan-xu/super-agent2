@@ -119,7 +119,7 @@ export function machineChoices(statuses: readonly MachineStatus[]): MachineChoic
         name: status.name,
         platform: report.platform,
         free: report.slots.free,
-        engines: report.programs.filter((program) => program.installed).map((program) => ({ engine: program.id, models: program.models })),
+        engines: report.programs.filter((program) => program.installed).map((program) => ({ engine: program.id, models: program.problem === null ? program.models : [] })),
       },
     ];
   });
@@ -147,9 +147,9 @@ export function offers(machine: MachineChoice | undefined, engine: ProgramId, mo
   return engineOn(machine, engine)?.models.some((offered) => offered.id === model && offered.efforts.includes(effort)) ?? false;
 }
 
-export function defaultMachine(platform: Platform, engine: ProgramId, machines: readonly MachineChoice[]): string | null {
+export function defaultMachine(platform: Platform, engine: ProgramId, machines: readonly MachineChoice[], model: string | null = null, effort: string | null = null): string | null {
   const candidates = machinesFor(platform, machines)
-    .filter((machine) => engineOn(machine, engine) !== undefined)
+    .filter((machine) => model !== null && effort !== null ? offers(machine, engine, model, effort) : engineOn(machine, engine) !== undefined)
     .sort((a, b) => b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return candidates[0]?.name ?? null;
 }
@@ -182,10 +182,10 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   const { owner } = input;
   const engine = owner.engine ?? (input.stated || input.kind === "writing" ? defaultEngine(input.kind, input.brainEngine, allowance, context) : null);
   const required = input.requiredMachine ?? null;
-  const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines) : null);
   const fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
   const model = owner.model ?? fromTable?.model ?? null;
   const effort = owner.effort ?? fromTable?.effort ?? null;
+  const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines, model, effort) : null);
   const missing = new Set<MissingPart>();
   if (!input.stated) {
     missing.add("defaults");
@@ -193,7 +193,11 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   const chosen = machine === null ? undefined : machines.find((entry) => entry.name === machine);
   if (machine === null) {
     if (engine !== null && input.platform !== null) {
-      missing.add(machinesFor(input.platform, machines).length === 0 ? "machine" : "engine");
+      const candidates = machinesFor(input.platform, machines);
+      if (candidates.length === 0) missing.add("machine");
+      else if (!candidates.some((entry) => engineOn(entry, engine) !== undefined)) missing.add("engine");
+      else if (model !== null && !candidates.some((entry) => engineOn(entry, engine)?.models.some((offered) => offered.id === model))) missing.add("model");
+      else missing.add("effort");
     }
   } else if (required !== null && machine !== required) {
     missing.add("machine");
