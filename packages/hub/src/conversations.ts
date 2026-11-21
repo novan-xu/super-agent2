@@ -2,7 +2,7 @@ import { ticketReferences } from "./ticket-codes.js";
 import { rearrangePrefix, rearrangePrompt } from "./rearrange.js";
 import { scheduleAccess } from "./schedule-access.js";
 import { createHash, randomUUID } from "node:crypto";
-import { text } from "@super-agent2/catalog";
+import { brainRestartPrompt, text } from "@super-agent2/catalog";
 import {
   Attachment,
   attachmentRelativePath,
@@ -856,11 +856,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     const run = schedules.forTurn({ id: turn.id, conversation: turn.conversation });
     if (run !== undefined && !run.authorized) return undefined;
     const priorPrompts = inputs.map((input) => input.prompt);
-    const prompt = text("prompt.brainRestartContinuation", { turn: turn.id });
     const id = writeEntry({
       conversation: turn.conversation, kind: "notice", turn: null,
       body: { text: text("notice.brainRestartContinuation"), restartOf: turn.id, ...(priorPrompts.some((prior) => prior.startsWith(rearrangePrefix)) ? { rearrange: true } : {}) },
-      prompt: priorPrompts.length === 0 ? prompt : `${prompt}\n\nEarlier hub inputs for context:\n${priorPrompts.join("\n\n")}`,
+      prompt: brainRestartPrompt(turn.id, priorPrompts),
       ...(isQuiet(turn.id) ? { hidden: true } : {}),
     });
     if (run !== undefined) continueSchedule.run(id, run.id);

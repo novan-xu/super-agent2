@@ -139,7 +139,6 @@ export const messages = {
   "turn.reason.brainAbsent": "大脑没有连接，这一轮被中断",
   "turn.reason.noProvider": "没有可用的模型：{detail}",
   "notice.brainRestartContinuation": "大脑重连后自动继续",
-  "prompt.brainRestartContinuation": "[hub] A brain restart cut off turn {turn} in this topic. Use the conversation history to identify the interrupted work. Some actions may already have taken effect. Check the current state of the relevant tickets, issues, and commands before acting. Avoid repeating work that already took effect, then finish the remaining work and report back to the owner.",
   "notice.providerChanged": "{from} 暂时不可用（{reason}），改由 {to} 接手",
   "notice.heldOutcome": "等你确认的命令有了结果（{state}）：{command}",
 
