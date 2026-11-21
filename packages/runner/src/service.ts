@@ -159,7 +159,11 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   const definitions = programDefinitions(config.models);
   let probing = false;
   const probe = async () => {
-    programs = await probePrograms(definitions, prober);
+    const previous = programs;
+    programs = (await probePrograms(definitions, prober)).map((program) => {
+      const prior = previous.find((entry) => entry.id === program.id && entry.installed && program.installed && entry.path === program.path);
+      return prior?.update === undefined ? program : { ...program, update: prior.update };
+    });
     log(
       `Programs: ${programs
         .map((program) => (program.installed ? `${program.id} ${program.version ?? "?"} (${program.models.length} models from ${program.source})` : `${program.id} not installed`))

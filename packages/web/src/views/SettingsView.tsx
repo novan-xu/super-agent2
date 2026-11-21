@@ -174,6 +174,9 @@ function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly 
           ))}
         </div>
       )}
+      {programs.filter((program) => program.update?.note != null).map((program) => (
+        <p className="card-sub" key={program.id}>{text(`engine.${program.id}`)}: {program.update?.note}</p>
+      ))}
       <MachineStorageFields machine={machine} save={saveStorage} />
       {step === "idle" ? (
         <div className="card-actions" key="idle">
