@@ -36,6 +36,11 @@ describe("what a ticket's row and panel say", () => {
     expect(phaseLooks.unreachable.tone).toBe("warn");
   });
 
+  it("shows the Chinese reason when a waiting ticket cannot begin", () => {
+    const waiting = ticket(1, { state: "waiting", startBlock: { en: "missing engine", zh: "\u7f3a\u5c11\u5f15\u64ce" } });
+    expect(ticketProblem(waiting, none)).toEqual({ kind: "beginFailed", reason: "\u7f3a\u5c11\u5f15\u64ce" });
+  });
+
   it("gives what the hub recorded for a problem", () => {
     expect(ticketProblem(ticket(1, { state: "working", beginFailure: "no task" }), none)).toEqual({ kind: "beginFailed", reason: "no task" });
     expect(ticketProblem(ticket(1, { state: "working", work: workStatus({ state: "failed", failure: "lost", reason: "gone" }) }), none)).toEqual({

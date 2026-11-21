@@ -214,6 +214,9 @@ export function createChains(options: ChainsOptions): Chains {
   const insertBegin = connection.prepare(
     "INSERT INTO ticket_begins (ticket_id, due_at) VALUES (?, ?) ON CONFLICT (ticket_id) DO UPDATE SET due_at = excluded.due_at, done_at = NULL, failed_at = NULL, failure = NULL",
   );
+  const selectBlock = connection.prepare("SELECT value FROM hub_settings WHERE key = ?");
+  const saveBlock = connection.prepare("INSERT INTO hub_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
+  const deleteBlock = connection.prepare("DELETE FROM hub_settings WHERE key = ?");
   const markBegun = connection.prepare("UPDATE ticket_begins SET done_at = ? WHERE ticket_id = ? AND done_at IS NULL AND failed_at IS NULL");
   const markFailed = connection.prepare("UPDATE ticket_begins SET failed_at = ?, failure = ? WHERE ticket_id = ? AND done_at IS NULL AND failed_at IS NULL");
   const selectDue = connection.prepare(
@@ -303,6 +306,7 @@ export function createChains(options: ChainsOptions): Chains {
         if (ready.length === 0) {
           continue;
         }
+        const notices: { ticket: Ticket; choice: StartChoice; reason: string; machines: MachineChoice[] }[] = [];
         const began = tickets.change((writes) =>
           ready.filter((id) => {
             const ticket = writes.get(id);
@@ -312,7 +316,22 @@ export function createChains(options: ChainsOptions): Chains {
             if (ticket.light !== undefined || (ticket.scheduleRun !== undefined && ticket.chosenAt === null)) {
               const choice = defaults.resolve(ticket);
               const run = isComplete(choice) ? chosenRun(choice) : undefined;
-              if (run === undefined) return false;
+              if (run === undefined) {
+                const wanted = [ticket.platform ?? "any", choice.engine ?? "not set", choice.model ?? "not set", choice.effort ?? "not set"].join(" ");
+                const missing = choice.missing.join(", ");
+                const en = `missing ${missing}; wanted ${wanted}${ticket.requiredMachine === null ? "" : ` on ${ticket.requiredMachine}`}`;
+                const names = { defaults: "\u9ed8\u8ba4\u8bbe\u7f6e", machine: "\u673a\u5668", engine: "\u5f15\u64ce", model: "\u6a21\u578b", effort: "\u63a8\u7406\u5f3a\u5ea6" };
+                const zh = `\u65e0\u6cd5\u5f00\u59cb\uff1a\u7f3a\u5c11 ${choice.missing.map((part) => names[part]).join("\u3001")}\uff1b\u9700\u8981 ${wanted}${ticket.requiredMachine === null ? "" : `\uff0c\u6307\u5b9a\u673a\u5668 ${ticket.requiredMachine}`}`;
+                const key = `start_block:${id}`;
+                const previous = selectBlock.get(key) as { value: string } | undefined;
+                const signature = JSON.stringify(choice.missing);
+                const old = previous === undefined ? null : JSON.parse(previous.value) as { signature?: string };
+                saveBlock.run(key, JSON.stringify({ en, zh, signature }), clock.now());
+                if (previous?.value !== JSON.stringify({ en, zh, signature })) writes.touched(id);
+                if (old?.signature !== signature) notices.push({ ticket, choice, reason: en, machines: defaults.machinesFor(ticket) });
+                return false;
+              }
+              deleteBlock.run(`start_block:${id}`);
               writes.choose(id, run);
             }
             writes.move(id, "working");
@@ -320,6 +339,14 @@ export function createChains(options: ChainsOptions): Chains {
             return true;
           }),
         );
+        for (const notice of notices) {
+          const offers = notice.machines.map((machine) => {
+            const engine = machine.engines.find((entry) => entry.engine === notice.choice.engine);
+            return `${machine.name}: ${engine === undefined ? "engine not offered" : engine.models.map((model) => `${model.id} (${model.efforts.join(", ")})`).join(", ") || "no models"}`;
+          });
+          tell(notice.ticket.id, text("notice.ticketBeginFailed", { ticket: notice.ticket.code }),
+            [`[hub] Started ${described(notice.ticket)} cannot begin: ${notice.reason}.`, ...offers, "Decide what to do and tell the owner."].join("\n"));
+        }
         begin(began);
       } while (again);
     } finally {

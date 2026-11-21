@@ -16,6 +16,8 @@ import { type ChainDefaults, type Chains, type ChainSpec, chainFingerprint, crea
 import { type HubDatabase, openDatabase } from "./database.js";
 import { TestClock } from "./testing/access.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
+import { ticketReport } from "./reports.js";
+import { storeTopic } from "./conversations.js";
 
 const sandbox = "novan-xu/super-agent-sandbox";
 const other = "novan-xu/other";
@@ -72,7 +74,7 @@ const testMachines: MachineChoice[] = [
 
 let allowance: AllowanceStates = { codex: "available", claude: "available" };
 
-function testDefaults(lenient: boolean): ChainDefaults {
+function testDefaults(lenient: boolean, machines = testMachines): ChainDefaults {
   return {
     resolve: (ticket: Ticket, owner: OwnerChoice = ticket.ownerChoice) =>
       resolveStart(
@@ -87,11 +89,11 @@ function testDefaults(lenient: boolean): ChainDefaults {
               owner,
             },
         startingEngineTable,
-        testMachines,
+        machines,
         allowance,
       ),
-    machines: () => testMachines,
-    machinesFor: () => testMachines,
+    machines: () => machines,
+    machinesFor: () => machines,
   };
 }
 
@@ -114,7 +116,7 @@ interface Setup {
   readonly told: Told[];
 }
 
-function setup(work?: Partial<TicketWork>, strict = false): Setup {
+function setup(work?: Partial<TicketWork>, strict = false, machines?: MachineChoice[]): Setup {
   const database = openDatabase({ dataDir, clock });
   opened.push(database);
   const begun: number[] = [];
@@ -126,7 +128,7 @@ function setup(work?: Partial<TicketWork>, strict = false): Setup {
     tickets,
     verify,
     ownerEmail,
-    defaults: strict ? testDefaults(false) : lenientDefaults,
+    defaults: machines === undefined ? (strict ? testDefaults(false) : lenientDefaults) : testDefaults(false, machines),
     work: {
       begin: work?.begin ?? ((ticket) => void begun.push(ticket.id)),
       stop: work?.stop ?? (() => undefined),
@@ -475,6 +477,40 @@ describe("starting", () => {
     }
     expect(card(chains, 1).fingerprint).toBe(chainFingerprint(shown(a, b)));
     expect(card(chains, 2).fingerprint).toBe(chainFingerprint(shown(b)));
+  });
+});
+
+describe("an incomplete automatic start", () => {
+  it("reports once across retries and restarts, then begins when a machine offers the choice", async () => {
+    const machines: MachineChoice[] = [{ name: "mini", platform: "darwin", free: 1, engines: [] }];
+    const first = setup(undefined, true, machines);
+    const title = { en: "Light task", zh: "\u8f7b\u4efb\u52a1" };
+    const topic = storeTopic(opened[0]!, clock.now(), "Test");
+    const ticket = first.tickets.open({ form: "task", light: "transfer", task: { task: "Do it", materials: [] }, repository: null, issues: [], title, summary: title, kind: "operation", conversation: topic });
+    first.tickets.change((writes) => {
+      writes.state(ticket.id, { kind: "operation", difficulty: "standard", difficultyReason: title, platform: "macos", brainEngine: "codex" });
+      writes.ownerChoice(ticket.id, { machine: null, engine: "dsh", model: null, effort: null });
+      writes.move(ticket.id, "waiting");
+    });
+    expect(first.told).toHaveLength(1);
+    expect(first.told[0]?.prompt).toContain("missing engine; wanted macos dsh");
+    expect(first.told[0]?.prompt).toContain("mini: engine not offered");
+    expect(ticketReport(first.tickets.get(ticket.id)!)).toContain("Cannot begin: missing engine; wanted macos dsh");
+    expect(first.tickets.get(ticket.id)?.startBlock?.zh).toContain("\u65e0\u6cd5\u5f00\u59cb");
+    first.chains.resume();
+    expect(first.told).toHaveLength(1);
+    machines[0]!.engines.push({ engine: "dsh", models: [] });
+    first.chains.resume();
+    expect(first.told).toHaveLength(2);
+    expect(first.told[1]?.prompt).toContain("missing model");
+    first.chains.close();
+    const second = setup(undefined, true, machines);
+    expect(second.told).toHaveLength(0);
+    machines[0]!.engines[0]!.models.push({ id: "deepseek-flash", efforts: ["high"] });
+    second.chains.resume();
+    await second.chains.idle();
+    expect(second.tickets.get(ticket.id)).toMatchObject({ state: "working", startBlock: null });
+    expect(second.begun).toEqual([ticket.id]);
   });
 });
 
