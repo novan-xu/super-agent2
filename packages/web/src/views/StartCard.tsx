@@ -113,7 +113,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
   const repository = ticketProject(ticket);
   const sending = use.step === "sending";
   return (
-    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code}`}>
+    <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`}>
       <div className="wcard-kind">
         {repository === null ? null : (
           <span className="chip chip--mono">

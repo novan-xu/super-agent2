@@ -241,7 +241,7 @@ describe("decisions made on the owner's behalf", () => {
       ["worker", 22, "Chose a new column", null],
     ]);
     const told = notices(running, conversation).at(-1);
-    expect(told?.text).toBe(`工单 ${ticket.code} 已合并`);
+    expect(told?.text).toBe(`工单 ${ticket.code.toUpperCase()} 已合并`);
     expect(told?.prompt).toContain("Decisions made on the owner's behalf, as recorded for this ticket (3):");
     expect(told?.prompt).toContain("recorded by you, the brain): Chosen: Chose one chain Why: Because of one chain Other options: Not one chain");
     expect(told?.prompt).toContain("recorded by the worker with pull request #22): Chosen: Chose a new column");
@@ -280,7 +280,7 @@ describe("decisions made on the owner's behalf", () => {
     });
     expect(response.status).toBe(202);
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.code}`]);
+    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.code.toUpperCase()}`]);
     expect(told[0]?.prompt).toContain("Chosen: Chose a cut");
   });
 
@@ -308,7 +308,7 @@ describe("decisions made on the owner's behalf", () => {
 
     expect((await review(running, ticket.id, three, { verdict: "opinion", opinion: "这个也不对" })).status).toBe(202);
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`你看完了工单 ${ticket.code} 的决定，2 条意见交给了大脑`]);
+    expect(told.map((entry) => entry.text)).toEqual([`你看完了工单 ${ticket.code.toUpperCase()} 的决定，2 条意见交给了大脑`]);
     expect(told[0]?.prompt).toContain(`[hub] The owner went through the decisions recorded on ticket ${ticketReference(ticket)} (Two steps), which is working, and disagrees with 2 of them.`);
     expect(told[0]?.prompt).toContain("Chosen: Chose two");
     expect(told[0]?.prompt).toContain("The owner's opinion: 应该用 UTC");

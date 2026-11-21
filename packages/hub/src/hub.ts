@@ -47,6 +47,7 @@ import { createRepositoryAccounts, type RepositoryAccounts } from "./repositorie
 import { bgeSmallZh, modelScorer } from "@super-agent2/routing";
 import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
+import { createInbox } from "./inbox.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -70,6 +71,7 @@ export interface HubOptions {
   readonly scheduleTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
+  readonly inboxServiceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
   readonly routingModel?: ModelLoader;
   readonly routingSleep?: Sleep;
@@ -122,6 +124,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
   const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
   const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
+  const verifyInbox = config.accessInboxAudience === undefined ? undefined : createAccessVerifier({ team: config.accessTeam, audience: config.accessInboxAudience, keys, clock });
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
@@ -385,6 +388,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       commands,
       verify,
       verifyRunner,
+      ...(verifyInbox === undefined ? {} : { verifyInbox, inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,

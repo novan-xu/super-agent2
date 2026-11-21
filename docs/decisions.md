@@ -3664,6 +3664,15 @@ Streaming larger files was an alternative, but would require a separate resource
   What each delta still costs is rewriting the entry's whole body, which grows with the entry and is work for the processor and the WAL, not a wait for the disk.
 - **Other options:** Batch the brain's deltas like the work events, which can follow if long streamed outputs show up as slow.
 
+## 2026-11-20 — Inbox source messages
+
+- **Chosen:** Use a separate Access application and its service token's `common_name` as the source identity, with a topic per source and no brain turn.
+  Support idempotency keys and a per-process limit of 60 new messages per source per minute.
+  Revocation takes effect in the hub before attempting to delete the Cloudflare token.
+- **Why:** The two Access headers work with scripts and Shortcuts, retries do not duplicate messages, and a Cloudflare deletion failure cannot keep a revoked source active.
+  A simple in-memory rate limit avoids another persistent store for a single hub process.
+- **Other options:** A separate bearer credential, a shared topic, a durable distributed rate limiter, or letting incoming messages start a brain turn.
+
 ## 2026-11-20 — Run confirmed schedules in their own turns (#206)
 
 - **Chosen:** Use numeric five-field cron in the hub time zone, with daily, weekly and monthly controls for common plans in 定时.

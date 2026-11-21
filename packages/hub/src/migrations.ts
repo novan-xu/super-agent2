@@ -973,6 +973,27 @@ export const migrations: readonly Migration[] = [
   {
     version: 47,
     sql: `
+      CREATE TABLE inbox_sources (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        client_id TEXT NOT NULL UNIQUE,
+        token_id TEXT NOT NULL,
+        topic TEXT REFERENCES conversations(id),
+        revoked_at INTEGER
+      ) STRICT;
+      CREATE UNIQUE INDEX inbox_active_name ON inbox_sources(name) WHERE revoked_at IS NULL;
+      CREATE TABLE inbox_idempotency (
+        source TEXT NOT NULL REFERENCES inbox_sources(id),
+        key TEXT NOT NULL,
+        body_hash TEXT NOT NULL,
+        entry TEXT NOT NULL REFERENCES conversation_entries(id),
+        PRIMARY KEY(source, key)
+      ) STRICT;
+    `,
+  },
+  {
+    version: 48,
+    sql: `
       CREATE TABLE schedules (
         id TEXT PRIMARY KEY,
         topic TEXT NOT NULL REFERENCES conversations(id),

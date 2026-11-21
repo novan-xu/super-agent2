@@ -109,18 +109,20 @@ describe("the brain's ticket tools", () => {
     clock.advance(86_400_000);
     await callBrainTool(running, "open_task_ticket", { ...writingArguments, task: "Translate the newer notice." });
     const newest = await callBrainTool(running, "read_ticket", { ticket: "aa" });
-    expect(newest).toMatchObject({ isError: false, text: expect.stringContaining("Ticket aa-2026-11-18") });
+    expect(newest).toMatchObject({ isError: false, text: expect.stringContaining("Ticket AA-2026-11-18") });
     expect(newest.text).toContain("Translate the newer notice.");
     const older = await callBrainTool(running, "read_ticket", { ticket: "aa-2026-11-17" });
-    expect(older).toMatchObject({ isError: false, text: expect.stringContaining("Ticket aa-2026-11-17") });
+    expect(older).toMatchObject({ isError: false, text: expect.stringContaining("Ticket AA-2026-11-17") });
     expect(older.text).not.toContain("Translate the newer notice.");
     expect(await callBrainTool(running, "read_ticket", { ticket: "aa-2026-11-16" })).toEqual({
-      isError: true, text: "There is no ticket aa-2026-11-16.",
+      isError: true, text: "There is no ticket AA-2026-11-16.",
     });
     expect(await callBrainTool(running, "read_ticket", { ticket: 1 })).toMatchObject({ isError: true });
-    for (const ticket of ["AA", "abc", "abc-2026-11-17"]) {
+    expect(await callBrainTool(running, "read_ticket", { ticket: "AA" })).toEqual(newest);
+    expect(await callBrainTool(running, "read_ticket", { ticket: "AA-2026-11-17" })).toEqual(older);
+    for (const ticket of ["abc", "abc-2026-11-17"]) {
       expect(await callBrainTool(running, "read_ticket", { ticket })).toMatchObject({
-        isError: true, text: expect.stringContaining("Use a ticket code like aa"),
+        isError: true, text: expect.stringContaining("Use a ticket code like AA"),
       });
     }
   });
@@ -202,7 +204,7 @@ describe("the brain's ticket tools", () => {
     const filed = await callBrainTool(running, "file_issue", fileArguments, conversation.id);
     expect(filed.isError).toBe(false);
     expect(filed.text).toContain(`Filed ${sandbox}#1`);
-    expect(filed.text).toContain("opened ticket aa-2026-11-17");
+    expect(filed.text).toContain("opened ticket AA-2026-11-17");
     expect(github.repositories.get(sandbox)?.[0]?.body).toBe(fileArguments.body);
 
     const socket = sockets[0]!;
@@ -211,7 +213,7 @@ describe("the brain's ticket tools", () => {
     expect(update?.type === "ticket" && update.ticket).toMatchObject({ state: "pending", title: { zh: "启动时打印问候" }, conversation: conversation.id });
 
     const listed = await callBrainTool(running, "list_tickets", {});
-    expect(listed.text).toBe(`Ticket aa-2026-11-17 [pending] feature in ${sandbox} (issues #1): Print a greeting on start`);
+    expect(listed.text).toBe(`Ticket AA-2026-11-17 [pending] feature in ${sandbox} (issues #1): Print a greeting on start`);
 
     const read = await callBrainTool(running, "read_ticket", { ticket: "aa" });
     expect(read.text).toContain("Chinese title: 启动时打印问候");
@@ -223,7 +225,7 @@ describe("the brain's ticket tools", () => {
     await until(socket, () => page.some((message) => message.type === "ticket" && message.ticket.state === "stopped"));
     expect((await callBrainTool(running, "stop_ticket", { ticket: "aa", reason: { en: "Again", zh: "再一次" } })).text).toContain("is stopped and cannot be stopped");
     expect((await callBrainTool(running, "list_tickets", {})).text).toBe("There are no tickets.");
-    expect((await callBrainTool(running, "list_tickets", { all: true })).text).toContain("Ticket aa-2026-11-17 [stopped]");
+    expect((await callBrainTool(running, "list_tickets", { all: true })).text).toContain("Ticket AA-2026-11-17 [stopped]");
     expect((await callBrainTool(running, "read_ticket", { ticket: "aa" })).text).toContain("Stopped because: Only a test");
   });
 
@@ -233,7 +235,7 @@ describe("the brain's ticket tools", () => {
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain("The arguments are not valid");
     expect(github.jobs).toEqual([]);
-    expect((await callBrainTool(running, "read_ticket", { ticket: "zz" })).text).toBe("There is no ticket zz.");
+    expect((await callBrainTool(running, "read_ticket", { ticket: "zz" })).text).toBe("There is no ticket ZZ.");
     expect((await callBrainTool(running, "stop_ticket", { ticket: "zz", reason: { en: "x", zh: "停" } })).isError).toBe(true);
   });
 
@@ -259,7 +261,7 @@ describe("the brain's tool for task tickets", () => {
     const conversation = running.conversations.create();
     const opened = await callBrainTool(running, "open_task_ticket", writingArguments, conversation.id);
     expect(opened.isError).toBe(false);
-    expect(opened.text).toContain("Opened task ticket aa-2026-11-17");
+    expect(opened.text).toContain("Opened task ticket AA-2026-11-17");
     expect(github.jobs).toEqual([]);
     expect(running.tickets.get(1)).toMatchObject({ form: "task", kind: "writing", repository: null, issues: [], state: "pending", conversation: conversation.id, title: { zh: "翻译一则通知" } });
     expect(running.tickets.task(1)?.materials).toEqual([
@@ -270,7 +272,7 @@ describe("the brain's tool for task tickets", () => {
     expect(read.text).toContain("Task: Translate the notice into English.");
     expect(read.text).toContain("Material notice.txt, from pasted by the owner in the conversation (6 characters given)");
     expect(read.text).toContain("Material terms, from https://example.com/terms (by its source only)");
-    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("Ticket aa-2026-11-17 [pending] writing task in no repository: Translate a notice");
+    expect((await callBrainTool(running, "list_tickets", {})).text).toBe("Ticket AA-2026-11-17 [pending] writing task in no repository: Translate a notice");
   });
 
   it("refuses a missing Chinese copy, an unsafe material name and repeated names, opening nothing", async () => {
@@ -369,7 +371,7 @@ describe("tickets for the page", () => {
     const page = await pageSocket(second);
     const snapshot = page.find((message) => message.type === "tickets");
     expect(snapshot?.type === "tickets" && snapshot.tickets.map((ticket) => [ticket.id, ticket.state, ticket.title.zh])).toEqual([[1, "working", "启动时打印问候"]]);
-    expect((await callBrainTool(second, "file_issue", fileArguments)).text).toContain("already has ticket aa-2026-11-17");
+    expect((await callBrainTool(second, "file_issue", fileArguments)).text).toContain("already has ticket AA-2026-11-17");
     expect(github.created).toBe(1);
   });
 });

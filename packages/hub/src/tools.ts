@@ -218,7 +218,7 @@ const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) })
 const ticketCodeSchema = (what: string) => ({
   type: "string",
   pattern: ticketReferencePattern,
-  description: `${what}. Use a code such as aa for the newest match or aa-2026-11-19 for an exact ticket.`,
+  description: `${what}. Use a code such as AA for the newest match or AA-2026-11-19 for an exact ticket.`,
 });
 
 const generatedSchema = (what: string) => ({
@@ -496,7 +496,7 @@ function chainDefinitions() {
                 after: {
                   type: "array",
                   items: { type: "string" },
-                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as aa or aa-2026-11-19",
+                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as AA or AA-2026-11-19",
                 },
                 after_deployment: { type: "boolean", description: "Also wait until the earlier work is deployed: a task ticket that deploys it is done, or you record it with report_deployment" },
                 title: generatedSchema("chain title"),
@@ -1104,7 +1104,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     };
     const resolve = (reference: string): number => {
       const id = tools.tickets.resolve(reference);
-      if (id === undefined) throw new TicketWriteRefused(`There is no ticket ${reference}.`);
+      if (id === undefined) throw new TicketWriteRefused(`There is no ticket ${reference.toUpperCase()}.`);
       return id;
     };
     switch (name) {
@@ -1249,7 +1249,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const detail = tools.tickets.detail(resolve(parsed.data.ticket));
         if (detail === undefined) {
-          return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
+          return { text: `There is no ticket ${parsed.data.ticket.toUpperCase()}.`, isError: true };
         }
         if (scope !== undefined) {
           tools.tickets.versions.seen(scope, detail.ticket.id);
@@ -1333,7 +1333,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return { text: [`Stopped ticket ${ticketReference(result.ticket)}.`, ticketLine(result.ticket), ...chainProgress(result.ticket), ...decisionReport(result.ticket)].join("\n") };
         }
         return result.error === "not_found"
-          ? { text: `There is no ticket ${parsed.data.ticket}.`, isError: true }
+          ? { text: `There is no ticket ${parsed.data.ticket.toUpperCase()}.`, isError: true }
           : { text: `Ticket ${parsed.data.ticket} is ${result.ticket?.state ?? "finished"} and cannot be stopped.`, isError: true };
       }
       case "open_repair_ticket": {
@@ -1343,7 +1343,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const before = tools.tickets.get(resolve(parsed.data.ticket));
         if (before === undefined) {
-          return { text: `There is no ticket ${parsed.data.ticket}.`, isError: true };
+          return { text: `There is no ticket ${parsed.data.ticket.toUpperCase()}.`, isError: true };
         }
         if (before.state === "stuck") {
           return { text: `Ticket ${ticketReference(before)} is stopped for the owner at the retry cap; only the owner decides now, on its card in 等你: giving it up there opens its repair ticket. Tell the owner.`, isError: true };

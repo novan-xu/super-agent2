@@ -363,7 +363,7 @@ describe("giving up a stuck chain", () => {
     expect(stops(sent, chain.id)).toEqual([{ type: "work.stop", ticket: chain.id, save: true, remove: false }]);
 
     const told = notices(running, conversation).at(-1);
-    expect(told?.text).toBe(`你放弃了工单 ${chain.code}，已开补救工单 ${repair.code}，等你开始`);
+    expect(told?.text).toBe(`你放弃了工单 ${chain.code.toUpperCase()}，已开补救工单 ${repair.code.toUpperCase()}，等你开始`);
     expect(told?.prompt).toContain(`A repair ticket was opened for ticket ${ticketReference(chain)} in the same step: ticket ${ticketReference(repair)}. It is pending: the hub does not start it`);
     expect(told?.prompt).toContain(`It continues on branch ${second}`);
     expect(told?.prompt).toContain("the issues still open: #8, #9");
@@ -372,7 +372,7 @@ describe("giving up a stuck chain", () => {
     expect(told?.prompt).toContain("prefer a different provider, or a stronger model");
     expect(told?.prompt).toContain("The owner's words, which the repair's worker is given as well: 换个更强的模型试试");
     expect(told?.prompt).toContain(chain.decisions[0]?.chosen.en ?? "missing");
-    expect(notices(running, conversation).map((entry) => entry.text)).not.toContain(`工单 ${chain.code} 停止了，排在它后面的工单 ${deployment} 由大脑决定是否继续`);
+    expect(notices(running, conversation).map((entry) => entry.text)).not.toContain(`工单 ${chain.code.toUpperCase()} 停止了，排在它后面的工单 ${deployment} 由大脑决定是否继续`);
 
     expect(running.waiting.cards().some((card) => card.kind === "stuck")).toBe(false);
     expect(running.waiting.cards().map((card) => [card.kind, card.kind === "start" ? card.ticket.id : 0])).toContainEqual(["start", repair.id]);
@@ -525,7 +525,7 @@ describe("giving up a stuck chain", () => {
 
     const recorded = running.tickets.change((writes) => writes.recordDecisions(second.id, "worker", [decision, { ...decision, chosen: { en: "A new choice.", zh: "新的选择。" } }]));
     expect(recorded.map((entry) => entry.chosen.en)).toEqual(["A new choice."]);
-    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${first.code}，已开补救工单 ${second.code}，等你开始`);
+    expect(notices(running, conversation).at(-1)?.text).toBe(`你放弃了工单 ${first.code.toUpperCase()}，已开补救工单 ${second.code.toUpperCase()}，等你开始`);
   });
 });
 
@@ -557,8 +557,8 @@ describe("repairing a stopped ticket in conversation", () => {
     const stopped = current(running, chain.id);
     expect(stopped).toMatchObject({ state: "stopped", repairedBy: null });
     expect(running.tickets.list({ open: true }).filter((ticket) => ticket.repairs !== null)).toEqual([]);
-    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`你停止了工单 ${chain.code}，已合并的部分保留`);
-    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`工单 ${chain.code} 停止了，排在它后面的工单 ${waits.code} 由大脑决定是否继续`);
+    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`你停止了工单 ${chain.code.toUpperCase()}，已合并的部分保留`);
+    expect(notices(running, conversation).map((entry) => entry.text)).toContain(`工单 ${chain.code.toUpperCase()} 停止了，排在它后面的工单 ${waits.code.toUpperCase()} 由大脑决定是否继续`);
 
     const missing = await callBrainTool(running, "open_repair_ticket", { ticket: "zz" }, conversation);
     expect(missing).toMatchObject({ isError: true });

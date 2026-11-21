@@ -239,7 +239,7 @@ describe("a chain handed in as several pull requests", () => {
     expect(third?.note).toContain("Pull request #21 is merged into main as commit merge-of-bbb222. It closed #7, #8.");
     expect(third?.note).toContain("- #9 Step 9");
     expect(third?.note).toContain(`Your folder is now on a new branch, ${second}, made from the updated main`);
-    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`]);
+    expect(notices(running, conversation).map((entry) => entry.text)).toEqual([`工单 ${ticket.code.toUpperCase()} 没有通过验证，大脑会决定怎么处理`]);
     const moves = running.tickets.moves(ticket.id).map((move) => [move.from, move.to, move.reason?.zh ?? null]);
     expect(moves).toContainEqual(["verifying", "working", "PR #21 已合并，接着做 #9"]);
 
@@ -258,7 +258,7 @@ describe("a chain handed in as several pull requests", () => {
     expect(forge.merges.map((merge) => merge.number)).toEqual([21, 22]);
     expect(forge.repository(repository).issues.get(9)).toBe("closed");
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`工单 ${ticket.code} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.code} 已合并`]);
+    expect(told.map((entry) => entry.text)).toEqual([`工单 ${ticket.code.toUpperCase()} 没有通过验证，大脑会决定怎么处理`, `工单 ${ticket.code.toUpperCase()} 已合并`]);
     expect(told.at(-1)?.prompt).toContain("Pull requests merged in novan-xu/super-agent-sandbox, in order: #21 (closed #7, #8, commit merge-of-bbb222); #22 (closed #9, commit merge-of-ccc333).");
     expect(told.at(-1)?.prompt).toContain("That is the final merge commit");
 
@@ -453,7 +453,7 @@ describe("a chain handed in as several pull requests", () => {
     ]);
     expect(forge.repository(repository).issues.get(7)).toBe("closed");
     const told = notices(running, conversation);
-    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.code}，已合并的部分保留`]);
+    expect(told.map((entry) => entry.text)).toEqual([`你停止了工单 ${ticket.code.toUpperCase()}，已合并的部分保留`]);
     expect(told[0]?.prompt).toContain("Pull requests merged, in order: #41 (closed #7, commit merge-of-eee555).");
     expect(told[0]?.prompt).toContain(`Still open: #8, #9; open pull request: #42 from ${second}.`);
     expect(told[0]?.prompt).toContain("the repository has a deployment");

@@ -1,4 +1,4 @@
-import type { PushSubscriptionRequest } from "@super-agent2/protocol";
+import { pagePath, type PushPayload, type PushSubscriptionRequest } from "@super-agent2/protocol";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 import { createNotifier, type Notifier } from "./notifier.js";
@@ -16,6 +16,7 @@ export interface PushService {
   readonly publicKey: string;
   subscribe(request: PushSubscriptionRequest, origin: string): SubscribeOutcome;
   unsubscribe(endpoint: string): boolean;
+  inbox(source: string, message: string, topic: string): void;
   idle(): Promise<void>;
   close(): Promise<void>;
 }
@@ -44,6 +45,7 @@ export function createPushService(options: PushServiceOptions): PushService {
     sender,
     vapidKey: options.settings.publicKey,
   });
+  const pending = new Set<Promise<void>>();
   return {
     publicKey: options.settings.publicKey,
     subscribe: (request, origin) => {
@@ -57,10 +59,19 @@ export function createPushService(options: PushServiceOptions): PushService {
       return "saved";
     },
     unsubscribe: (endpoint) => store.remove(endpoint),
-    idle: () => notifier.idle(),
+    inbox: (source, message, topic) => {
+      const payload: PushPayload = { title: source, body: [...message].slice(0, 160).join(""), url: pagePath({ view: "conversations", conversation: topic, scope: { kind: "daily" } }), tag: `inbox:${topic}` };
+      const work = Promise.all(store.list(options.settings.publicKey).map(async (target) => {
+        const result = await sender.send(target, payload).catch(() => "failed" as const);
+        if (result === "gone") store.remove(target.endpoint);
+      })).then(() => undefined).finally(() => pending.delete(work));
+      pending.add(work);
+    },
+    idle: async () => { await notifier.idle(); await Promise.all([...pending]); },
     close: async () => {
       stopping.abort();
       await notifier.close();
+      await Promise.all([...pending]);
     },
   };
 }

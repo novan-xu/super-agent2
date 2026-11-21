@@ -150,6 +150,12 @@ function Delivery({ entry, topic, action }: { readonly entry: DeliveryEntry; rea
 }
 
 function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
+  if (entry.source !== undefined) {
+    return <div className="msg msg--brain">
+      <div className="msg-who"><strong>{entry.source}</strong><span className="num">{clockOf(entry.at)}</span>{topic}{action}</div>
+      <div className="msg-text msg-plain">{entry.text}</div>
+    </div>;
+  }
   if (entry.worker === true) {
     return <div className="msg msg--brain">
       <div className="msg-who"><span className="num">{clockOf(entry.at)}</span>{topic}{action}</div>

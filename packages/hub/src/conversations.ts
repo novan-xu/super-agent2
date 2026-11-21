@@ -106,6 +106,7 @@ export interface ConversationService {
   handover(source: string, turn: string, destination: HandoverDestination, message?: string, ownerRequested?: boolean): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
   tell(ticket: number | null, notice: string, prompt: string): string;
+  inbox(topic: string | null, source: string, message: string): { topic: string; entry: string };
   deliver(delivery: Delivery): string;
   writeDelivery(conversation: string, delivery: Delivery): string;
   writeConfirmation(conversation: string, turn: string, message: string): string;
@@ -326,6 +327,7 @@ function toEntry(row: EntryRow): ConversationEntry {
       return ConversationEntry.parse({ ...base, kind: "question", turn: row.turn_id, questions: body.questions, answer: body.answer ?? null });
     case "notice":
       return ConversationEntry.parse({ ...base, kind: "notice", text: body.text, turn: row.turn_id,
+        ...(typeof body.source === "string" ? { source: body.source } : {}),
         ...(body.ticket === undefined ? {} : { ticket: body.ticket }), ...(body.destination === undefined ? {} : { destination: body.destination }),
         ...(body.start === true ? { start: true } : {}), ...(body.worker === true ? { worker: true } : {}) });
     case "delivery":
@@ -382,7 +384,7 @@ function historyItem(raw: unknown, reference: (id: number) => string | undefined
     case "question":
       return { kind: "notice", text: JSON.stringify({ questions: entry.questions, answer: entry.answer }) };
     case "notice":
-      return { kind: "notice", text: entry.text };
+      return { kind: "notice", text: entry.source === undefined ? entry.text : `[${entry.source}] ${entry.text}` };
     case "delivery":
       return { kind: "notice", text: deliveryHistory(entry, reference(entry.ticket)) };
     case "text":
@@ -1329,6 +1331,12 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     topics,
     tell,
+    inbox: (topic, source, message) => {
+      const id = topic ?? create(source).id;
+      updateConversation(id, { topic_state: "active" });
+      const entry = addEntry({ conversation: id, kind: "notice", turn: null, body: { source, text: message } });
+      return { topic: id, entry };
+    },
     deliver: (delivery) => postHubEntry(deliveryEntry(noticeTarget(delivery.ticket), delivery)),
     writeDelivery: (conversation, delivery) => writeEntry(deliveryEntry(conversation, delivery)),
     writeConfirmation: (conversation, turn, message) => writeEntry({

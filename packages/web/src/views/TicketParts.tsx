@@ -25,7 +25,7 @@ export function PhaseStatus({ phase }: { readonly phase: TicketPhase }) {
 }
 
 export function TicketCodeLabel({ code }: { readonly code: string }) {
-  return <span className="mono wb-ticket-code">{code}</span>;
+  return <span className="mono wb-ticket-code">{code.toUpperCase()}</span>;
 }
 
 export const pullRequestTones: Readonly<Record<TicketPullRequestState, "ok" | "info" | "mute">> = { merged: "ok", open: "info", closed: "mute" };

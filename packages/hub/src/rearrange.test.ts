@@ -16,9 +16,9 @@ describe("rearrange prompt", () => {
     expect(project).toContain('"state":"waiting"');
     expect(project).toContain('"kind":"deployment"');
     expect(project).toContain('"issues":[{"number":9}]');
-    expect(project).toContain('"after":["ticket ab-2026-11-19","ticket ac-2026-11-19"]');
-    expect(project).not.toContain('"ticket":"ticket ab-2026-11-19"');
-    expect(rearrangePrompt(null, tickets)).toContain('"ticket":"ticket ab-2026-11-19"');
-    expect(rearrangePrompt(undefined, tickets)).toContain('"ticket":"ticket ac-2026-11-19"');
+    expect(project).toContain('"after":["ticket AB-2026-11-19","ticket AC-2026-11-19"]');
+    expect(project).not.toContain('"ticket":"ticket AB-2026-11-19"');
+    expect(rearrangePrompt(null, tickets)).toContain('"ticket":"ticket AB-2026-11-19"');
+    expect(rearrangePrompt(undefined, tickets)).toContain('"ticket":"ticket AC-2026-11-19"');
   });
 });

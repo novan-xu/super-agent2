@@ -27,7 +27,7 @@ export async function startFromEnvironment(
     config: loaded.config,
     environment: env,
     report: options.report,
-    ...("missing" in cloudflare ? {} : { serviceTokens: cloudflareServiceTokens(cloudflare) }),
+    ...("missing" in cloudflare ? {} : { serviceTokens: cloudflareServiceTokens(cloudflare), inboxServiceTokens: cloudflareServiceTokens(cloudflare, "inbox") }),
     ...(options.keySource === undefined ? {} : { keySource: options.keySource }),
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });

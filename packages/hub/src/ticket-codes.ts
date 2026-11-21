@@ -57,6 +57,7 @@ export function ticketReferences(connection: DatabaseSync) {
       return ticketReference({ code, codeDate: code_date });
     },
     resolve(reference: string): number | undefined {
+      reference = reference.toLowerCase();
       const separator = reference.indexOf("-");
       const row = separator === -1 ? newest.get(reference) : dated.get(reference.slice(0, separator), reference.slice(separator + 1));
       return row === undefined ? undefined : IdRow.parse(row).id;

@@ -60,7 +60,7 @@ export function cloudflareSettings(environment: Readonly<Record<string, string |
   return missing.length > 0 ? { missing } : { accountId, apiToken };
 }
 
-export function cloudflareServiceTokens(settings: CloudflareSettings): AccessServiceTokens {
+export function cloudflareServiceTokens(settings: CloudflareSettings, tag: "runner" | "inbox" = "runner"): AccessServiceTokens {
   const call = settings.fetch ?? fetch;
   const base = settings.apiBase ?? cloudflareApiBase;
   const failure = async (response: Response, what: string): Promise<Error> => {
@@ -90,7 +90,7 @@ export function cloudflareServiceTokens(settings: CloudflareSettings): AccessSer
       const response = await call(`${base}/accounts/${encodeURIComponent(settings.accountId)}/access/service_tokens`, {
         method: "POST",
         headers: { authorization: `Bearer ${settings.apiToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ name, duration: serviceTokenDuration, tags: { [serviceTokenTag.key]: serviceTokenTag.value } }),
+        body: JSON.stringify({ name, duration: serviceTokenDuration, tags: { [serviceTokenTag.key]: tag } }),
       });
       let body: unknown;
       try {
