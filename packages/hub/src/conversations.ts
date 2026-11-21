@@ -1459,13 +1459,17 @@ export function createConversationService(options: ConversationServiceOptions): 
       const byId = new Map(answers.map((answer) => [answer.question, answer]));
       if (byId.size !== answers.length || answers.some((answer) => !parsed.questions.some((question) => question.id === answer.question))) return undefined;
       const normalized: QuestionAnswer[] = [];
+      const lines: string[] = [];
       for (const question of parsed.questions) {
         const answer = byId.get(question.id) ?? { question: question.id, options: [], text: "" };
-        const selected = answer.text.trim() ? [] : answer.options;
-        if (new Set(selected).size !== selected.length || (!question.multiple && selected.length > 1) || selected.some((id) => !question.options.some((option) => option.id === id)) || (question.required && !answer.text.trim() && selected.length === 0)) return undefined;
-        normalized.push({ question: question.id, options: selected, text: answer.text.trim() });
+        const typed = answer.text.trim();
+        const selected = typed ? [] : answer.options;
+        if (new Set(selected).size !== selected.length || (!question.multiple && selected.length > 1) || selected.some((id) => !question.options.some((option) => option.id === id)) || (question.required && !typed && selected.length === 0)) return undefined;
+        normalized.push({ question: question.id, options: selected, text: typed });
+        const labels = selected.map((id) => question.options.find((option) => option.id === id)!.label);
+        lines.push(`${question.prompt}：${typed || labels.join("、") || text("question.skipped")}`);
       }
-      const message = normalized.map((answer, index) => `${index + 1}. ${answer.text || answer.options.map((id) => parsed.questions[index]!.options.find((option) => option.id === id)!.label).join("、")}`).join("；");
+      const message = lines.join("\n");
       let owner: string;
       connection.exec("BEGIN IMMEDIATE");
       try {

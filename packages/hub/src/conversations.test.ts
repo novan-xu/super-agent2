@@ -1444,8 +1444,10 @@ describe("question cards", () => {
     expect((await request()).status).toBe(202);
     expect((await request()).status).toBe(409);
     expect(running.conversations.entries(topic.id).find((entry) => entry.id === card?.id)).toMatchObject({ answer: { kind: "card", answers: [{ question: "scope", options: [], text: "自己写" }, { question: "extras", options: ["x", "y"] }] } });
-    expect(sent).toContainEqual(expect.objectContaining({ type: "input", conversation: topic.id, input: expect.objectContaining({ text: expect.stringContaining('"question":"scope"'), questionResponse: { card: card!.id, answers: [{ question: "scope", options: [], text: "自己写" }, { question: "extras", options: ["x", "y"], text: "" }] } }) }));
-    expect(running.conversations.entries(topic.id).at(-1)).toMatchObject({ kind: "owner", text: "1. 自己写；2. 一、二" });
+    const message = "选择范围：自己写\n选择附加项：一、二";
+    const answer = { card: card!.id, answers: [{ question: "scope", options: [], text: "自己写" }, { question: "extras", options: ["x", "y"], text: "" }] };
+    expect(sent).toContainEqual(expect.objectContaining({ type: "input", conversation: topic.id, input: expect.objectContaining({ text: `${message}\n[hub] Structured question answers: ${JSON.stringify(answer)}`, questionResponse: answer }) }));
+    expect(running.conversations.entries(topic.id).at(-1)).toMatchObject({ kind: "owner", text: message });
   });
 
   it("keeps earlier cards open when a later card is answered", async () => {
@@ -1456,7 +1458,7 @@ describe("question cards", () => {
     brain.receive({ type: "turn.started", conversation: topic.id, turn: "t", provider: "gpt", model: "test", inputs: [] });
     const first = running.conversations.askOwner(topic.id, "t", questions)!;
     const second = running.conversations.askOwner(topic.id, "t", questions)!;
-    expect(running.conversations.answerQuestions(topic.id, second, [{ question: "scope", options: ["a"], text: "" }])).toBeDefined();
+    expect(running.conversations.answerQuestions(topic.id, second, [{ question: "scope", options: ["a"], text: "" }])).toMatchObject({ text: "选择范围：甲\n选择附加项：未作答" });
     expect(running.conversations.entries(topic.id).find((entry) => entry.id === first)).toMatchObject({ answer: null });
     running.conversations.send(topic.id, "回复第一张");
     expect(running.conversations.entries(topic.id).find((entry) => entry.id === first)).toMatchObject({ answer: { kind: "message", text: "回复第一张" } });

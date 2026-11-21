@@ -44,15 +44,15 @@ function endedTurns(turns: readonly Turn[]): readonly Turn[] {
   return turns.filter((turn) => turn.state === "interrupted" || turn.state === "failed");
 }
 
-export function streamItems(state: ConversationState, now: number): readonly StreamItem[] {
-  return itemsOf(state, now, isWorking(state), false);
+export function streamItems(state: ConversationState, now: number, submittedQuestions?: ReadonlySet<string>): readonly StreamItem[] {
+  return itemsOf(state, now, isWorking(state), false, submittedQuestions);
 }
 
-export function combinedStreamItems(entries: readonly ConversationEntry[], turns: readonly Turn[], now: number): readonly StreamItem[] {
-  return itemsOf({ entries, turns }, now, false, true);
+export function combinedStreamItems(entries: readonly ConversationEntry[], turns: readonly Turn[], now: number, submittedQuestions?: ReadonlySet<string>): readonly StreamItem[] {
+  return itemsOf({ entries, turns }, now, false, true, submittedQuestions);
 }
 
-function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: number, working: boolean, combined: boolean): readonly StreamItem[] {
+function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: number, working: boolean, combined: boolean, submittedQuestions?: ReadonlySet<string>): readonly StreamItem[] {
   const items: StreamItem[] = [];
   const runningTurns = state.turns.filter((turn) => turn.state === "running");
   const running = new Set(runningTurns.map((turn) => turn.id));
@@ -101,7 +101,7 @@ function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: numbe
   const lastEntry = state.entries.at(-1);
   for (const entry of state.entries) {
     pushLoose(entry.at);
-    if (entry.kind !== "tool") {
+    if (entry.kind !== "tool" && !(entry.kind === "question" && (entry.answer !== null || submittedQuestions?.has(entry.id)))) {
       pushDay(entry.at, entry.id);
       const lead = isBrain(entry) && !(previous !== undefined && isBrain(previous) && turnOf(previous) === turnOf(entry) && previous.conversation === entry.conversation);
       const live = entry.kind === "text" && running.has(entry.turn) && (combined ? lastOfTurn.get(entry.turn) === entry.id : entry === lastEntry && working);

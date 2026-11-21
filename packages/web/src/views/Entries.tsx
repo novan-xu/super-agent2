@@ -186,7 +186,7 @@ function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNod
   );
 }
 
-export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move, split }: {
+export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move, split, onQuestionSubmitted }: {
   readonly item: StreamItem;
   readonly thisYear: number;
   readonly topic?: ReactNode;
@@ -195,6 +195,7 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move,
   readonly split?: (() => Promise<boolean>) | undefined;
   readonly match?: ReactNode;
   readonly quoted?: ReactNode;
+  readonly onQuestionSubmitted?: (id: string) => void;
 }) {
   switch (item.kind) {
     case "day":
@@ -212,7 +213,7 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move,
       );
       switch (entry.kind) {
         case "question":
-          return <div>{topic}<QuestionCard entry={entry} /></div>;
+          return <QuestionCard entry={entry} topic={topic} onSubmitted={onQuestionSubmitted} />;
         case "owner":
           return <OwnerMessage entry={entry} topic={topic} action={<>
             {action}
