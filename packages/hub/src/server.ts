@@ -1,3 +1,4 @@
+import { renderHtml } from "./html-render.js";
 import { Previews, previewFile } from "./previews.js";
 import { join } from "node:path";
 import { sendFile } from "./file-response.js";
@@ -688,6 +689,15 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if ((path === streamPath || path === streamPreviewPath || path.startsWith(conversationsPath)) && (await serveConversations(request, response, path, method))) {
       return;
+    }
+    if (method === "GET" && path.endsWith("/render")) {
+      const ticket = /^\/api\/tickets\/([1-9][0-9]{0,15})\/files\/([^/]{1,400})\/render$/.exec(path);
+      if (ticket?.[1] && ticket[2]) {
+        let file;
+        try { file = options.files?.get(Number(ticket[1]), decodeURIComponent(ticket[2])); } catch { file = undefined; }
+        if (!file || !(await renderHtml(response, file))) sendJson(response, 404, { error: "not_found" });
+        return;
+      }
     }
     if (method === "GET" && path.endsWith("/preview")) {
       const attachment = /^\/api\/attachments\/([0-9a-f]{32})\/preview$/.exec(path);

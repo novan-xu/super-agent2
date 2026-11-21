@@ -52,6 +52,20 @@ describe("device transfer", () => {
     expect((await request(`/api/transfer/files/${attachment.id}`)).status).toBe(404);
     ws.close();
   });
+  it("renders transfer HTML using the same isolation as attachments", async () => {
+    hub = await startTestHub({ config: testConfig(dir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials });
+    const base = `http://127.0.0.1:${hub.address.port}`;
+    const token = await assertion({ key, clock });
+    const request = (path: string, init: RequestInit = {}) => fetch(base + path, { ...init, headers: { "Cf-Access-Jwt-Assertion": token, origin: base, ...init.headers } });
+    const html = "<style>body { color: red }</style>";
+    const created = await request("/api/transfer/files", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "page.htm", size: html.length, mediaType: "text/html" }) });
+    const { attachment } = await created.json() as { attachment: { id: string } };
+    await request(`/api/transfer/files/${attachment.id}/upload?offset=0`, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: html });
+    const response = await request(`/api/transfer/files/${attachment.id}/render`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toContain("style-src 'unsafe-inline'");
+    expect(await response.text()).toBe(html);
+  });
   it("enforces upload and origin boundaries", async () => {
     hub = await startTestHub({ config: testConfig(dir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials });
     const base = `http://127.0.0.1:${hub.address.port}`;

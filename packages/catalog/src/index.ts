@@ -1,2 +1,3 @@
 export * from "./messages.js";
 export * from "./text.js";
+export * from "./filekind.js";

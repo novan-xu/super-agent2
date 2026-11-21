@@ -141,6 +141,28 @@ describe("attachments for the owner", () => {
     } finally { await new Promise<void>(resolve => converter.close(() => resolve())); }
   });
 
+  it("renders only HTML with an isolated offline policy", async () => {
+    const running = await started();
+    const html = "<!doctype html><style>body { background: rgb(1, 2, 3) }</style><p>中文</p>";
+    const id = await uploaded(running, "page.html", Buffer.from(html), "text/html");
+    const response = await owner(running, `/api/attachments/${id}/render`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-ancestors 'self'");
+    expect(response.headers.get("x-frame-options")).not.toBe("DENY");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-disposition")).toBe("inline");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.text()).toBe(html);
+    const legacy = await uploaded(running, "legacy.html", Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), "text/html");
+    expect(await (await owner(running, `/api/attachments/${legacy}/render`)).text()).toBe("中文");
+    const other = await uploaded(running, "file.txt", Buffer.from("text"), "text/html");
+    expect((await owner(running, `/api/attachments/${other}/render`)).status).toBe(404);
+    expect((await owner(running, `/api/attachments/${"0".repeat(32)}/render`)).status).toBe(404);
+    expect((await fetch(`${base(running)}/api/attachments/${id}/render`)).status).toBe(403);
+  });
+
   it("serves byte ranges and rejects unsatisfiable ranges", async () => {
     const running = await started();
     const id = await uploaded(running, "audio.mp3", Buffer.from("0123456789"), "audio/mpeg");
