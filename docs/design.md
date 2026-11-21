@@ -740,6 +740,13 @@ Proper nouns and technical terms may stay as they are.
   If neither provides a topic, the first event creates one named after the ticket.
 - Hub notices without a ticket, such as new-model notices, go to a shared System topic created on first use in 日常.
   New-model notices link to Settings → Models and tell the brain the reported efforts, machines and current row.
+- Machine and provider problem notices appear in both the 日常 System topic and a separate repository-free 代码 System topic.
+  An incident sends one push when it starts and one notice in each topic when it recovers, without starting a brain turn.
+  Incident state and both notices are stored together so a hub restart does not repeat them.
+  A disconnected machine and a persistently overloaded service have a ten-minute grace period; program probe failures and other provider problems are reported immediately.
+  If the hub starts with no recorded disconnect for an offline machine, it starts that machine’s grace period then because the last report is not a heartbeat.
+  Used-up allowances, rate limits, balances, and program updates do not cause notices.
+  Provider events carry a category when known; older events without one use their reason text for compatibility.
 
 What waits for the owner (a held operation, a stopped ticket, a question, a chain to start) shows in 工作台's 等你 and is sent as a push notification from the web page.
 There is no Lark channel.

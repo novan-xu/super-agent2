@@ -1030,6 +1030,21 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX tickets_schedule_run ON tickets(schedule_run) WHERE schedule_run IS NOT NULL;
     `,
   },
+  {
+    version: 49,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN code_system INTEGER NOT NULL DEFAULT 0 CHECK (code_system IN (0, 1) AND (code_system = 0 OR (system = 0 AND needs_repository = 1 AND repository IS NULL)));
+      CREATE UNIQUE INDEX conversations_code_system ON conversations(code_system) WHERE code_system = 1;
+      ALTER TABLE provider_marks ADD COLUMN category TEXT;
+      CREATE TABLE health_incidents (
+        key TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        since INTEGER NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        description TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

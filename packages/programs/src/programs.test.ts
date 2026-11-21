@@ -173,7 +173,7 @@ describe("Codex through its app server", () => {
     const log = new EventLog();
     track(adapter.open(options(null), log.listener)).start("limit");
     await log.ended();
-    expect(log.events.at(-1)).toEqual({ type: "unavailable", reason: "You've hit your usage limit.", until: 1_800_000_000_000 });
+    expect(log.events.at(-1)).toEqual({ type: "unavailable", reason: "You've hit your usage limit.", until: 1_800_000_000_000, category: "limit" });
   });
 
   it("tells allowance and outages from other failures by what Codex reports", () => {
@@ -296,7 +296,7 @@ describe("dsh through its SDK profile", () => {
     const quota = new EventLog();
     track(adapter.open(options("kept"), quota.listener)).start("quota");
     await quota.ended();
-    expect(quota.events.at(-1)).toEqual({ type: "unavailable", reason: "ACCOUNT_QUOTA: quota exhausted", until: null });
+    expect(quota.events.at(-1)).toEqual({ type: "unavailable", reason: "ACCOUNT_QUOTA: quota exhausted", until: null, category: "limit" });
     const lost = new EventLog();
     track(adapter.open(options("missing"), lost.listener)).start("hello");
     await lost.ended();
@@ -308,6 +308,7 @@ describe("dsh through its SDK profile", () => {
     expect(dshTurnEnd({ reason: { kind: "aborted", reason: { kind: "user" } } }, now)).toEqual({ type: "turn.finished", outcome: "interrupted" });
     expect(dshTurnEnd({ reason: { kind: "error", error: { code: "RATE_LIMIT", message: "slow down", providerRetryAfterMs: 5000 } } }, now)).toEqual({
       type: "unavailable",
+      category: "limit",
       reason: "RATE_LIMIT: slow down",
       until: now + 5000,
     });
@@ -424,7 +425,7 @@ describe("Claude Code through stream-json", () => {
     const log = new EventLog();
     track(claude().open(options(null), log.listener)).start("limit");
     await log.ended();
-    expect(log.events.at(-1)).toEqual({ type: "unavailable", reason: "You've hit your limit", until: 1_800_000_000_000 });
+    expect(log.events.at(-1)).toEqual({ type: "unavailable", reason: "You've hit your limit", until: 1_800_000_000_000, category: "limit" });
     expect(log.events.some((event) => event.type === "text")).toBe(false);
   });
 

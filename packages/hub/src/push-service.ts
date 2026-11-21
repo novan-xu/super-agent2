@@ -17,6 +17,7 @@ export interface PushService {
   subscribe(request: PushSubscriptionRequest, origin: string): SubscribeOutcome;
   unsubscribe(endpoint: string): boolean;
   inbox(source: string, message: string, topic: string): void;
+  health(message: string, topic: string, key: string): void;
   idle(): Promise<void>;
   close(): Promise<void>;
 }
@@ -59,6 +60,14 @@ export function createPushService(options: PushServiceOptions): PushService {
       return "saved";
     },
     unsubscribe: (endpoint) => store.remove(endpoint),
+    health: (message, topic, key) => {
+      const payload: PushPayload = { title: "System", body: [...message].slice(0, 160).join(""), url: pagePath({ view: "conversations", conversation: topic, scope: { kind: "daily" } }), tag: `health:${key}` };
+      const work = Promise.all(store.list(options.settings.publicKey).map(async (target) => {
+        const result = await sender.send(target, payload).catch(() => "failed" as const);
+        if (result === "gone") store.remove(target.endpoint);
+      })).then(() => undefined).finally(() => pending.delete(work));
+      pending.add(work);
+    },
     inbox: (source, message, topic) => {
       const payload: PushPayload = { title: source, body: [...message].slice(0, 160).join(""), url: pagePath({ view: "conversations", conversation: topic, scope: { kind: "daily" } }), tag: `inbox:${topic}` };
       const work = Promise.all(store.list(options.settings.publicKey).map(async (target) => {

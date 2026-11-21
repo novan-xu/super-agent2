@@ -845,7 +845,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const current = latest?.attempt === attempt.attempt;
     let told: { readonly failure: WorkFailure; readonly reason: string; readonly report?: GeneratedText | undefined } | undefined;
     let recoveredMark = false;
-    let unavailable: { readonly reason: string; readonly until: number | null; readonly unsent: readonly string[] } | undefined;
+    let unavailable: { readonly reason: string; readonly until: number | null; readonly unsent: readonly string[]; readonly category?: "limit" | "problem" | "overload" } | undefined;
     let handedOver = false;
     let delivered: Ticket | undefined;
     let fetchFiles = false;
@@ -960,7 +960,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
               }
             } else {
               end(attempt.ticket_id, attempt.attempt, "unavailable", null, event.reason);
-              unavailable = { reason: event.reason, until: event.until, unsent: event.unsent };
+              unavailable = { reason: event.reason, until: event.until, unsent: event.unsent, ...(event.category === undefined ? {} : { category: event.category }) };
             }
           }
           writes.touched(attempt.ticket_id);
@@ -985,7 +985,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       announce(stored);
       if (unavailable !== undefined) {
         messages.undelivered(attempt.ticket_id, unavailable.unsent);
-        options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until);
+        options.defaults?.markUnavailable(attempt.engine, unavailable.reason, unavailable.until, unavailable.category);
         const ended = attemptOf(attempt.ticket_id, attempt.attempt);
         if (current && ended !== undefined) {
           switchAway(attempt.ticket_id, ended);

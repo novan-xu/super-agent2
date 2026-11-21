@@ -40,7 +40,7 @@ interface ListProps {
 type TopicHeading = StreamRecord["topic"];
 
 function repositoryOf(topic: TopicHeading | undefined): string | null {
-  return topic?.repository ?? (topic?.needsRepository === true ? text("conversation.repository.pending") : null);
+  return topic?.system === true ? null : topic?.repository ?? (topic?.needsRepository === true ? text("conversation.repository.pending") : null);
 }
 
 export function TopicList({ list, current, hrefOf, open, now, showRepository, edit }: ListProps) {

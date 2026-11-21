@@ -80,10 +80,10 @@ export function dshTurnEnd(data: unknown, now: number): ProgramEvent | undefined
       const message = `${code}: ${reason.error?.message ?? "dsh reported an error"}`;
       if (limitCodes.has(code)) {
         const after = reason.error?.providerRetryAfterMs;
-        return { type: "unavailable", reason: message, until: after === undefined ? null : now + after };
+        return { type: "unavailable", reason: message, until: after === undefined ? null : now + after, category: "limit" };
       }
       if (unavailableCodes.has(code)) {
-        return { type: "unavailable", reason: message, until: null };
+        return { type: "unavailable", reason: message, until: null, category: code === "SERVER" ? "overload" : "problem" };
       }
       return { type: "failed", reason: message, lostSession: false };
     }

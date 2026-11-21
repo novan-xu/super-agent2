@@ -133,13 +133,13 @@ export function claudeFailure(result: Output, lastError: string | undefined, lim
     return { type: "failed", reason, lostSession: true };
   }
   if (lastError !== undefined && limitErrors.has(lastError)) {
-    return { type: "unavailable", reason, until: limitUntil };
+    return { type: "unavailable", reason, until: limitUntil, category: "limit" };
   }
   if (limitUntil !== null) {
-    return { type: "unavailable", reason, until: limitUntil };
+    return { type: "unavailable", reason, until: limitUntil, category: "limit" };
   }
   if (lastError !== undefined && unavailableErrors.has(lastError)) {
-    return { type: "unavailable", reason, until: null };
+    return { type: "unavailable", reason, until: null, category: lastError === "overloaded" || lastError === "server_error" ? "overload" : "problem" };
   }
   return { type: "failed", reason, lostSession: false };
 }

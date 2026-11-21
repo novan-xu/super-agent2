@@ -208,7 +208,7 @@ export type ReviewedStreamDestination = Pick<StreamMessage, "topic" | "newTopic"
 
 export const StreamEntry = z.object({
   position: z.number().int().positive(),
-  topic: Conversation.pick({ id: true, title: true, repository: true, needsRepository: true }),
+  topic: Conversation.pick({ id: true, title: true, repository: true, needsRepository: true, system: true }),
   entry: ConversationEntry,
   latestOwner: z.boolean().optional(),
 });

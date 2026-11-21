@@ -119,7 +119,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
     refreshPrograms: (id) => requestPrograms(id),
-    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
+    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), updatingPrograms, storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),

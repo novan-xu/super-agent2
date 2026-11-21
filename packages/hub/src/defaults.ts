@@ -41,7 +41,8 @@ export interface StartDefaults {
   unavailable(): ProviderUnavailable[];
   out(): Map<ProgramId, ProviderOut>;
   order(prose: boolean): ProgramId[];
-  markUnavailable(program: ProgramId, reason: string, until: number | null): void;
+  markUnavailable(program: ProgramId, reason: string, until: number | null, category?: "limit" | "problem" | "overload"): void;
+  healthMarks(): { program: ProgramId; reason: string; since: number; category: "limit" | "problem" | "overload" | null }[];
   recovered(program: ProgramId, at: number): boolean;
   machines(): MachineChoice[];
   machinesFor(ticket: Ticket): MachineChoice[];
@@ -63,7 +64,7 @@ const tableKey = "engine_table";
 
 const ValueRow = z.object({ value: z.string() });
 
-const MarkRow = z.object({ program: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable() });
+const MarkRow = z.object({ program: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable(), category: z.enum(["limit", "problem", "overload"]).nullable() });
 
 export function allowanceStatesOf(subscriptions: Subscriptions): AllowanceStates {
   return { codex: subscriptions.codex.state, claude: subscriptions.claude.state };
@@ -97,7 +98,7 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
 
   const selectMarks = connection.prepare("SELECT * FROM provider_marks ORDER BY program");
   const upsertMark = connection.prepare(
-    "INSERT INTO provider_marks (program, reason, since, until) VALUES (?, ?, ?, ?) ON CONFLICT (program) DO UPDATE SET reason = excluded.reason, since = excluded.since, until = excluded.until",
+    "INSERT INTO provider_marks (program, reason, since, until, category) VALUES (?, ?, ?, ?, ?) ON CONFLICT (program) DO UPDATE SET reason = excluded.reason, since = excluded.since, until = excluded.until, category = excluded.category",
   );
   const deleteMark = connection.prepare("DELETE FROM provider_marks WHERE program = ? AND since < ?");
 
@@ -176,9 +177,17 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     unavailable,
     out,
     order,
-    markUnavailable: (program, reason, until) => {
+    healthMarks: () => {
+      const active = new Set(unavailable().map((mark) => mark.program));
+      return selectMarks.all().flatMap((row) => {
+        const mark = MarkRow.parse(row);
+        const program = ProgramId.safeParse(mark.program);
+        return program.success && active.has(program.data) ? [{ program: program.data, reason: mark.reason, since: mark.since, category: mark.category }] : [];
+      });
+    },
+    markUnavailable: (program, reason, until, category) => {
       const now = clock.now();
-      upsertMark.run(program, reason, now, until !== null && until > now ? until : null);
+      upsertMark.run(program, reason, now, until !== null && until > now ? until : null, category ?? null);
       changed();
     },
     recovered: (program, at) => {
