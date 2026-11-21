@@ -159,9 +159,11 @@ describe("scheduled work", () => {
     const run = fire(schedule, inputs);
     expect(inputs.at(-1)).toMatchObject({ source: "hub", scheduleRun: run, text: expect.stringContaining(fields.instruction) });
     const scheduled = turn(link, topic, run);
-    await openLight(scheduled);
+    const resultWithProject = await scheduled.call("run_scheduled_light_task", { ...light, project: repository });
+    expect(resultWithProject.isError, resultWithProject.text).toBe(false);
+    expect(hub.conversations.get(topic)?.repository).toBeNull();
     const ticket = hub.tickets.list()[0]!;
-    expect(ticket).toMatchObject({ scheduleRun: run, light: "transfer", state: "pending", requiredMachine: "mac-mini" });
+    expect(ticket).toMatchObject({ scheduleRun: run, light: "transfer", project: repository, state: "pending", requiredMachine: "mac-mini" });
     expect(hub.chains.startScheduled(run)).toBeUndefined();
     scheduled.finish();
     expect(other.sent.filter((message) => message.type === "work.task")).toEqual([]);

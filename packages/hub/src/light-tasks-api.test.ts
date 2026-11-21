@@ -165,28 +165,31 @@ describe("light tasks", () => {
     scope.finish();
   });
 
-  it.each([false, true])("quietly delivers a project operation in its repository topic (already assigned: %s)", async (assigned) => {
+  it.each([undefined, "owner/repository"])("quietly delivers a project operation without changing the topic repository (%s)", async (topicRepository) => {
     const project = "owner/repository";
     const { link } = connectBrain();
     const run = connectRunner();
     const topic = hub.conversations.create().id;
-    if (assigned) {
+    if (topicRepository !== undefined) {
       const scope = turn(link, topic, [owner(topic, "看看这个仓库")]);
-      expect((await scope.call("set_topic_repository", { repository: project })).isError).toBe(false);
+      expect((await scope.call("set_topic_repository", { repository: topicRepository.toUpperCase() })).isError).toBe(false);
       scope.finish();
     }
     const request = turn(link, topic, [owner(topic, "处理仓库配置")]);
+    if (topicRepository !== undefined) {
+      expect((await request.call("start_light_task", { ...operation, project: "owner/elsewhere" })).isError).toBe(true);
+    }
     expect((await request.call("start_light_task", { ...operation, mode: "transfer", project })).isError).toBe(false);
     expect((await request.call("start_light_task", { ...operation, mode: "transfer", project })).isError).toBe(false);
     request.finish();
-    expect(hub.conversations.get(topic)?.repository).toBe(project);
+    expect(hub.conversations.get(topic)?.repository).toBe(topicRepository?.toUpperCase() ?? null);
     const sends = run.sent.filter((message) => message.type === "work.task");
     expect(sends).toMatchObject([{ task: { light: true, checkout: null, deploys: false, engine: "codex", environment: {} } }]);
     const started = sends[0]!.task.ticket;
     expect(hub.tickets.get(started)).toMatchObject({ project, repository: null, conversation: topic });
     run.show(started, 1, { kind: "delivered", text: "Configuration checked.", files: [], report });
-    expect(entries(topic, project).at(-1)).toMatchObject({ kind: "delivery", light: true, text: "Configuration checked." });
-    expect(entries(topic)).toEqual([]);
+    expect(entries(topic, topicRepository).at(-1)).toMatchObject({ kind: "delivery", light: true, text: "Configuration checked." });
+    expect(entries(topic, topicRepository === undefined ? project : undefined)).toEqual([]);
     expect(await (await get("/api/tickets")).json()).toEqual({ tickets: [] });
     expect(hub.waiting.cards()).toEqual([]);
   });
@@ -201,14 +204,36 @@ describe("light tasks", () => {
     expect(run.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { engine: ownerEngine ?? "dsh" } }]);
   });
 
-  it("refuses a project task when conflicting work was filed in the same topic", async () => {
+  it("accepts a light task with a project alongside unrelated daily work", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
     const request = turn(link, topic, [owner(topic, "处理这些工作")]);
     expect((await request.call("open_task_ticket", { title: writing.title, summary: writing.summary, task: writing.task, kind: "writing" })).isError).toBe(false);
-    expect((await request.call("start_light_task", { ...operation, project: "owner/repository" })).isError).toBe(true);
+    expect((await request.call("start_light_task", { ...operation, project: "owner/repository" })).isError).toBe(false);
     request.finish();
     expect(hub.conversations.get(topic)?.repository).toBeNull();
+  });
+
+  it("moves a topic with labeled and unlabeled light tasks, but refuses a conflicting code ticket", async () => {
+    const { link } = connectBrain();
+    const topic = hub.conversations.create().id;
+    const request = turn(link, topic, [owner(topic, "处理这些工作")]);
+    expect((await request.call("start_light_task", writing)).isError).toBe(false);
+    expect((await request.call("start_light_task", { ...operation, project: "owner/old" })).isError).toBe(false);
+
+    for (const repository of ["owner/old", null, "owner/new"]) {
+      expect((await request.call("set_topic_repository", { repository })).isError).toBe(false);
+      expect(hub.conversations.get(topic)?.repository).toBe(repository);
+    }
+
+    const repository = "owner/old";
+    hub.tickets.open({
+      repository, conversation: topic, kind: "feature", title: writing.title, summary: writing.summary,
+      issues: [{ repository, number: 1, url: `https://github.com/${repository}/issues/1`, title: writing.title, summary: writing.summary }],
+    });
+    expect(await request.call("set_topic_repository", { repository: null })).toMatchObject({ isError: true, text: expect.stringContaining("tickets") });
+    expect(hub.conversations.get(topic)?.repository).toBe("owner/new");
+    request.finish();
   });
 
   it("waits offline, starts once when a runner returns, and delivers text only in the topic", async () => {

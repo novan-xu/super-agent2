@@ -613,7 +613,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const lastCode = connection.prepare("SELECT code FROM tickets WHERE code_date = ? ORDER BY code DESC LIMIT 1");
   const resolveTopic = createTopicResolver(options.database);
   const noTopicMerge = "NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)";
-  const noConflictingTickets = "NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)";
+  const noConflictingTickets = "NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND light IS NULL AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)";
   const claimTopic = connection.prepare(
     `UPDATE conversations SET repository = ?, needs_repository = 0
      WHERE id = ? AND system = 0 AND merged_into IS NULL AND repository IS NULL
@@ -622,15 +622,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const lightTopic = connection.prepare(
     `SELECT 1 FROM conversations WHERE id = ? AND system = 0 AND merged_into IS NULL AND topic_state = 'active'
      AND ${noTopicMerge} AND (
-       (? IS NULL AND repository IS NULL AND needs_repository = 0)
+       (repository IS NULL AND needs_repository = 0)
        OR repository = ? COLLATE NOCASE
-       OR (? IS NOT NULL AND repository IS NULL AND ${noConflictingTickets})
      )`,
   );
-  const lightTopicAllows = (topic: string, project: string | undefined): boolean => {
-    const name = project ?? null;
-    return lightTopic.get(topic, name, name, name, name) !== undefined;
-  };
+  const lightTopicAllows = (topic: string, project: string | undefined): boolean => lightTopic.get(topic, project ?? null) !== undefined;
   const changeTopicHistory = connection.prepare("UPDATE topic_history_revision SET revision = revision + 1");
   const insertTaskNotice = connection.prepare(`
     INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, provider, body, prompt, taken, created_at, stream_seq)
@@ -994,7 +990,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       if (topic === undefined) {
         return openTopic(request.title.zh.trim(), repository);
       }
-      if (repository !== null && claimTopic.run(repository, topic, repository).changes > 0) {
+      if (request.light === undefined && repository !== null && claimTopic.run(repository, topic, repository).changes > 0) {
         changeTopicHistory.run();
         changedTopics.add(topic);
       }

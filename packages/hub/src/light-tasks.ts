@@ -49,7 +49,7 @@ export function createLightTasks(database: HubDatabase, tickets: TicketService, 
         if (ticket !== undefined) return ticket;
       }
       if (!tickets.lightTopicAllows(turn.conversation, request.project)) {
-        throw new TicketWriteRefused("A light task needs an active daily topic or a topic for its project. Use a matching topic if this one has conflicting work.");
+        throw new TicketWriteRefused("A light task needs an active daily topic or a repository topic matching its project.");
       }
       const ticket = open(request, engine, turn, true);
       started.set(key, ticket.id);
