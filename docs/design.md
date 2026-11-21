@@ -47,18 +47,16 @@ Nothing of ours re-implements an agent or calls a model API directly.
 
 | Role | Providers |
 | --- | --- |
-| Brain | Claude through Claude Code first, then GPT through Codex. DeepSeek, through `dsh`, answers only while both are unavailable. The owner can change the order of the first two in 设置. |
-| Worker, code | Codex, Claude Code and `dsh`. |
+| Brain | Claude through Claude Code, GPT through Codex, and DeepSeek through `dsh`, in that starting order. The owner can reorder all three in 设置 → 模型. |
+| Worker, code | GPT through Codex, Claude through Claude Code, and DeepSeek through `dsh`, in that starting order. The owner can reorder all three in the worker section above the brain order in 设置 → 模型. |
 | Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
-
-The order the owner sets in 设置 (Claude, then GPT, then DeepSeek, unless the owner changed the first two) is the order for workers as well.
 
 ### When a provider is unavailable
 
 The brain switches provider by itself when its program reports itself unavailable.
 A worker does the same, decided by the hub.
 
-- When a worker's program reports itself unavailable (a used-up subscription, a rate limit, a failed login, an overloaded or failing service), the ticket continues on the next provider in the owner's order, on the same machine when that machine has the program, with the model and effort the start-defaults table gives for that provider and the ticket's difficulty.
+- When a worker's program reports itself unavailable (a used-up subscription, a rate limit, a failed login, an overloaded or failing service), the ticket continues on the first available provider in the owner's worker order, on the same machine when that machine has the program, with the model and effort the start-defaults table gives for that provider and the ticket's difficulty.
   A code ticket whose machine lacks the program moves to another machine that fits the platform, after the first has pushed the branch; a task ticket never moves.
   Where the machine lacks the next program, the next provider after that is taken.
   This is not a failure: no guided round is counted, the brain is not asked to guide and the ticket does not stop.
@@ -457,7 +455,7 @@ The brain can open one for any ticket that stopped with work remaining, when the
   The ended ticket names its repair, and the repair names the ticket it repairs, and the page, `read_ticket` and `list_tickets` show both links.
 - **Pending.**
   A repair ticket starts only with the owner's 开始, like any ticket.
-  The brain is told, and states its defaults with `choose_defaults`, usually a different provider or a stronger model than the run that failed, with the reason the owner reads on the card.
+  The brain is told, and states its defaults with `choose_defaults`, including the difficulty reason the owner reads on the card.
 - **What waited.**
   Tickets arranged `after` the ended ticket (a deployment ticket after a chain, `after_deployment` included) wait for the repair instead, and the owner's 开始 on the repair starts those not yet started with it.
   A wait that was already waived stays waived.
@@ -500,18 +498,22 @@ Effort-only changes and disappearing models do not create notices.
 The brain proposes a row change and uses `set_engine_row` only with the owner's agreement.
 Changed pairs must be offered by an online machine, as for page edits.
 
-For each chain the brain chooses, once, where and how it runs: machine, engine, model and effort, for example Mac mini, Codex, `gpt-6.1-sol`, high.
+For each chain the brain states its kind, difficulty, difficulty reason and platform.
+The hub resolves the machine, engine, model and effort.
 They are defaults: the owner can change any of them on the card before the start, and the owner's choice wins.
 The card has one select for each, in that order; the page calls the engine 供应商.
 
-The brain decides from four things.
+The hub uses these inputs to resolve the defaults.
 
 | Input | Values | Decides |
 | --- | --- | --- |
 | Kind | Code tickets: `parameter` (a value, constant or copy change with no logic change), `fix`, `feature`, `refactor`, `maintenance` (dependencies and CI). Task tickets: `writing` (prose), `operation` (anything done on a machine) | Prose goes to Antigravity; everything else to a code engine |
 | Difficulty | Mechanical: a fixed procedure with a known result. Standard: bounded implementation or diagnosis. Complex: reasoning across modules, state or concurrency changes, or an open design decision. A chain takes the highest of its issues. | The model and effort, through the table below |
 | Platform | macOS, Windows, or any | The machine |
-| Subscription allowance | What is left on the GPT and Claude subscriptions, the DeepSeek account balance, and which worker programs the hub has marked unavailable | The engine. DeepSeek is chosen automatically only when both are used up or marked. An unknown reading is not used up. An empty DeepSeek balance makes dsh unavailable until a later successful reading shows money. |
+| Worker provider order and availability | The order in 设置 → 模型, subscription allowance, the DeepSeek balance and active worker availability marks | The first available engine in the worker order. An unknown allowance counts as available. An empty DeepSeek balance makes dsh unavailable until a later successful reading shows money. |
+
+A code or operation ticket started with every worker provider unavailable waits and resolves its engine again when a provider returns.
+Writing tries Antigravity first and uses the worker order for fallback.
 
 What the brain can do in the hub's container needs no ticket; anything on a work machine is a task ticket.
 A deployment's machine is the one its deployment file names, and the owner cannot choose another.

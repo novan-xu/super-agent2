@@ -45,19 +45,20 @@ describe("machines in 设置", () => {
   });
 });
 
-describe("the brain's providers", () => {
-  it("move one place earlier, with DeepSeek fixed last", () => {
-    expect(movedEarlier(["gpt", "claude", "deepseek"], "claude")).toEqual(["claude", "gpt"]);
-    expect(movedEarlier(["claude", "gpt", "deepseek"], "claude")).toEqual(["claude", "gpt"]);
-    expect(movedEarlier(["claude", "deepseek"], "gpt")).toEqual(["gpt", "claude"]);
+describe("provider orders", () => {
+  it("moves any provider one place earlier while keeping all three", () => {
+    expect(movedEarlier(["gpt", "claude", "deepseek"], "claude")).toEqual(["claude", "gpt", "deepseek"]);
+    expect(movedEarlier(["claude", "gpt", "deepseek"], "claude")).toEqual(["claude", "gpt", "deepseek"]);
+    expect(movedEarlier(["claude", "gpt", "deepseek"], "deepseek")).toEqual(["claude", "deepseek", "gpt"]);
+    expect(movedEarlier(["claude", "deepseek", "gpt"], "deepseek")).toEqual(["deepseek", "claude", "gpt"]);
   });
 
-  it("are listed in order with their state, and only GPT and Claude move", () => {
-    const rows = providerRows({ linked: true, order: ["claude", "gpt", "deepseek"], providers: [{ provider: "gpt", model: "m", effort: "high", available: false, until: 5 }] });
-    expect(rows.map((row) => [row.provider, row.movable, row.state?.available])).toEqual([
-      ["claude", false, undefined],
-      ["gpt", true, false],
-      ["deepseek", false, undefined],
+  it("lists providers in order with their state when reported", () => {
+    const rows = providerRows(["deepseek", "gpt", "claude"], [{ provider: "gpt", model: "m", effort: "high", available: false, until: 5 }]);
+    expect(rows.map((row) => [row.provider, row.state?.available])).toEqual([
+      ["deepseek", undefined],
+      ["gpt", false],
+      ["claude", undefined],
     ]);
     expect(availableNow(rows[1]?.state, 4)).toBe(false);
     expect(availableNow(rows[1]?.state, 5)).toBe(true);

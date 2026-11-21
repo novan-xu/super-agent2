@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import { type MachineChoice, startingEngineTable } from "./defaults.js";
 import { fullOrder, ProviderOrderChange, pushServiceOf, tableCells, unofferedChanges, withCell } from "./settings.js";
 
-describe("the brain's provider order", () => {
-  it("puts DeepSeek last, once", () => {
+describe("provider orders", () => {
+  it("completes older orders and preserves specified positions", () => {
     expect(fullOrder(["claude", "gpt"])).toEqual(["claude", "gpt", "deepseek"]);
-    expect(fullOrder(["deepseek", "gpt", "gpt"])).toEqual(["gpt", "deepseek"]);
+    expect(fullOrder(["deepseek", "gpt", "gpt"])).toEqual(["deepseek", "gpt", "claude"]);
   });
 
-  it("accepts only an order of GPT and Claude, each once", () => {
-    expect(ProviderOrderChange.safeParse({ order: ["claude", "gpt"] }).success).toBe(true);
-    expect(ProviderOrderChange.safeParse({ order: ["gpt", "gpt"] }).success).toBe(false);
+  it("accepts a permutation of all three providers", () => {
+    expect(ProviderOrderChange.safeParse({ order: ["deepseek", "claude", "gpt"] }).success).toBe(true);
+    expect(ProviderOrderChange.safeParse({ order: ["gpt", "claude", "gpt"] }).success).toBe(false);
     expect(ProviderOrderChange.safeParse({ order: ["gpt"] }).success).toBe(false);
     expect(ProviderOrderChange.safeParse({ order: ["gpt", "deepseek"] }).success).toBe(false);
   });

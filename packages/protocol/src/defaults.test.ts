@@ -16,7 +16,8 @@ import {
   startingEngineTable,
   tableChoice,
 } from "./defaults.js";
-import type { MachineStatus } from "./runner.js";
+import { noEngineContext } from "./providers.js";
+import type { MachineStatus, ProgramId } from "./runner.js";
 import { noOwnerChoice } from "./tickets.js";
 
 const pc: MachineChoice = {
@@ -40,10 +41,10 @@ const mini: MachineChoice = {
   ],
 };
 
-const available = { codex: "available", claude: "available" } as const;
+const subscriptionsOut = { ...noEngineContext, out: new Set<ProgramId>(["codex", "claude"]) };
 
 function input(overrides: Partial<StartInput> = {}): StartInput {
-  return { kind: "feature", difficulty: "complex", platform: "macos", brainEngine: "claude", stated: true, owner: noOwnerChoice, ...overrides };
+  return { kind: "feature", difficulty: "complex", platform: "macos", stated: true, owner: noOwnerChoice, ...overrides };
 }
 
 describe("the starting table", () => {
@@ -70,26 +71,17 @@ describe("a chain's difficulty", () => {
 });
 
 describe("the default engine", () => {
-  it("is dsh only when both subscriptions are used up", () => {
-    expect(defaultEngine("feature", "codex", { codex: "exhausted", claude: "exhausted" })).toBe("dsh");
-    for (const codex of ["available", "unknown", "exhausted"] as const) {
-      for (const claude of ["available", "unknown"] as const) {
-        expect(defaultEngine("feature", "codex", { codex, claude })).not.toBe("dsh");
-        expect(defaultEngine("feature", "claude", { codex: claude, claude: codex })).not.toBe("dsh");
-      }
-    }
-  });
-
-  it("is the brain's pick, or the other subscription when the pick is used up", () => {
-    expect(defaultEngine("fix", "claude", available)).toBe("claude");
-    expect(defaultEngine("fix", "claude", { codex: "available", claude: "exhausted" })).toBe("codex");
-    expect(defaultEngine("fix", "codex", { codex: "exhausted", claude: "unknown" })).toBe("claude");
-    expect(defaultEngine("fix", "codex", { codex: "unknown", claude: "unknown" })).toBe("codex");
-    expect(defaultEngine("fix", null, available)).toBeNull();
+  it("takes the first available worker provider for code and operations", () => {
+    expect(defaultEngine("feature")).toBe("codex");
+    const order = ["dsh", "codex", "claude"] as const;
+    expect(defaultEngine("operation", { ...noEngineContext, order })).toBe("dsh");
+    expect(defaultEngine("fix", { order, out: new Set(["dsh"]) })).toBe("codex");
+    expect(defaultEngine("fix", subscriptionsOut)).toBe("dsh");
+    expect(defaultEngine("fix", { order, out: new Set(order) })).toBeNull();
   });
 
   it("is Antigravity for writing", () => {
-    expect(defaultEngine("writing", null, { codex: "exhausted", claude: "exhausted" })).toBe("antigravity");
+    expect(defaultEngine("writing", subscriptionsOut)).toBe("antigravity");
   });
 });
 
@@ -133,20 +125,20 @@ describe("the default machine", () => {
 describe("resolving a chain's start", () => {
   it("chooses a fitting machine before ranking free slots and respects an explicit machine", () => {
     const broken = { ...pc, engines: [{ engine: "codex" as const, models: [] }] };
-    const base = input({ platform: "any", brainEngine: "codex" });
-    expect(resolveStart(base, startingEngineTable, [broken, mini], available)).toMatchObject({ machine: "mini", missing: [] });
-    expect(resolveStart({ ...base, owner: { ...noOwnerChoice, machine: "pc" } }, startingEngineTable, [broken, mini], available)).toMatchObject({ machine: "pc", missing: ["model"] });
-    expect(resolveStart(base, startingEngineTable, [broken], available)).toMatchObject({ machine: null, engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: ["model"] });
+    const base = input({ platform: "any" });
+    expect(resolveStart(base, startingEngineTable, [broken, mini])).toMatchObject({ machine: "mini", missing: [] });
+    expect(resolveStart({ ...base, owner: { ...noOwnerChoice, machine: "pc" } }, startingEngineTable, [broken, mini])).toMatchObject({ machine: "pc", missing: ["model"] });
+    expect(resolveStart(base, startingEngineTable, [broken])).toMatchObject({ machine: null, engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: ["model"] });
     const wrongEffort = { ...mini, engines: [{ engine: "codex" as const, models: [{ id: "gpt-6.1-sol", efforts: ["medium"] }] }] };
-    expect(resolveStart(base, startingEngineTable, [wrongEffort], available)).toMatchObject({ machine: null, missing: ["effort"] });
+    expect(resolveStart(base, startingEngineTable, [wrongEffort])).toMatchObject({ machine: null, missing: ["effort"] });
   });
 
-  it("offers a complex macOS chain on the Mac with the complex row of the brain's engine", () => {
-    const choice = resolveStart(input(), startingEngineTable, [pc, mini], available);
+  it("offers a complex macOS chain on the Mac with the complex row of the default engine", () => {
+    const choice = resolveStart(input(), startingEngineTable, [pc, mini]);
     expect(choice).toEqual({
       machine: "mini",
-      engine: "claude",
-      model: "claude-opus-5-5",
+      engine: "codex",
+      model: "gpt-6.1-sol",
       effort: "high",
       by: { machine: "default", engine: "default", model: "default", effort: "default" },
       missing: [],
@@ -155,15 +147,15 @@ describe("resolving a chain's start", () => {
   });
 
   it("lets the owner's choice win", () => {
-    const owner = { machine: "pc", engine: "codex" as const, model: "gpt-6.1-sol", effort: "medium" };
-    const choice = resolveStart(input({ owner }), startingEngineTable, [pc, mini], available);
-    expect(choice).toMatchObject({ machine: "pc", engine: "codex", model: "gpt-6.1-sol", effort: "medium", missing: [] });
+    const owner = { machine: "pc", engine: "claude" as const, model: "claude-opus-5-5", effort: "max" };
+    const choice = resolveStart(input({ owner }), startingEngineTable, [pc, mini]);
+    expect(choice).toMatchObject({ machine: "pc", engine: "claude", model: "claude-opus-5-5", effort: "max", missing: [] });
     expect(choice.by).toEqual({ machine: "owner", engine: "owner", model: "owner", effort: "owner" });
   });
 
   it("says an effort the machine does not offer for the model is missing, instead of taking a neighbour", () => {
     const owner = { ...noOwnerChoice, model: "gpt-6.1-sol", effort: "max" };
-    const choice = resolveStart(input({ brainEngine: "codex", platform: "windows", owner }), startingEngineTable, [pc], available);
+    const choice = resolveStart(input({ platform: "windows", owner }), startingEngineTable, [pc]);
     expect(choice).toMatchObject({ model: "gpt-6.1-sol", effort: "max", missing: ["effort"] });
     expect(isComplete(choice)).toBe(false);
     expect(ownerGivesUnoffered(owner, choice, [pc])).toBe(true);
@@ -171,28 +163,28 @@ describe("resolving a chain's start", () => {
 
   it("says a model the machine does not offer is missing", () => {
     const owner = { ...noOwnerChoice, model: "gpt-99", effort: "high" };
-    const choice = resolveStart(input({ brainEngine: "codex", platform: "windows", owner }), startingEngineTable, [pc], available);
+    const choice = resolveStart(input({ platform: "windows", owner }), startingEngineTable, [pc]);
     expect(choice).toMatchObject({ model: "gpt-99", effort: "high", missing: ["model"] });
   });
 
   it("says what is missing when nothing is stated, no runner fits, or the engine is nowhere", () => {
-    expect(resolveStart(input({ stated: false, brainEngine: null, difficulty: null, platform: null }), startingEngineTable, [pc, mini], available).missing).toEqual(["defaults"]);
-    expect(resolveStart(input({ platform: "macos" }), startingEngineTable, [pc], available).missing).toEqual(["machine"]);
-    expect(resolveStart(input({ platform: "macos" }), startingEngineTable, [pc, mini], { codex: "exhausted", claude: "exhausted" })).toMatchObject({ engine: "dsh", machine: null, missing: ["engine"] });
-    expect(resolveStart(input({ owner: { ...noOwnerChoice, machine: "gone" } }), startingEngineTable, [pc, mini], available).missing).toEqual(["machine"]);
-    expect(resolveStart(input({ owner: { ...noOwnerChoice, machine: "mini", engine: "dsh" } }), startingEngineTable, [pc, mini], available).missing).toEqual(["engine"]);
+    expect(resolveStart(input({ stated: false, difficulty: null, platform: null }), startingEngineTable, [pc, mini]).missing).toEqual(["defaults"]);
+    expect(resolveStart(input({ platform: "macos" }), startingEngineTable, [pc]).missing).toEqual(["machine"]);
+    expect(resolveStart(input({ platform: "macos" }), startingEngineTable, [pc, mini], subscriptionsOut)).toMatchObject({ engine: "dsh", machine: null, missing: ["engine"] });
+    expect(resolveStart(input({ owner: { ...noOwnerChoice, machine: "gone" } }), startingEngineTable, [pc, mini]).missing).toEqual(["machine"]);
+    expect(resolveStart(input({ owner: { ...noOwnerChoice, machine: "mini", engine: "dsh" } }), startingEngineTable, [pc, mini]).missing).toEqual(["engine"]);
   });
 
   it("uses dsh's row when both subscriptions are used up", () => {
-    const choice = resolveStart(input({ platform: "windows" }), startingEngineTable, [pc], { codex: "exhausted", claude: "exhausted" });
+    const choice = resolveStart(input({ platform: "windows" }), startingEngineTable, [pc], subscriptionsOut);
     expect(choice).toMatchObject({ machine: "pc", engine: "dsh", model: "deepseek-flash", effort: "max", missing: [] });
   });
 
   it("does not refuse a default the owner did not give, and refuses what the owner gives that is not offered", () => {
     const engineOnly = { ...noOwnerChoice, engine: "dsh" as const };
-    const choice = resolveStart(input({ platform: "windows" }), startingEngineTable, [pc], available);
+    const choice = resolveStart(input({ platform: "windows" }), startingEngineTable, [pc]);
     expect(ownerGivesUnoffered(noOwnerChoice, choice, [pc])).toBe(false);
-    expect(ownerGivesUnoffered(engineOnly, resolveStart(input({ platform: "windows", owner: engineOnly }), startingEngineTable, [pc], available), [pc])).toBe(false);
+    expect(ownerGivesUnoffered(engineOnly, resolveStart(input({ platform: "windows", owner: engineOnly }), startingEngineTable, [pc]), [pc])).toBe(false);
     expect(ownerGivesUnoffered({ ...noOwnerChoice, machine: "elsewhere" }, choice, [pc])).toBe(true);
     expect(ownerGivesUnoffered({ ...noOwnerChoice, engine: "antigravity" }, choice, [pc])).toBe(true);
   });
@@ -215,28 +207,28 @@ describe("a change on the card", () => {
 
 describe("a ticket that must run on one machine", () => {
   it("defaults to that machine whatever the platform says, and lists no other", () => {
-    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc, mini], available);
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc, mini]);
     expect(choice.machine).toBe("mini");
     expect(choice.missing).toEqual([]);
     expect(machinesFor("any", [pc, mini], "mini").map((machine) => machine.name)).toEqual(["mini"]);
   });
 
   it("is missing its machine while that machine is away, rather than taking another", () => {
-    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc], available);
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini" }), startingEngineTable, [pc]);
     expect(choice.machine).toBe("mini");
     expect(choice.missing).toEqual(["machine"]);
   });
 
   it("refuses the owner's choice of another machine instead of running there", () => {
     const owner = { ...noOwnerChoice, machine: "pc" };
-    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini", owner }), startingEngineTable, [pc, mini], available);
+    const choice = resolveStart(input({ kind: "operation", platform: "any", requiredMachine: "mini", owner }), startingEngineTable, [pc, mini]);
     expect(choice.missing).toContain("machine");
     expect(ownerGivesUnoffered(owner, choice, [pc, mini], "mini")).toBe(true);
     expect(ownerGivesUnoffered({ ...noOwnerChoice, machine: "mini" }, choice, [pc, mini], "mini")).toBe(false);
   });
 
   it("gives an operation a code engine by difficulty, and prose Antigravity", () => {
-    expect(defaultEngine("operation", "codex", available)).toBe("codex");
-    expect(defaultEngine("writing", "codex", available)).toBe("antigravity");
+    expect(defaultEngine("operation")).toBe("codex");
+    expect(defaultEngine("writing")).toBe("antigravity");
   });
 });

@@ -309,7 +309,7 @@ export function App() {
       addMachine: (name, system) => controller.addMachine(name, system),
       revokeMachine: (name) => controller.revokeMachine(name),
       setMachineStorage: (name, storage) => controller.setMachineStorage(name, storage),
-      setOrder: (order) => controller.setOrder(order),
+      setOrder: (role, order) => controller.setOrder(role, order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
       setPinned: (repository, pinned) => controller.setPinned(repository, pinned),
       setAlias: (repository, alias) => controller.setAlias(repository, alias),

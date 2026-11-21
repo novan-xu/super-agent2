@@ -2,7 +2,6 @@ import {
   activeMarks,
   currentBalance,
   type Balance,
-  type AllowanceStates,
   EngineTable,
   engineOrder,
   type EngineContext,
@@ -68,10 +67,6 @@ const tableKey = "engine_table";
 const ValueRow = z.object({ value: z.string() });
 
 const MarkRow = z.object({ program: z.string(), model: z.string(), reason: z.string(), since: z.number().int(), until: z.number().int().nullable(), category: z.enum(["limit", "problem", "overload"]).nullable() });
-
-export function allowanceStatesOf(subscriptions: Subscriptions): AllowanceStates {
-  return { codex: subscriptions.codex.state, claude: subscriptions.claude.state };
-}
 
 export function readingsOf(statuses: readonly MachineStatus[]): MachineReading[] {
   return statuses.flatMap((status) => (status.report?.allowances ?? []).map((reading) => ({ machine: status.name, reading })));
@@ -173,12 +168,6 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
 
   const contextOf = (): EngineContext => ({ out: new Set(out().keys()), order: order(false), antigravityOut: new Set(antigravityOut().keys()) });
 
-  const foldedStates = (): AllowanceStates => {
-    const states = allowanceStatesOf(subscriptions());
-    const unavailableNow = out();
-    return { codex: unavailableNow.has("codex") ? "exhausted" : states.codex, claude: unavailableNow.has("claude") ? "exhausted" : states.claude };
-  };
-
   return {
     table,
     setTable: (next) => {
@@ -223,13 +212,11 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
           difficulty: ticket.difficulty,
           platform: ticket.platform,
           requiredMachine: ticket.requiredMachine,
-          brainEngine: ticket.brainEngine,
           stated: ticket.difficultyReason !== null && ticket.platform !== null && ticket.difficulty !== null,
           owner,
         },
         table(),
         machines(),
-        foldedStates(),
         contextOf(),
       ),
     subscribe: (listener) => {

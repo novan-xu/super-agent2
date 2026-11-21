@@ -262,7 +262,7 @@ describe("a worker whose program becomes unavailable", () => {
     expect(runners.of("work.task", "pc").at(-1)?.task).toMatchObject({ attempt: 2, engine: "dsh", model: "deepseek-flash", effort: "max", takeover: true });
   });
 
-  it("falls to dsh only when both Claude and Codex are unavailable", () => {
+  it("falls to dsh last in the initial worker order", () => {
     machine("pc", "win32", complex);
     defaults.markUnavailable("codex", "Usage limit", clock.now() + 1_000_000);
     const ticket = working();
@@ -272,14 +272,14 @@ describe("a worker whose program becomes unavailable", () => {
     expect(current(ticket.id)).toMatchObject({ engine: "dsh", model: "deepseek-flash", effort: "max", work: { attempt: 2, engine: "dsh" } });
   });
 
-  it("follows the owner's order of providers", () => {
-    order = ["gpt", "claude", "deepseek"];
+  it("switches to DeepSeek first when it leads the worker order", () => {
+    order = ["deepseek", "gpt", "claude"];
     machine("pc", "win32", complex);
     const ticket = working({ engine: "codex" });
     work.begin(ticket);
     started("pc", ticket.id, 1);
     emit("pc", ticket.id, 1, limit());
-    expect(current(ticket.id)).toMatchObject({ engine: "claude", model: "claude-opus-5-5" });
+    expect(current(ticket.id)).toMatchObject({ engine: "dsh", model: "deepseek-flash" });
   });
 
   it("does not count an error or a crash as unavailable", () => {
@@ -371,6 +371,7 @@ describe("what the hub remembers about an unavailable provider", () => {
   it("makes new tickets default to another provider instead of failing over one by one, and never from an unknown reading", () => {
     const unknown: AllowanceReading = { program: "claude", readAt: clock.now(), state: "unknown", remainingPercent: null, resetsAt: null, windows: [], problem: "no machine could ask" };
     machine("pc", "win32", complex, [unknown]);
+    order = ["claude", "gpt", "deepseek"];
     const pending = tickets.open({
       repository,
       issues: [{ repository, number: 5, url: `https://github.com/${repository}/issues/5`, title: { en: "Five", zh: "五" }, summary: { en: "s", zh: "摘要" } }],
@@ -381,7 +382,7 @@ describe("what the hub remembers about an unavailable provider", () => {
       platform: "any",
       conversation: "c-1",
     });
-    tickets.change((writes) => writes.state(pending.id, { kind: "feature", difficulty: "complex", difficultyReason: { en: "r", zh: "理由" }, platform: "any", brainEngine: "claude" }));
+    tickets.change((writes) => writes.state(pending.id, { kind: "feature", difficulty: "complex", difficultyReason: { en: "r", zh: "理由" }, platform: "any" }));
     expect(defaults.resolve(current(pending.id))).toMatchObject({ engine: "claude", model: "claude-opus-5-5" });
     defaults.markUnavailable("claude", "Usage limit", clock.now() + 600_000);
     expect(defaults.resolve(current(pending.id))).toMatchObject({ engine: "codex", model: "gpt-6.1-sol" });
@@ -494,14 +495,14 @@ describe("when every provider is unavailable", () => {
     work.begin(ticket);
     started("pc", ticket.id, 1);
     emit("pc", ticket.id, 1, limit(null, "offline"));
-    expect(current(ticket.id).work).toMatchObject({ attempt: 2, engine: "claude" });
+    expect(current(ticket.id).work).toMatchObject({ attempt: 2, engine: "codex" });
     emit("pc", ticket.id, 2, limit(null, "offline"));
     emit("pc", ticket.id, 3, limit(null, "offline"));
     expect(current(ticket.id).work).toMatchObject({ attempt: 3, state: "unavailable" });
     expect(told).toHaveLength(1);
     clock.advance(600_000);
     tick?.();
-    expect(current(ticket.id).work).toMatchObject({ attempt: 4, engine: "claude" });
+    expect(current(ticket.id).work).toMatchObject({ attempt: 4, engine: "codex" });
     emit("pc", ticket.id, 4, limit(null, "offline"));
     emit("pc", ticket.id, 5, limit(null, "offline"));
     emit("pc", ticket.id, 6, limit(null, "offline"));
@@ -569,7 +570,7 @@ describe("when every provider is unavailable", () => {
     work.begin(ticket);
     started("pc", ticket.id, 1);
     emit("pc", ticket.id, 1, { kind: "unavailable", category: "problem", reason: "You are not signed in", until: null, unsent: [] });
-    expect(current(ticket.id)).toMatchObject({ engine: "claude", model: "claude-opus-5-5", work: { attempt: 2, engine: "claude" } });
+    expect(current(ticket.id)).toMatchObject({ engine: "codex", model: "gpt-6.1-sol", work: { attempt: 2, engine: "codex" } });
     expect(defaults.unavailable().map((mark) => mark.program)).toEqual(["antigravity"]);
   });
 

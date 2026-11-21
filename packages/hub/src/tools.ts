@@ -6,7 +6,6 @@ import {
   AntigravityRow,
   DifficultyRow,
   unofferedChanges,
-  codeEngineChoices,
   codeKinds,
   CommitRef,
   ConversationId,
@@ -158,6 +157,7 @@ const ScheduledLightArguments = LightTaskRequest.omit({ materials: true }).exten
 const StartLightArguments = ScheduledLightArguments.extend({
   ownerEngine: ProgramId.optional(),
 });
+const LegacyLightEngine = { engine: CodeEngineChoice.optional() };
 
 const ScheduleProposalArguments = ScheduleFields.extend({
   confirmation: z.string().trim().min(1).max(2_000),
@@ -210,7 +210,6 @@ const DefaultsArgument = z.object({
   difficulty: Difficulty.optional(),
   reason: GeneratedText,
   platform: Platform,
-  engine: CodeEngineChoice.optional(),
 });
 
 const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) });
@@ -413,7 +412,7 @@ function defaultsDefinitions() {
       name: "read_allowance",
       title: "Read provider allowances",
       description:
-        "Read the latest GPT and Claude subscription allowances, the Antigravity Gemini Models quota and the DeepSeek balance from the runners. See which worker programs reported themselves unavailable and which work machines are online with their programs and free slots. Read it before choosing a chain's engine with choose_defaults.",
+        "Read the latest GPT and Claude subscription allowances, the Antigravity Gemini Models quota and the DeepSeek balance from the runners. See which worker programs reported themselves unavailable and which work machines are online with their programs and free slots.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
@@ -424,11 +423,11 @@ function defaultsDefinitions() {
     },
     {
       name: "choose_defaults",
-      title: "State each chain's kind, difficulty, platform and engine",
+      title: "State each chain's kind, difficulty and platform",
       description: [
-        "For each chain you arranged, and for each task ticket you opened (a pending ticket), state once: its kind; the difficulty of each of its issues, of which the chain takes the highest, or for a task ticket its difficulty; a one-line reason for that difficulty, in English with a Chinese copy, which the owner sees on the card; its platform (macos, windows or any); and, for anything but writing, its engine, codex or claude, chosen from what read_allowance says is left on each subscription.",
+        "For each chain you arranged and each pending task ticket you opened, state its kind, difficulty and platform (macos, windows or any). Give each issue's difficulty when a chain has issues. The chain takes the highest one. Give a one-line reason for the difficulty in English with a Chinese copy for the owner's card.",
         "Difficulty: mechanical is a fixed procedure with a known result; standard is bounded implementation or diagnosis; complex is reasoning across modules, state or concurrency changes, or an open design decision.",
-        "The hub then resolves the rest: the machine from the platform (a deployment's machine is the one its deployment file names, and only that one), the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty. dsh is used only when both subscriptions are used up; writing goes to Antigravity, which never runs a code ticket.",
+        "The hub defaults to the first available provider in the owner's worker order in Settings. Writing tries Antigravity first. The hub chooses the machine using the platform, the runner offers and the free slots, and chooses the model and effort from its table by engine and difficulty. A deployment uses its designated machine.",
         "These are defaults: the owner can change the machine, engine, model and effort on the card, and the owner's choice wins. Rearranging a chain's issues clears what was stated for it; state it again.",
       ].join(" "),
       inputSchema: {
@@ -462,7 +461,6 @@ function defaultsDefinitions() {
                 difficulty: { type: "string", enum: [...difficulties], description: "For a task ticket, which has no issues: its difficulty (standard when omitted for writing, whose model does not depend on it)" },
                 reason: generatedSchema("one-line reason for the chain's difficulty"),
                 platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
-                engine: { type: "string", enum: [...codeEngineChoices], description: "For anything but writing: codex (GPT) or claude (Claude Code), by what is left on each subscription" },
               },
               required: ["ticket", "kind", "reason", "platform"],
               additionalProperties: false,
@@ -670,7 +668,7 @@ function ticketDefinitions() {
     {
       name: "start_light_task",
       title: "Start an everyday task",
-      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. Writing defaults to Antigravity. For Agent_wring articles use kind writing and mode agent_wring. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. For operations choose a code engine using read_allowance. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
+      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. The hub uses the owner's worker order in Settings, with Antigravity first for writing. For Agent_wring articles use kind writing and mode agent_wring. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -684,7 +682,6 @@ function ticketDefinitions() {
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
           reason: generatedSchema("one-line reason for the difficulty"),
-          engine: { type: "string", enum: [...codeEngineChoices], description: "For operations, the default code engine by allowance" },
           ownerEngine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner" },
         },
         required: ["title", "summary", "task", "kind", "reason"],
@@ -1165,7 +1162,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
             `Opened task ticket ${ticketReference(ticket)}.`,
             ticketReport(ticket),
             ...opened.notes,
-            `Now state its defaults with choose_defaults (kind ${ticket.kind}, its difficulty and platform, a one-line reason${ticket.kind === "writing" ? "" : ", and its engine"}).`,
+            `Now state its defaults with choose_defaults (kind ${ticket.kind}, its difficulty and platform, and a one-line reason).`,
             ticket.scheduleRun !== undefined
               ? "This work starts after this scheduled turn with its defaults."
               : pendingBefore
@@ -1204,9 +1201,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       }
       case "run_scheduled_light_task": {
         if (tools.schedules === undefined || tools.light === undefined) return undefined;
-        const parsed = ScheduledLightArguments.safeParse(raw);
+        const parsed = ScheduledLightArguments.extend(LegacyLightEngine).safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
-        const { material, ...request } = parsed.data;
+        const { material, engine: _engine, ...request } = parsed.data;
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
         tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
@@ -1214,13 +1211,13 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       }
       case "start_light_task": {
         if (tools.light === undefined) return undefined;
-        const parsed = StartLightArguments.safeParse(raw);
+        const parsed = StartLightArguments.extend(LegacyLightEngine).safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
-        const { material, ownerEngine, ...request } = parsed.data;
+        const { material, ownerEngine, engine: _engine, ...request } = parsed.data;
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
         const ticket = tools.light.start({ ...request, materials: chosen.materials }, ownerEngine, writeTurn());
-        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when a suitable machine is available." : ""}` };
+        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when a suitable machine and provider are available." : ""}` };
       }
       case "answer_light_task": {
         if (tools.work === undefined) return undefined;

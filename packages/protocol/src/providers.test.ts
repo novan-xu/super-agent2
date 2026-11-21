@@ -68,7 +68,8 @@ describe("the order of providers", () => {
   it("follows the owner's order and puts DeepSeek last", () => {
     expect(engineOrder(["gpt", "claude", "deepseek"], false)).toEqual(["codex", "claude", "dsh"]);
     expect(engineOrder(["claude", "gpt", "deepseek"], false)).toEqual(["claude", "codex", "dsh"]);
-    expect(engineOrder(undefined, false)).toEqual(["claude", "codex", "dsh"]);
+    expect(engineOrder(undefined, false)).toEqual(["codex", "claude", "dsh"]);
+    expect(engineOrder(["deepseek", "gpt", "claude"], false)).toEqual(["dsh", "codex", "claude"]);
   });
 
   it("puts Antigravity first for prose and leaves the code providers in the owner's order", () => {
@@ -168,25 +169,25 @@ describe("routing away from a provider that is out", () => {
 });
 
 describe("the default engine with providers that are out", () => {
-  const states = { codex: "available", claude: "available" } as const;
   const context = (out: readonly ProgramId[]) => ({ out: new Set<ProgramId>(out), order: ["claude", "codex", "dsh"] as readonly ProgramId[] });
 
   it("sends prose to the first code provider that is free when Antigravity is out", () => {
-    expect(defaultEngine("writing", null, states, context(["antigravity"]))).toBe("claude");
-    expect(defaultEngine("writing", null, { codex: "available", claude: "exhausted" }, context(["antigravity"]))).toBe("codex");
-    expect(defaultEngine("writing", null, states, context([]))).toBe("antigravity");
+    expect(defaultEngine("writing", context(["antigravity"]))).toBe("claude");
+    expect(defaultEngine("writing", context(["antigravity", "claude"]))).toBe("codex");
+    expect(defaultEngine("writing", context([]))).toBe("antigravity");
   });
 
   it("stays with Antigravity when nothing else is free", () => {
-    expect(defaultEngine("writing", null, { codex: "exhausted", claude: "exhausted" }, context(["antigravity", "dsh"]))).toBe("antigravity");
+    expect(defaultEngine("writing", context(["antigravity", "dsh", "codex", "claude"]))).toBe("antigravity");
   });
 
-  it("resolves a start the same way as before when nothing is marked", () => {
-    const input = { kind: "feature", difficulty: "standard", platform: "any", brainEngine: "claude", stated: true, owner: noOwnerChoice } as const;
-    const plain = resolveStart(input, startingEngineTable, [pc], states);
-    const marked = resolveStart(input, startingEngineTable, [pc], { codex: "available", claude: "exhausted" });
+  it("uses the ordered first available provider and waits if every provider is out", () => {
+    const input = { kind: "feature", difficulty: "standard", platform: "any", stated: true, owner: noOwnerChoice } as const;
+    const plain = resolveStart(input, startingEngineTable, [pc], context([]));
+    const marked = resolveStart(input, startingEngineTable, [pc], context(["claude"]));
     expect(plain.engine).toBe("claude");
     expect(marked.engine).toBe("codex");
+    expect(resolveStart(input, startingEngineTable, [pc], context(["claude", "codex", "dsh"]))).toMatchObject({ engine: null, missing: ["provider"] });
   });
 });
 

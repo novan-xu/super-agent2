@@ -367,7 +367,8 @@ Nothing is authorized for the hub on the NAS host: it gets no key and needs none
 ## What the owner does once by hand
 
 - **DeepSeek for `dsh`.**
-  The brain falls back to DeepSeek only when GPT and Claude are both unavailable, and `dsh` needs the DeepSeek account login made once in the brain container.
+  The brain uses Claude, GPT and DeepSeek in that order by default, and `dsh` needs the DeepSeek account login made once in the brain container.
+  `BRAIN_PROVIDERS` can list DeepSeek anywhere, and the owner's brain order in 设置 → 模型 takes precedence.
   On the NAS, open `dsh` in the container with `docker exec -it -w /home/node/workspace superagent2-brain dsh tui` and sign in to the DeepSeek account from its account settings.
   The login is kept on the volume `superagent2-brain-dsh`.
 - **Codex, if its login is refused.**

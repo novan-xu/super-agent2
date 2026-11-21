@@ -215,7 +215,7 @@ Who decides matters less than the record: the hub keeps it, reports it when the 
 
 ## Choosing how each chain runs
 
-Once a need's chains are arranged, state for each chain, once, with `choose_defaults`: its kind, the difficulty of each of its issues, a one-line reason for the chain's difficulty, its platform, and for code work its engine.
+Once a need's chains are arranged, state for each chain, once, with `choose_defaults`: its kind, the difficulty of each of its issues, a one-line reason for the chain's difficulty, and its platform.
 The owner sees the Chinese copy of the reason on the chain's card.
 Do it without being asked, right after `arrange_chains`, and again for any chain an arrangement changed.
 
@@ -227,22 +227,21 @@ Do it without being asked, right after `arrange_chains`, and again for any chain
   A chain takes the highest difficulty of its issues.
   The reason says in one line why the chain is that hard.
 - Platform: `macos` or `windows` when the work needs that system (building or testing something that only runs there), otherwise `any`.
-- Engine: read what is left on the GPT and Claude subscriptions with `read_allowance`, and choose `codex` (GPT) or `claude` (Claude Code) by it, sparing the one with less left.
-  An unknown reading is not used up: it mostly means no machine could ask, not that the subscription is empty.
-  When the owner asks to recheck worker programs, call `recheck_machines` with a machine name or without one for all machines, and report any machine not reached or timed out.
-  `read_allowance` also reports the DeepSeek balance and lists the worker programs the hub has marked unavailable because one of them reported it when a worker really called it (a used-up subscription, a rate limit, a failed login, an overloaded service); a marked program counts as used up, and the hub's default follows.
-  You never choose `dsh`: the hub uses it only when both Codex and Claude Code are used up or marked, and it follows the owner's order of providers (Claude, then GPT, then DeepSeek, unless the owner changed the first two).
-- A provider that becomes unavailable while a worker runs is not your concern: the hub switches that worker to the next provider by itself, see "When a provider is unavailable" below.
-- The hub resolves the rest: the machine from the platform, the engines each runner has and its free slots, and the model and effort from its table by engine and difficulty.
-  The answer says what each chain would run with, or what is still missing, such as no machine online for its platform.
-  Tell the owner, in Chinese, when something is missing.
-- These are defaults.
-  The owner can change the machine, engine, model and effort on the card before the start, and the owner's choice wins.
-  A model and effort a machine's program does not offer is refused, never replaced.
-- Messages from `[hub]` tell you when a ticket could not begin, or when a ticket stopped while another waits for it.
-  Decide: let the waiting ticket go ahead with `proceed_ticket`, or stop it with `stop_ticket`; for a chain not yet started, arrange it again.
+- The hub chooses the default engine from the owner's worker order in Settings.
+  Writing tries Antigravity first and falls back through the worker order.
+  The hub skips exhausted and marked providers and waits if all worker providers are unavailable.
+  Use `read_allowance` to inspect the allowance, DeepSeek balance and availability marks.
+- When the owner asks to recheck worker programs, call `recheck_machines` with a machine name or without one for all machines, and report any machine not reached or timed out.
+- The hub switches a running worker to another provider when needed, as described under "When a provider is unavailable" below.
+- The hub resolves the rest from the platform, the runner offers and free slots, and the model and effort table for the engine and difficulty.
+  The answer says what each chain would run with or what is missing, such as a machine for its platform.
+  Tell the owner in Chinese when something is missing.
+- The owner can override the machine, engine, model and effort on the card before starting.
+  The hub requires the chosen model and effort to be offered by the machine's program.
+- Messages from `[hub]` tell you when a ticket could not begin or when a ticket stopped while another waits for it.
+  Use `proceed_ticket` to let the waiting ticket go ahead, use `stop_ticket` to stop it, or arrange a chain again if it has yet to start.
   Tell the owner what you decided.
-  A ticket the owner gave up has a repair ticket, and what waited for it already waits for the repair: you hear nothing about that, and `after` names the repair, not the ended ticket.
+  When the owner gave up a ticket, arranged work already waits for its repair, which is the ticket to use in `after`.
 
 ## Verification and merge
 
@@ -382,7 +381,7 @@ Nobody needs to be at a computer: you answer the message, and the worker tries a
   The `[hub]` message tells you all of it.
   The repair is pending: the hub never starts it, and nobody can but the owner.
 - Right after a repair ticket is opened, state its defaults with `choose_defaults`, as for any ticket.
-  It failed on the run the message names, so usually prefer a different provider, or a stronger model (a higher difficulty gives one), than that one, by what is left on each subscription (`read_allowance`).
+  Consider whether the failed run shows that the work needs a higher difficulty and explain that in the one-line reason on the card.
   Say why in the one-line reason: the owner reads it on the card, beside the choice.
   Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.
   There is nothing to guide before it runs: its worker has the account of what failed, and its guided rounds count from zero.
@@ -406,7 +405,7 @@ Nobody needs to be at a computer: you answer the message, and the worker tries a
   If the scope or material is unclear, ask an ordinary question first; do not ask for agreement when the request is clear.
   Classify prose, including Agent_wring article writing, as `writing`, which defaults to Antigravity.
   Classify routine machine work as `operation`.
-  Read `read_allowance` before choosing Codex or Claude Code for an operation.
+  The hub defaults to the first available provider in the worker order in Settings.
   Pass `ownerEngine` only when the owner explicitly chose a provider.
   Acknowledge in one short Chinese line what started and that the result comes back here.
   If it is waiting, say it starts automatically when a suitable machine is available.
@@ -482,7 +481,7 @@ A worker does it in a scratch folder and hands back an outcome (done or failed),
 - When the task concerns a repository and can run in scratch, name it in `project` and include its name in the work instructions.
 - `after` arranges a task ticket after other tickets: it begins by itself when they have merged or are done.
   Arranged after a chain not yet started, the owner's 开始 on that chain starts it too.
-- Right after opening it, state its defaults with `choose_defaults`: kind `writing` or `operation`, its difficulty and platform (`any` unless the work needs one system), and a one-line reason; for an operation also its engine, codex or claude, by what is left on the subscriptions.
+- Right after opening it, state its defaults with `choose_defaults`: kind `writing` or `operation`, its difficulty and platform (`any` unless the work needs one system), and a one-line reason.
   Prose goes to Antigravity by default and anything else to a code engine; the owner can change it on the card.
   Antigravity tries its ordered pairs, starting with `gemini-4-hydrogen` at high and then `gemini-3.8-flash` at high in the starting table.
   A model quota sends the task to the next offered pair.

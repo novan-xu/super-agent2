@@ -43,12 +43,12 @@ describe("the brain's provider order", () => {
     brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "hello", attachments: [] } });
     (await programs.gpt.next()).handle.finish("hi");
     await brain.settled();
-    brain.receive({ type: "order", order: ["claude", "gpt", "deepseek"] });
-    expect(sent.at(-1)).toMatchObject({ type: "providers", order: ["claude", "gpt", "deepseek"] });
+    brain.receive({ type: "order", order: ["deepseek", "claude", "gpt"] });
+    expect(sent.at(-1)).toMatchObject({ type: "providers", order: ["deepseek", "claude", "gpt"] });
     brain.receive({ type: "input", conversation: "c1", input: { id: "i2", source: "owner", text: "again", attachments: [] } });
-    (await programs.claude.next()).handle.finish("hi");
+    (await programs.deepseek.next()).handle.finish("hi");
     await brain.settled();
-    expect(startedWith(sent)).toEqual(["gpt", "claude"]);
+    expect(startedWith(sent)).toEqual(["gpt", "deepseek"]);
     await brain.close();
   });
 

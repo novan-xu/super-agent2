@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AllowanceList, type Subscription } from "./allowance.js";
 import { type EngineTable, type MachineChoice, machinesFor, offers, tableChoice } from "./defaults.js";
-import type { Provider } from "./conversations.js";
+import { type Provider, startingWorkerOrder } from "./conversations.js";
 import { ProgramId } from "./runner.js";
 import type { Difficulty, Platform } from "./tickets.js";
 
@@ -70,15 +70,20 @@ export function providersOut(marks: readonly ProviderUnavailable[], subscription
   return out;
 }
 
-export const defaultProviderOrder: readonly ProgramId[] = ["claude", "codex", "dsh"];
-
 const engineOfProvider: Readonly<Record<Provider, ProgramId>> = { claude: "claude", gpt: "codex", deepseek: "dsh" };
 
 export function engineOrder(order: readonly Provider[] | undefined, prose: boolean): ProgramId[] {
-  const code = order === undefined ? [...defaultProviderOrder] : order.map((provider) => engineOfProvider[provider]);
-  const full = [...code.filter((program, index) => code.indexOf(program) === index), ...defaultProviderOrder.filter((program) => !code.includes(program))];
+  const full = [...new Set([...(order ?? []), ...startingWorkerOrder])].map((provider) => engineOfProvider[provider]);
   return prose ? ["antigravity", ...full] : full;
 }
+
+export interface EngineContext {
+  readonly out: ReadonlySet<ProgramId>;
+  readonly order: readonly ProgramId[];
+  readonly antigravityOut?: ReadonlySet<string>;
+}
+
+export const noEngineContext: EngineContext = { out: new Set(), order: engineOrder(undefined, false) };
 
 export interface RouteInput {
   readonly difficulty: Difficulty | null;
