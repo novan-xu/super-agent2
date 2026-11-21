@@ -155,8 +155,8 @@ const TaskArguments = z.object({
 const ScheduledLightArguments = LightTaskRequest.omit({ materials: true }).extend({
   material: z.array(MaterialArgument).optional(),
 });
-const ProposeLightArguments = ScheduledLightArguments.extend({
-  confirmation: z.string().trim().min(1),
+const StartLightArguments = ScheduledLightArguments.extend({
+  ownerEngine: ProgramId.optional(),
 });
 
 const ScheduleProposalArguments = ScheduleFields.extend({
@@ -166,7 +166,6 @@ const ScheduleProposalArguments = ScheduleFields.extend({
 const ScheduleConfirmArguments = z.strictObject({ proposal: MessageId });
 const ScheduleIdArguments = z.strictObject({ schedule: ScheduleId });
 
-const StartLightArguments = z.strictObject({ proposal: MessageId, engine: ProgramId.optional() });
 
 const ListArguments = z.object({
   all: z.boolean().optional(),
@@ -658,15 +657,14 @@ function ticketDefinitions() {
       },
     },
     {
-      name: "propose_light_task",
-      title: "Confirm an everyday task in conversation",
-      description: "Post a brief Chinese confirmation for work that needs no checkout, code change or deployment. Use a 日常 topic for unrelated work, or supply project for repository-related work and use its topic or a daily topic that can move there. The hub shows the confirmation as your reply. Wait for a newer owner message to agree in words, then call start_light_task with the returned proposal ID. If the scope changes, propose again. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring ingest, wait and save belong to an operation with mode agent_wring. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
+      name: "start_light_task",
+      title: "Start an everyday task",
+      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring work is an operation with mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
       inputSchema: {
         type: "object",
         properties: {
           title: generatedSchema("task title"),
           summary: generatedSchema("short task summary"),
-          confirmation: { type: "string", description: "The short Chinese message shown to the owner, asking for agreement in words" },
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
           project: { type: "string", description: "The related repository as owner/name, when the task concerns one" },
@@ -676,22 +674,9 @@ function ticketDefinitions() {
           platform: startChoices.platform,
           reason: generatedSchema("one-line reason for the difficulty"),
           engine: { type: "string", enum: [...codeEngineChoices], description: "For operations, the default code engine by allowance" },
+          ownerEngine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner" },
         },
-        required: ["title", "summary", "confirmation", "task", "kind", "reason"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "start_light_task",
-      title: "Dispatch a light task the owner agreed to",
-      description: "Call only after a newer owner message in this same topic explicitly agrees to the current proposal as written. The hub starts it once, or waits for a suitable machine, and publishes its result here. A proposal expires after 24 hours. Use engine only if the owner explicitly selected it. Keep the internal reference private.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          proposal: { type: "string", description: "ID returned by propose_light_task" },
-          engine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner" },
-        },
-        required: ["proposal"],
+        required: ["title", "summary", "task", "kind", "reason"],
         additionalProperties: false,
       },
     },
@@ -822,7 +807,7 @@ function scheduleDefinitions() {
     })),
     {
       name: "run_scheduled_light_task",
-      description: "Open a quiet light task in the current confirmed scheduled run. Scope and instructions work like propose_light_task. Use a project for repository-related work in scratch. The hub starts it after the turn and publishes the result in its topic.",
+      description: "Open a quiet light task in the current confirmed scheduled run. Scope and instructions work like start_light_task. Use a project for repository-related work in scratch. The hub starts it after the turn and publishes the result in its topic.",
       inputSchema: z.toJSONSchema(ScheduledLightArguments, { io: "input" }),
     },
   ];
@@ -1042,7 +1027,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     const target = parsed.data.target ?? hubTargetName;
     if (target !== hubTargetName) {
       return {
-        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker. Use propose_light_task for everyday work in 日常 or open_task_ticket for a visible ticket.`,
+        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker. Use start_light_task for everyday work in 日常 or open_task_ticket for a visible ticket.`,
         isError: true,
       };
     }
@@ -1216,24 +1201,15 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
         return { text: "The light task is ready for this run. Its result arrives in the topic after the turn." };
       }
-      case "propose_light_task": {
-        if (tools.light === undefined) return undefined;
-        const parsed = ProposeLightArguments.safeParse(raw);
-        if (!parsed.success) return invalid(parsed.error);
-        const { material, confirmation, ...request } = parsed.data;
-        const chosen = materialsOf(material ?? []);
-        if (!chosen.ok) return chosen.result;
-        const proposal = tools.light.propose({ ...request, materials: chosen.materials }, confirmation, writeTurn());
-        return { text: `Proposal ${proposal}. The confirmation is already visible in chat. End this turn without repeating it. Wait for the owner's agreement before calling start_light_task.` };
-      }
       case "start_light_task": {
         if (tools.light === undefined) return undefined;
         const parsed = StartLightArguments.safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
-        const ticket = tools.light.start(parsed.data.proposal, parsed.data.engine, writeTurn());
-        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. ${ticket.state === "waiting"
-          ? "Tell the owner in one line that it will start automatically when a suitable machine is available."
-          : "The result arrives automatically in the conversation. A brief acknowledgment is enough."}` };
+        const { material, ownerEngine, ...request } = parsed.data;
+        const chosen = materialsOf(material ?? []);
+        if (!chosen.ok) return chosen.result;
+        const ticket = tools.light.start({ ...request, materials: chosen.materials }, ownerEngine, writeTurn());
+        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when a suitable machine is available." : ""}` };
       }
       case "answer_light_task": {
         if (tools.work === undefined) return undefined;

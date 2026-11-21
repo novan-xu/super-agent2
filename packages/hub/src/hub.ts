@@ -185,7 +185,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const storeLightTransfer = createLightTransfer(database);
   const lightQuestions = createLightTaskQuestions(database);
   const attachments = createAttachmentStore(database, clock, config.attachmentsDir ?? attachmentsFolder(config.dataDir));
-  const lightTasks = createLightTasks(database, clock, tickets, () => conversations, (id, materials) => {
+  const lightTasks = createLightTasks(database, tickets, (id, materials) => {
     attachments.grant(id, materials.flatMap((piece) => piece.attachment == null ? [] : [piece.attachment]));
   });
   const credentials = options.credentials ?? environmentCredentials(environment);
@@ -224,7 +224,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const routingModels = config.routingModels;
     conversations = createConversationService({
       extraMcp: extraMcp.brain,
-      lightTaskContext: (topic, message) => lightTasks.context(topic, message) + lightQuestions.context(topic, message),
+      lightTaskContext: (topic, message) => lightQuestions.context(topic, message),
       scheduleContext: (topic, message) => schedules?.context(topic, message) ?? "",
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => storedOrder(),
       routing: {

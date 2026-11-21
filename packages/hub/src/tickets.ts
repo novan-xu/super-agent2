@@ -1134,7 +1134,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           throw new TicketError(`Every issue of ticket ${ticketReference(old)} is closed, so nothing remains to repair`);
         }
         const merged = new Set(mergedIssueNumbers(old));
-        if (old.light !== undefined) throw new TicketError("Propose a new light task in the conversation to try again.");
+        if (old.light !== undefined) throw new TicketError("Start a new light task in the conversation to try again.");
         const task = old.form === "task" ? taskOf(id) : undefined;
         const raw = TicketRow.parse(selectTicket.get(id));
         const stuck = raw.stuck_failure === null ? undefined : LoopFailureKind.safeParse(raw.stuck_failure);
