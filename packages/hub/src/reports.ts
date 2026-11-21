@@ -337,7 +337,7 @@ export function allowanceReport(subscriptions: Subscriptions, machines: readonly
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
     subscriptionLine("Antigravity (Gemini Models)", subscriptions.antigravity, geminiWindows(subscriptions.antigravity)),
-    "An unknown reading is not used up. dsh is the default only when both are used up.",
+    "An unknown reading is not used up. dsh is the default only when the GPT and Claude subscriptions are both used up.",
   ];
   if (balance !== undefined) {
     const amounts = balance.wallets.map((wallet) => `${wallet.currency} ${wallet.total} (granted ${wallet.granted}, topped up ${wallet.toppedUp})`).join(", ");
