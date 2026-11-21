@@ -670,7 +670,7 @@ function ticketDefinitions() {
     {
       name: "start_light_task",
       title: "Start an everyday task",
-      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. Writing defaults to Antigravity. For operations choose a code engine using read_allowance. Agent_wring work is an operation with mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
+      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. Writing defaults to Antigravity. For Agent_wring articles use kind writing and mode agent_wring. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. For operations choose a code engine using read_allowance. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -679,7 +679,7 @@ function ticketDefinitions() {
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
           project: { type: "string", description: "The related repository as owner/name, when the task concerns one" },
-          mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring when the worker saves material in the Agent_wring library. Otherwise use transfer." },
+          mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring for Agent_wring ingestion, polling, saving, or article writing. Otherwise use transfer." },
           material: materialSchema,
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,

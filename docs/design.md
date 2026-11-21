@@ -386,6 +386,7 @@ The delivered result offers a link to its worker log.
 If the result contains files, the hub adds one titled entry to 传输 with the result text and the files.
 The conversation also offers the files.
 Agent_wring workers save in Agent_wring and report the saved item and summary in the conversation.
+Agent_wring article writing uses the Antigravity model order and code fallback, and standalone ingestion, polling and saving without writing use code engines.
 
 ### Scheduled work
 
@@ -903,4 +904,7 @@ Conversion requests and results are limited to 64 MiB, and requests time out aft
 The hub can offer additional HTTP MCP servers to the brain, workers, or both.
 It reads definitions and named token variables from its environment, sends selected endpoints over its authenticated brain and runner links, and keeps tokens out of program arguments.
 Claude Code receives environment references in its strict MCP configuration, and Codex receives bearer token environment variable names.
-The dsh adapter uses its HTTP MCP client, while Antigravity does not receive extra servers.
+The dsh adapter uses its HTTP MCP client.
+Antigravity loads extra servers from a temporary configuration directory passed with `--add-dir`.
+The configuration starts a stdio bridge that authenticates to the HTTP MCP server with the token from its environment.
+The per-session permissions allow calls to the configured MCP servers, and the adapter removes the temporary directory when it closes.

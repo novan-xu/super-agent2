@@ -404,14 +404,17 @@ Nobody needs to be at a computer: you answer the message, and the worker tries a
   If a repository-less request lands in a code topic, use `handover` to place it in a daily topic before starting a light task.
 - When you understand the request, call `start_light_task` with the exact scope, desired result and source material.
   If the scope or material is unclear, ask an ordinary question first; do not ask for agreement when the request is clear.
-  Classify prose as `writing`, which defaults to Antigravity, and machine or Agent_wring work as `operation`.
+  Classify prose, including Agent_wring article writing, as `writing`, which defaults to Antigravity.
+  Classify routine machine work as `operation`.
   Read `read_allowance` before choosing Codex or Claude Code for an operation.
   Pass `ownerEngine` only when the owner explicitly chose a provider.
   Acknowledge in one short Chinese line what started and that the result comes back here.
   If it is waiting, say it starts automatically when a suitable machine is available.
   Keep internal references private and leave the work to the worker.
-- For Agent_wring, use kind `operation` and mode `agent_wring`.
-  Give the worker the source and instruct it to search first, ingest if necessary, wait for the job, read the relevant passages and save to the Agent_wring library.
+- For Agent_wring, use mode `agent_wring` for both kinds of work.
+  Choose kind `writing` to write and save an article, and kind `operation` for standalone ingestion, job polling or saving without writing.
+  Give the worker the source and instruct it to search first, ingest if needed and wait for the job to finish.
+  For an article, instruct the worker to read the relevant passages and the article guide, then call `save_article` with the finished article.
   Ask the worker to name the saved item and summarize it in the report.
   The worker uses the Agent_wring MCP server configured for workers.
   Use Agent_wring's read-only search and passage tools yourself when they help answer a question.

@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { antigravityMcp } from "./antigravity-mcp.js";
 import type { OpenOptions, ProgramAdapter, ProgramEvent, ProgramHandle, ProgramListener } from "./program.js";
 import { exitReason, invocationOf, type LineProcess, spawnLines } from "./process.js";
 import type { ProgramSettings } from "./settings.js";
 
-export function antigravityArguments(settings: ProgramSettings, session: string | null): string[] {
+export function antigravityArguments(settings: ProgramSettings, session: string | null, mcp: readonly string[] = []): string[] {
   return [
     "--input-format",
     "stream-json",
@@ -14,6 +15,7 @@ export function antigravityArguments(settings: ProgramSettings, session: string 
     "--effort",
     settings.effort,
     "--disable-slash-commands",
+    ...mcp,
     ...(session === null ? [] : ["--conversation", session]),
     "--print=",
   ];
@@ -98,6 +100,7 @@ function openAntigravity(settings: ProgramSettings, options: OpenOptions, listen
   if (options.tools !== null) {
     throw new Error("Antigravity is not given the hub's tools");
   }
+  const mcp = options.extraMcp?.length ? antigravityMcp(options.extraMcp) : undefined;
   let session = options.session;
   let current: LineProcess | undefined;
   let running = false;
@@ -198,9 +201,9 @@ function openAntigravity(settings: ProgramSettings, options: OpenOptions, listen
 
   const launch = (): LineProcess => {
     let child: LineProcess | undefined;
-    const started = spawnLines(invocationOf(settings.program, antigravityArguments(settings, session)), {
+    const started = spawnLines(invocationOf(settings.program, antigravityArguments(settings, session, mcp?.args)), {
       cwd: options.workspace,
-      env: settings.environment,
+      env: mcp === undefined ? settings.environment : { ...settings.environment, ...mcp.environment },
       onMessage: (message) => {
         if (child !== undefined) {
           onOutput(child, message);
@@ -250,10 +253,14 @@ function openAntigravity(settings: ProgramSettings, options: OpenOptions, listen
       closed = true;
       const child = current;
       current = undefined;
-      if (child !== undefined) {
-        child.end();
-        child.kill();
-        await child.exited;
+      try {
+        if (child !== undefined) {
+          child.end();
+          child.kill();
+          await child.exited;
+        }
+      } finally {
+        mcp?.close();
       }
     },
     processId: () => current?.pid,

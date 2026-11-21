@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@super-agent2/protocol": "workspace:*",
     "zod": "4.6.7"
   },
