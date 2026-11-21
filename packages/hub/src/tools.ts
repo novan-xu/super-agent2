@@ -668,7 +668,7 @@ function ticketDefinitions() {
     {
       name: "start_light_task",
       title: "Start an everyday task",
-      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. Use a daily topic for unrelated work, or supply project for repository-related work. The hub uses the owner's worker order in Settings, with Antigravity first for writing. For Agent_wring articles use kind writing and mode agent_wring. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
+      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. The task stays in its current topic without assigning a repository. Use a daily topic with or without a project label. In a repository topic, project must match the topic repository. The hub uses the owner's worker order in Settings, with Antigravity first for writing. For Agent_wring articles use kind writing and mode agent_wring. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -676,7 +676,7 @@ function ticketDefinitions() {
           summary: generatedSchema("short task summary"),
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
-          project: { type: "string", description: "The related repository as owner/name, when the task concerns one" },
+          project: { type: "string", description: "The related repository as owner/name, used as a task label" },
           mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring for Agent_wring ingestion, polling, saving, or article writing. Otherwise use transfer." },
           material: materialSchema,
           difficulty: startChoices.difficulty,
@@ -815,7 +815,7 @@ function scheduleDefinitions() {
     })),
     {
       name: "run_scheduled_light_task",
-      description: "Open a quiet light task in the current confirmed scheduled run. Scope and instructions work like start_light_task. Use a project for repository-related work in scratch. The hub starts it after the turn and publishes the result in its topic.",
+      description: "Open a quiet light task in the current confirmed scheduled run. Scope, instructions and the project label work like start_light_task. The hub starts it after the turn and publishes the result in the same topic without assigning a repository.",
       inputSchema: z.toJSONSchema(ScheduledLightArguments, { io: "input" }),
     },
   ];
@@ -961,7 +961,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "set_topic_repository",
         title: "Set the repository for this topic",
-        description: "Move a daily or pending code topic into its repository, or move a repository topic without repository tickets into daily with null. Supply a topic ID to move another topic at the owner's request. Topics with conflicting tickets cannot move.",
+        description: "Move a daily or pending code topic into a repository, or pass null to move a topic back to daily. Code and task tickets must be compatible with the destination. Light tasks do not restrict the move. Supply a topic ID to move another topic at the owner's request.",
         inputSchema: z.toJSONSchema(AssignRepositoryArguments, { io: "input" }),
       },
       {

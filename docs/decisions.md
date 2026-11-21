@@ -3753,3 +3753,10 @@ Each order is saved only when the owner changes it.
   Existing explicit owner choices still take precedence when starting a ticket.
 - **Why:** The same availability rules cover the first run and fallback, and a waiting ticket can use the latest order when a provider returns.
 - **Other options:** Reject the start until a provider returns, reserve the first unavailable engine, or keep the brain's engine selection.
+
+## 2026-11-21 — Keep light tasks in their topics (#258)
+
+- **Chosen:** A light task's project labels the work, while the current topic keeps its repository assignment.
+  Daily topics accept any project label, and repository topics require their own project.
+  Topic claims and manual moves ignore light tasks.
+- **Why:** Scratch work can concern a repository without changing where the owner finds the conversation or blocking a later move.

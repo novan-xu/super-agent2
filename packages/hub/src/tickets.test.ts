@@ -117,6 +117,18 @@ describe("tickets", () => {
     expect(database.connection.prepare("SELECT id, repository FROM conversations").all()).toEqual([{ id: conversation, repository: finalRepository }]);
   });
 
+  it.each(["code", "task"] as const)("lets a %s ticket claim a daily topic with a light task for another project", (form) => {
+    const database = open();
+    const conversation = storeTopic(database, clock.now(), "Filing topic");
+    const tickets = createTicketService({ database, clock });
+    const task = { task: "Translate.", materials: [] };
+    tickets.open(request(1, { ...writing, form: "task", conversation, task, light: "transfer", project: "owner/other" }));
+
+    tickets.open(request(2, { ...(form === "task" ? { ...writing, task, project: repository } : {}), form, conversation }));
+
+    expect(database.connection.prepare("SELECT repository FROM conversations WHERE id = ?").get(conversation)).toEqual({ repository });
+  });
+
   it("follows a merged filing topic to the final destination", () => {
     const database = open();
     const source = storeTopic(database, clock.now(), "Source");

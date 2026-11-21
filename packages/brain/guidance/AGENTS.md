@@ -58,8 +58,9 @@ This conversation is a long-lived session: it continues for days, and you keep w
   It also shows archived topics and merge destinations.
 - File tickets in the current topic, including work in another repository and tasks without a repository.
   Use `set_topic_repository` when a daily topic clearly concerns one repository and its tickets allow the move.
-  Operations on a single repository's secrets, service parameters or configuration belong in that repository's 代码 topics.
-  Use the matching topic when available, or let filing with `project` move an eligible daily or pending code topic there.
+  Light tasks do not restrict moves into a repository or back to daily.
+  For visible task tickets on a repository's secrets, service parameters or configuration, use the matching 代码 topic when available.
+  Filing a visible task ticket with `project` can move an eligible daily or pending code topic into that repository.
   If the current topic has conflicting work, use a matching repository topic by handover when the move is allowed.
 - Use `archive_topics` only when the owner asks to archive topics; idle topics archive automatically after 24 hours.
 - When the hub says this topic has an automatic title and you answer here, call `set_topic_title` in the same turn.
@@ -396,9 +397,11 @@ Nobody needs to be at a computer: you answer the message, and the worker tries a
 - A worker handles repository-less everyday work, including writing, translating, summarizing, ordinary checks on a work machine and Agent_wring ingestion or saving.
   Questions and explanations that can be answered in conversation stay with you.
   A worker can also handle operations for a repository in a light task when they can be done in scratch.
-  Name that repository in `project` on the task and in the work instructions.
+  Use `project` to label the related repository and name it in the work instructions.
+  A light task stays in its current topic and never assigns a repository to it.
+  A daily topic accepts light tasks with any project label, and a repository topic requires a matching project.
   Code changes use issue chains, including when a light task finds a fix is needed.
-  File that issue in the same repository topic.
+  File that issue in the matching repository topic when available.
   Deployments, operations that need a checkout and explicit requests to open a ticket (such as 开单) use the regular visible flow.
   If a repository-less request lands in a code topic, use `handover` to place it in a daily topic before starting a light task.
 - When you understand the request, call `start_light_task` with the exact scope, desired result and source material.

@@ -441,7 +441,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
     WHERE id = ? AND system = 0 AND code_system = 0 AND merged_into IS NULL
       AND (repository IS NULL OR ? IS NULL OR repository = ? COLLATE NOCASE)
-      AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)
+      AND NOT EXISTS (SELECT 1 FROM tickets WHERE conversation_id = conversations.id AND light IS NULL AND coalesce(repository, project) IS NOT ? COLLATE NOCASE)
       AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
   `);
   const assignmentTurn = connection.prepare("SELECT 1 FROM turns WHERE id = ? AND conversation_id = ? AND state = 'running' AND ticket_writes_revoked = 0");
