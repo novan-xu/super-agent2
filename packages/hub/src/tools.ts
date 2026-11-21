@@ -1507,9 +1507,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     let result: ToolResult;
     switch (parsed.data.name) {
       case "run_command":
-        result = conversation !== undefined && turn !== undefined && options.tickets?.tickets.scheduleForTurn({
-          conversation, id: turn, available: () => !aborted.aborted && conversations.brainReady(),
-        })?.authorized === false
+        result = conversation !== undefined && turn !== undefined && options.tickets?.tickets.scheduleForTurn({ conversation, id: turn })?.authorized === false
           ? { text: "This scheduled run is no longer authorized.", isError: true }
           : await run(parsed.data.arguments ?? {}, conversation, aborted);
         break;

@@ -278,6 +278,38 @@ describe("scheduled work", () => {
     expect(hub.schedules.history(revised.id)?.runs).toMatchObject([{ state: "cancelled" }]);
   });
 
+  it.each(["completed", "interrupted"] as const)("continues the same scheduled run until the retry is %s", async (outcome) => {
+    const first = brain();
+    const id = hub.schedules.save({ ...fields, recurrence: { at: clock.now() + minute } });
+    const schedule = hub.schedules.list().schedules[0]!;
+    const run = fire(schedule, first.inputs);
+    const scheduled = turn(first.link, schedule.topic, run);
+    await openLight(scheduled);
+    const [task] = hub.tickets.list();
+    expect(task).toMatchObject({ scheduleRun: run, state: "pending" });
+
+    const second = brain();
+    expect(second.inputs).toMatchObject([{ source: "hub", scheduleRun: run, text: expect.stringContaining(fields.instruction) }]);
+    const continuation = second.inputs[0]!;
+    expect(continuation.id).not.toBe(run);
+    hub.schedules.tick();
+    expect(hub.schedules.history(id)?.runs).toMatchObject([{ id: run, state: "queued", entry: run }]);
+    expect(hub.tickets.get(task!.id)?.state).toBe("pending");
+    expect(await scheduled.call("run_command", {})).toMatchObject({ isError: true, text: "This scheduled run is no longer authorized." });
+
+    const retry = turn(second.link, schedule.topic, continuation.id);
+    expect(hub.schedules.history(id)?.runs).toMatchObject([{ id: run, state: "running" }]);
+    if (outcome === "completed") {
+      retry.reply("已安排检查磁盘空间。");
+      retry.finish();
+      expect(hub.schedules.history(id)?.runs).toMatchObject([{ id: run, state: "running", tickets: [{ id: task!.id, state: "waiting" }] }]);
+    } else {
+      expect(brain().inputs).toEqual([]);
+      hub.schedules.tick();
+      expect(hub.schedules.history(id)?.runs).toMatchObject([{ id: run, state: "interrupted", tickets: [{ id: task!.id, state: "stopped" }] }]);
+    }
+  });
+
   it("lets the same-origin owner create, edit, pause, resume and delete from the API", async () => {
     const plan = { ...fields, recurrence: { at: clock.now() + 2 * minute } };
     expect((await request("", "POST", { fields: plan }, false)).status).toBe(403);

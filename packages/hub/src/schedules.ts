@@ -76,7 +76,9 @@ export function createSchedules({ database, clock, conversations, tickets, chain
     (SELECT delivery.id FROM conversation_entries delivery WHERE delivery.conversation_id = e.conversation_id AND delivery.kind = 'delivery'
       AND json_extract(delivery.body, '$.ticket') IN (SELECT id FROM tickets WHERE schedule_run = r.id)
       ORDER BY delivery.seq DESC LIMIT 1) AS delivery
-    FROM schedule_runs r JOIN conversation_entries e ON e.id = r.entry LEFT JOIN turns t ON t.id = e.turn_id`;
+    FROM schedule_runs r JOIN conversation_entries e ON e.id = r.entry
+    JOIN conversation_entries input ON input.id = coalesce(r.continuation_entry, r.entry)
+    LEFT JOIN turns t ON t.id = input.turn_id`;
   const recent = connection.prepare(`${runView} WHERE r.schedule = ? ORDER BY r.due_at DESC, r.rowid DESC LIMIT ?`);
   const finished = connection.prepare(`${runView} WHERE r.state = 'pending' AND t.state IN ('completed', 'failed', 'interrupted')`);
   const runTickets = connection.prepare(`SELECT id, title_zh AS title, light IS NOT NULL AS light, state FROM tickets

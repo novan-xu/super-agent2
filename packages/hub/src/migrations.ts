@@ -1063,6 +1063,13 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_switches ADD COLUMN from_model TEXT;
     `,
   },
+  {
+    version: 51,
+    sql: `
+      ALTER TABLE schedule_runs ADD COLUMN continuation_entry TEXT REFERENCES conversation_entries(id);
+      CREATE UNIQUE INDEX schedule_runs_continuation ON schedule_runs(continuation_entry) WHERE continuation_entry IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
