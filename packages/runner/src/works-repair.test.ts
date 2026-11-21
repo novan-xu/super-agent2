@@ -1,0 +1,92 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { workPaths } from "./workplace.js";
+import { outputFolder, taskPaths } from "./task.js";
+import { repository, scratch, home, programs, opened, git, start, task, events, ended, writingTask } from "./testing/works.js";
+
+describe("a repair worker continuing the folder of an earlier ticket", () => {
+  it("saves the folder of the ended ticket without removing it, and works in that same folder on the same branch, uncommitted changes included", async () => {
+    const works = start();
+    works.receive({ type: "work.start", task: task(50) });
+    const first = await programs.prompted(1);
+    const paths = workPaths(home, repository, 50);
+    writeFileSync(join(paths.worktree, "half.txt"), "half");
+    first.emit({ type: "failed", reason: "The program crashed", lostSession: false });
+    expect(await ended(50)).toMatchObject({ kind: "failed" });
+    works.receive({ type: "work.stop", ticket: 50, save: true, remove: false });
+    await works.idle();
+    expect(events(50).find((message) => message.event.kind === "stopped")?.event).toMatchObject({ kind: "stopped", saved: true });
+    expect(existsSync(paths.worktree)).toBe(true);
+    expect(readFileSync(join(paths.worktree, "half.txt"), "utf8")).toBe("half");
+    const seed = join(scratch, "seed");
+    await git(seed).must(["fetch", "origin", "sa2/ticket-50-abcd"], seed);
+    expect((await git(seed).must(["show", "FETCH_HEAD:half.txt"], seed)).trim()).toBe("half");
+
+    works.receive({ type: "work.start", task: task(51, { branch: "sa2/ticket-50-abcd", folder: 50, takeover: true, note: "You are taking over work that earlier workers could not finish." }) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    const second = programs.last();
+    expect(second.options.workspace).toBe(paths.worktree);
+    const prompt = second.prompts[0] ?? "";
+    expect(prompt).toContain("You are taking over work that earlier workers could not finish.");
+    expect(prompt).toContain("Commits on sa2/ticket-50-abcd that are not on main:");
+    expect(prompt).toContain("Save work in progress on the worker branch");
+    expect(prompt).toContain(`Working folder: ${paths.worktree}`);
+    expect(workPaths(home, repository, 51, 50).worktree).toBe(paths.worktree);
+    expect(workPaths(home, repository, 51, 50).folder).not.toBe(paths.folder);
+    expect(existsSync(join(workPaths(home, repository, 51).folder, "work.json"))).toBe(true);
+    expect(JSON.parse(readFileSync(join(workPaths(home, repository, 51).folder, "work.json"), "utf8"))).toMatchObject({ ticket: 51, folder: 50 });
+  });
+
+  it("keeps working in the earlier folder after a restart, and removes both tickets' folders when the hub says so", async () => {
+    const first = start();
+    first.receive({ type: "work.start", task: task(54) });
+    const before = await programs.prompted(1);
+    const paths = workPaths(home, repository, 54);
+    before.emit({ type: "failed", reason: "The program crashed", lostSession: false });
+    expect(await ended(54)).toMatchObject({ kind: "failed" });
+    first.receive({ type: "work.start", task: task(55, { branch: "sa2/ticket-54-abcd", folder: 54, takeover: true, note: "A repair." }) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    await first.close();
+    opened.splice(opened.indexOf(first), 1);
+    const again = start();
+    expect(again.held().map((work) => work.ticket)).toEqual([54, 55]);
+    again.receive({ type: "work.start", task: task(55, { branch: "sa2/ticket-54-abcd", folder: 54, takeover: true, note: "A repair." }) });
+    await programs.changed.until(() => programs.handles.length === 3 && programs.last().prompts.length === 1);
+    expect(programs.last().options.workspace).toBe(paths.worktree);
+    again.receive({ type: "work.stop", ticket: 55, save: false, remove: true });
+    await again.idle();
+    expect(existsSync(paths.worktree)).toBe(false);
+    expect(existsSync(workPaths(home, repository, 55).folder)).toBe(false);
+    expect(existsSync(paths.folder)).toBe(true);
+    again.receive({ type: "work.stop", ticket: 54, save: false, remove: true });
+    await again.idle();
+    expect(existsSync(paths.folder)).toBe(false);
+  });
+
+  it("continues the scratch folder of an earlier task, with what it produced, while keeping its own record", async () => {
+    const works = start();
+    works.receive({ type: "work.task", task: writingTask(52) });
+    const first = await programs.prompted(1);
+    const earlier = taskPaths(home, 52);
+    mkdirSync(outputFolder(earlier), { recursive: true });
+    writeFileSync(join(outputFolder(earlier), "draft.txt"), "a draft");
+    first.emit({ type: "failed", reason: "The program crashed", lostSession: false });
+    expect(await ended(52)).toMatchObject({ kind: "failed" });
+    works.receive({ type: "work.task", task: writingTask(53, { folder: 52, takeover: true, note: "You are taking over this task." }) });
+    await programs.changed.until(() => programs.handles.length === 2 && programs.last().prompts.length === 1);
+    const prompt = programs.last().prompts[0] ?? "";
+    expect(prompt).toContain("draft.txt (7 bytes)");
+    expect(prompt).toContain(`Output folder: ${outputFolder(earlier)}`);
+    expect(taskPaths(home, 53, null, 52).worktree).toBe(earlier.worktree);
+    expect(existsSync(join(taskPaths(home, 53).folder, "work.json"))).toBe(true);
+    expect(readFileSync(join(outputFolder(earlier), "draft.txt"), "utf8")).toBe("a draft");
+    works.receive({ type: "work.stop", ticket: 53, save: false, remove: true });
+    await works.idle();
+    expect(existsSync(taskPaths(home, 53).folder)).toBe(false);
+    expect(existsSync(outputFolder(earlier))).toBe(false);
+    works.receive({ type: "work.stop", ticket: 52, save: false, remove: true });
+    await works.idle();
+    expect(existsSync(earlier.folder)).toBe(false);
+  });
+});
