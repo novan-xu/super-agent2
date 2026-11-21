@@ -1125,7 +1125,8 @@ Each entry says what was chosen, why, and what the other options were, so it can
   停止 takes two presses like 确认: the first turns the buttons into a red 停止 on the left and 取消 where 停止 was, which takes the focus.
   改派 opens the start card's three selects in the panel, starting from the ticket's current choice, limited to machines fitting its platform and, for code, without Antigravity; a changed engine sends no model, so the hub's table fills it.
   The reply box shows only while a reachable worker runs.
-  The page opens a ticket at its top and follows new output only when the owner has scrolled to the bottom of a page longer than the screen; sending a message makes it follow.
+  The page opens a ticket at its latest entry and follows new output until the owner scrolls up; sending a message or using the floating bottom button resumes following.
+  Floating buttons jump to the top or bottom of the detail.
 - **Why:** The look is the prototype's; the roles it showed (reviewer, repairer, CI panel) are gone.
   Moving the confirming button is the guard already chosen for confirmation cards.
   Following only from the bottom keeps a long log readable while it grows.
