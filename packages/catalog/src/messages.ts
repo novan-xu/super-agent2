@@ -203,6 +203,8 @@ export const messages = {
   "composer.send": "发送",
   "composer.stop": "停止",
   "viewer.failed": "无法预览此文件，请下载原文件。",
+  "viewer.source": "源码",
+  "viewer.rendered": "页面",
   "viewer.download": "下载",
   "viewer.close": "关闭",
   "viewer.previous": "上一个",

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { canDrawBytes, decodeText, delimiterOf, kindOf, parseTable, svgImage, TEXT_BYTES } from "./filekind.js";
 
 describe("file viewer kinds", () => {
-  it("prefers extensions and treats markup as source", () => {
+  it("prefers extensions and recognizes HTML", () => {
     expect(kindOf({ name: "x.svg", mime: "text/html" })).toBe("vector");
-    expect(kindOf({ name: "x.html", mime: "image/png" })).toBe("text");
+    expect(kindOf({ name: "x.html", mime: "image/png" })).toBe("html");
+    expect(kindOf({ name: "x.HTM", mime: "" })).toBe("html");
+    expect(kindOf({ name: "x", mime: "text/html; charset=utf-8" })).toBe("html");
+    expect(kindOf({ name: "x.js", mime: "text/html" })).toBe("text");
     expect(kindOf({ name: "x", mime: "application/pdf" })).toBe("pdf");
     expect(kindOf({ name: "x.docx", mime: "" })).toBe("office");
     expect(TEXT_BYTES).toBe(5 * 1024 * 1024);

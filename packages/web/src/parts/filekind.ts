@@ -1,6 +1,6 @@
 
 
-export type FileKind = 'image' | 'vector' | 'video' | 'audio' | 'pdf' | 'office' | 'markdown' | 'table' | 'text' | 'other'
+export type FileKind = 'image' | 'vector' | 'video' | 'audio' | 'pdf' | 'office' | 'markdown' | 'table' | 'html' | 'text' | 'other'
 
 const KINDS: [FileKind, string][] = [
   ['image', 'png jpg jpeg gif webp avif bmp'],
@@ -11,14 +11,15 @@ const KINDS: [FileKind, string][] = [
   ['office', 'doc docx docm dot dotx dotm rtf odt ott xls xlsx xlsm xlsb xlt xltx xltm ods ots ppt pptx pptm pps ppsx ppsm pot potx potm odp otp'],
   ['markdown', 'md markdown'],
   ['table', 'csv tsv'],
+  ['html', 'html htm'],
   ['text', 'txt text log json jsonl ndjson xml yaml yml toml ini conf cfg env properties sh bash zsh bat cmd ps1 py js mjs cjs ts mts cts tsx jsx css scss less '
-    + 'html htm vue svelte c h cc cpp hpp cs java kt kts go rs rb php swift m mm sql tex bib srt vtt diff patch gitignore dockerfile makefile lua r pl gradle'],
+    + 'vue svelte c h cc cpp hpp cs java kt kts go rs rb php swift m mm sql tex bib srt vtt diff patch gitignore dockerfile makefile lua r pl gradle'],
 ]
 const BY_EXTENSION = new Map(KINDS.flatMap(([kind, names]) => names.split(' ').map(name => [name, kind] as const)))
 const BY_TYPE: [RegExp, FileKind][] = [
   [/^image\/(png|jpeg|gif|webp|avif|bmp)$/, 'image'], [/^image\/svg\+xml$/, 'vector'], [/^video\//, 'video'], [/^audio\//, 'audio'],
   [/^application\/pdf$/, 'pdf'], [/^text\/(markdown|x-markdown)$/, 'markdown'], [/^text\/(csv|tab-separated-values)$/, 'table'],
-  [/^text\//, 'text'], [/^application\/(json|xml|x-yaml|yaml|toml|javascript|x-sh|sql)$/, 'text'],
+  [/^text\/html(?:\s*;|$)/i, 'html'], [/^text\//, 'text'], [/^application\/(json|xml|x-yaml|yaml|toml|javascript|x-sh|sql)$/, 'text'],
 ]
 
 export function extensionOf(name: string): string {

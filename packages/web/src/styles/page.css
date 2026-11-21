@@ -391,7 +391,9 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .fv-header { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid #8885; }
 .fv-header strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fv-header button, .fv-prev, .fv-next { font-size: 1.8rem; cursor: pointer; }
-.fv-body { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: safe center; }
+.fv-header .fv-toggle { font-size: inherit; white-space: nowrap; }
+.fv-body { min-height: 0; flex: 1; overflow: auto; display: flex; justify-content: center; align-items: safe center; }
+.fv-html { width: 100%; height: 100%; border: 0; background: white; }
 .fv-image { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
 .fv-image.actual { max-width: none; max-height: none; cursor: zoom-out; }
 .fv-body video { max-width: 100%; max-height: 100%; }
