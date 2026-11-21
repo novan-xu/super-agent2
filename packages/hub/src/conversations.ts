@@ -9,6 +9,7 @@ import {
   type BrainInput,
   type BrainMessage,
   type BrainProviders,
+  type BrainStatus,
   type BrainUpdate,
   type CommandRecord,
   Conversation,
@@ -116,6 +117,7 @@ export interface ConversationService {
   publishScheduleNotice(id: string): void;
   writeLightQuestion(conversation: string, id: string, message: string): void;
   linked(): boolean;
+  brainStatus(): BrainStatus;
   brainReady(): boolean;
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
@@ -417,6 +419,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
   let closing = false;
   let brainProviders: BrainProviders | undefined;
+  let lastTurnModel: string | null = null;
+  let brainStatus: BrainStatus = { linked: false, model: null };
   const brainListeners = new Set<() => void>();
   const brainChanged = () => {
     for (const listener of brainListeners) {
@@ -561,6 +565,22 @@ export function createConversationService(options: ConversationServiceOptions): 
         continue;
       }
     }
+  };
+
+  const publishBrainStatus = () => {
+    const linked = link !== undefined;
+    const reported = brainProviders?.model;
+    const configured = brainProviders?.providers.find((provider) => provider.available && provider.model.trim() !== "")?.model;
+    const model = linked ? (reported === undefined ? lastTurnModel ?? configured?.trim() ?? null : reported?.trim() || null) : null;
+    if (brainStatus.linked !== linked || brainStatus.model !== model) {
+      brainStatus = { linked, model };
+      emit({ type: "brain", brain: brainStatus });
+    }
+  };
+
+  const rememberTurnModel = (model: string) => {
+    if (model.trim() !== "") lastTurnModel = model.trim();
+    publishBrainStatus();
   };
 
   const withMerge = (row: unknown): Conversation => {
@@ -881,6 +901,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     switch (message.type) {
       case "providers": {
         brainProviders = message;
+        publishBrainStatus();
         brainChanged();
         return;
       }
@@ -893,11 +914,15 @@ export function createConversationService(options: ConversationServiceOptions): 
           sendToBrain({ type: "order", order: [...order] });
         }
         const running = new Set(message.running.map((item) => `${item.conversation}\n${item.turn}`));
+        let resumedModel: string | null = null;
         for (const turn of selectRunningTurns.all().map(toTurn)) {
           if (!running.has(`${turn.conversation}\n${turn.id}`)) {
             endTurn(turn.id, "interrupted", brainRestartedReason);
+          } else if (turn.model?.trim()) {
+            resumedModel = turn.model;
           }
         }
+        if (resumedModel !== null) rememberTurnModel(resumedModel);
         for (const item of message.running) {
           const turn = getTurn(item.turn);
           if (turn !== undefined && turn.state !== "running") {
@@ -919,6 +944,7 @@ export function createConversationService(options: ConversationServiceOptions): 
           return;
         }
         insertTurn.run(message.turn, message.conversation, message.provider, message.model, clock.now());
+        rememberTurnModel(message.model);
         for (const input of message.inputs) {
           const entry = markTaken.get(message.turn, input, message.conversation);
           if (entry !== undefined) {
@@ -960,6 +986,7 @@ export function createConversationService(options: ConversationServiceOptions): 
           return;
         }
         changeTurnProvider.run(message.to, message.model, message.turn);
+        rememberTurnModel(message.model);
         if (isQuiet(message.turn)) return;
         emitTurn(message.turn);
         addEntry({
@@ -1520,6 +1547,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
     },
     linked: () => link !== undefined,
+    brainStatus: () => brainStatus,
     brainReady: () => link?.ready === true,
     providers: () => (link === undefined ? undefined : brainProviders),
     sendOrder: (order) => {
@@ -1536,10 +1564,10 @@ export function createConversationService(options: ConversationServiceOptions): 
       const previous = link;
       const current = { connection, ready: false };
       link = current;
+      brainProviders = undefined;
+      lastTurnModel = null;
       previous?.connection.close();
-      if (previous === undefined) {
-        emit({ type: "brain", brain: { linked: true } });
-      }
+      publishBrainStatus();
       brainChanged();
       connection.send({ type: "hello", protocol: protocolVersion, ...(options.extraMcp?.length ? { extraMcp: [...options.extraMcp] } : {}) });
       return {
@@ -1553,7 +1581,8 @@ export function createConversationService(options: ConversationServiceOptions): 
             link = undefined;
             corrections.finishOfflineMerges();
             brainProviders = undefined;
-            emit({ type: "brain", brain: { linked: false } });
+            lastTurnModel = null;
+            publishBrainStatus();
             brainChanged();
           }
         },
@@ -1572,6 +1601,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       unsubscribeCommands();
       link?.connection.close();
       link = undefined;
+      brainStatus = { linked: false, model: null };
       listeners.clear();
       brainListeners.clear();
     },

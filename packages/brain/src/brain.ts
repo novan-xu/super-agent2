@@ -73,6 +73,8 @@ interface TurnRun {
   readonly tried: Set<Provider>;
   readonly withdrawing: Set<string>;
   provider: Provider;
+  model: string;
+  selection: number;
   tokens: number;
   current: Attempt | undefined;
   started: boolean;
@@ -123,10 +125,22 @@ export function createBrain(options: BrainOptions): Brain {
   const softShare = options.seedSoftShare ?? defaultSoftShare;
   const inputCapacity = options.inputCapacity ?? fallbackInputCapacity;
   const learnedCapacity = new Map<Provider, number>();
+  const states = new Map<string, State>();
+  let selections = 0;
   const choice = createProviderChoice(options.order.filter((provider) => adapters.has(provider)), options.clock);
+  const providerForNextTurn = () => choice.candidates()[0] ?? choice.order()[0];
+  const model = (): string | null => {
+    let latest: TurnRun | undefined;
+    for (const { turn } of states.values()) {
+      if (turn !== undefined && (latest === undefined || turn.selection > latest.selection)) latest = turn;
+    }
+    const next = latest === undefined ? providerForNextTurn() : undefined;
+    return (latest?.model ?? (next === undefined ? undefined : adapters.get(next)?.model))?.trim() || null;
+  };
   const status = (): BrainProviders => ({
     type: "providers",
     order: choice.order(),
+    model: model(),
     providers: choice.order().flatMap((provider) => {
       const adapter = adapters.get(provider);
       if (adapter === undefined) {
@@ -138,7 +152,7 @@ export function createBrain(options: BrainOptions): Brain {
       return [{ provider, model: adapter.model, effort: adapter.effort, available, until: available ? null : (state?.until ?? null) }];
     }),
   });
-  let told = "";
+  let told = JSON.stringify(status());
   const tell = () => {
     const current = status();
     const key = JSON.stringify(current);
@@ -163,7 +177,6 @@ export function createBrain(options: BrainOptions): Brain {
       tell();
     },
   };
-  const states = new Map<string, State>();
   const merged = new Set<string>();
   const work = new Set<Promise<void>>();
   let uses = 0;
@@ -227,6 +240,7 @@ export function createBrain(options: BrainOptions): Brain {
     state.used = ++uses;
     state.idleAt = options.clock.now();
     transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason, applied });
+    tell();
     if (turn.withdrawing.size > 0) {
       dropLive(state);
       for (const input of turn.withdrawing) {
@@ -260,16 +274,19 @@ export function createBrain(options: BrainOptions): Brain {
       finishTurn(state, turn, "failed", unavailableSummary() || reason);
       return;
     }
+    turn.model = adapterOf(next).model;
+    turn.selection = ++selections;
     transport.send({
       type: "provider.changed",
       conversation: state.id,
       turn: turn.id,
       from: attempt.provider,
       to: next,
-      model: adapterOf(next).model,
+      model: turn.model,
       reason,
     });
     track(run(state, turn, next, "continue", false));
+    tell();
   };
 
   const onEvent = (state: State, live: Live, event: ProgramEvent) => {
@@ -298,6 +315,12 @@ export function createBrain(options: BrainOptions): Brain {
     const { turn } = attempt;
     const prefix = `${attempt.token}.`;
     switch (event.type) {
+      case "model":
+        if (event.model.trim() !== "") {
+          turn.model = event.model;
+          tell();
+        }
+        return;
       case "text":
         transport.send({ type: "text", conversation: state.id, turn: turn.id, block: prefix + event.block, delta: event.delta });
         return;
@@ -499,8 +522,7 @@ export function createBrain(options: BrainOptions): Brain {
   };
 
   const startTurn = (state: State) => {
-    const candidates = providers.candidates();
-    const provider = candidates[0] ?? providers.order()[0];
+    const provider = providerForNextTurn();
     if (provider === undefined) {
       return;
     }
@@ -511,6 +533,8 @@ export function createBrain(options: BrainOptions): Brain {
       tried: new Set(),
       withdrawing: new Set(),
       provider,
+      model: adapterOf(provider).model,
+      selection: ++selections,
       tokens: 0,
       current: undefined,
       started: false,
@@ -522,9 +546,10 @@ export function createBrain(options: BrainOptions): Brain {
       conversation: state.id,
       turn: turn.id,
       provider,
-      model: adapterOf(provider).model,
+      model: turn.model,
       inputs: turn.inputs.map((input) => input.id),
     });
+    tell();
     track(run(state, turn, provider, "fresh", false));
   };
 

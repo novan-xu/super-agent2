@@ -137,7 +137,7 @@ describe("HubSocket", () => {
     sockets[0]?.deliver("not json");
     sockets[0]?.deliver(JSON.stringify({ type: "nonsense" }));
     sockets[0]?.deliver(JSON.stringify({ type: "brain", brain: { linked: true } }));
-    expect(messages).toEqual([{ type: "brain", brain: { linked: true } }]);
+    expect(messages).toEqual([{ type: "brain", brain: { linked: true, model: null } }]);
   });
 
   it("reconnects at once when asked, dropping a socket that may be dead", () => {

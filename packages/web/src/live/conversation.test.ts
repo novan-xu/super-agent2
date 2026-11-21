@@ -70,7 +70,7 @@ describe("receive", () => {
       { type: "delta", conversation: "c2", entry: "x1", field: "text", text: "y" },
       { type: "turn", turn: turn({ conversation: "c2" }) },
       { type: "conversation", conversation: conversation({ id: "c2" }) },
-      { type: "brain", brain: { linked: true } },
+      { type: "brain", brain: { linked: true, model: null } },
     );
     expect(state).toBe(start);
   });

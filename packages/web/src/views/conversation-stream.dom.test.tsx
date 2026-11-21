@@ -88,6 +88,20 @@ async function open(path: string) {
   });
 }
 
+it("shows the global brain model on the workbench and updates it live", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => path === "/api/conversations?all=1"
+    ? Response.json({ conversations: topics, repositories, brain: { linked: true, model: "gpt-current" } })
+    : Response.json({}, { status: 404 })));
+  await open("/workbench");
+  const brainLine = () => host.querySelector(".hub-card .hub-line:last-child .od-truncate")?.textContent;
+  expect(brainLine()).toBe("gpt-current");
+  await act(async () => TestSocket.current.deliver({ type: "brain", brain: { linked: true, model: "claude-current" } }));
+  expect(brainLine()).toBe("claude-current");
+  expect(host.querySelector(".brain-chip")?.textContent).toContain("claude-current");
+  await act(async () => TestSocket.current.deliver({ type: "brain", brain: { linked: false, model: null } }));
+  expect(brainLine()).toBe(text("brain.offline"));
+});
+
 function lastWatch() {
   return TestSocket.current.messages.findLast((message) => message.type === "watch.stream")!;
 }

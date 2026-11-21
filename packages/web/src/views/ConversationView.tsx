@@ -335,7 +335,6 @@ export function ConversationView(props: ConversationViewProps) {
   const selected = state?.conversation ?? list.find((topic) => topic.id === conversation && topic.mergedInto === undefined);
   const title = titleOf(selected);
   const online = props.status === "open";
-  const lastModel = state?.turns.at(-1)?.model ?? props.model;
 
   return (
     <div className={props.compact === true ? "conv conv--solo conv--compact" : "conv"}>
@@ -365,7 +364,7 @@ export function ConversationView(props: ConversationViewProps) {
             {!online ? (
               <span>{text("hub.reconnecting")}</span>
             ) : props.linked ? (
-              lastModel === null ? null : <span className="mono">{lastModel}</span>
+              props.model === null ? null : <span className="mono od-truncate">{props.model}</span>
             ) : (
               <span>{text("brain.offline")}</span>
             )}
