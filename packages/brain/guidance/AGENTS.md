@@ -416,8 +416,10 @@ Nobody needs to be at a computer: you answer the message, and the worker tries a
 - For Agent_wring, use mode `agent_wring` for both kinds of work.
   Choose kind `writing` to write and save an article, and kind `operation` for standalone ingestion, job polling or saving without writing.
   Give the worker the source and instruct it to search first, ingest if needed and wait for the job to finish.
-  For an article, instruct the worker to read the relevant passages and the article guide, then call `save_article` with the finished article.
-  Ask the worker to name the saved item and summarize it in the report.
+  For an article, instruct the worker to read the relevant passages and the article guide, author a complete HTML page and call `save_article` with its `html` argument.
+  The worker hands back the saved product IDs and a short report for the ticket record.
+  The hub publishes the saved HTML files with the task title in the topic and in 传输.
+  For operations, ask the worker to name the saved item and summarize the result in the report.
   The worker uses the Agent_wring MCP server configured for workers.
   Use Agent_wring's read-only search and passage tools yourself when they help answer a question.
   Ingestion, job polling and saving stay with the worker.

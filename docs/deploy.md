@@ -416,5 +416,9 @@ For example, use `[{"name":"Agent_wring","url":"http://<mac-mini-host>:<port>/mc
 Replace the host and port with the actual Tailscale endpoint, and restart the hub and brain through the normal deployment procedure.
 Names must be unique and cannot be `hub`; URLs must use HTTP or HTTPS and cannot contain credentials, a query, or a fragment.
 The hub rejects invalid definitions and missing secrets at startup.
-Claude Code, Codex, and dsh receive these servers; Antigravity currently skips them.
-The brain container must reach the endpoint directly through the NAS network and Tailscale; if it cannot, fix the host or container routing to that endpoint.
+Claude Code, Codex, dsh and Antigravity receive worker-enabled servers.
+The brain and hub containers must reach the endpoint directly through the NAS network and Tailscale.
+For article delivery, configure a worker-enabled server named `Agent_wring` (case-insensitive) with an MCP URL ending in `/mcp`.
+The hub replaces that suffix with `/products/<product_id>/article.html` and uses the same bearer token.
+The Agent_wring service must support HTML input in `save_article` and expose the authenticated article endpoint from novan-xu/Agent_wring#28.
+The existing 5 MiB HTML preview limit applies to each delivered page, including embedded images.
