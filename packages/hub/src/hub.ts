@@ -65,11 +65,16 @@ export interface HubOptions {
   readonly gitHubBase?: string;
   readonly verificationTicker?: Ticker;
   readonly workTicker?: Ticker;
+  readonly workSchedule?: (drain: () => void) => void;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly report?: (line: string) => void;
   readonly routingModel?: ModelLoader;
   readonly routingSleep?: Sleep;
+}
+
+export function scheduleWorkDrain(drain: () => void): void {
+  setImmediate(drain);
 }
 
 const accessCheckMilliseconds = 60 * 60 * 1000;
@@ -238,6 +243,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         attachments,
         defaults,
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
+        schedule: options.workSchedule ?? scheduleWorkDrain,
+        log: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
         tell: told.tell,
         deliver: told.deliver,
         lightQuestions,

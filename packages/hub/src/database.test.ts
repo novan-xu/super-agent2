@@ -25,6 +25,16 @@ describe("openDatabase", () => {
     database.close();
   });
 
+  it("runs in WAL mode with NORMAL synchronous", () => {
+    const database = openDatabase({ dataDir, clock: new TestClock() });
+    try {
+      expect(database.connection.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+      expect(database.connection.prepare("PRAGMA synchronous").get()).toEqual({ synchronous: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("keeps its state across a restart", () => {
     const clock = new TestClock();
     const first = openDatabase({ dataDir, clock });

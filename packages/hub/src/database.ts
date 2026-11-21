@@ -77,7 +77,7 @@ export function openDatabase(options: OpenDatabaseOptions): HubDatabase {
   const connection = new DatabaseSync(join(options.dataDir, databaseFileName));
   const ticketTimeZone = options.ticketTimeZone ?? defaultTicketTimeZone;
   try {
-    connection.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    connection.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     applyMigrations(connection, options.migrations ?? hubMigrations, options.clock, ticketTimeZone);
     connection
       .prepare("INSERT INTO hub (id, instance, created_at) VALUES (1, ?, ?) ON CONFLICT (id) DO NOTHING")
