@@ -275,6 +275,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   if (ticket.deployedAt !== null) {
     lines.push(`Deployed: recorded at ${new Date(ticket.deployedAt).toISOString()}`);
   }
+  if (ticket.startBlock != null) lines.push(`Cannot begin: ${ticket.startBlock.en}`);
   if (ticket.beginFailure !== null) {
     lines.push(`Its work could not begin: ${ticket.beginFailure}`);
   }

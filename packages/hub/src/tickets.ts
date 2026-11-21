@@ -640,6 +640,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateTicketTopic = connection.prepare("UPDATE tickets SET conversation_id = ? WHERE id = ?");
   const selectIssues = connection.prepare("SELECT * FROM ticket_issues WHERE ticket_id = ? ORDER BY position");
   const selectWaits = connection.prepare("SELECT waits_for, deployment, waived_at FROM ticket_waits WHERE ticket_id = ? ORDER BY waits_for");
+  const selectStartBlock = connection.prepare("SELECT value FROM hub_settings WHERE key = ?");
   const selectBegin = connection.prepare("SELECT failure FROM ticket_begins WHERE ticket_id = ? AND failed_at IS NOT NULL AND done_at IS NULL");
   const selectMoves = connection.prepare("SELECT * FROM ticket_moves WHERE ticket_id = ? ORDER BY seq");
   const selectAttempt = connection.prepare("SELECT * FROM ticket_attempts WHERE ticket_id = ? ORDER BY attempt DESC LIMIT 1");
@@ -813,6 +814,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       waits,
       deployedAt: value.deployed_at,
       beginFailure: begin === undefined ? null : BeginRow.parse(begin).failure,
+      startBlock: value.state === "waiting" ? z.object({ en: z.string(), zh: z.string() }).nullable().catch(null).parse(parsedJson((selectStartBlock.get(`start_block:${value.id}`) as { value: string } | undefined)?.value ?? "null")) : null,
       stopReason: pair(value.stop_reason_en, value.stop_reason_zh),
       joinedInto: value.joined_into,
       repairs,
