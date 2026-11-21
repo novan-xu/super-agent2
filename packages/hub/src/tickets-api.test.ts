@@ -160,7 +160,6 @@ describe("the brain's ticket tools", () => {
       "file_issue",
       "open_ticket",
       "open_task_ticket",
-      "propose_light_task",
       "start_light_task",
       "answer_light_task",
       "list_tickets",

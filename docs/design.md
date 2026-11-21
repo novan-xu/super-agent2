@@ -360,19 +360,19 @@ A task ticket can be arranged after a code chain and take that chain's final mer
 ### Light tasks
 
 Light tasks cover everyday prose, routine machine operations and Agent_wring work in 日常, along with operations for a repository that can be done in scratch in 代码.
-Use `project` in `propose_light_task` for operations concerning a repository's secrets, service parameters or configuration.
+Use `project` in `start_light_task` for operations concerning a repository's secrets, service parameters or configuration.
 The active topic must already belong to the project or be eligible to move there when the work starts.
-The brain posts a short confirmation using `propose_light_task` and dispatches using `start_light_task` after the owner agrees in words.
-The hub checks that the proposal is current, is younger than 24 hours and precedes an owner message taken into the active turn of the same topic.
-The brain interprets the owner's words and asks again if the scope changes.
-A proposal can dispatch once.
+The brain calls `start_light_task` as soon as it understands the request and acknowledges the work in one short line.
+If the scope or material is unclear, it asks an ordinary question first.
+The hub requires an owner message from the same topic in the active turn and permits multiple distinct tasks in that turn.
+A repeated identical call in the same turn returns the same task.
 Light tasks are standalone and use the existing task ticket, daily code, runner, scratch folder, work events and provider fallback internally.
-The hub chooses the machine, model and effort from the usual defaults and starts an approved task when a suitable machine is available.
+The hub chooses the machine, model and effort from the usual defaults and starts the task when a suitable machine is available.
 An owner can request an engine or stop the worker in the conversation.
 Code changes always use issue chains.
 Deployments, operations that need a checkout and explicit requests for a ticket use visible tickets.
 
-The conversation shows the confirmation, any worker question and the final result, failure or stop.
+The conversation shows any worker question and the final result, failure or stop.
 The workbench, waiting list and ticket history omit light tasks.
 A worker can write a question to its runner and pause until the brain relays the owner's original later message and attachments from the same topic.
 The brain can guide retries privately within the existing retry limit.

@@ -3723,3 +3723,14 @@ Streaming larger files was an alternative, but would require a separate resource
 - **Why:** The last runner report is not a heartbeat and may be old even when the machine was connected before the hub stopped.
   Treating it as a disconnect time would cause false alerts during an ordinary hub restart.
 - **Other options:** Count from the last report, which can be stale, or suppress offline alerts until a machine reconnects once.
+
+## 2026-11-20 — Direct light tasks
+
+- **Chosen:** Start light tasks in the owner request turn once the brain understands the work, require an owner message in that turn, and leave old pending proposals unused.
+  Scheduled tasks retain their separate confirmation flow.
+- **Why:** Clear everyday requests should start without an extra round, while hub notices alone must not authorize work.
+- **Other options:** Retain the confirmation round or allow old proposals to start without a fresh request.
+
+- **Chosen:** Deduplicate identical requests within a turn in hub memory, and use `ownerEngine` for an explicit provider override while retaining `engine` for the operation default.
+- **Why:** Retries during a running turn should not duplicate work, and the two engine choices have different meanings.
+- **Other options:** Persist deduplication across hub restarts, or make callers distinguish choices using a different schema.

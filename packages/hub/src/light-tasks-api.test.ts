@@ -13,7 +13,6 @@ import { startTestHub } from "./testing/http.js";
 const writing = {
   title: { en: "Write an email", zh: "写一封邮件" },
   summary: { en: "Draft a thank-you email", zh: "起草感谢邮件" },
-  confirmation: "我来起草一封感谢邮件，可以吗？",
   task: "Write a short thank-you email in English.",
   kind: "writing",
   reason: { en: "A short draft", zh: "简短的草稿" },
@@ -84,23 +83,11 @@ function owner(topic: string, message: string): string {
   return entry.id;
 }
 
-async function proposed(brain: BrainLink, topic: string, args: Record<string, unknown> = writing): Promise<string> {
+async function agreed(brain: BrainLink, topic: string, args: Record<string, unknown> = writing) {
   const request = turn(brain, topic, [owner(topic, "帮我处理这件事")]);
-  const result = await request.call("propose_light_task", args);
+  const result = await request.call("start_light_task", args);
   expect(result.isError, result.text).toBe(false);
   request.finish();
-  const confirmation = hub.conversations.entries(topic).findLast((entry) => entry.kind === "text");
-  if (confirmation === undefined) throw new Error("The confirmation was not shown");
-  expect(result.text).toContain(confirmation.id);
-  return confirmation.id;
-}
-
-async function agreed(brain: BrainLink, topic: string, args?: Record<string, unknown>) {
-  const proposal = await proposed(brain, topic, args);
-  const agreement = turn(brain, topic, [owner(topic, "好")]);
-  const result = await agreement.call("start_light_task", { proposal });
-  expect(result.isError, result.text).toBe(false);
-  agreement.finish();
   const ticket = hub.tickets.list().find((candidate) => candidate.conversation === topic && candidate.light !== undefined);
   if (ticket === undefined) throw new Error("The light task was not opened");
   return ticket;
@@ -136,39 +123,28 @@ function entries(topic: string, project?: string) {
     .filter((item) => item.topic.id === topic).map((item) => item.entry);
 }
 
-describe("confirmed light tasks", () => {
-  it("requires newer owner input taken into the current turn, enforces topic scope, and expires the proposal", async () => {
+describe("light tasks", () => {
+  it("requires an owner message in the active turn and starts multiple distinct requests without confirmation", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
-    const proposal = await proposed(link, topic);
     const synthetic = turn(link, topic);
-    const refused = await synthetic.call("start_light_task", { proposal });
-    expect(refused).toMatchObject({ isError: true, text: expect.stringContaining("newer owner message") });
+    expect(await synthetic.call("start_light_task", writing)).toMatchObject({ isError: true, text: expect.stringContaining("owner message") });
     synthetic.finish();
-
-    const newMessage = owner(topic, "好");
-    const unrelated = turn(link, topic);
-    expect((await unrelated.call("start_light_task", { proposal })).isError).toBe(true);
-    unrelated.finish();
-
-    const another = hub.conversations.create().id;
-    const wrong = turn(link, another, [owner(another, "好")]);
-    expect((await wrong.call("start_light_task", { proposal })).isError).toBe(true);
-    wrong.finish();
-
-    clock.advance(24 * 60 * 60 * 1000 + 1);
-    const answer = turn(link, topic, [newMessage]);
-    expect(await answer.call("start_light_task", { proposal })).toMatchObject({ isError: true, text: expect.stringContaining("expired") });
-    answer.finish();
-    expect(hub.tickets.list()).toEqual([]);
+    const request = turn(link, topic, [owner(topic, "处理两件事")]);
+    expect((await request.call("start_light_task", writing)).isError).toBe(false);
+    expect((await request.call("start_light_task", writing)).isError).toBe(false);
+    expect((await request.call("start_light_task", { ...writing, task: "Write another email." })).isError).toBe(false);
+    request.finish();
+    expect(hub.tickets.list()).toHaveLength(2);
+    expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner"]);
   });
 
   it("rejects checkout and deployment inputs and leaves the ordinary task flow available", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
     const request = turn(link, topic, [owner(topic, "处理仓库")]);
-    expect((await request.call("propose_light_task", { ...writing, repository: "owner/repository" })).isError).toBe(true);
-    expect((await request.call("propose_light_task", { ...operation, project: "owner/repository", deploy: true })).isError).toBe(true);
+    expect((await request.call("start_light_task", { ...writing, repository: "owner/repository" })).isError).toBe(true);
+    expect((await request.call("start_light_task", { ...operation, project: "owner/repository", deploy: true })).isError).toBe(true);
     const normal = await request.call("open_task_ticket", { title: writing.title, summary: writing.summary, task: writing.task, kind: "writing" });
     expect(normal.isError, normal.text).toBe(false);
     expect(hub.waiting.cards()).toMatchObject([{ kind: "start" }]);
@@ -178,13 +154,13 @@ describe("confirmed light tasks", () => {
     const code = hub.conversations.create().id;
     const scope = turn(link, code, [owner(code, "在这个仓库部署")]);
     expect((await scope.call("set_topic_repository", { repository: "owner/repository" })).isError).toBe(false);
-    expect(await scope.call("propose_light_task", writing)).toMatchObject({ isError: true, text: expect.stringContaining("daily topic") });
+    expect(await scope.call("start_light_task", writing)).toMatchObject({ isError: true, text: expect.stringContaining("daily topic") });
     scope.finish();
   });
 
   it.each([false, true])("quietly delivers a project operation in its repository topic (already assigned: %s)", async (assigned) => {
     const project = "owner/repository";
-    const { link, inputs } = connectBrain();
+    const { link } = connectBrain();
     const run = connectRunner();
     const topic = hub.conversations.create().id;
     if (assigned) {
@@ -192,14 +168,10 @@ describe("confirmed light tasks", () => {
       expect((await scope.call("set_topic_repository", { repository: project })).isError).toBe(false);
       scope.finish();
     }
-    const proposal = await proposed(link, topic, { ...operation, mode: "transfer", project });
-    expect(hub.conversations.get(topic)?.repository).toBe(assigned ? project : null);
-    const approval = owner(topic, "好");
-    expect(inputs.at(-1)?.text).toContain(proposal);
-    const agreement = turn(link, topic, [approval]);
-    expect((await agreement.call("start_light_task", { proposal })).isError).toBe(false);
-    expect((await agreement.call("start_light_task", { proposal })).isError).toBe(false);
-    agreement.finish();
+    const request = turn(link, topic, [owner(topic, "处理仓库配置")]);
+    expect((await request.call("start_light_task", { ...operation, mode: "transfer", project })).isError).toBe(false);
+    expect((await request.call("start_light_task", { ...operation, mode: "transfer", project })).isError).toBe(false);
+    request.finish();
     expect(hub.conversations.get(topic)?.repository).toBe(project);
     const sends = run.sent.filter((message) => message.type === "work.task");
     expect(sends).toMatchObject([{ task: { light: true, checkout: null, deploys: false, engine: "codex", environment: {} } }]);
@@ -212,25 +184,22 @@ describe("confirmed light tasks", () => {
     expect(hub.waiting.cards()).toEqual([]);
   });
 
-  it("refuses to dispatch when conflicting work was filed after the proposal", async () => {
+  it("refuses a project task when conflicting work was filed in the same topic", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
-    const proposal = await proposed(link, topic, { ...operation, project: "owner/repository" });
-    const agreement = turn(link, topic, [owner(topic, "好")]);
-    expect((await agreement.call("open_task_ticket", { title: writing.title, summary: writing.summary, task: writing.task, kind: "writing" })).isError).toBe(false);
-    expect((await agreement.call("start_light_task", { proposal })).isError).toBe(true);
-    agreement.finish();
+    const request = turn(link, topic, [owner(topic, "处理这些工作")]);
+    expect((await request.call("open_task_ticket", { title: writing.title, summary: writing.summary, task: writing.task, kind: "writing" })).isError).toBe(false);
+    expect((await request.call("start_light_task", { ...operation, project: "owner/repository" })).isError).toBe(true);
+    request.finish();
     expect(hub.conversations.get(topic)?.repository).toBeNull();
-    expect(hub.tickets.list().map((ticket) => ticket.light)).toEqual([undefined]);
   });
 
   it("waits offline, starts once when a runner returns, and delivers text only in the topic", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;
-    const proposal = await proposed(link, topic);
-    const answer = turn(link, topic, [owner(topic, "好")]);
-    expect(await answer.call("start_light_task", { proposal })).toMatchObject({ isError: false, text: expect.stringContaining("is waiting") });
-    expect((await answer.call("start_light_task", { proposal })).isError).toBe(false);
+    const answer = turn(link, topic, [owner(topic, "帮我写邮件")]);
+    expect(await answer.call("start_light_task", writing)).toMatchObject({ isError: false, text: expect.stringContaining("is waiting") });
+    expect((await answer.call("start_light_task", writing)).isError).toBe(false);
     answer.finish();
     expect(hub.tickets.list()).toMatchObject([{ light: "transfer", state: "waiting" }]);
     const run = connectRunner();
@@ -246,7 +215,7 @@ describe("confirmed light tasks", () => {
     run.show(ticket, 1, { kind: "phase", phase: "started", detail: "The worker started" });
     run.show(ticket, 1, { kind: "text", block: "progress", delta: "Internal worker output" });
     run.show(ticket, 1, { kind: "delivered", text: "Thank you for your help.", files: [], report });
-    expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner", "text", "owner", "delivery"]);
+    expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner", "delivery"]);
     expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", light: true, text: "Thank you for your help." });
     expect(hub.waiting.cards()).toEqual([]);
     expect(await (await get("/api/tickets")).json()).toEqual({ tickets: [] });
@@ -349,7 +318,7 @@ describe("confirmed light tasks", () => {
       const input = inputs.at(-1);
       if (input === undefined) throw new Error("The hub did not ask the brain to guide the retry");
       expect(input.text).toContain("guide_ticket");
-      expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner", "text", "owner"]);
+      expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner"]);
       const guidance = turn(link, topic, [input.id]);
       link.receive({ type: "text", ...guidance.scope, block: "internal", delta: "Internal failure detail" });
       expect((await guidance.call("read_ticket", { ticket: reference })).isError).toBe(false);
@@ -359,7 +328,7 @@ describe("confirmed light tasks", () => {
     }
     expect(hub.tickets.get(ticket.id)).toMatchObject({ state: "stopped", round: 3 });
     expect(entries(topic).filter((entry) => entry.kind === "notice")).toMatchObject([{ text: "任务「写一封邮件」未能完成。" }]);
-    expect(hub.conversations.detail(topic)?.turns).toHaveLength(2);
+    expect(hub.conversations.detail(topic)?.turns).toHaveLength(1);
     expect(hub.waiting.cards()).toEqual([]);
   });
 });
