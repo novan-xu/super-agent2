@@ -30,6 +30,7 @@ import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } 
 import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
 import { createLightTransfer } from "./transfer.js";
+import { isAgentWringWriting } from "./agent-wring.js";
 import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
 import { createLightTaskQuestions } from "./light-task-questions.js";
 import { createLightTasks } from "./light-tasks.js";
@@ -266,14 +267,15 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         },
         lightDelivery: (ticket, attempt, event) => {
           if (ticket.conversation === null) throw new Error("A light task must have a conversation.");
-          const delivered = ticket.light === "agent_wring" ? [] : event.files;
+          const article = isAgentWringWriting(ticket);
+          const delivered = ticket.light === "agent_wring" && !article ? [] : event.files;
           if (delivered.length > 0) {
-            storeLightTransfer(ticket.id, attempt, ticket.title.zh, event.text ?? event.report.zh, delivered,
+            storeLightTransfer(ticket.id, attempt, ticket.title.zh, article ? "" : event.text ?? event.report.zh, delivered,
               (part) => files.stagedPath(ticket.id, attempt, part), clock.now());
           }
           const entry = told.writeDelivery(ticket.conversation, {
-            ticket: ticket.id, title: ticket.title, report: event.report,
-            text: ticket.light === "agent_wring" && event.text !== null ? `${event.report.zh}\n\n${event.text}` : event.text,
+            ticket: ticket.id, title: ticket.title, report: article ? undefined : event.report,
+            text: article ? null : ticket.light === "agent_wring" && event.text !== null ? `${event.report.zh}\n\n${event.text}` : event.text,
             files: delivered.map(({ name, size }) => ({ name, size })), light: true, prompt: "",
           });
           return () => {

@@ -3591,6 +3591,7 @@ Streaming larger files was an alternative, but would require a separate resource
 - Link delivered worker files into the private transfer store after receiving them in parts.
   The two downloads share the same bytes, and deleting a transfer entry leaves its conversation download available.
   Agent_wring tasks use a library-only result mode and report the saved item in the conversation.
+  The rule for article writing was superseded by #257.
 
 ## 2026-11-20 — Put repository operations in code topics (#211)
 
@@ -3760,3 +3761,15 @@ Each order is saved only when the owner changes it.
   Daily topics accept any project label, and repository topics require their own project.
   Topic claims and manual moves ignore light tasks.
 - **Why:** Scratch work can concern a repository without changing where the owner finds the conversation or blocking a later move.
+
+## 2026-11-21 — Deliver saved Agent_wring articles as HTML (#257)
+
+- **Chosen:** The writer saves a complete HTML page in Agent_wring and returns its product ID.
+  The hub fetches each saved page through the authenticated article endpoint and publishes it as `<product_id>.html` in the topic and transfer list.
+  The topic and transfer list show the title and files, and the ticket keeps the worker's report.
+- **Why:** The owner can open the finished article directly, and the library copy is the source of each delivered file.
+- **Other options:** Accept an export file from the worker or publish the worker's summary in the topic.
+
+- **Chosen:** Apply the existing HTML preview size limit to the fetched pages and deliver the set only after all pages are ready.
+- **Why:** Each successful delivery can be opened in the existing viewer, and any fetch failure can be retried without publishing a partial result.
+- **Other options:** Deliver oversized pages as downloads only, raise the preview limit, or publish the pages that fetched successfully.

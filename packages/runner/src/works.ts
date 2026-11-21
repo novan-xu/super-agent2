@@ -495,7 +495,7 @@ export function createWorks(options: WorksOptions): Works {
 
   const checked = async (work: Work): Promise<Checked | undefined> => {
     if (work.assignment !== undefined) {
-      const outcome = checkTaskHandback({ paths: work.paths });
+      const outcome = checkTaskHandback({ paths: work.paths, agentWringArticle: work.assignment.agentWringArticle });
       if (!outcome.ok) {
         return outcome;
       }
@@ -508,6 +508,7 @@ export function createWorks(options: WorksOptions): Works {
           text: outcome.text,
           files: [...outcome.files],
           report: outcome.report,
+          ...(outcome.products === undefined ? {} : { products: [...outcome.products] }),
           ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
         },
       };

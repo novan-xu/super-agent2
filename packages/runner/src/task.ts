@@ -189,12 +189,13 @@ export function mediaTypeOf(name: string): string {
 }
 
 export type TaskCheckOutcome =
-  | { readonly ok: true; readonly outcome: TaskOutcome; readonly text: string | null; readonly files: readonly DeliveredFile[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
+  | { readonly ok: true; readonly outcome: TaskOutcome; readonly text: string | null; readonly files: readonly DeliveredFile[]; readonly report: GeneratedText; readonly decisions: readonly Decision[]; readonly products?: readonly string[] }
   | { readonly ok: false; readonly problem: string };
 
 export interface TaskCheck {
   readonly paths: WorkPaths;
   readonly inlineBytes?: number;
+  readonly agentWringArticle?: true | undefined;
 }
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -223,12 +224,22 @@ export function checkTaskHandback(check: TaskCheck): TaskCheckOutcome {
   }
   const parsed = TaskHandback.safeParse(raw);
   if (!parsed.success) {
+    const fields = check.agentWringArticle === true
+      ? 'and may name "products" (the unique 16-character lowercase hexadecimal product IDs returned by save_article, required when done)'
+      : 'and may name "text" (a file in the output folder whose text the owner reads), "files" (a list of file names in the output folder)';
     return {
       ok: false,
-      problem: `The hand-back file ${handback} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "outcome" ("done" or "failed"), "report" with "en" in English and "zh" in Simplified Chinese, and may name "text" (a file in the output folder whose text the owner reads), "files" (a list of file names in the output folder) and "decisions" (each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh").`,
+      problem: `The hand-back file ${handback} does not have the expected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(file)"}: ${issue.message}`).join("; ")}. It needs "outcome" ("done" or "failed"), "report" with "en" in English and "zh" in Simplified Chinese, ${fields} and "decisions" (each with "chosen", "why" and "otherOptions", every one of them with "en" and "zh").`,
     };
   }
   const given = parsed.data;
+  if (check.agentWringArticle === true) {
+    if (given.outcome === "done" && given.products === undefined) {
+      return { ok: false, problem: `Write the hand-back file ${handback} again with "products" listing the product IDs returned by Agent_wring save_article.` };
+    }
+    return { ok: true, outcome: given.outcome, text: null, files: [], report: given.report, decisions: given.decisions,
+      ...(given.outcome === "done" && given.products !== undefined ? { products: given.products } : {}) };
+  }
   const names = [...(given.text === undefined || given.text === null ? [] : [given.text]), ...given.files];
   if (new Set(names).size !== names.length) {
     return { ok: false, problem: `The hand-back file ${handback} names a file twice. Each file is named once: the text file in "text", every other file in "files".` };
@@ -340,5 +351,15 @@ export function assignmentText(task: TaskAssignment, place: TaskPlace): string {
     "",
     task.materials.length === 0 ? "There is no material beyond the task text." : "Material, and where each piece comes from:",
     ...task.materials.map(materialLine),
+    ...(task.agentWringArticle === true ? [
+      "",
+      "# Agent_wring article delivery",
+      "",
+      "Read the relevant passages and the Agent_wring article guide, then author the finished article directly as a complete HTML page.",
+      "Save the page with Agent_wring's save_article tool using its html argument.",
+      'In your completed hand-back JSON, put each returned product_id once in "products", for example ["cc992985d3ce4559"].',
+      'Keep "report" to one short line in each language and omit "text" and "files".',
+      "The hub fetches the saved pages and delivers them as HTML files.",
+    ] : []),
   ].join("\n");
 }

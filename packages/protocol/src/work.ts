@@ -46,6 +46,9 @@ export const DeliveredFile = z.object({
 });
 export type DeliveredFile = z.infer<typeof DeliveredFile>;
 
+const ArticleProducts = z.array(z.string().regex(/^[0-9a-f]{16}$/)).min(1)
+  .refine((ids) => new Set(ids).size === ids.length, { message: "Each article product ID must occur once" });
+
 export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("phase"), phase: WorkPhase, detail: z.string() }),
   z.object({ kind: z.literal("session"), session: z.string().min(1) }),
@@ -78,6 +81,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     text: z.string().nullable(),
     files: z.array(DeliveredFile),
     report: GeneratedText,
+    products: ArticleProducts.optional(),
     decisions: z.array(Decision).optional(),
   }),
   z.object({ kind: z.literal("settled") }),
@@ -166,6 +170,7 @@ export type TaskCheckout = z.infer<typeof TaskCheckout>;
 export const TaskAssignment = z.object({
   ticket: Ticket,
   light: z.literal(true).optional(),
+  agentWringArticle: z.literal(true).optional(),
   ticketReference: TicketReference.optional(),
   attempt: Attempt,
   title: z.string().min(1),
@@ -350,6 +355,7 @@ export const TaskHandback = z.preprocess(
     report: GeneratedText,
     text: z.string().min(1).nullable().optional(),
     files: z.array(z.string().min(1)).default([]),
+    products: ArticleProducts.optional(),
     decisions: z.array(Decision).default([]),
   }),
 );

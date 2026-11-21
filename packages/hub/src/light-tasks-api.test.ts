@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type RequestListener, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startingEngineTable, filePartBytes, protocolVersion, ticketReference, type BrainInput, type HubToRunner, type MachineReport, type WorkEvent } from "@super-agent2/protocol";
@@ -27,9 +28,12 @@ const operation = {
 const article = {
   ...writing,
   title: { en: "Write an article from the video", zh: "根据视频写文章" },
-  task: "Search Agent_wring first, read relevant passages and the article guide, and call save_article. Report the saved item.",
+  task: "Search Agent_wring first, read relevant passages and the article guide, and save the finished HTML with save_article.",
   mode: "agent_wring",
 };
+const product = "cc992985d3ce4559";
+const otherProduct = "3e6ebf3ab533a184";
+const savedHtml = '<!doctype html><html lang="zh-CN"><title>文章</title><p>原文</p></html>';
 const report = { en: "Done", zh: "已完成" };
 const mac: MachineReport = {
   hostname: "mac", platform: "darwin", arch: "arm64", release: "1", user: "owner", slots: { total: 2, free: 2 },
@@ -46,22 +50,44 @@ let dataDir: string;
 let clock: TestClock;
 let key: SigningKey;
 let hub: Hub;
+let articleServer: Server;
+let wringUrl: string;
+let replyArticle: RequestListener;
+let articleRequests: { path: string | undefined; authorization: string | undefined }[];
+
+async function startHub() {
+  hub = await startTestHub({
+    config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock,
+    environment: {
+      HUB_EXTRA_MCP_SERVERS: JSON.stringify([{ name: "agent_wring", url: wringUrl, secret: "WRING_TOKEN", brain: true, workers: true }]),
+      WRING_TOKEN: "example-token",
+    },
+  });
+}
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "hub-light-tasks-"));
   key = await signingKey("key-1");
   clock = new TestClock();
-  hub = await startTestHub({
-    config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock,
-    environment: {
-      HUB_EXTRA_MCP_SERVERS: JSON.stringify([{ name: "Agent_wring", url: "http://worker/mcp", secret: "WRING_TOKEN", brain: true, workers: true }]),
-      WRING_TOKEN: "example-token",
-    },
+  articleRequests = [];
+  replyArticle = (_request, response) => response.writeHead(404).end();
+  articleServer = createServer((request, response) => {
+    articleRequests.push({ path: request.url, authorization: request.headers.authorization });
+    replyArticle(request, response);
   });
+  await new Promise<void>((resolve) => articleServer.listen(0, "127.0.0.1", resolve));
+  const address = articleServer.address();
+  if (address === null || typeof address === "string") throw new Error("Could not start the test article server");
+  wringUrl = `http://127.0.0.1:${address.port}/library/mcp/`;
+  await startHub();
 });
 
 afterEach(async () => {
   await hub?.close();
+  await new Promise<void>((resolve) => {
+    articleServer.close(() => resolve());
+    articleServer.closeAllConnections();
+  });
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -357,16 +383,17 @@ describe("light tasks", () => {
     const topic = hub.conversations.create().id;
     const ticket = await agreed(link, topic, operation);
     expect(run.sent).toContainEqual(expect.objectContaining({
-      type: "work.task", task: expect.objectContaining({ ticket: ticket.id, engine: "codex", extraMcp: [expect.objectContaining({ name: "Agent_wring" })] }),
+      type: "work.task", task: expect.objectContaining({ ticket: ticket.id, engine: "codex", extraMcp: [expect.objectContaining({ name: "agent_wring" })] }),
     }));
+    const libraryReport = { en: "Saved Example Video in Agent_wring", zh: "已在 Agent_wring 保存 Example Video。" };
     run.show(ticket.id, 1, {
-      kind: "delivered", text: null,
-      report: { en: "Saved Example Video in Agent_wring", zh: "已在 Agent_wring 保存 Example Video。" },
+      kind: "delivered", text: "Video is available.", report: libraryReport,
       files: [{ name: "library-export.md", size: 5, mediaType: "text/markdown" }],
     });
     expect(run.sent.some((message) => message.type === "work.file")).toBe(false);
-    expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", report: { zh: expect.stringContaining("Example Video") }, files: [] });
+    expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", text: `${libraryReport.zh}\n\nVideo is available.`, report: libraryReport, files: [] });
     expect(await (await get(transferPath)).json()).toMatchObject({ items: [] });
+    expect(articleRequests).toEqual([]);
   });
 
   it("writes Agent_wring articles on the ordered Antigravity models and hands off to a code engine when the provider is out", async () => {
@@ -375,17 +402,102 @@ describe("light tasks", () => {
     const topic = hub.conversations.create().id;
     const ticket = await agreed(link, topic, article);
     await hub.chains.idle();
-    const assignment = { task: article.task, extraMcp: [{ name: "Agent_wring", url: "http://worker/mcp", token: "example-token" }] };
+    const assignment = { task: article.task, agentWringArticle: true, extraMcp: [{ name: "agent_wring", url: wringUrl, token: "example-token" }] };
     const starts = () => run.sent.filter((message) => message.type === "work.task").map((message) => message.task);
     expect(starts()).toMatchObject([{ ...assignment, attempt: 1, engine: "antigravity", model: "gemini-4-hydrogen", effort: "high" }]);
     run.show(ticket.id, 1, { kind: "unavailable", category: "limit", reason: "Gemini quota reached", until: null, unsent: [] });
     expect(starts()[1]).toMatchObject({ ...assignment, attempt: 2, engine: "antigravity", model: "gemini-3.8-flash", effort: "high" });
     run.show(ticket.id, 2, { kind: "unavailable", category: "problem", reason: "Sign in required", until: null, unsent: [] });
     expect(starts()[2]).toMatchObject({ ...assignment, attempt: 3, engine: "codex" });
-    run.show(ticket.id, 3, { kind: "delivered", text: "Article saved.", report, files: [{ name: "draft.md", size: 5, mediaType: "text/markdown" }] });
+  });
+
+  it("retries a transient fetch and delivers only the saved HTML in the topic and transfer", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    replyArticle = (_request, response) => {
+      if (articleRequests.length === 1) response.writeHead(503).end();
+      else response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(savedHtml);
+    };
+    run.show(ticket.id, 1, { kind: "delivered", products: [product], text: "Worker summary", report, files: [{ name: "draft.md", size: 5, mediaType: "text/markdown" }] });
+
+    const name = `${product}.html`;
+    const size = Buffer.byteLength(savedHtml);
+    await expect.poll(() => entries(topic).at(-1), { timeout: 5_000 }).toMatchObject({
+      kind: "delivery", light: true, title: article.title, text: null, report: null, files: [{ name, size }],
+    });
+    expect(hub.tickets.get(ticket.id)).toMatchObject({ state: "delivered", report });
     expect(run.sent.some((message) => message.type === "work.file")).toBe(false);
-    expect(entries(topic).at(-1)).toMatchObject({ kind: "delivery", files: [] });
+    const request = { path: `/library/products/${product}/article.html`, authorization: "Bearer example-token" };
+    expect(articleRequests).toEqual([request, request]);
+    const transfer = await (await get(transferPath)).json() as { items: { files: { id: string }[] }[] };
+    expect(transfer.items).toMatchObject([{ title: article.title.zh, text: "", files: [{ name, size }] }]);
+    const id = transfer.items[0]?.files[0]?.id;
+    for (const path of [`/api/tickets/${ticket.id}/files/${name}`, `${transferPath}/files/${id}`]) {
+      const response = await get(path);
+      expect(response.status).toBe(200);
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from(savedHtml));
+    }
+    const preview = await get(`/api/tickets/${ticket.id}/files/${name}/render`);
+    expect(preview.status).toBe(200);
+    expect(await preview.text()).toBe(savedHtml);
+  });
+
+  it("ends a failed article fetch through the light-task retry flow without delivering a partial result", async () => {
+    const { link, inputs } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    replyArticle = (request, response) => {
+      if (request.url === `/library/products/${product}/article.html`) response.writeHead(200, { "content-type": "text/html" }).end(savedHtml);
+      else response.writeHead(404).end();
+    };
+    run.show(ticket.id, 1, { kind: "delivered", products: [product, otherProduct], text: "Worker summary", report, files: [] });
+
+    const reason = `Agent_wring article ${otherProduct} could not be fetched: HTTP 404`;
+    await expect.poll(() => hub.tickets.get(ticket.id), { timeout: 5_000 }).toMatchObject({
+      work: { state: "failed", failure: "lost", reason: expect.stringContaining(reason) },
+    });
+    expect(inputs.at(-1)?.text).toContain(reason);
+    expect(inputs.at(-1)?.text).toContain("guide_ticket");
+    expect(articleRequests.map(({ path }) => path)).toEqual([product, otherProduct, otherProduct, otherProduct].map((id) => `/library/products/${id}/article.html`));
+    expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner"]);
     expect(await (await get(transferPath)).json()).toMatchObject({ items: [] });
+    expect((await get(`/api/tickets/${ticket.id}/files/${product}.html`)).status).toBe(404);
+  });
+
+  it("rejects an older runner's article hand-back without a product ID", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    run.show(ticket.id, 1, { kind: "delivered", text: "Worker summary", report, files: [] });
+
+    expect(hub.tickets.get(ticket.id)).toMatchObject({ work: { state: "failed", reason: expect.stringContaining("product IDs") } });
+    expect(entries(topic).map((entry) => entry.kind)).toEqual(["owner"]);
+    expect(articleRequests).toEqual([]);
+  });
+
+  it("resumes the stored hand-back after a hub restart and delivers all saved articles without a runner", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    replyArticle = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" }).write("Partial HTML");
+    };
+    run.show(ticket.id, 1, { kind: "delivered", products: [product, otherProduct], text: null, report, files: [] });
+    await expect.poll(() => articleRequests.length).toBe(1);
+    await hub.close();
+
+    replyArticle = (_request, response) => response.writeHead(200, { "content-type": "text/html" }).end(savedHtml);
+    await startHub();
+    await expect.poll(() => entries(topic).filter((entry) => entry.kind === "delivery"), { timeout: 5_000 }).toMatchObject([{
+      files: [product, otherProduct].map((id) => ({ name: `${id}.html`, size: Buffer.byteLength(savedHtml) })), text: null, report: null,
+    }]);
+    expect(hub.tickets.get(ticket.id)).toMatchObject({ state: "delivered", work: { attempt: 1, state: "finished" } });
+    expect(await (await get(`/api/tickets/${ticket.id}/files/${product}.html`)).text()).toBe(savedHtml);
   });
 
   it("shows a worker question as a message and forwards the owner's answer once", async () => {

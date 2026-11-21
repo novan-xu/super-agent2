@@ -89,11 +89,12 @@ A text result is in whatever language the task asks for.
 ## Handing back
 
 When you are done, or know that the task cannot be done, write a JSON file at the hand-back path named in your task.
+For Agent_wring article delivery, follow the instructions in your assignment for naming saved products in the hand-back.
 
 - `outcome` is `done` when the task did what it should, or `failed` when it did not.
   A failed outcome goes back to the brain, which may guide you to try again.
 - `report` says what happened in one to a few sentences, in English (`en`) and in Simplified Chinese (`zh`): what you did, what came out of it, and anything the owner should know.
-  The owner reads the Chinese in the conversation.
+  The owner usually reads the Chinese in the conversation.
 - `text` (optional) names one UTF-8 file in the output folder whose text the owner should read as it is, for example the translated letter in `result.md`.
   It holds the result only: no preface, no remarks about what you did.
 - `files` (optional) lists other files in the output folder for the owner (a document, a spreadsheet, an image, a log), directly in the output folder, with no subfolder.

@@ -59,6 +59,20 @@ describe("a task's hand-back", () => {
     expect(checkTaskHandback({ paths: handBack({}, { outcome: "failed", report }) })).toMatchObject({ ok: true, outcome: "failed" });
   });
 
+  it.each([
+    { products: [] },
+    { products: ["../article.html"] },
+    { products: ["cc992985d3ce4559", "cc992985d3ce4559"] },
+  ])("rejects an invalid Agent_wring product list ($products)", ({ products }) => {
+    const paths = handBack({}, { report: summary, products });
+    expect(checkTaskHandback({ paths, agentWringArticle: true })).toMatchObject({ ok: false, problem: expect.stringContaining('"products"') });
+  });
+
+  it("accepts a failed Agent_wring article hand-back without product IDs", () => {
+    const paths = handBack({}, { outcome: "failed", report: summary });
+    expect(checkTaskHandback({ paths, agentWringArticle: true })).toMatchObject({ ok: true, outcome: "failed", text: null, files: [], report: summary });
+  });
+
   it("asks again for an outcome it does not know, or a report without its Chinese copy", () => {
     const wrong = checkTaskHandback({ paths: handBack({}, { outcome: "partly", report: { en: "x", zh: "好" } }) });
     expect(wrong.ok ? "" : wrong.problem).toContain('"outcome" ("done" or "failed")');

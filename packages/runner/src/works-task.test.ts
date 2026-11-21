@@ -93,6 +93,22 @@ describe("a task worker on the runner", () => {
     expect(await ended(21)).toEqual({ kind: "delivered", outcome: "done", text: null, files: [{ name: "table.xlsx", size: 5, mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }], report: summary });
   });
 
+  it("asks again for a saved Agent_wring article ID and hands back only product IDs and the report", async () => {
+    const works = start();
+    works.receive({ type: "work.task", task: writingTask(94, { light: true, agentWringArticle: true }) });
+    const handle = await programs.prompted(1);
+    expect(handle.prompts[0]).toContain("save_article tool using its html argument");
+    expect(handle.prompts[0]).toContain('put each returned product_id once in "products"');
+    writeOutput(94, {}, { report: summary });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    await programs.prompted(2, handle);
+    expect(handle.prompts[1]).toContain('"products" listing the product IDs');
+    const products = ["cc992985d3ce4559"];
+    writeOutput(94, { "draft.md": "Worker summary", "draft.html": "Unsaved HTML" }, { report: summary, text: "draft.md", files: ["draft.html"], products });
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(94)).toEqual({ kind: "delivered", outcome: "done", text: null, files: [], report: summary, products });
+  });
+
   it.each([false, true])("fails after three idle task turns, with a hand-back file appearing during the first three turns: %s", async (file) => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(73) });

@@ -6,6 +6,7 @@ import {
   activeWorkStates,
   type Attachment,
   attachmentPartBytes,
+  type DeliveredFile,
   type FetchAttachment,
   type FilePart,
   filePartBytes,
@@ -34,6 +35,7 @@ import {
   type WorkTask,
 } from "@super-agent2/protocol";
 import { z } from "zod";
+import { fetchArticle, isAgentWringWriting } from "./agent-wring.js";
 import type { Tell } from "./chains.js";
 import type { Clock } from "./clock.js";
 import type { Delivery } from "./conversations.js";
@@ -192,6 +194,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const removalsSent = new Set<string>();
   const savesSent = new Set<string>();
   const fetching = new Map<number, Fetching>();
+  const articleFetches = new Map<number, { readonly attempt: number; readonly controller: AbortController }>();
+  const agentWring = options.extraMcp?.find((server) => server.name.toLowerCase() === "agent_wring");
   const messages = createWorkerMessages(options.database, clock);
   let closed = false;
 
@@ -236,6 +240,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const insertEvent = connection.prepare("INSERT OR IGNORE INTO ticket_work_events (ticket_id, attempt, seq, at, event) VALUES (?, ?, ?, ?, ?)");
   const selectEvents = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND id > ? ORDER BY id LIMIT ?");
   const selectRecent = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? ORDER BY id DESC LIMIT ?");
+  const selectHandedBack = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? AND json_extract(event, '$.kind') = 'delivered' ORDER BY seq DESC LIMIT 1");
 
   const attemptOf = (ticket: number, attempt: number): Attempt | undefined => {
     const row = selectAttempt.get(ticket, attempt);
@@ -412,6 +417,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     return {
       ticket: ticket.id,
       ...(ticket.light === undefined ? {} : { light: true as const }),
+      ...(isAgentWringWriting(ticket) ? { agentWringArticle: true as const } : {}),
       ticketReference: ticketReference(ticket),
       attempt: attempt.attempt,
       title: ticket.title.en,
@@ -536,6 +542,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   };
 
   const forget = (ticket: number) => {
+    const articles = articleFetches.get(ticket);
+    if (articles !== undefined) {
+      articleFetches.delete(ticket);
+      articles.controller.abort();
+      files.drop(ticket, articles.attempt);
+    }
     const pending = fetching.get(ticket);
     if (pending !== undefined) {
       fetching.delete(ticket);
@@ -712,47 +724,78 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     });
   };
 
-  const complete = (id: number, pending: Fetching) => {
+  const complete = (id: number, number: number, event: DeliveredEvent) => {
     fetching.delete(id);
+    articleFetches.delete(id);
     let delivered: Ticket | undefined;
     let publish: (() => void) | undefined;
     try {
       tickets.change((writes) => {
-        const attempt = attemptOf(id, pending.attempt);
+        const attempt = attemptOf(id, number);
         if (attempt !== undefined && isActive(attempt.state)) {
-          end(id, pending.attempt, "finished", null, null);
+          end(id, number, "finished", null, null);
         }
         const ticket = writes.get(id);
         if (ticket !== undefined && ticket.form === "task" && ticket.state === "working") {
-          files.keep(id, pending.attempt, pending.event.files);
-          if (ticket.light !== undefined) publish = options.lightDelivery?.(ticket, pending.attempt, pending.event);
-          writes.setReport(id, pending.event.report);
+          files.keep(id, number, event.files);
+          if (ticket.light !== undefined) publish = options.lightDelivery?.(ticket, number, event);
+          writes.setReport(id, event.report);
           delivered = writes.move(id, "delivered");
         }
         writes.touched(id);
       });
     } catch (error) {
-      fetching.set(id, pending);
-      loseDelivery(id, pending, `The hub could not store the delivered files: ${error instanceof Error ? error.message : String(error)}`);
+      loseDelivery(id, number, `The hub could not store the delivered files: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
     publish?.();
     if (delivered !== undefined && delivered.light === undefined) {
-      handIn(delivered, pending.event);
+      handIn(delivered, event);
     }
     dispatch();
   };
 
-  const loseDelivery = (id: number, pending: Fetching, reason: string) => {
-    forget(id);
+  const loseDelivery = (id: number, number: number, reason: string) => {
+    fetching.delete(id);
+    articleFetches.delete(id);
+    files.drop(id, number);
     const ticket = tickets.get(id);
-    const attempt = attemptOf(id, pending.attempt);
+    const attempt = attemptOf(id, number);
     if (ticket === undefined || attempt === undefined || !isActive(attempt.state) || isFinal(ticket)) {
       return;
     }
     touch(id, () => end(id, attempt.attempt, "failed", "lost", reason));
     failed(ticket, attempt, "lost", reason);
     dispatch();
+  };
+
+  const fetchArticles = (id: number, attempt: number, event: DeliveredEvent) => {
+    if (closed || articleFetches.has(id)) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    articleFetches.set(id, { attempt, controller });
+    const current = () => {
+      if (signal.aborted) return false;
+      const latest = latestOf(id);
+      if (latest?.attempt === attempt && isActive(latest.state) && tickets.get(id)?.state === "working") return true;
+      forget(id);
+      return false;
+    };
+    void (async () => {
+      if (!current()) return;
+      const delivered: DeliveredFile[] = [];
+      try {
+        if (event.products === undefined) throw new Error("The worker did not hand back any Agent_wring article product IDs.");
+        if (agentWring === undefined) throw new Error("No worker MCP server named Agent_wring is configured.");
+        for (const [part, product] of event.products.entries()) {
+          delivered.push(await fetchArticle(agentWring, product, signal, (offset, bytes) => files.append(id, attempt, part, offset, bytes)));
+        }
+      } catch (error) {
+        if (current()) loseDelivery(id, attempt, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (current()) complete(id, attempt, { ...event, text: null, files: delivered });
+    })().catch((error: unknown) => log(`Agent_wring delivery failed (ticket ID ${id}, attempt ${attempt}): ${problemOf(error)}`));
   };
 
   const fetchNext = (id: number) => {
@@ -777,7 +820,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return;
       }
     }
-    complete(id, pending);
+    complete(id, pending.attempt, pending.event);
   };
 
   const fetchFrom = (id: number, attempt: number, machine: string, event: DeliveredEvent) => {
@@ -805,7 +848,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const expected = Math.min(filePartBytes, file.size - asked.offset);
     if (data === undefined || data.length === 0 || data.length > expected) {
       const why = message.problem ?? (data === undefined || data.length === 0 ? "the file ended before its size" : "it sent more than was asked for");
-      loseDelivery(message.ticket, pending, `The runner on ${machine} could not send the delivered file ${file.name} from byte ${asked.offset}: ${why}`);
+      loseDelivery(message.ticket, pending.attempt, `The runner on ${machine} could not send the delivered file ${file.name} from byte ${asked.offset}: ${why}`);
       return;
     }
     files.append(message.ticket, pending.attempt, asked.part, asked.offset, data);
@@ -851,7 +894,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     let unavailable: { readonly reason: string; readonly until: number | null; readonly unsent: readonly string[]; readonly category?: "limit" | "problem" | "overload" } | undefined;
     let handedOver = false;
     let delivered: Ticket | undefined;
-    let fetchFiles = false;
+    let fetchFiles: "runner" | "article" | undefined;
     let publish: (() => void) | undefined;
     let id = 0;
     ((): void => {
@@ -925,8 +968,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
             writes.touched(attempt.ticket_id);
             return;
           }
+          if (accepted && isAgentWringWriting(ticket)) {
+            if (live) fetchFiles = "article";
+            writes.touched(attempt.ticket_id);
+            return;
+          }
           if (accepted && ticket.light !== "agent_wring" && event.files.length > 0) {
-            fetchFiles = true;
+            fetchFiles = "runner";
             writes.touched(attempt.ticket_id);
             return;
           }
@@ -1000,8 +1048,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (delivered !== undefined && delivered.light === undefined && event.kind === "delivered") {
         handIn(delivered, event);
       }
-      if (fetchFiles && event.kind === "delivered" && event.outcome !== "failed") {
-        fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
+      if (event.kind === "delivered" && event.outcome !== "failed") {
+        if (fetchFiles === "article") fetchArticles(attempt.ticket_id, attempt.attempt, event);
+        if (fetchFiles === "runner") fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
       }
       if (told !== undefined) {
         const ticket = tickets.get(attempt.ticket_id);
@@ -1157,7 +1206,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     for (const value of selectActiveOn.all(machine)) {
       const row = Attempt.parse(value);
-      if (seen.has(`${row.ticket_id}:${row.attempt}`)) {
+      if (seen.has(`${row.ticket_id}:${row.attempt}`) || articleFetches.has(row.ticket_id)) {
         continue;
       }
       const ticket = tickets.get(row.ticket_id);
@@ -1181,6 +1230,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     for (const value of selectActiveOn.all(machine)) {
       const row = Attempt.parse(value);
+      if (tickets.get(row.ticket_id)?.light === "agent_wring") continue;
       const last = selectRecent.all(row.ticket_id, row.attempt, 1).map(storedOf)[0]?.event;
       if (last?.kind === "delivered" && last.outcome !== "failed" && last.files.length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
         fetchFrom(row.ticket_id, row.attempt, machine, last);
@@ -1762,6 +1812,14 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
     resume: () => {
       markAllUnreachable.run(clock.now());
+      for (const value of selectActive.all()) {
+        const attempt = Attempt.parse(value);
+        const ticket = tickets.get(attempt.ticket_id);
+        if (ticket?.state !== "working" || !isAgentWringWriting(ticket) || latestOf(ticket.id)?.attempt !== attempt.attempt) continue;
+        const row = selectHandedBack.get(ticket.id, attempt.attempt);
+        const event = row === undefined ? undefined : storedOf(row)?.event;
+        if (event?.kind === "delivered" && event.outcome !== "failed") fetchArticles(ticket.id, attempt.attempt, event);
+      }
       if (stopTicker === undefined && options.defaults !== undefined) {
         stopTicker = ticker(() => dispatch());
       }
@@ -1769,6 +1827,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     },
     close: () => {
       closed = true;
+      for (const pending of articleFetches.values()) pending.controller.abort();
+      articleFetches.clear();
       if (arrived.length > 0) {
         log(`Work events dropped, ${arrived.length} still queued when the work service closed (${rangesOf(arrived)}); runners resend them through work.sync`);
       }
