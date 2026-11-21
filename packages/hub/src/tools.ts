@@ -1381,7 +1381,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (results.length === 0) return { text: "No machines are registered." };
         return { text: results.map((result) => result.report === undefined
           ? `${result.name}: ${result.status}.`
-          : `${result.name}: refreshed\n${result.report.programs.map((program) => `- ${program.id}: ${program.installed ? `version ${program.version ?? "unknown"}, ${program.models.length} models${program.problem === null ? "" : `, problem: ${program.problem}`}` : "not installed"}`).join("\n")}`).join("\n") };
+          : `${result.name}: refreshed\n${result.report.programs.map((program) => `- ${program.id}: ${program.installed ? `version ${program.version ?? "unknown"}, ${program.models.length} models${program.problem === null ? "" : `, problem: ${program.problem}`}${program.update?.note == null ? "" : `, update note: ${program.update.note}`}` : "not installed"}`).join("\n")}`).join("\n") };
       }
       case "choose_defaults": {
         if (tools.defaults === undefined || tools.chains === undefined) {

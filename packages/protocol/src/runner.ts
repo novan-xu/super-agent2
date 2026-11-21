@@ -47,6 +47,7 @@ export const ProgramReport = z.object({
   models: z.array(ProgramModel),
   source: z.enum(["program", "configuration", "none"]),
   problem: z.string().nullable(),
+  update: z.object({ channel: z.string().nullable(), note: z.string().nullable() }).optional(),
 });
 export type ProgramReport = z.infer<typeof ProgramReport>;
 

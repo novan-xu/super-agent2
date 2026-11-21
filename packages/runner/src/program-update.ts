@@ -123,15 +123,16 @@ export function createProgramUpdater(options: {
     pending = false;
     options.lock(true);
     running = (async () => {
-      const unrecognised = new Set<ProgramId>();
+      const updates = new Map<ProgramId, { path: string | null; update: NonNullable<ProgramReport["update"]> }>();
       for (const program of options.report()) {
         if (closed || !program.installed) continue;
         try {
           const update = await options.steps.check(program);
           if (update === undefined) {
-            unrecognised.add(program.id);
+            updates.set(program.id, { path: program.path, update: { channel: null, note: program.id === "dsh" ? "Unrecognised installation channel; if bundled with DeepSeek Harness Desktop, update through the desktop application" : "Unrecognised installation channel; no verified safe updater" } });
             continue;
           }
+          updates.set(program.id, { path: program.path, update: { channel: update.channel ?? "npm", note: null } });
           options.log(`${program.id} auto-update channel: ${update.channel ?? "npm"}`);
           if (program.version === null || (update.latest !== null && !newer(program.version, update.latest))) continue;
           options.log(`Updating ${program.id} from ${program.version} to ${update.latest ?? "vendor stable"}`);
@@ -147,7 +148,10 @@ export function createProgramUpdater(options: {
           options.log(`Checking ${program.id} for updates failed: ${String(error)}`);
         }
       }
-      options.publish(options.report().map((entry) => unrecognised.has(entry.id) ? { ...entry, problem: [entry.problem, entry.id === "dsh" ? "auto-update: unrecognised installation channel; if bundled with DeepSeek Harness Desktop, update through the desktop application" : "auto-update: unrecognised installation channel; no verified safe updater"].filter(Boolean).join("; ") } : entry));
+      options.publish(options.report().map((entry) => {
+        const result = updates.get(entry.id);
+        return entry.installed && result !== undefined && result.path === entry.path ? { ...entry, update: result.update } : entry;
+      }));
     })().finally(() => {
       running = undefined;
       options.lock(false);

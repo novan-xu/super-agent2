@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ProgramReport } from "@super-agent2/protocol";
+import { machineChoices, type MachineStatus, type ProgramReport } from "@super-agent2/protocol";
 import { createProgramUpdater, newer, npmPackageFor, systemProgramUpdateSteps } from "./program-update.js";
 import type { Prober } from "./programs.js";
 
@@ -58,6 +58,30 @@ describe("program updates", () => {
     await expect(update?.install()).rejects.toThrow("install failed");
     expect(await readFile(join(folder, "cli.js"), "utf8")).toBe("old");
     expect(await Promise.all(shims.map((shim) => readFile(shim, "utf8")))).toEqual(contents);
+  });
+
+  it("keeps models available for an unrecognised channel and clears the note when recognised", async () => {
+    let reports: ProgramReport[] = [{ ...report, id: "dsh", models: [{ id: "deepseek-flash", efforts: ["high"] }] }];
+    let recognised = false;
+    const updater = createProgramUpdater({
+      busy: () => 0, report: () => reports, publish: (value) => { reports = value; },
+      lock: () => undefined, log: () => undefined, reprobe: async () => undefined,
+      steps: { check: async () => recognised ? { latest: "1.0.0", install: async () => undefined } : undefined },
+    });
+    updater.check();
+    await updater.settled();
+    expect(reports[0]).toMatchObject({ problem: null, update: { channel: null, note: expect.stringContaining("Unrecognised") } });
+    const status: MachineStatus = { name: "mini", online: true, createdAt: 1, lastSeenAt: 1, report: {
+      hostname: "mini", platform: "darwin", release: "1", arch: "arm64", user: "owner", slots: { total: 1, free: 1 }, programs: reports, allowances: [],
+    } };
+    expect(machineChoices([status])[0]?.engines[0]?.models).toEqual(reports[0]?.models);
+    reports[0]!.problem = "probe failed";
+    expect(machineChoices([status])[0]?.engines[0]?.models).toEqual([]);
+    recognised = true;
+    updater.check();
+    await updater.settled();
+    expect(reports[0]?.update).toEqual({ channel: "npm", note: null });
+    expect(reports[0]?.problem).toBe("probe failed");
   });
 
   it("waits for idle, locks out new work, and publishes a fresh probe after installation", async () => {

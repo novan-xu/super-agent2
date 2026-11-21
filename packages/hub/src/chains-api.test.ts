@@ -696,6 +696,7 @@ describe("start defaults", () => {
     const fresh = machineReport("win32");
     fresh.programs[0]!.version = "2.0";
     fresh.programs[0]!.problem = "listing failed";
+    fresh.programs[0]!.update = { channel: null, note: "Unrecognised channel" };
     let link: import("./runners.js").RunnerLink;
     const requested: string[] = [];
     link = running.runners.attach(machine, { send: (message) => {
@@ -708,6 +709,7 @@ describe("start defaults", () => {
     const named = await callBrainTool(running, "recheck_machines", { machine: "pc" });
     expect(named.text).toContain("pc: refreshed");
     expect(named.text).toContain("codex: version 2.0, 3 models, problem: listing failed");
+    expect(named.text).toContain("update note: Unrecognised channel");
     expect(named.text).not.toContain("offline");
     const all = await callBrainTool(running, "recheck_machines", {});
     expect(all.text).toContain("offline: not reached");
