@@ -123,10 +123,24 @@ describe("the default machine", () => {
       },
     });
     expect(machineChoices([status("mini", true), status("old", false)])).toEqual([{ name: "mini", platform: "darwin", free: 1, engines: [{ engine: "codex", models: [] }] }]);
+    const broken = status("broken", true);
+    broken.report!.programs[0]!.models = [{ id: "gpt-6.1-sol", efforts: ["high"] }];
+    broken.report!.programs[0]!.problem = "probe failed";
+    expect(machineChoices([broken])[0]!.engines[0]!.models).toEqual([]);
   });
 });
 
 describe("resolving a chain's start", () => {
+  it("chooses a fitting machine before ranking free slots and respects an explicit machine", () => {
+    const broken = { ...pc, engines: [{ engine: "codex" as const, models: [] }] };
+    const base = input({ platform: "any", brainEngine: "codex" });
+    expect(resolveStart(base, startingEngineTable, [broken, mini], available)).toMatchObject({ machine: "mini", missing: [] });
+    expect(resolveStart({ ...base, owner: { ...noOwnerChoice, machine: "pc" } }, startingEngineTable, [broken, mini], available)).toMatchObject({ machine: "pc", missing: ["model"] });
+    expect(resolveStart(base, startingEngineTable, [broken], available)).toMatchObject({ machine: null, engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: ["model"] });
+    const wrongEffort = { ...mini, engines: [{ engine: "codex" as const, models: [{ id: "gpt-6.1-sol", efforts: ["medium"] }] }] };
+    expect(resolveStart(base, startingEngineTable, [wrongEffort], available)).toMatchObject({ machine: null, missing: ["effort"] });
+  });
+
   it("offers a complex macOS chain on the Mac with the complex row of the brain's engine", () => {
     const choice = resolveStart(input(), startingEngineTable, [pc, mini], available);
     expect(choice).toEqual({
@@ -176,7 +190,7 @@ describe("resolving a chain's start", () => {
 
   it("does not refuse a default the owner did not give, and refuses what the owner gives that is not offered", () => {
     const engineOnly = { ...noOwnerChoice, engine: "dsh" as const };
-    const choice = resolveStart(input({ platform: "windows", difficulty: "mechanical" }), startingEngineTable, [pc], available);
+    const choice = resolveStart(input({ platform: "windows" }), startingEngineTable, [pc], available);
     expect(ownerGivesUnoffered(noOwnerChoice, choice, [pc])).toBe(false);
     expect(ownerGivesUnoffered(engineOnly, resolveStart(input({ platform: "windows", owner: engineOnly }), startingEngineTable, [pc], available), [pc])).toBe(false);
     expect(ownerGivesUnoffered({ ...noOwnerChoice, machine: "elsewhere" }, choice, [pc])).toBe(true);

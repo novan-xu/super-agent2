@@ -297,7 +297,10 @@ export function choiceText(choice: StartChoice): string {
   if (choice.missing.length === 0) {
     return `It would run on ${what}.`;
   }
-  return `It cannot start yet (missing: ${choice.missing.join(", ")}); so far: ${what}.`;
+  const unavailable = choice.machine === null && choice.engine !== null && choice.model !== null && choice.effort !== null
+    ? ` No online machine matching the platform offers ${choice.engine}, ${choice.model} at ${choice.effort}.`
+    : "";
+  return `It cannot start yet (missing: ${choice.missing.join(", ")}); so far: ${what}.${unavailable}`;
 }
 
 function subscriptionLine(name: string, subscription: Subscription): string {
