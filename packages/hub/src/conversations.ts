@@ -1,7 +1,8 @@
 import { ticketReferences } from "./ticket-codes.js";
 import { rearrangePrefix, rearrangePrompt } from "./rearrange.js";
+import { scheduleAccess } from "./schedule-access.js";
 import { createHash, randomUUID } from "node:crypto";
-import { text } from "@super-agent2/catalog";
+import { brainRestartPrompt, text } from "@super-agent2/catalog";
 import {
   Attachment,
   attachmentRelativePath,
@@ -433,6 +434,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const router = createTopicRouter(options.database, { clock, ...options.routing });
+  const schedules = scheduleAccess(options.database);
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
   const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
   const assignTopicRepository = connection.prepare(`
@@ -450,7 +452,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   const deletePending = connection.prepare("DELETE FROM pending_topic_inputs WHERE id = ?");
   const activeRearrange = connection.prepare(`SELECT 1 FROM conversation_entries e
     LEFT JOIN turns t ON t.id = e.turn_id
-    WHERE e.kind = 'notice' AND substr(e.prompt, 1, ?) = ? AND (e.taken = 0 OR t.state = 'running') LIMIT 1`);
+    WHERE e.kind = 'notice' AND (e.taken = 0 OR t.state = 'running')
+      AND (substr(e.prompt, 1, ?) = ? OR json_extract(e.body, '$.rearrange') = 1) LIMIT 1`);
   const selectSystem = connection.prepare("SELECT * FROM conversations WHERE system = 1");
   const selectCodeSystem = connection.prepare("SELECT * FROM conversations WHERE code_system = 1");
   const selectTurn = connection.prepare("SELECT * FROM turns WHERE id = ?");
@@ -491,7 +494,11 @@ export function createConversationService(options: ConversationServiceOptions): 
   const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
   const routingColumns = `${placement}, CASE WHEN ${originalPlacement} AND r.owner_placed = 0 THEN r.rule END AS routing_rule`;
   const selectEntry = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.id = ?`);
-  const scheduledInput = connection.prepare("SELECT id FROM schedule_runs WHERE entry = ? AND state = 'pending'");
+  const scheduledInput = connection.prepare(`SELECT id FROM schedule_runs WHERE state = 'pending'
+    AND ((entry = ? AND continuation_entry IS NULL) OR continuation_entry = ?)`);
+  const continueSchedule = connection.prepare("UPDATE schedule_runs SET continuation_entry = ? WHERE id = ?");
+  const priorHubInputs = connection.prepare(`SELECT prompt, json_extract(body, '$.restartOf') AS restart_of
+    FROM conversation_entries WHERE turn_id = ? AND taken = 1 AND kind IN ('notice', 'delivery') AND prompt IS NOT NULL ORDER BY seq`);
   const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND owner_placed IS NOT 1 AND moved_at IS NULL AND brain_moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
@@ -777,7 +784,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     const body = row.kind === "owner" ? Body.parse(JSON.parse(row.body)) : undefined;
     const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
-    const scheduleRun = row.kind === "notice" ? scheduledInput.get(row.id)?.id : undefined;
+    const scheduleRun = row.kind === "notice" ? scheduledInput.get(row.id, row.id)?.id : undefined;
     const input: BrainInput = {
       id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
       source: row.kind === "owner" ? "owner" : "hub",
@@ -843,13 +850,34 @@ export function createConversationService(options: ConversationServiceOptions): 
     return row === undefined ? undefined : toTurn(row);
   };
 
-  const endTurn = (id: string, outcome: TurnOutcome, reason: string | null, applied = false) => {
-    const turn = getTurn(id);
-    if (turn === undefined || turn.state !== "running") {
+  const writeRestartNotice = (turn: Turn): string | undefined => {
+    const inputs = z.array(z.object({ prompt: z.string(), restart_of: z.string().nullable() })).parse(priorHubInputs.all(turn.id));
+    if (inputs.some((input) => input.restart_of !== null)) return undefined;
+    const run = schedules.forTurn({ id: turn.id, conversation: turn.conversation });
+    if (run !== undefined && !run.authorized) return undefined;
+    const priorPrompts = inputs.map((input) => input.prompt);
+    const id = writeEntry({
+      conversation: turn.conversation, kind: "notice", turn: null,
+      body: { text: text("notice.brainRestartContinuation"), restartOf: turn.id, ...(priorPrompts.some((prior) => prior.startsWith(rearrangePrefix)) ? { rearrange: true } : {}) },
+      prompt: brainRestartPrompt(turn.id, priorPrompts),
+      ...(isQuiet(turn.id) ? { hidden: true } : {}),
+    });
+    if (run !== undefined) continueSchedule.run(id, run.id);
+    return id;
+  };
+
+  const endTurn = (id: string, outcome: TurnOutcome, reason: string | null, { applied = false, restarting = false } = {}) => {
+    const row = selectTurn.get(id);
+    if (row === undefined || row.state !== "running") {
       return;
     }
+    const turn = toTurn(row);
+    let continuation: string | undefined;
     connection.exec("BEGIN IMMEDIATE");
     try {
+      if (restarting && row.ticket_writes_revoked === 0) {
+        continuation = writeRestartNotice(turn);
+      }
       if (outcome === "completed") {
         applyTitle.run(id);
       }
@@ -865,6 +893,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       throw error;
     }
     emitTurn(id);
+    if (continuation !== undefined) emitEntry(continuation);
     announce(turn.conversation);
     corrections.finishOfflineMerges();
   };
@@ -917,7 +946,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         let resumedModel: string | null = null;
         for (const turn of selectRunningTurns.all().map(toTurn)) {
           if (!running.has(`${turn.conversation}\n${turn.id}`)) {
-            endTurn(turn.id, "interrupted", brainRestartedReason);
+            endTurn(turn.id, "interrupted", brainRestartedReason, { restarting: true });
           } else if (turn.model?.trim()) {
             resumedModel = turn.model;
           }
@@ -943,14 +972,21 @@ export function createConversationService(options: ConversationServiceOptions): 
         if (topic === undefined || topic.mergedInto !== undefined || getTurn(message.turn) !== undefined) {
           return;
         }
-        insertTurn.run(message.turn, message.conversation, message.provider, message.model, clock.now());
-        rememberTurnModel(message.model);
-        for (const input of message.inputs) {
-          const entry = markTaken.get(message.turn, input, message.conversation);
-          if (entry !== undefined) {
-            emitEntry(z.string().parse(entry["id"]));
+        const entries: string[] = [];
+        connection.exec("BEGIN IMMEDIATE");
+        try {
+          insertTurn.run(message.turn, message.conversation, message.provider, message.model, clock.now());
+          for (const input of message.inputs) {
+            const entry = markTaken.get(message.turn, input, message.conversation);
+            if (entry !== undefined) entries.push(z.string().parse(entry["id"]));
           }
+          connection.exec("COMMIT");
+        } catch (error) {
+          connection.exec("ROLLBACK");
+          throw error;
         }
+        rememberTurnModel(message.model);
+        for (const entry of entries) emitEntry(entry);
         emitTurn(message.turn);
         if (!isQuiet(message.turn)) updateConversation(message.conversation, { state: "working", provider: message.provider });
         return;
@@ -1062,7 +1098,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       case "turn.finished": {
         if (known(message.conversation, message.turn)) {
-          endTurn(message.turn, message.outcome, message.reason, message.applied ?? message.outcome === "completed");
+          endTurn(message.turn, message.outcome, message.reason, { applied: message.applied ?? message.outcome === "completed" });
         }
         return;
       }

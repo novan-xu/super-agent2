@@ -138,6 +138,7 @@ export const messages = {
   "turn.reason.brainRestarted": "大脑在这一轮结束前重启了，这一轮被中断",
   "turn.reason.brainAbsent": "大脑没有连接，这一轮被中断",
   "turn.reason.noProvider": "没有可用的模型：{detail}",
+  "notice.brainRestartContinuation": "大脑重连后自动继续",
   "notice.providerChanged": "{from} 暂时不可用（{reason}），改由 {to} 接手",
   "notice.heldOutcome": "等你确认的命令有了结果（{state}）：{command}",
 

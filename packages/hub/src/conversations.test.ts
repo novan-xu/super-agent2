@@ -9,6 +9,7 @@ import { brainLinkPath, brainToolsPath, ConversationList, ConversationResponse, 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
+import { brainAbsentReason, brainRestartedReason } from "./conversations.js";
 import { openDatabase } from "./database.js";
 import type { Hub } from "./hub.js";
 import { migrations } from "./migrations.js";
@@ -134,6 +135,135 @@ function connect(running: Hub) {
   link.receive({ type: "hello", protocol: protocolVersion, running: [] });
   return { link, messages };
 }
+
+describe("continuing after a brain restart", () => {
+  const restartPrompt = expect.stringContaining("Check the current state of the relevant tickets, issues, and commands before acting");
+  const status = messages["notice.brainRestartContinuation"];
+
+  it("interrupts the old turn and delivers a continuation after waiting owner input", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const { id: conversation } = service.create();
+    const first = connect(hub);
+    const request = service.send(conversation, "Check the deployment status")!;
+    const original = { conversation, turn: "original" };
+    first.link.receive({ type: "turn.started", ...original, provider: "gpt", model: "test", inputs: [request.id] });
+    first.link.receive({ type: "text", ...original, block: "reply", delta: "I checked the main branch." });
+    first.link.receive({ type: "hello", protocol: protocolVersion, running: [original] });
+    expect(service.detail(conversation)?.turns).toMatchObject([{ id: original.turn, state: "running" }]);
+    first.link.detach();
+    const waiting = service.send(conversation, "Also check the latest build")!;
+
+    const second = connect(hub);
+    const inputs = second.messages.filter((message) => message.type === "input");
+    expect(inputs).toMatchObject([
+      { conversation, input: { source: "owner", id: waiting.id } },
+      { conversation, input: { source: "hub", text: restartPrompt } },
+    ]);
+    const continuation = inputs[1]!.input;
+    expect(continuation.text).toContain(original.turn);
+    expect(service.entries(conversation).at(-1)).toMatchObject({ id: continuation.id, kind: "notice", text: status });
+
+    const retry = { conversation, turn: "retry" };
+    second.link.receive({ type: "turn.started", ...retry, provider: "gpt", model: "test", inputs: [waiting.id, continuation.id] });
+    expect(service.detail(conversation)?.turns).toMatchObject([
+      { id: original.turn, state: "interrupted", reason: brainRestartedReason },
+      { id: retry.turn, state: "running" },
+    ]);
+    second.link.receive({ type: "prepare", request: "retry-context", conversation, provider: "gpt", fresh: false, seed: true, exclude: [waiting.id, continuation.id] });
+    expect(second.messages.at(-1)).toMatchObject({ type: "prepared", seed: { turns: [[
+      { kind: "owner", text: request.text }, { kind: "text", text: "I checked the main branch." },
+    ]] } });
+    second.link.receive({ type: "text", ...retry, block: "reply", delta: "The latest build passed." });
+    second.link.receive({ type: "turn.finished", ...retry, outcome: "completed", reason: null });
+    expect(service.entries(conversation).at(-1)).toMatchObject({ kind: "text", turn: retry.turn, text: "The latest build passed." });
+    expect(connect(hub).messages.filter((message) => message.type === "input")).toEqual([]);
+  });
+
+  it.each(["turn.started", "input.taken"] as const)("caps recovery once the continuation is taken by %s", async (taken) => {
+    const firstHub = await start();
+    const { id: conversation } = firstHub.conversations.create();
+    const first = connect(firstHub);
+    const original = firstHub.conversations.send(conversation, "Check the deployment status")!;
+    first.link.receive({ type: "turn.started", conversation, turn: "original", provider: "gpt", model: "test", inputs: [original.id] });
+    const second = connect(firstHub);
+    const continuation = second.messages.find((message) => message.type === "input")?.input;
+    expect(continuation).toMatchObject({ source: "hub", text: restartPrompt });
+    await firstHub.close();
+
+    const secondHub = await start();
+    const third = connect(secondHub);
+    expect(third.messages.filter((message) => message.type === "input")).toMatchObject([{ conversation, input: continuation }]);
+    const retry = { conversation, turn: "retry" };
+    third.link.receive({ type: "turn.started", ...retry, provider: "gpt", model: "test", inputs: taken === "turn.started" ? [continuation!.id] : [] });
+    if (taken === "input.taken") third.link.receive({ type: taken, ...retry, input: continuation!.id });
+    expect(connect(secondHub).messages.filter((message) => message.type === "input")).toEqual([]);
+    expect(secondHub.conversations.detail(conversation)?.turns).toMatchObject([
+      { id: "original", state: "interrupted", reason: brainRestartedReason },
+      { id: retry.turn, state: "interrupted", reason: brainRestartedReason },
+    ]);
+    expect(secondHub.conversations.entries(conversation).filter((entry) => entry.kind === "notice")).toHaveLength(1);
+  });
+
+  it.each(["acknowledged", "lost acknowledgment", "offline"] as const)("skips an owner stop when it is %s", async (stop) => {
+    const hub = await start();
+    const service = hub.conversations;
+    const { id: conversation } = service.create();
+    const first = connect(hub);
+    const request = service.send(conversation, "Check the deployment status")!;
+    const original = { conversation, turn: "stopped" };
+    first.link.receive({ type: "turn.started", ...original, provider: "gpt", model: "test", inputs: [request.id] });
+    if (stop === "offline") first.link.detach();
+    service.interrupt(conversation);
+    if (stop !== "offline") expect(first.messages).toContainEqual({ type: "interrupt", conversation });
+    if (stop === "acknowledged") first.link.receive({ type: "turn.finished", ...original, outcome: "interrupted", reason: null });
+
+    expect(connect(hub).messages.filter((message) => message.type === "input")).toEqual([]);
+    expect(service.detail(conversation)?.turns).toMatchObject([{
+      id: original.turn, state: "interrupted", reason: stop === "offline" ? brainAbsentReason : stop === "lost acknowledgment" ? brainRestartedReason : null,
+    }]);
+    expect(service.entries(conversation).map((entry) => entry.id)).toEqual([request.id]);
+  });
+
+  it("retains the context and silence of a hidden hub input", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const title = { en: "Translate a notice", zh: "翻译一则通知" };
+    const ticket = hub.tickets.open({ form: "task", light: "transfer", kind: "writing", repository: null, issues: [], title, summary: title,
+      conversation: service.create().id, task: { task: title.en, materials: [] } });
+    const first = connect(hub);
+    const conversation = service.tell(ticket.id, "Internal notice", "Process this light ticket result.");
+    const input = first.messages.find((message) => message.type === "input")!.input;
+    first.link.receive({ type: "turn.started", conversation, turn: "quiet", provider: "gpt", model: "test", inputs: [input.id] });
+
+    const second = connect(hub);
+    const resume = second.messages.find((message) => message.type === "input")!.input;
+    expect(resume.text).toContain(input.text);
+    const retry = { conversation, turn: "quiet-retry" };
+    second.link.receive({ type: "turn.started", ...retry, provider: "gpt", model: "test", inputs: [resume.id] });
+    second.link.receive({ type: "text", ...retry, block: "reply", delta: "Internal reply" });
+    expect(service.detail(conversation)).toMatchObject({ turns: [], entries: [] });
+  });
+
+  it("keeps a workbench rearrangement serialized through the continuation", async () => {
+    const hub = await start();
+    const service = hub.conversations;
+    const first = connect(hub);
+    const conversation = service.rearrange(null)!.id;
+    const input = first.messages.find((message) => message.type === "input")!.input;
+    first.link.receive({ type: "turn.started", conversation, turn: "rearrange", provider: "gpt", model: "test", inputs: [input.id] });
+
+    const second = connect(hub);
+    const resume = second.messages.find((message) => message.type === "input")!.input;
+    expect(resume.text).toContain(input.text);
+    expect(service.rearrange(null)).toBeUndefined();
+    const retry = { conversation, turn: "rearrange-retry" };
+    second.link.receive({ type: "turn.started", ...retry, provider: "gpt", model: "test", inputs: [resume.id] });
+    expect(service.rearrange(null)).toBeUndefined();
+    second.link.receive({ type: "turn.finished", ...retry, outcome: "completed", reason: null });
+    expect(service.rearrange(null)).toBeDefined();
+  });
+});
 
 describe("workbench rearrangement", () => {
   it("authenticates, scopes, delivers and serializes rearrangement turns", async () => {
