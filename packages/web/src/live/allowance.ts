@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import { type AllowanceProgram, type AllowanceReport, type AllowanceWindow, allowancePrograms, type Subscription } from "@super-agent2/protocol";
 
 export type Tone = "ok" | "warn" | "bad" | "unknown";
@@ -56,8 +57,8 @@ export function providersOf(report: AllowanceReport | null, now = 0): ProviderVi
     const percent = cost?.amount != null && cost.budget != null && cost.currency === "USD" ? cost.amount / cost.budget * 100 : null;
     const apiTone = cost?.state === "unknown" ? "unknown" : usageTone(percent);
     const api = cost === undefined ? undefined : {
-      label: cost.state === "unknown" ? `API 本月 未知${value === null ? "" : ` (${value} · ${new Date(cost.readAt!).toLocaleString()})`}` : `API 本月 ${value}${percent === null ? "" : ` / ${currency("USD", cost.budget!)}`}`,
-      detail: percent === null || cost.state === "unknown" ? null : `剩余 ${currency("USD", Math.max(0, cost.budget! - cost.amount!))} · 已用 ${Math.round(percent)}%`,
+      label: cost.state === "unknown" ? `${text("allowance.apiUnknown")}${value === null ? "" : ` (${value} · ${new Date(cost.readAt!).toLocaleString()})`}` : text("allowance.apiMonth", { amount: `${value}${percent === null ? "" : ` / ${currency("USD", cost.budget!)}`}` }),
+      detail: percent === null || cost.state === "unknown" ? null : text("allowance.apiRemaining", { amount: currency("USD", Math.max(0, cost.budget! - cost.amount!)), percent: Math.round(percent) }),
       tone: apiTone,
       compact: cost.state === "unknown" ? "API ?" : percent === null ? `API ${value}` : `API ${Math.round(percent)}%`,
     };

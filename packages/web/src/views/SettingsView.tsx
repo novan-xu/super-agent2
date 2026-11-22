@@ -828,7 +828,7 @@ function OpenAIBudget({ budget }: { readonly budget: number | null }) {
       setError(false); setSaved(true);
     } catch { setError(true); setSaved(false); }
   };
-  return <section className="section"><form onSubmit={(event) => void save(event)}><label>OpenAI API 月预算 (USD) <input type="number" min="0.01" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} /></label> <button type="submit">保存</button>{error ? <span role="alert">保存失败，请输入正数或留空</span> : saved ? <span role="status">已保存</span> : null}</form></section>;
+  return <section className="section"><form onSubmit={(event) => void save(event)}><label>{text("usage.openaiBudget")} <input type="number" min="0.01" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} /></label> <button type="submit">{text("usage.budgetSave")}</button>{error ? <span role="alert">{text("usage.budgetError")}</span> : saved ? <span role="status">{text("usage.budgetSaved")}</span> : null}</form></section>;
 }
 
 function UsageSection({ budget }: { readonly budget: number | null }) {
