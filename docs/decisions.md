@@ -245,7 +245,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   A count is a placeholder (`{count} 项`): Chinese has no plural forms, so there are none here either.
   There is no fallback language and no lookup that can miss at run time.
   The keys for states, hold answers and refusals are the protocol's own enum values, so the page reaches them with `command.state.${state}`.
-  Its tests require every message to hold Chinese and no other English, apart from `Super-agent2`, `hub` and `GitHub`, and the hub's tests require a key for every command state, hold answer and refusal.
+  Its tests require every message to hold Chinese and no other English, apart from `Super Agent`, `hub` and `GitHub`, and the hub's tests require a key for every command state, hold answer and refusal.
 - **Why:** Both the page and the hub need the same text, and `protocol` is the messages between parts, not their words.
   Flat keys need no path type or cast.
   Seeding only what exists (the five navigation items, the command and hold states and refusals of #3 and #4, and the product name) follows the rule not to invent labels for views that do not exist.
@@ -1478,7 +1478,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   A deployment with no such record (a first deployment) is not rolled back when it fails: it ends `failed`, saying there was nothing to roll back to.
   The brain can name the commit running now with `previous` on `deploy_repository`; it is used only while the hub has no successful deployment on record.
 - **Why:** Only the hub's record is known to be true; a rollback to a guessed commit could be worse than the failure.
-  Super-agent2 itself (#18) was deployed by hand first, which `previous` covers.
+  Super Agent itself (#18) was deployed by hand first, which `previous` covers.
 - **Other options:** Running the rollback with an empty previous commit; reading the running version from the target.
 
 ## 2026-11-17 — How a deployment runs, and what ends it
@@ -1547,7 +1547,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   Keeping the old form for an empty environment keeps every hold already waiting valid.
 - **Other options:** Dropping every hold stored before the change; letting credential names through and hiding them on the card; substituting the variables into the text the lock reads.
 
-## 2026-11-17 — Super-agent2 is deployed by a script that outlives the hub
+## 2026-11-17 — Super Agent is deployed by a script that outlives the hub
 
 - **Chosen:** The deploy script on the NAS releases a commit by itself.
   `deploy.sh begin <deployment> <commit>` records the release in `releases/d<deployment>-<commit>/` and starts it with `setsid` in a session of its own, so it survives the hub's process, the SSH session that started it and the brain; it returns once the release has recorded its process.
@@ -1563,7 +1563,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   The NAS has no `nohup`, and its `/share/Container` is a symbolic link, so the script keeps the path it was called by.
 - **Other options:** A one-off container that runs the release (it would need the Docker socket); restoring the database on every rollback, which loses what the new hub wrote; letting the hub's own rollback command run the way back, which the hub's restart would cut off; uploading the source from a PC as before.
 
-## 2026-11-17 — Super-agent2's deployment file, and why its shape did not change
+## 2026-11-17 — Super Agent's deployment file, and why its shape did not change
 
 - **Chosen:** `.superagent2/deployment.json` names the `hub` target and three commands that sign in to the NAS with the hub's key and run `deploy.sh begin|outcome|settle "$SUPERAGENT2_DEPLOYMENT" "$SUPERAGENT2_COMMIT"` of the hub's own instance, `/share/Container/${SUPERAGENT2_INSTANCE}`, which the Compose file sets in the hub's environment (a command on the `hub` target inherits it).
   The health check runs every 10 seconds for up to an hour.
@@ -1828,7 +1828,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
 ## 2026-11-17 — The build is complete, and what is left for the owner
 
 - **Chosen:** With #21 merged, every issue is built except #8, which stays open until the owner has signed in to the page and talked to the brain.
-  The live system was moved to the last commit by hand, with the first release under the scheme of #18; from here the brain can deploy Super-agent2 with `deploy_repository`.
+  The live system was moved to the last commit by hand, with the first release under the scheme of #18; from here the brain can deploy Super Agent with `deploy_repository`.
   Nothing was changed in Cloudflare: adding a machine from the page needs an Access application for the path `runner/enroll` with a Bypass policy, and runners need a Service Auth policy on the host's application.
   Both are the owner's to add.
 - **Why:** Those two rules open paths through the owner's front door, and no issue asked for them to be made without the owner.
@@ -1960,17 +1960,17 @@ Each entry says what was chosen, why, and what the other options were, so it can
 - **Chosen:** At the owner's review, the hub has no way into the NAS host.
   The `nas` target is gone, with `NAS_SSH_DESTINATION`, `NAS_SSH_PORT` and `NAS_SSH_IDENTITY` (a hub given them ignores them), the SSH script target behind it, the key's mount at `/run/superagent2/ssh`, the `host.docker.internal` host entry and `SUPERAGENT2_INSTANCE` in `deploy/compose.yaml`, and the `authorize` step and the key generation of the `secrets` step in `deploy/deploy.sh`.
   `deauthorize` stays, so an instance authorized earlier can be cleaned up, and now refuses a public key file that holds no key instead of matching every line.
-  The hub does not deploy Super-agent2: `.superagent2/deployment.json` is removed from this repository, `deploy_repository` refuses the hub's own repository (`HUB_SOURCE_REPOSITORY`) before it reads GitHub, whatever an older commit's file says, and a merge in it tells the brain that the new version waits to be deployed on the NAS, with 工单 n 已合并，Super-agent2 的新版本等你部署 as the notice.
+  The hub does not deploy Super Agent: `.superagent2/deployment.json` is removed from this repository, `deploy_repository` refuses the hub's own repository (`HUB_SOURCE_REPOSITORY`) before it reads GitHub, whatever an older commit's file says, and a merge in it tells the brain that the new version waits to be deployed on the NAS, with 工单 n 已合并，Super Agent 的新版本等你部署 as the notice.
   The owner deploys it with `deploy.sh release`, or files work for a worker, which signs in with its own machine's access; the brain then records it with `report_deployment`.
   A deployment file of any repository that names `nas` is refused with the reason that the hub cannot reach the NAS host.
   `nas` stays reserved as a machine name, so no runner can take it and turn such a file into a deployment on that runner.
   The script's `begin`, `outcome` and `settle` steps and the background release they started are removed, since only the hub called them; `release`, `rollback` and the other steps keep today's behaviour, including installing the release's own `deploy.sh` and `compose.yaml`.
   The hub's reading of an outcome line from a deployment's commands stays, as a general part of `deploy_repository` that its tool text describes.
   Runner targets, for `run_command` and for deployment files, are unchanged.
-  This overturns "How the hub reaches the NAS host", the `nas` part of "Targets, shells and stopping", "Super-agent2's deployment file, and why its shape did not change", and the hub-driven part of "Super-agent2 is deployed by a script that outlives the hub" (`begin`, `outcome`, `settle` and `setsid`); the release itself, with its backup, health check and way back, stands.
+  This overturns "How the hub reaches the NAS host", the `nas` part of "Targets, shells and stopping", "Super Agent's deployment file, and why its shape did not change", and the hub-driven part of "Super Agent is deployed by a script that outlives the hub" (`begin`, `outcome`, `settle` and `setsid`); the release itself, with its backup, health check and way back, stands.
 - **Why:** The owner's word: administrator rights inside this project's containers are intended, administrator rights over the whole NAS are not.
   `novanxu` can drive Docker for every container on the NAS, so any sign-in as that user is the whole NAS, and the brain has passwordless `sudo` in the hub's container, so whatever the container holds the brain holds.
-  Whether the brain deploys Super-agent2 matters little to the owner, since a worker can.
+  Whether the brain deploys Super Agent matters little to the owner, since a worker can.
 - **Other options:** A key that `sshd` restricts to a forced command accepting only the release's verbs, kept for the self-deployment; a NAS user without Docker rights, which could not release; keeping `nas` as a target name that is listed and always refused.
 
 ## 2026-11-17 — The memory is the owner's, in one Chinese text
@@ -2370,7 +2370,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   `after_deployment` keeps its meaning (merged and marked deployed), and a chain may also come after the deployment's ticket by number.
   `report_deployment` stays, for work deployed by other means (the owner by hand).
   The merge report now says which task ticket deploys the chain, or that none is arranged and how to open one.
-  This overturns "A ticket never deploys" in the design, "What the deployment file holds" (the `hub` and `nas` targets), "The previous version, and a first deployment", "How a deployment runs, and what ends it", "A restart of the hub during a deployment", "What a successful deployment marks deployed" (now done when the task ticket is done), "Where the owner sees deployments", "Deployments in the development harness, and what was verified", "Super-agent2's deployment file, and why its shape did not change" and the deployment parts of "The brain's reach ends at the hub's container" (`deploy_repository` refusing the hub's repository, the outcome line).
+  This overturns "A ticket never deploys" in the design, "What the deployment file holds" (the `hub` and `nas` targets), "The previous version, and a first deployment", "How a deployment runs, and what ends it", "A restart of the hub during a deployment", "What a successful deployment marks deployed" (now done when the task ticket is done), "Where the owner sees deployments", "Deployments in the development harness, and what was verified", "Super Agent's deployment file, and why its shape did not change" and the deployment parts of "The brain's reach ends at the hub's container" (`deploy_repository` refusing the hub's repository, the outcome line).
 - **Why:** The owner's words: deploying is the same as telling Codex or Claude Code to deploy the project, and a ticket needs the owner's release anyway.
   Pinning at opening is what helps the brain arrange; the runner's check is what holds when the file changed in the chain.
 - **Other options:** The brain opening the deployment after the merge (a second start); a `target` meaning a platform; refusing a deployment whose file is not on the default branch yet.
@@ -2392,7 +2392,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   A runner that can run nothing but workers is the strongest form of that.
 - **Other options:** Keeping the runner's command channel unused; keeping runner targets behind the confirmation lock.
 
-## 2026-11-17 — Super-agent2 deploys itself through a ticket
+## 2026-11-17 — Super Agent deploys itself through a ticket
 
 - **Chosen:** `.superagent2/deployment.json` is restored as a recipe: `target` `pc` (the owner's Windows PC, whose SSH alias `novan-nas-maintenance` reaches the NAS), `deploy` `ssh novan-nas-maintenance "bash /share/Container/superagent2/deploy.sh release $(git rev-parse HEAD)"` run in the checkout, `health` `deploy.sh health`, `rollback` `deploy.sh rollback`, health every 10 seconds for up to 10 minutes.
   `deploy.sh` is unchanged: the release runs in the foreground of the worker's SSH session and goes back by itself on failure.
@@ -2401,7 +2401,7 @@ Each entry says what was chosen, why, and what the other options were, so it can
   `$(...)` works in both Bash and PowerShell, the shells the workers use.
 - **Other options:** A Mac mini as the target; a recipe in words instead of commands.
 
-## 2026-11-18 — Deploy Super-agent2 from the Mac mini
+## 2026-11-18 — Deploy Super Agent from the Mac mini
 
 - **Chosen:** `.superagent2/deployment.json` names `mac-mini` as its target.
   The deploy, health and rollback commands continue to use `novan-nas-maintenance`.
@@ -3145,7 +3145,7 @@ Streaming larger files was an alternative, but would require a separate resource
 
 ## 2026-11-18 — Evaluation of routing without a model call (#139)
 
-- **Chosen:** Copy Super-agent2's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts `superagent2-hub-data` read-only, and the first Super-agent's `hub.sqlite` as a byte copy from a one-off container that mounts `superagent-hub-data` read-only.
+- **Chosen:** Copy Super Agent's live `hub.sqlite` with `VACUUM INTO` from a one-off container that mounts `superagent2-hub-data` read-only, and the first Super-agent's `hub.sqlite` as a byte copy from a one-off container that mounts `superagent-hub-data` read-only.
   Both containers use the image `superagent2-hub:current`.
 - **Why:** The NAS has no `sqlite3`; the hub image already has Node 24 with `node:sqlite`, so nothing had to be pulled.
   The first Super-agent's containers are stopped and its database had no WAL, so the file itself is consistent; the live database needs `VACUUM INTO` for a consistent copy.
@@ -3157,7 +3157,7 @@ Streaming larger files was an alternative, but would require a separate resource
 
 - **Chosen:** Do not count messages the hub would not route: answers sent with a ticket in the first Super-agent and card buttons (`开始：…`, `编排：…`, `全部开始`, `开始所选`).
   They stay in their topics' history.
-- **Why:** Such messages carry their topic; in Super-agent2 they are sent inside a topic or from a card that belongs to one.
+- **Why:** Such messages carry their topic; in Super Agent they are sent inside a topic or from a card that belongs to one.
   Counting them would measure decisions the router never makes.
 - **Other options:** Route every message; the tool also reports that, for comparison.
 
@@ -3263,7 +3263,7 @@ Streaming larger files was an alternative, but would require a separate resource
   The hub and the brain are built from one commit and deployed together, and the version did not change when these messages were added in #121.
 - **Other options:** Keep the text-only mode for a later use; raise the protocol version.
 
-- **Chosen:** Rule b also needs the message to have no attachment, in the hub and in the tool, which now reads the attachment flag of Super-agent2's messages.
+- **Chosen:** Rule b also needs the message to have no attachment, in the hub and in the tool, which now reads the attachment flag of Super Agent's messages.
 - **Why:** The issue's rule says so, and the tool has to measure the same rule; it changes none of the report's numbers.
 - **Other options:** Apply it in the hub only.
 
@@ -3820,3 +3820,9 @@ The page retains the full unsent transcript and seeds a replacement call with it
 This preserves context during reconnect without storing unfinished calls on the hub.
 Voice billing remains in OpenAI's usage dashboard because the existing settings view measures brain program usage.
 Showing calls there would require a voice-duration data model and display.
+
+## 2026-11-22 — Product name
+
+- **Chosen:** The product is named Super Agent; `super-agent2` remains the repository name and existing technical identifiers retain their names.
+- **Why:** The owner chose one consistent product name without disrupting installed systems.
+- **Other options:** Keep the old product spelling or rename technical identifiers as well.

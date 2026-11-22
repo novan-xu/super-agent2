@@ -213,7 +213,7 @@ function openTask(running: Hub): Ticket {
     form: "task",
     repository: null,
     issues: [],
-    title: { en: "Deploy Super-agent2", zh: "部署 Super-agent2" },
+    title: { en: "Deploy Super Agent", zh: "部署 Super Agent" },
     summary: { en: "Release the merged commit on the NAS", zh: "在 NAS 上发布合并后的版本" },
     kind: "operation",
     conversation: running.conversations.create().id,

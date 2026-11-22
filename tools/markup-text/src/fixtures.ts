@@ -188,7 +188,7 @@ export const flagged: Fixture[] = [
       '<html lang="zh-CN">',
       "<head>",
       '  <meta charset="utf-8">',
-      "  <title>Super-agent2</title>",
+      "  <title>Super Agent</title>",
       "</head>",
       "<body>",
       '  <div id="app" title="Home"></div>',

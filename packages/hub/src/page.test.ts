@@ -113,8 +113,8 @@ describe("the page", () => {
     const manifest = await call(running, "/manifest.webmanifest");
     expect(manifest.status).toBe(200);
     expect(manifest.headers.get("content-type")).toBe("application/manifest+json; charset=utf-8");
-    const body = (await manifest.json()) as { name: string; display: string; lang: string; icons: { src: string; purpose: string }[] };
-    expect(body).toMatchObject({ name: "Super-agent2", display: "standalone", lang: "zh-CN" });
+    const body = (await manifest.json()) as { name: string; short_name: string; display: string; lang: string; icons: { src: string; purpose: string }[] };
+    expect(body).toMatchObject({ name: "Super Agent", short_name: "Super Agent", display: "standalone", lang: "zh-CN" });
     expect(body.icons.map((entry) => entry.purpose)).toEqual(["any", "any", "maskable"]);
     expect(body.icons.every((entry) => entry.src.startsWith("/icons/"))).toBe(true);
   });

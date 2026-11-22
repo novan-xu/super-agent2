@@ -26,5 +26,5 @@
 - The worker checks health and rolls back if the new service fails to come up.
   Its success marks the affected tickets deployed and releases dependent work.
   Guide a failed deployment as you would any failed task.
-- During a Super-agent2 deployment the hub and brain may restart while the worker carries on.
+- During a Super Agent deployment the hub and brain may restart while the worker carries on.
   The report arrives when the hub is back.

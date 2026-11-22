@@ -1,5 +1,5 @@
 export const messages = {
-  "app.name": "Super-agent2",
+  "app.name": "Super Agent",
   "navigation.collapseSidebar": "\u6536\u8d77\u4fa7\u8fb9\u680f",
   "navigation.expandSidebar": "\u5c55\u5f00\u4fa7\u8fb9\u680f",
   "allowance.title": "供应商额度",

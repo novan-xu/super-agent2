@@ -328,7 +328,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
 
   const ready = (async () => {
     await client.request("initialize", {
-      clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super-agent2 brain", version: "0.0.0" },
+      clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super Agent brain", version: "0.0.0" },
       capabilities: { experimentalApi: false, optOutNotificationMethods: [] },
     });
     client.notify("initialized");
