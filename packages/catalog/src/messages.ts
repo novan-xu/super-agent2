@@ -631,7 +631,7 @@ export const messages = {
   "mail.attention": "{count} 封邮件需要处理",
   "mail.unknownSender": "发件人未知",
   "mail.noSubject": "无主题",
-  "mail.item": "• {sender}《{subject}》（{mailbox}）— {action}",
+  "mail.item": "• {sender}《{subject}》（邮箱 {mailbox}）— {action}",
   "mail.deadline": "截止时间：{deadline}。",
   "mail.reply": "建议回复。",
   "mail.skipped": "邮箱 {mailbox} 无法读取 {from} 至 {until} 的邮件，这段时间已跳过。",
