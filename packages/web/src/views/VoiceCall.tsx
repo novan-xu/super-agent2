@@ -151,10 +151,10 @@ export function VoiceCall({ scope }: { readonly scope: TopicScope }) {
           <div className="voice-header">
             <Icon name="phone" />
             <h2 id={titleId}>{text("voice.call")}</h2>
-            <span role="status">{text(`voice.phase.${phase}`)}</span>
+            <span role="status">{phase === "idle" ? null : text(`voice.phase.${phase}`)}</span>
           </div>
-          <audio ref={audio} autoPlay />
-          <div className="voice-transcript" role="log" aria-live="off" aria-label={text("voice.transcript")} ref={transcript}>
+          <audio ref={audio} />
+          <div className="voice-transcript" role={phase === "idle" ? undefined : "log"} aria-live="off" aria-label={text("voice.transcript")} ref={transcript}>
             {voiceLines(fragments).map(({ role, text: line }, index) =>
               <p key={index}><strong>{text(`voice.speaker.${role}`)}</strong><span>{line}</span></p>)}
           </div>

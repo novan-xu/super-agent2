@@ -62,7 +62,7 @@ it("shows each active call phase, orders transcript fragments and waits for conf
   const trigger = button(text("voice.call"));
   expect(trigger.disabled).toBe(false);
   expect(modal().open).toBe(false);
-  expect(status()).toBe(text("voice.phase.idle"));
+  expect(status()).toBe("");
   await click(trigger);
   expect(modal().open).toBe(true);
   expect(status()).toBe(text("voice.phase.connecting"));
@@ -86,7 +86,7 @@ it("shows each active call phase, orders transcript fragments and waits for conf
   expect(send).not.toHaveBeenCalled();
   await click(button(text("voice.confirm")));
   expect(send).toHaveBeenCalledExactlyOnceWith("call", {
-    proposal: proposal.id, transcript: "你：Mobile layout.\n\nGPT-Live：I will check.",
+    proposal: proposal.id, transcript: "你：Mobile layout.\n\nGPT 语音助手：I will check.",
   });
   expect(status()).toBe(text("voice.phase.sent"));
   expect(connect.mock.lastCall![2].aborted).toBe(true);
