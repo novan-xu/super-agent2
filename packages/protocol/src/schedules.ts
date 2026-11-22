@@ -4,9 +4,11 @@ import { RepositoryName } from "./repositories.js";
 import { TicketId, TicketState } from "./tickets.js";
 
 export const ScheduleId = z.uuid();
+export const WorkSourceName = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 export const ScheduleRecurrence = z.union([
   z.strictObject({ cron: z.string().trim().max(100).regex(/^[0-9*,/-]+(?: +[0-9*,/-]+){4}$/) }),
   z.strictObject({ at: z.number().int().positive().max(8_640_000_000_000_000) }),
+  z.strictObject({ trigger: WorkSourceName }),
 ]);
 export type ScheduleRecurrence = z.infer<typeof ScheduleRecurrence>;
 

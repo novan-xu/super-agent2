@@ -17,7 +17,7 @@ Every path the script deletes or moves is checked to be inside its own folder an
 | Source of the running version | `/share/Container/superagent2/src` (its commit in `src/.revision`); the one before it in `src.previous` |
 | Releases | `/share/Container/superagent2/releases/<id>/`: `state` (what the release did, line by line), `log`, `build.log`, `hub.sqlite` (the database backed up just before the switch) and, after a rollback that restored it, `replaced/` (the database files the failed version left). The newest five are kept. `<id>` is `manual-<time>-<commit>`; `d<deployment>-<commit>` are releases an earlier hub started |
 | Uploaded archives | `/share/Container/superagent2/incoming/<commit>.tar`, used instead of GitHub when present |
-| Secrets | `/share/Container/superagent2/secrets`: `hub.env`, `brain.env`, `tunnel.env` |
+| Secrets | `/share/Container/superagent2/secrets`: `hub.env`, `brain.env`, `tunnel.env`, `work-sources/` |
 | Project folders | `/share/Container/superagent2/projects`, mounted at the same path in the hub; the only place the lock lets a delete run unasked |
 | Docker client settings | `/share/Container/superagent2/.docker` |
 | Copies of `authorized_keys` taken before a change | `/share/Container/superagent2/backups` |
@@ -233,6 +233,32 @@ A machine added after the set-up shows as online in 设置 once its install line
 
 Not checked against the real Cloudflare: the hub's two API calls (in particular that `duration: "forever"` and `tags` are accepted and what the answer then says about expiry), that a path application's assertion carries that application's own audience tag, that the Service Token Tag selector is offered on this account, and what Cloudflare answers to a refused request (a redirect to the sign-in or a 403).
 All of this comes from Cloudflare's documentation and is exercised only against a fake in the tests and in `tools/page-dev`; if adding a machine fails, 设置 shows Cloudflare's own reason.
+
+## Internal work requests
+
+The Compose hub listens for work requests on `http://hub:8081` on the `superagent2_default` Docker network.
+Join the calling service to that network and keep the tunnel origin on port `8080`.
+Compose publishes only port `8080` to the NAS host and mounts its own `secrets/work-sources` directory read-only at `/run/superagent2/work-sources` in the hub.
+Outside Compose, set `HUB_WORK_REQUEST_PORT` and `HUB_WORK_SOURCES_DIR` together to enable the listener on the hub's `HUB_HOST`.
+Without a digest file for a source, requests for that source fail authentication.
+
+To add a service, choose a lowercase source name of up to 64 characters using letters, digits, underscores and hyphens, starting with a letter or digit.
+Generate a unique bearer token with `openssl rand -hex 32` and store it in the calling service's private secrets folder with permissions allowing only its runtime user to read it.
+Hash the token with SHA-256, excluding its trailing newline, and place the 64 lowercase hexadecimal digest in `/share/Container/superagent2/secrets/work-sources/<source>.sha256`.
+Give the hub's `node` user (UID and GID 1000 in the image) directory traversal and file read access, for example group 1000 with directory mode `0750` and digest file mode `0640`.
+Install a new digest by renaming a temporary file into place on the same filesystem.
+The hub reads the digest on each request, so replacing or removing it takes effect without restarting the hub.
+In 定时, confirm a schedule with 服务请求 as its trigger and enter the exact source name.
+
+Send `POST /work-requests/<source>` with `Authorization: Bearer <token>`, `Content-Type: application/json`, and a unique `Idempotency-Key` for each occurrence.
+The token may use 32 to 128 URL-safe characters (`A–Z`, `a–z`, `0–9`, `_` and `-`).
+The key may use up to 256 visible ASCII characters excluding commas and spaces.
+The JSON body requires `kind` (a token of up to 64 letters, digits, underscores and hyphens, starting with a letter or digit) and `text` (1 to 4,000 characters), and accepts an optional HTTP or HTTPS `link` of up to 2,048 characters.
+The hub returns `202` with `{ "id": "<request-id>" }` once it stores the request.
+Retry a transient failure with the same key and body.
+For seven days after acceptance, a valid retry returns the original ID and a different body for the same key returns `409 idempotency_conflict`.
+Missing or invalid credentials and unknown sources receive `401`, and a new request without an active schedule for its source receives `409 no_active_schedule`.
+The hub returns `429` with `Retry-After: 60` above 60 new accepted requests in a rolling minute for the source, or if a matching schedule's pending batch would exceed 60 requests or 48 KiB of serialized data.
 
 ## Service tokens and their lifetime
 

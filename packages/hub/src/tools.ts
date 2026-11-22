@@ -795,7 +795,7 @@ function scheduleDefinitions() {
   return [
     {
       name: "propose_schedule",
-      description: "Show a short Chinese confirmation with the schedule's work, timing and scope. Write the instruction in English and use five numeric cron fields in the hub time zone, or an epoch timestamp in milliseconds for one run. Supply schedule to propose replacing an existing plan. End the turn and wait for the owner's agreement in this topic.",
+      description: "Show a short Chinese confirmation with the schedule's work, trigger or timing, and scope. Write the instruction in English. Use recurrence.cron for five numeric cron fields in the hub time zone, recurrence.at for an epoch timestamp in milliseconds, or recurrence.trigger for the registered service name the owner wants to trigger the work. Supply schedule to propose replacing an existing plan. End the turn and wait for the owner's agreement in this topic.",
       inputSchema: z.toJSONSchema(ScheduleProposalArguments, { io: "input" }),
     },
     {

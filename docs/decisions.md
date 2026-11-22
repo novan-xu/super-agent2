@@ -3773,3 +3773,26 @@ Each order is saved only when the owner changes it.
 - **Chosen:** Apply the existing HTML preview size limit to the fetched pages and deliver the set only after all pages are ready.
 - **Why:** Each successful delivery can be opened in the existing viewer, and any fetch failure can be retried without publishing a partial result.
 - **Other options:** Deliver oversized pages as downloads only, raise the preview limit, or publish the pages that fetched successfully.
+
+## 2026-11-21 — Service-triggered schedules (#265)
+
+An authenticated service request supplies data for a run of every active schedule the owner confirmed for that source.
+The hub labels the payload with the source in the brain input and the owner's topic, and uses the existing scheduled-turn authorization and revision checks before starting work.
+The service determines when it has work and the brain chooses how to dispatch it within the owner's confirmed scope.
+Other options were starting a fixed worker on receipt or leaving an inbox message for the owner to dispatch.
+
+The hub keeps one durable pending batch per schedule while a prior brain turn or its worker tickets are active, or while the brain is offline.
+It returns a retryable response when the batch is full.
+This bounds follow-up turns and preserves every accepted payload, including one-off topic requests.
+Other options were dropping older payloads from a full batch or queuing a separate turn for every request.
+
+## 2026-11-21 — Internal work request authentication (#265)
+
+The hub uses a separate Docker-only listener with per-source bearer tokens verified against SHA-256 digests in a read-only mount.
+It reads the digest on each request so the operator can update it in place.
+Callers on the shared network can authenticate using credentials distinct from Cloudflare inbox sources, and the hub only needs the digest of each token.
+Other options were routing a path through the existing hub listener or issuing Cloudflare service tokens through the inbox application.
+
+The hub keeps acceptance receipts for seven days and counts new receipts against a rolling limit of 60 per minute per source.
+It requires an idempotency key to link retries to the original acceptance so a restart or lost response cannot duplicate the request or reset the rate window.
+Other options were keeping receipts indefinitely or adopting the inbox's per-process rate limit.

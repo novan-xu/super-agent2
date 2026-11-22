@@ -1070,6 +1070,27 @@ export const migrations: readonly Migration[] = [
       CREATE UNIQUE INDEX schedule_runs_continuation ON schedule_runs(continuation_entry) WHERE continuation_entry IS NOT NULL;
     `,
   },
+  {
+    version: 52,
+    sql: `
+      CREATE TABLE schedule_triggers (
+        schedule TEXT PRIMARY KEY REFERENCES schedules(id),
+        due_at INTEGER NOT NULL,
+        batch TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE work_request_receipts (
+        source TEXT NOT NULL,
+        key TEXT NOT NULL,
+        id TEXT NOT NULL,
+        body_hash TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        PRIMARY KEY (source, key)
+      ) STRICT;
+      CREATE INDEX work_request_expiration ON work_request_receipts(received_at);
+      CREATE INDEX work_request_rate ON work_request_receipts(source, received_at);
+      CREATE INDEX schedules_triggers ON schedules(json_extract(fields, '$.recurrence.trigger')) WHERE state = 'active';
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

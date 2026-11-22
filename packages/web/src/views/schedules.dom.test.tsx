@@ -41,6 +41,24 @@ function button(label: string): HTMLButtonElement {
 }
 
 describe("schedules tab", () => {
+  it("shows the service in place of a next time and edits the trigger name", async () => {
+    const triggered: Schedule = { ...schedule, recurrence: { trigger: "loom" }, nextAt: null };
+    const current = { ok: true as const, value: { timeZone: "America/New_York", schedules: [triggered] } };
+    vi.spyOn(scheduleApi, "schedules").mockResolvedValue(current);
+    const save = vi.spyOn(scheduleApi, "saveSchedule").mockResolvedValue(current);
+    await act(async () => root.render(<SchedulesView navigate={() => undefined} />));
+    expect(host.textContent).toContain("由 loom 触发");
+    expect(host.textContent).not.toContain("下次");
+    await act(async () => button("编辑").click());
+    const source = host.querySelector<HTMLInputElement>('input[name="source"]')!;
+    expect(source.value).toBe("loom");
+    expect(host.querySelector('input[type="time"]')).toBeNull();
+    source.value = "another-source";
+    expect(source.checkValidity()).toBe(true);
+    await act(async () => button("保存并确认").click());
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ recurrence: { trigger: "another-source" } }), triggered.id, triggered.revision);
+  });
+
   it("shows localized timing, links to runs, and manages schedules", async () => {
     let schedules = [schedule];
     const current = () => ({ ok: true as const, value: { timeZone: "America/New_York", schedules } });

@@ -122,6 +122,7 @@ import type { MachineAdmin } from "./machine-admin.js";
 import type { RepositoryAccounts } from "./repositories.js";
 import type { Settings } from "./settings.js";
 import { InboxMessage, InboxName, type Inbox } from "./inbox.js";
+import { isJson, parseJson, readBody } from "./http-json.js";
 
 export const healthPath = "/health";
 export const sessionPath = "/api/session";
@@ -304,11 +305,6 @@ function integerParameter(url: URL, name: string, fallback: number, maximum: num
   return Math.min(Number(text), maximum);
 }
 
-function isJson(request: IncomingMessage): boolean {
-  const type = request.headers["content-type"] ?? "";
-  return type.split(";")[0]?.trim().toLowerCase() === "application/json";
-}
-
 function withoutDefaultPort(host: string): string {
   return host.toLowerCase().replace(/:(?:80|443)$/, "");
 }
@@ -338,39 +334,12 @@ function refuseTooLarge(request: IncomingMessage, response: ServerResponse): voi
   sendJson(response, 413, { error: "too_large" });
 }
 
-function readBody(request: IncomingMessage, limit: number = largestMessageBytes): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    request.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size <= limit) {
-        chunks.push(chunk);
-      }
-    });
-    request.on("end", () => resolve(size > limit ? undefined : Buffer.concat(chunks).toString("utf8")));
-    request.on("error", () => resolve(undefined));
-  });
-}
-
 function parseDecision(text: string | undefined): HoldDecision | undefined {
   if (text === undefined) {
     return undefined;
   }
   try {
     const parsed = HoldDecision.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseJson<Schema extends z.ZodType>(text: string | undefined, schema: Schema): z.output<Schema> | undefined {
-  if (text === undefined) {
-    return undefined;
-  }
-  try {
-    const parsed = schema.safeParse(JSON.parse(text));
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
@@ -523,6 +492,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const path = pathOf(request);
     const method = request.method ?? "GET";
+    if (path === "/work-requests" || path.startsWith("/work-requests/")) {
+      request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+    }
     if (path === healthPath && (method === "GET" || method === "HEAD")) {
       const healthy = options.database.healthy();
       sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable", ...(options.version === undefined ? {} : { version: options.version }) }, method === "HEAD");

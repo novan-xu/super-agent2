@@ -391,6 +391,7 @@ Agent_wring article writing uses the Antigravity model order and code fallback, 
 
 A schedule stores a title, instructions, timing, an optional repository and work machine, and the topic that receives its results.
 Recurring schedules use numeric five-field cron in `HUB_TICKET_TIME_ZONE`.
+Service-triggered schedules use `{ "trigger": "<source>" }` and have no next run time.
 A single run uses an absolute timestamp and keeps its history after completion.
 The schedule records who confirmed its plan and when.
 
@@ -401,7 +402,7 @@ Replacing the plan uses the same flow with the schedule ID.
 `list_schedules`, `pause_schedule`, `resume_schedule` and `delete_schedule` manage existing schedules.
 The owner can also confirm a new or edited plan and manage schedules on the 定时 page.
 
-At a due time the hub records a run and posts its instruction into its topic as a scheduled input.
+At a due time or on a service trigger the hub records a run and posts its instruction into its topic as a scheduled input.
 The brain takes this input in a dedicated turn and decides what the work needs at that time.
 It can answer directly, call `run_scheduled_light_task`, open a visible task ticket, or file issues and arrange chains and deployments.
 It states defaults for any visible work in that turn.
@@ -417,6 +418,20 @@ A due time is recorded as skipped while a prior run is queued, its brain turn is
 The topic receives a short skip notice and keeps the run's output.
 Pausing, editing or deleting a plan invalidates automatic starts from its older revision.
 Work the hub already started continues under its own ticket.
+
+### Service requests
+
+The hub accepts authenticated work requests on the internal Docker listener described in [deploy.md](deploy.md#internal-work-requests).
+Each new request joins the pending batch of every active, confirmed trigger schedule bound to that source.
+The hub saves the receipt and the fan-out together in SQLite, so a retry with the same source, idempotency key and payload returns the original receipt for seven days.
+The request cannot select a schedule revision, set the machine or change the owner's instruction.
+The run input contains the confirmed instruction and a JSON block labelled as untrusted service data.
+The schedule topic shows the request content under the source name.
+
+Each schedule holds one pending batch while the brain is offline or a previous run is queued, in its brain turn or still has active worker tickets.
+The batch becomes a single run when the schedule is ready again.
+A full batch rejects new requests with a retryable response and keeps every request it accepted.
+Changing, pausing or deleting a schedule clears its pending batch and invalidates unstarted work from older revisions.
 
 ## Chains
 
@@ -781,7 +796,7 @@ Kept from it:
 
 Changed by this design:
 
-- 定时 lists each schedule with its recurrence, next run and latest outcome.
+- 定时 lists each schedule with its recurrence, next run or triggering service, and latest outcome.
   The owner can create, edit, pause, resume and delete schedules there.
   The run history links to topic messages and visible tickets, and the workbench marks tickets that came from schedules.
 - 对话 keeps a switch at the top, 代码 | 日常 | 传输.

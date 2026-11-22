@@ -6,7 +6,7 @@ import { Icon } from "../parts/icons.js";
 import type { Navigate } from "../parts/route.js";
 import { followLink } from "../parts/Shell.js";
 
-const frequencies = ["daily", "weekly", "monthly", "once", "cron"] as const;
+const frequencies = ["daily", "weekly", "monthly", "once", "cron", "trigger"] as const;
 type Frequency = (typeof frequencies)[number];
 const days = ["0", "1", "2", "3", "4", "5", "6"] as const;
 const dateTime = (at: number, timeZone: string) => new Intl.DateTimeFormat("zh-CN", {
@@ -16,6 +16,7 @@ const dateTime = (at: number, timeZone: string) => new Intl.DateTimeFormat("zh-C
 function timing(recurrence: ScheduleRecurrence): { frequency: Frequency; time: string; weekday: typeof days[number]; day: string } {
   const base = { time: "09:00", weekday: "0" as const, day: "1" };
   if ("at" in recurrence) return { ...base, frequency: "once" };
+  if ("trigger" in recurrence) return { ...base, frequency: "trigger" };
   const [minute, hour, day, month, weekday] = recurrence.cron.split(/ +/);
   if (minute === undefined || hour === undefined || month !== "*" || !/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return { ...base, frequency: "cron" };
   const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
@@ -35,6 +36,7 @@ function fieldLabel(field = "*"): string {
 
 export function recurrenceLabel(recurrence: ScheduleRecurrence, timeZone: string): string {
   if ("at" in recurrence) return text("schedule.repeat.once", { time: dateTime(recurrence.at, timeZone) });
+  if ("trigger" in recurrence) return text("schedule.repeat.trigger", { source: recurrence.trigger });
   const when = timing(recurrence);
   if (when.frequency === "daily") return text("schedule.repeat.daily", { time: when.time });
   if (when.frequency === "weekly") return text("schedule.repeat.weekly", { day: text(`schedule.weekday.${when.weekday}`), time: when.time });
@@ -64,7 +66,8 @@ function Editor({ schedule, timeZone, busy, save, cancel }: {
     const read = (key: string) => String(data.get(key) ?? "").trim();
     const [hour, minute] = time.split(":").map(Number);
     const cron = `${minute} ${hour} ${frequency === "monthly" ? read("day") : "*"} * ${frequency === "weekly" ? read("weekday") : "*"}`;
-    const recurrence = frequency === "once" ? { at: new Date(read("at")).getTime() }
+    const recurrence = frequency === "trigger" ? { trigger: read("source") }
+      : frequency === "once" ? { at: new Date(read("at")).getTime() }
       : { cron: frequency === "cron" ? read("cron") : cron };
     save({
       title: read("title"), instruction: read("instruction"), recurrence,
@@ -85,7 +88,9 @@ function Editor({ schedule, timeZone, busy, save, cancel }: {
             {frequencies.map((value) => <option key={value} value={value}>{text(`schedule.frequency.${value}`)}</option>)}
           </select>
         </label>
-        {frequency === "once" ? (
+        {frequency === "trigger" ? (
+          <label>{text("schedule.source")}<input className="field" name="source" required maxLength={64} pattern="[a-z0-9][a-z0-9_\-]{0,63}" defaultValue={"trigger" in existing ? existing.trigger : undefined} /></label>
+        ) : frequency === "once" ? (
           <label>{text("schedule.localTime")}<input className="field" name="at" type="datetime-local" required defaultValue={"at" in existing ? localValue(existing.at) : undefined} /></label>
         ) : frequency === "cron" ? (
           <label>{text("schedule.cron")}<input className="field mono" name="cron" required maxLength={100} defaultValue={"cron" in existing ? existing.cron : undefined}
@@ -103,7 +108,7 @@ function Editor({ schedule, timeZone, busy, save, cancel }: {
         <label>{text("schedule.machine")}<input className="field" name="machine" maxLength={100} defaultValue={schedule?.machine} /></label>
       </div>
       <div className="schedule-actions">
-        <span className="muted">{frequency === "once" ? null : timeZone}</span>
+        <span className="muted">{frequency === "once" || frequency === "trigger" ? null : timeZone}</span>
         <button className="btn btn-sm" type="button" disabled={busy} onClick={cancel}>{text("schedule.cancel")}</button>
         <button className="btn btn-sm btn-primary" type="submit" disabled={busy}>{text(schedule === null ? "schedule.confirm" : "schedule.confirmEdit")}</button>
       </div>
@@ -210,7 +215,7 @@ export function SchedulesView({ navigate }: { readonly navigate: Navigate }) {
               <div>
                 <button className="schedule-title" type="button" aria-expanded={current} onClick={() => setSelected(current ? null : schedule.id)}>{schedule.title}</button>
                 <p className="muted">{recurrenceLabel(schedule.recurrence, data.timeZone)}</p>
-                {schedule.nextAt === null ? <p className="muted">{text(`schedule.state.${schedule.state}`)}</p>
+                {schedule.nextAt === null ? schedule.state === "active" && "trigger" in schedule.recurrence ? null : <p className="muted">{text(`schedule.state.${schedule.state}`)}</p>
                   : <p className="muted num">{text("schedule.next", { time: dateTime(schedule.nextAt, data.timeZone) })}</p>}
                 {last === null ? null : <p className="schedule-last"><span className="muted num">{text("schedule.last", { time: dateTime(last.at, data.timeZone) })}</span>
                   {link(runRoute(schedule, last), text(`schedule.run.${last.state}`))}</p>}
