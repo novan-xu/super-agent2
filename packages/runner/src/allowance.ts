@@ -18,7 +18,7 @@ import type { CaptureOptions, Prober } from "./programs.js";
 export const allowanceRequestId = "superagent2-allowance";
 
 export const codexAllowanceInput = [
-  { id: "superagent2-initialize", method: "initialize", params: { clientInfo: { name: "super-agent2-runner", title: "Super-agent2 runner", version: "0.0.0" }, capabilities: { experimentalApi: false } } },
+  { id: "superagent2-initialize", method: "initialize", params: { clientInfo: { name: "super-agent2-runner", title: "Super Agent runner", version: "0.0.0" }, capabilities: { experimentalApi: false } } },
   { method: "initialized" },
   { id: allowanceRequestId, method: "account/rateLimits/read" },
 ]

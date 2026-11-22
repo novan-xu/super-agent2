@@ -1,6 +1,6 @@
 # Deployment on the NAS
 
-Super-agent2 runs on the NAS as the Compose project `superagent2`: `superagent2-hub`, `superagent2-brain`, and `superagent2-tunnel`, which starts only with the Compose profile `tunnel`.
+Super Agent runs on the NAS as the Compose project `superagent2`: `superagent2-hub`, `superagent2-brain`, and `superagent2-tunnel`, which starts only with the Compose profile `tunnel`.
 Everything is driven by `/share/Container/superagent2/deploy.sh` with `/share/Container/superagent2/compose.yaml`, run on the NAS as `novanxu` by a person, or by a worker over its own machine's sign-in to the NAS.
 The hub has no way into the NAS host: the brain's `run_command` runs only in the hub's container, and the container holds no key to sign in with.
 
@@ -42,9 +42,9 @@ bash /share/Container/superagent2/deploy.sh status
 
 It lists the containers, the running and previous commits and the latest releases with how each ended.
 
-## How Super-agent2 is deployed
+## How Super Agent is deployed
 
-Super-agent2 is deployed like any repository: by a worker, through a task ticket the brain arranges after the chain that changes it, started with that chain's 开始.
+Super Agent is deployed like any repository: by a worker, through a task ticket the brain arranges after the chain that changes it, started with that chain's 开始.
 Its recipe is `.superagent2/deployment.json`:
 
 - `target` is `mac-mini`, the owner's Mac mini, whose own SSH access reaches the NAS as `novan-nas-maintenance`.
@@ -151,7 +151,7 @@ This version is released by hand once, as above, from the running version, which
 - Migration 24 turns writing tickets into task tickets, drops the tables of the hub's own deployments (the commands they ran stay in the command history), and withdraws any deployment command still held for confirmation, with the reason that deployments are now done by tickets.
 - After the release, every runner moves to the new version by itself once its workers are idle.
   A runner of the previous version still holding a writing worker finishes it under the old version first.
-- For Super-agent2 to deploy itself, the Mac mini's runner must be named `mac-mini` (or `target` changed), and the account it runs as must reach the NAS with `ssh novan-nas-maintenance` without a prompt.
+- For Super Agent to deploy itself, the Mac mini's runner must be named `mac-mini` (or `target` changed), and the account it runs as must reach the NAS with `ssh novan-nas-maintenance` without a prompt.
 - `secrets/brain.env` and `secrets/hub.env` need no change.
   `NAS_SSH_*`, `HUB_CREDENTIAL_PATHS` and any deployment settings an older hub was given are ignored.
 
@@ -179,8 +179,8 @@ Nothing in them changes when a machine is added or revoked.
 | Application | Covers | Policy | Audience tag in `secrets/hub.env` |
 | --- | --- | --- | --- |
 | The host's own (exists) | The host name, empty path | Allow: the owner's email, through Google | `ACCESS_AUD` |
-| Super-agent2 runners (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
-| Super-agent2 inbox | The host name, path `inbox` | Service Auth: service token tag `superagent2` = `inbox` | `ACCESS_INBOX_AUD` |
+| `Super-agent2 runners` (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
+| `Super-agent2 inbox` | The host name, path `inbox` | Service Auth: service token tag `superagent2` = `inbox` | `ACCESS_INBOX_AUD` |
 
 Cloudflare gives the more specific path precedence, and a path covers the paths below it, so `/runner/link`, `/runner/release` and `/runner/install` are decided by the runner application alone: a service token never reaches the owner's pages or API at Cloudflare, and the owner's sign-in never reaches the runner paths.
 The hub checks the same thing again: it takes an assertion for `ACCESS_RUNNER_AUD` only on `/runner/` and only as a service token, and one for `ACCESS_AUD` only elsewhere; and on `/runner/` it also needs the machine's own runner token, bound to that service token.

@@ -15,7 +15,7 @@ function repositoryFile(path: string): string {
   return readFileSync(repositoryPath(path), "utf8");
 }
 
-describe("Super-agent2's own repository", () => {
+describe("Super Agent's own repository", () => {
   it("declares its deployment as a recipe for a worker on a machine that signs in to the NAS, releasing the commit of its checkout", () => {
     expect(existsSync(repositoryPath(".superagent2/deployment.json"))).toBe(true);
     const reading = readDeploymentFile(repositoryFile(".superagent2/deployment.json"));

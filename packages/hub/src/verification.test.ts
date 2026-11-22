@@ -571,7 +571,7 @@ describe("after the merge", () => {
     expect(deployedReport?.prompt).not.toContain("deploy_repository");
   });
 
-  it("says the task ticket arranged after a chain deploys it, and begins by itself, for Super-agent2 as for any repository", async () => {
+  it("says the task ticket arranged after a chain deploys it, and begins by itself, for Super Agent as for any repository", async () => {
     const chain = verifying([83], 30, "p3", ["src/app.ts"], ["src/app.ts", ".superagent2/deployment.json"]);
     const deployment = tickets.open({
       form: "task",

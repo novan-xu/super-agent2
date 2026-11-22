@@ -88,21 +88,21 @@ The shadow record exists to settle the choice on real use.
 
 | Data set | Source | Period | Owner messages | Routed (scored) | Topics | Median messages per topic | One-message topics | Messages ≤ 10 characters |
 |---|---|---|---|---|---|---|---|---|
-| Super-agent2 | production `hub.sqlite`, copied live with `VACUUM INTO` on 2026-11-18 20:46 EST | 2026-11-18 01:54 – 20:23 EST | 46 | 46 | 13 | 3 | 5 | 6 |
+| Super Agent | production `hub.sqlite`, copied live with `VACUUM INTO` on 2026-11-18 20:46 EST | 2026-11-18 01:54 – 20:23 EST | 46 | 46 | 13 | 3 | 5 | 6 |
 | First Super-agent | its `hub.sqlite` (containers stopped since 2026-11-17), byte copy | 2026-11-07 – 2026-11-17 | 518 | 342 | 90 | 3 | 21 | 86 |
 
 For the first Super-agent the owner's messages are the stream (`stream_items` of kind `owner`: 418 from the web page, the desktop app and Lark) and the front door (`chat_messages` with direction `in`: 100, one duplicate of a stream message dropped).
 `chat_messages` alone holds only 101 of them.
 The replies used as topic text and for rule a are the stream's `reply`, `confirm`, `ticket` and `handoff` items and the front door's outgoing messages (892 in all; 154 end with a question, 79 are confirmation cards).
-Super-agent2 has 85 assistant replies; none of them is a question card, so rule a there rests on the text alone.
+Super Agent has 85 assistant replies; none of them is a question card, so rule a there rests on the text alone.
 
 **These are small data sets.**
 The test part has 154 routed messages (136 and 18); the 95 % interval of an error rate measured on them is about ±7 points, and differences of fewer than about 15 cost points between two routers are within noise.
-Super-agent2 contributes too few messages to be judged on its own; its numbers are shown but should not be read separately.
+Super Agent contributes too few messages to be judged on its own; its numbers are shown but should not be read separately.
 
 ## Labels
 
-Super-agent2's topic assignment is not ground truth: 37 of its 46 messages sit in the single conversation of the time before topics, and the 9 later ones each opened their own topic because routing never worked.
+Super Agent's topic assignment is not ground truth: 37 of its 46 messages sit in the single conversation of the time before topics, and the 9 later ones each opened their own topic because routing never worked.
 No topic has been merged by hand (`merged_into` is empty).
 
 The first Super-agent's `conversation` is owner-chosen only for messages sent with a ticket: such a message goes to that ticket's conversation (`apps/hub/src/sources/chat.ts`); a message without a ticket always opens a fresh random conversation, whatever its subject.
@@ -156,7 +156,7 @@ Recency alone joins most messages correctly but makes a wrong join of every thir
 
 ### With a score (rules tuned together with the score)
 
-| Scorer | Right | Wrong joins | Wrong splits | Error, 95 % | Cost | First Super-agent (136) right / joins / splits | Super-agent2 (18) right / joins / splits | Train part right |
+| Scorer | Right | Wrong joins | Wrong splits | Error, 95 % | Cost | First Super-agent (136) right / joins / splits | Super Agent (18) right / joins / splits | Train part right |
 |---|---|---|---|---|---|---|---|---|
 | Bigram | 69.5 % | 20 (13.0 %) | 27 (17.5 %) | 24–38 % | 67 | 69.1 % / 20 / 22 | 72.2 % / 0 / 5 | 69.2 % |
 | multilingual-e5-small | 62.3 % | 19 (12.3 %) | 39 (25.3 %) | 30–46 % | 77 | 63.2 % / 14 / 36 | 55.6 % / 5 / 3 | 73.1 % |

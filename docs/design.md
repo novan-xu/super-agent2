@@ -1,4 +1,6 @@
-# Super-agent2 design
+# Super Agent design
+
+The product is named Super Agent; `super-agent2` is the repository name and remains in technical identifiers.
 
 ## Purpose
 
@@ -605,7 +607,7 @@ When the brain files work that will need deploying, it arranges the deployment's
 The worker deploys, checks health, rolls back when the new version does not come up, and reports.
 Done, the merged tickets it contains are marked deployed and what waits for that deployment begins; failed, it is a failed ticket like any other.
 
-Super-agent2 deploys itself the same way: its file names a machine of the owner's that can sign in to the NAS, whose worker runs `deploy/deploy.sh release` there.
+Super Agent deploys itself the same way: its file names a machine of the owner's that can sign in to the NAS, whose worker runs `deploy/deploy.sh release` there.
 The hub and the brain restart underneath the ticket; the worker goes on, its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 
 ## Verification rules
@@ -988,7 +990,7 @@ The work is tracked as GitHub issues under five milestones.
 3. **Verification and merge.**
    Woodpecker rules, automatic merge, the failure loop and its retry cap.
 4. **Deployment.**
-   Deployment by the brain with health check and rollback, Super-agent2 itself included.
+   Deployment by the brain with health check and rollback, Super Agent itself included.
 5. **Interface completion.**
    历史, 记忆 and 设置.
 
