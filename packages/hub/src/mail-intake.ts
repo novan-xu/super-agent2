@@ -70,7 +70,7 @@ export async function* pages(gateway: Pick<MailGateway, "call">, mailbox: Mailbo
     let next: string | undefined;
     do {
       const page = GmailPage.safeParse(await gateway.call(gmailTool, {
-        query: `after:${Math.floor(from / 1000)} before:${Math.ceil(until / 1000)} -in:sent -in:drafts -in:spam -in:trash -in:chats`,
+        query: `after:${Math.floor(from / 1000) - 1} before:${Math.ceil(until / 1000)} -in:sent -in:drafts -in:spam -in:trash -in:chats`,
         max_results: pageSize,
         ...(next === undefined ? {} : { next_page_token: next }),
       }));
