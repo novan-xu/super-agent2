@@ -45,6 +45,7 @@ export const Conversation = z.object({
   system: z.literal(true).optional(),
   mergedInto: ConversationId.optional(),
   mergePending: z.literal(true).optional(),
+  mergedSources: z.array(z.object({ id: ConversationId, title: z.string() })).optional(),
   provider: Provider.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),

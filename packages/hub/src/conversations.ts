@@ -100,6 +100,8 @@ export interface ConversationService {
   rename(id: string, title: string): TopicEdit<string>;
   proposeTitle(conversation: string, turn: string, title: string): boolean;
   merge(source: string, destination: string): TopicEdit<string>;
+  undoMerge(source: string, destination: string): TopicEdit<string>;
+  mergeForBrain(current: string, turn: string, destination: string, sources: readonly string[]): { topic: string; result: string }[] | undefined;
   archive(id: string): TopicEdit<string>;
   archiveForBrain(id: string, current: string): string;
   archiveIdle(): void;
@@ -592,7 +594,12 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const withMerge = (row: unknown): Conversation => {
     const topic = toConversation(row);
-    return corrections.pending(topic.id) ? { ...topic, mergePending: true } : topic;
+    const sources = topic.mergedInto === undefined ? corrections.mergedSources(topic.id) : [];
+    return {
+      ...topic,
+      ...(corrections.pending(topic.id) ? { mergePending: true } : {}),
+      ...(sources.length > 0 ? { mergedSources: sources } : {}),
+    };
   };
 
   const rawGet = (id: string): Conversation | undefined => {
@@ -1480,6 +1487,9 @@ export function createConversationService(options: ConversationServiceOptions): 
     rename: corrections.rename,
     proposeTitle: (conversation, turn, title) => link?.ready === true && proposeTitle.run(title, turn, conversation).changes > 0,
     merge: corrections.merge,
+    undoMerge: corrections.undoMerge,
+    mergeForBrain: (current, turn, destination, sources) => link?.ready === true && assignmentTurn.get(turn, current) !== undefined
+      ? corrections.mergeForBrain(current, destination, sources) : undefined,
     archive: corrections.archive,
     archiveForBrain: corrections.archiveForBrain,
     archiveIdle: corrections.archiveIdle,

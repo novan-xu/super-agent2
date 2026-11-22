@@ -158,6 +158,24 @@ function workRequest(idempotencyKey: string, { source = "loom", token = loomToke
 }
 
 describe("scheduled work", () => {
+  it("lets an authorized scheduled turn queue a topic merge and refuses it after a pause", async () => {
+    const topic = hub.conversations.create().id;
+    const { link, inputs } = brain();
+    const schedule = await approve(link, topic, await propose(link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
+    const scheduled = turn(link, topic, fire(schedule, inputs));
+    const source = hub.conversations.create().id;
+    const destination = hub.conversations.create().id;
+    const accepted = await scheduled.call("merge_topics", { destination, sources: [source] });
+    expect(accepted.isError).toBe(false);
+    expect(JSON.parse(accepted.text)).toEqual([{ topic: source, result: "merge queued" }]);
+    expect(hub.conversations.get(source)?.mergePending).toBe(true);
+
+    expect((await request(`/${schedule.id}/pause`, "POST", {})).status).toBe(200);
+    const refused = await scheduled.call("merge_topics", { destination: hub.conversations.create().id, sources: [hub.conversations.create().id] });
+    expect(refused).toMatchObject({ isError: true, text: "This scheduled run is no longer authorized." });
+    scheduled.finish();
+  });
+
   it("confirms once in the same topic, runs on the requested machine and delivers quietly", async () => {
     const topic = hub.conversations.create().id;
     const { link, inputs } = brain();

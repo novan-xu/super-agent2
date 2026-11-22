@@ -32,6 +32,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     renameTopic: (id, title) => answer(`rename ${id} ${title}`, { conversation }),
     archiveTopic: (id) => answer(`archive ${id}`, { conversation }),
     mergeTopic: (id, destination) => answer(`merge ${id} ${destination}`, { conversation }),
+    undoTopicMerge: (id, destination) => answer(`undo merge ${id} ${destination}`, { conversation }),
     moveMessage: (id, message, destination) => answer(`move ${id} ${message} ${destination}`, { conversation }),
     interrupt: (id) => answer(`interrupt ${id}`, { conversation }),
     release: (id, fingerprint) => answer(`release ${id} ${fingerprint}`, { command: record(id) }),

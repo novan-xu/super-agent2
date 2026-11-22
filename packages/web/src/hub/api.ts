@@ -118,6 +118,7 @@ export const hubApi = {
   renameTopic: (source: string, title: string) => call(`${conversationPath(source)}/rename`, ConversationResponse, { title }),
   archiveTopic: (source: string) => call(`${conversationPath(source)}/archive`, ConversationResponse, {}),
   mergeTopic: (source: string, destination: string) => call(`${conversationPath(source)}/merge`, ConversationResponse, { destination }),
+  undoTopicMerge: (source: string, destination: string) => call(`${conversationPath(source)}/undo-merge`, ConversationResponse, { destination }),
   moveMessage: (source: string, message: string, destination: TopicMove["destination"]) => call(`${conversationPath(source)}/move`, ConversationResponse, { message, destination }),
   interrupt: (id: string) => call(`${conversationPath(id)}/interrupt`, ConversationResponse, {}),
   release: (id: string, fingerprint: string) => call(`${commandPath(id)}/release`, CommandResponse, { fingerprint }),

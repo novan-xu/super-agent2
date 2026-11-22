@@ -188,6 +188,7 @@ export const messages = {
   "conversation.archive": "归档",
   "conversation.archived": "已归档",
   "conversation.merge": "合并",
+  "conversation.undoMerge": "撤销合并",
   "conversation.merging": "等待当前回合结束后合并",
   "conversation.move": "移到…",
   "conversation.newTopic": "新话题",

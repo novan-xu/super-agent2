@@ -190,7 +190,7 @@ export const ownerStopReason = { en: "The owner stopped it", zh: text("ticket.re
 
 const commandRoute = /^\/api\/commands\/([0-9A-Za-z-]+)(\/output|\/stop|\/release|\/refuse)?$/;
 
-const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/questions|\/interrupt|\/rename|\/archive|\/merge|\/move)?$/;
+const conversationRoute = /^\/api\/conversations\/([0-9A-Za-z-]+)(\/messages|\/questions|\/interrupt|\/rename|\/archive|\/merge|\/undo-merge|\/move)?$/;
 
 const defaultListLimit = 50;
 const maximumListLimit = 500;
@@ -1352,7 +1352,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       return true;
     }
-    if (id !== undefined && method === "POST" && (action === "/rename" || action === "/archive" || action === "/merge" || action === "/move")) {
+    if (id !== undefined && method === "POST" && (action === "/rename" || action === "/archive" || action === "/merge" || action === "/undo-merge" || action === "/move")) {
       if (!isJson(request)) {
         request.resume();
         sendJson(response, 415, { error: "unsupported_media_type" });
@@ -1360,10 +1360,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       const body = await readBody(request);
       const rename = action === "/rename" ? parseJson(body, TopicRename) : undefined;
-      const merge = action === "/merge" ? parseJson(body, TopicMerge) : undefined;
+      const merge = action === "/merge" || action === "/undo-merge" ? parseJson(body, TopicMerge) : undefined;
       const move = action === "/move" ? parseJson(body, TopicMove) : undefined;
       const result = rename !== undefined ? conversations.rename(id, rename.title)
-        : merge !== undefined ? conversations.merge(id, merge.destination)
+        : merge !== undefined ? (action === "/merge" ? conversations.merge : conversations.undoMerge)(id, merge.destination)
         : move !== undefined ? conversations.move(move.message, move.destination, id)
         : action === "/archive" ? conversations.archive(id) : undefined;
       if (result === undefined) {

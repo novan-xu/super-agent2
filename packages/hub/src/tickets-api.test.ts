@@ -156,6 +156,7 @@ describe("the brain's ticket tools", () => {
       "set_topic_repository",
       "set_topic_title",
       "archive_topics",
+      "merge_topics",
       "handover",
       "file_issue",
       "open_ticket",

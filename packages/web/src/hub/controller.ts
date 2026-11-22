@@ -490,6 +490,10 @@ export class PageController {
     return this.editTopic(() => this.options.api.mergeTopic(source, destination));
   }
 
+  undoTopicMerge(source: string, destination: string): Promise<boolean> {
+    return this.editTopic(() => this.options.api.undoTopicMerge(source, destination));
+  }
+
   moveMessage(source: string, message: string, destination: TopicMove["destination"]): Promise<boolean> {
     return this.editTopic(() => this.options.api.moveMessage(source, message, destination));
   }

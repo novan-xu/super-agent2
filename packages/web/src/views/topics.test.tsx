@@ -18,7 +18,7 @@ const owner = (id: string, conversation: string, text: string, fields: Partial<O
 const item = (position: number, topic: Conversation, entry: OwnerEntry) => ({ position, topic, entry });
 const ignore = () => undefined;
 const accepted = async () => true;
-const topicActions = { rename: accepted, archive: accepted, merge: accepted, move: accepted };
+const topicActions = { rename: accepted, archive: accepted, merge: accepted, undoMerge: accepted, move: accepted };
 
 function renderStream(entries: readonly StreamEntry[]) {
   return renderToStaticMarkup(<ConversationView conversation={null} scope={codeScope} state={null} list={list}
@@ -77,6 +77,15 @@ describe("the conversation page", () => {
     expect(html).toContain('<option value=":new">新话题</option>');
     expect(html).toContain('<option value="daily">Weekly planning</option>');
     expect(html).not.toContain('<option value="code">');
+  });
+
+  it("offers undo in the destination topic's actions when it has a recorded merge", () => {
+    const render = (topic: Conversation) => renderToStaticMarkup(
+      <TopicActionDialog edit={{ topic }} list={list} actions={topicActions} done={ignore} />,
+    );
+    expect(render(project)).not.toContain("撤销合并");
+    expect(render({ ...project, mergedSources: [{ id: "old", title: "Old topic" }] })).toContain("撤销合并");
+    expect(render({ ...project, mergePending: true, mergedSources: [{ id: "old", title: "Old topic" }] })).not.toContain("撤销合并");
   });
 
   it("uses a real transfer route and preserves a repository on a direct topic link", () => {

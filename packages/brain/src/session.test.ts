@@ -1160,7 +1160,7 @@ describe("topic corrections across the brain link", () => {
     });
   });
 
-  it("finishes both active turns before merging and seeds the queued turn with the combined history", async () => {
+  it("merges after both turns end and resumes the source with its own history after undo", async () => {
     const hub = await startHub();
     programs.gpt.steering = false;
     startBrain();
@@ -1202,5 +1202,20 @@ describe("topic corrections across the brain link", () => {
     expect(hub.conversations.list().map(({ id }) => id)).toEqual([destination.id]);
     expect(hub.conversations.topics.search("Monday", source.id, Number.MAX_SAFE_INTEGER, 5).messages)
       .toEqual(expect.arrayContaining([expect.objectContaining({ topic: destination.id })]));
+
+    combined.handle.emit({ type: "session", session: "combined" });
+    combined.handle.finish("The combined answer stays in the destination.");
+    await turnEnded(destination.id, 3);
+    const undo = await owner(`/api/conversations/${source.id}/undo-merge`, {
+      method: "POST", body: JSON.stringify({ destination: destination.id }),
+    });
+    expect(undo.status).toBe(200);
+    await expect.poll(() => detail(source.id).conversation.id).toBe(source.id);
+    await say(source.id, "Check the source again.");
+    const restored = await programs.gpt.next();
+    expect(restored.handle.options.tools?.conversation).toBe(source.id);
+    expect(restored.handle.options.session).toBeNull();
+    expect(restored.text).toContain("The source request was about a Monday release.");
+    expect(restored.text).not.toContain("Owner: The destination request asked for the checklist.");
   });
 });
