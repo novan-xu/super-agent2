@@ -332,13 +332,17 @@ const programWords: Readonly<Record<ProviderUnavailable["program"], string>> = {
   antigravity: "Antigravity",
 };
 
-export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = [], balance?: import("@super-agent2/protocol").Balance): string {
+export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = [], balance?: import("@super-agent2/protocol").Balance, cost?: import("@super-agent2/protocol").OpenAICost): string {
   const lines = [
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
     subscriptionLine("Antigravity (Gemini Models)", subscriptions.antigravity, geminiWindows(subscriptions.antigravity)),
     "An unknown reading is not used up. dsh is the default only when the GPT and Claude subscriptions are both used up.",
   ];
+  if (cost !== undefined) {
+    const amount = cost.amount === null ? "no last reading" : `${cost.currency} ${cost.amount.toFixed(2)}, read ${new Date(cost.readAt!).toISOString()}`;
+    lines.splice(1, 0, `OpenAI API: ${cost.state === "unknown" ? "unknown; last reading: " : ""}${amount} this month${cost.budget === null ? "" : `; USD ${cost.budget.toFixed(2)} budget`}`);
+  }
   if (balance !== undefined) {
     const amounts = balance.wallets.map((wallet) => `${wallet.currency} ${wallet.total} (granted ${wallet.granted}, topped up ${wallet.toppedUp})`).join(", ");
     const read = balance.machine === null ? "" : `, read ${new Date(balance.readAt).toISOString()} on ${balance.machine}`;

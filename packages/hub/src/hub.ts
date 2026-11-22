@@ -1,3 +1,4 @@
+import { createOpenAICosts } from "./openai-costs.js";
 import { createVoice } from "./voice.js";
 import { codexMailFilter, type MailFilter } from "./mail-filter.js";
 import { extraMcpFromEnvironment } from "./extra-mcp.js";
@@ -181,6 +182,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     providerOrder: () => settings?.workerOrder(),
     ...(options.adjustSubscriptions === undefined ? {} : { adjust: options.adjustSubscriptions }),
   });
+  const openaiCosts = environment.OPENAI_ADMIN_KEY?.trim() ? createOpenAICosts({ key: environment.OPENAI_ADMIN_KEY, timeZone: database.ticketTimeZone, now: () => clock.now(), changed: () => defaults.changed(), report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) }) : undefined;
+  const openaiCost = openaiCosts === undefined ? undefined : () => openaiCosts.reading(settings?.budget() ?? null);
   runners.subscribe(() => defaults.changed());
   let work: WorkService | undefined;
   const ticketWork: TicketWork = options.ticketWork ?? {
@@ -449,6 +452,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
           chains: chains.arranger,
           defaults,
+          ...(openaiCost === undefined ? {} : { openaiCost }),
           runners,
           verification,
           loop: failures,
@@ -460,6 +464,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       attachments,
       memories,
       settings,
+      ...(openaiCost === undefined ? {} : { openaiCost, refreshOpenAICost: () => { void openaiCosts?.refresh(); } }),
       admin,
       repositories,
       voice: createVoice({
@@ -569,6 +574,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       address,
       ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
+        openaiCosts?.close();
         topicTidy?.close();
         mailIntake?.close();
         mailTriage?.close();

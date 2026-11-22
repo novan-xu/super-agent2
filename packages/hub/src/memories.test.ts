@@ -81,8 +81,9 @@ describe("what looks like a credential", () => {
   });
 
   it("is any value the hub holds as a credential, however it is written around", () => {
-    const values = secretValues({ WOODPECKER_TOKEN: "wp-value-1234", HOME: "/home/owner", GH_TOKEN: "short" }, ["brain-token-value"]);
-    expect(values).toEqual(["wp-value-1234", "brain-token-value"]);
+    const values = secretValues({ WOODPECKER_TOKEN: "wp-value-1234", OPENAI_ADMIN_KEY: "admin-value-1234", HOME: "/home/owner", GH_TOKEN: "short" }, ["brain-token-value"]);
+    expect(values).toEqual(["wp-value-1234", "admin-value-1234", "brain-token-value"]);
+    expect(holdsCredential("admin-value-1234", values)).toBe(true);
     expect(holdsCredential("记住 wp-value-1234 这个", values)).toBe(true);
     expect(holdsCredential("/home/owner is the home folder", values)).toBe(false);
   });

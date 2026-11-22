@@ -110,7 +110,7 @@ function stopTree(child: ChildProcess, platform: NodeJS.Platform): Promise<void>
 
 export function commandEnvironment(base: Environment, credentials: Readonly<Record<string, string>>): Record<string, string> {
   const result: Record<string, string> = {};
-  const removed = new Set<string>(Object.values(accountTokenVariable));
+  const removed = new Set<string>([...Object.values(accountTokenVariable), "OPENAI_ADMIN_KEY"]);
   for (const [name, value] of Object.entries(base)) {
     if (value !== undefined && !removed.has(name.toUpperCase())) {
       result[name] = value;

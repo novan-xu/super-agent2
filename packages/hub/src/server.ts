@@ -231,6 +231,8 @@ export interface HubServerOptions {
   readonly memories?: MemoryService;
   readonly schedules?: Schedules;
   readonly settings?: Settings;
+  readonly openaiCost?: () => import("@super-agent2/protocol").OpenAICost;
+  readonly refreshOpenAICost?: () => void;
   readonly admin?: MachineAdmin;
   readonly repositories?: RepositoryAccounts;
   readonly refreshRepositories?: () => Promise<void>;
@@ -641,6 +643,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
       return;
     }
+    if (path === "/api/settings/openai-budget" && method === "PUT" && options.settings !== undefined) {
+      if (!ownerAction(request, response)) return;
+      const given = parseJson(await readBody(request), z.object({ budget: z.number().finite().positive().nullable() }).strict());
+      if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+      options.settings.setBudget(given.budget);
+      sendJson(response, 200, { budget: options.settings.budget() });
+      return;
+    }
     if (((path === brainOrderPath || path === workerOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath) && method === "POST")) {
       await serveSettingChange(request, response, path);
       return;
@@ -1025,7 +1035,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (dsh !== undefined && !unavailable.some((mark) => mark.program === "dsh")) {
       unavailable.push({ program: "dsh", reason: dsh.reason, since: balance.readAt, until: dsh.until, given: dsh.given });
     }
-    return { subscriptions: allowancePrograms.map((program) => subscriptions[program]), balance, unavailable };
+    return { subscriptions: allowancePrograms.map((program) => subscriptions[program]), balance, unavailable, ...(options.openaiCost === undefined ? {} : { openaiCost: options.openaiCost() }) };
   };
 
   const serveDefaults = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, defaults: StartDefaults): Promise<boolean> => {
@@ -1033,6 +1043,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       if (method === "POST") {
         if (!ownerAction(request, response)) return true;
         if (parseJson(await readBody(request), z.object({}).strict()) === undefined) { sendJson(response, 400, { error: "bad_request" }); return true; }
+        options.refreshOpenAICost?.();
         sendJson(response, 200, { requested: options.runners?.refreshAllowance() ?? 0 });
         return true;
       }

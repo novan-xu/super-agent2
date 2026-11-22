@@ -15,6 +15,7 @@ function Provider({ provider }: { readonly provider: ProviderView }) {
   return <section className="allowance-provider">
     <div className="allowance-name"><strong>{provider.name}</strong>{provider.id === "dsh" ? <span className={`allowance-text--${provider.tone}`}>{provider.amount ?? text("allowance.unknown")}</span> : null}</div>
     {provider.unavailableUntil !== undefined ? <div className="allowance-text--bad">{provider.unavailableUntil === null ? text("allowance.unavailable") : text("allowance.unavailableUntil", { time: time(provider.unavailableUntil) })}</div> : null}
+    {provider.api === undefined ? null : <div className={`allowance-window allowance-text--${provider.api.tone}`}><div>{provider.api.label}</div>{provider.api.detail === null ? null : <div>{provider.api.detail}</div>}</div>}
     {provider.windows.map((window) => <div className="allowance-window" key={window.name}>
       <div className={`allowance-meta allowance-text--${window.tone}`}><span>{text(`allowance.${window.name}`)}</span><span>{window.used === null ? text("allowance.unknown") : text("allowance.used", { percent: Math.round(window.used) })}</span></div>
       {window.used === null ? null : <div className="allowance-track"><div className={`allowance-fill allowance-fill--${window.tone}`} style={{ width: `${window.used}%` }} /></div>}

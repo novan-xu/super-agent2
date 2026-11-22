@@ -33,6 +33,8 @@ export interface Settings {
   workerOrder(): Provider[];
   setOrder(role: "brain" | "worker", order: readonly Provider[]): void;
   setTable(table: EngineTable): TableOutcome;
+  budget(): number | null;
+  setBudget(value: number | null): void;
   changed(): void;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
   close(): void;
@@ -101,10 +103,18 @@ export function createSettings(options: SettingsOptions): Settings {
           return { id: createHash("sha256").update(value.endpoint).digest("hex").slice(0, 16), service: pushServiceOf(value.endpoint), createdAt: value.created_at };
         });
 
+  const budget = (): number | null => {
+    const row = selectSetting.get("openai_monthly_budget");
+    if (row === undefined) return null;
+    const value = Number(ValueRow.parse(row).value);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+
   const snapshot = (): SettingsSnapshot => {
     const conversations = options.conversations();
     const subscriptions = options.defaults.subscriptions();
     return {
+      openaiBudget: budget(),
       machines: options.runners.statuses(),
       canAdd: { ...options.admin.canAdd },
       repositories: options.repositories.list(),
@@ -171,6 +181,11 @@ export function createSettings(options: SettingsOptions): Settings {
         return { ok: false, unoffered };
       }
       return { ok: true, table: options.defaults.setTable(table) };
+    },
+    budget,
+    setBudget: (value) => {
+      upsertSetting.run("openai_monthly_budget", value === null ? "" : String(value), options.clock.now());
+      options.defaults.changed();
     },
     changed,
     subscribe: (listener) => {

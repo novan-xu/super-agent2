@@ -498,3 +498,7 @@ A source checkout with the hub already built can also run `pnpm --filter @super-
 The smoke command uses the same Live model, prompts, delegation model, and tool catalog as the web application.
 It opens the documented Live WebSocket, supplies text input, and answers a delegated repository lookup with stub data.
 The command prints a pass result or a bounded diagnostic.
+
+Set `OPENAI_ADMIN_KEY` in `secrets/hub.env` on the NAS to enable the optional OpenAI API cost reading.
+This organization Admin key stays on the hub and is never forwarded to workers.
+Verify the Costs endpoint after deploying; an empty response or failed request appears as unknown.

@@ -139,6 +139,7 @@ export const AppGatewayStatus = z.object({
 export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
 
 export const SettingsSnapshot = z.object({
+  openaiBudget: z.number().positive().nullable().optional(),
   machines: z.array(MachineStatus),
   canAdd: z.object({ cloudflare: z.boolean(), release: z.boolean() }),
   repositories: z.array(RepositoryAccount),

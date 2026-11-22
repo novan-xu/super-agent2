@@ -9,6 +9,7 @@ export interface ProviderView {
   readonly compactName: string;
   readonly windows: readonly WindowView[];
   readonly amount: string | null;
+  readonly api?: { readonly label: string; readonly detail: string | null; readonly tone: Tone; readonly compact: string };
   readonly tone: Tone;
   readonly unavailableUntil: number | null | undefined;
 }
@@ -50,7 +51,17 @@ export function providersOf(report: AllowanceReport | null, now = 0): ProviderVi
     const mark = report?.unavailable.find((item) => item.program === id && (item.until === null || item.until > now));
     const tones = windows.map((item) => item.tone);
     const tone: Tone = mark || subscription?.state === "exhausted" || tones.includes("bad") ? "bad" : tones.includes("warn") ? "warn" : tones.includes("ok") ? "ok" : "unknown";
-    return { id, ...providerNames[id], windows, amount: null, tone, unavailableUntil: mark === undefined ? undefined : mark.until };
+    const cost = id === "codex" ? report?.openaiCost : undefined;
+    const value = cost?.amount == null || cost.currency === null ? null : currency(cost.currency, cost.amount);
+    const percent = cost?.amount != null && cost.budget != null && cost.currency === "USD" ? cost.amount / cost.budget * 100 : null;
+    const apiTone = cost?.state === "unknown" ? "unknown" : usageTone(percent);
+    const api = cost === undefined ? undefined : {
+      label: cost.state === "unknown" ? `API 本月 未知${value === null ? "" : ` (${value} · ${new Date(cost.readAt!).toLocaleString()})`}` : `API 本月 ${value}${percent === null ? "" : ` / ${currency("USD", cost.budget!)}`}`,
+      detail: percent === null || cost.state === "unknown" ? null : `剩余 ${currency("USD", Math.max(0, cost.budget! - cost.amount!))} · 已用 ${Math.round(percent)}%`,
+      tone: apiTone,
+      compact: cost.state === "unknown" ? "API ?" : percent === null ? `API ${value}` : `API ${Math.round(percent)}%`,
+    };
+    return { id, ...providerNames[id], windows, amount: null, ...(api === undefined ? {} : { api }), tone: apiTone === "bad" || tone === "bad" ? "bad" : apiTone === "warn" || tone === "warn" ? "warn" : tone, unavailableUntil: mark === undefined ? undefined : mark.until };
   });
   const balance = report?.balance;
   const mark = report?.unavailable.find((item) => item.program === "dsh" && (item.until === null || item.until > now));
@@ -62,5 +73,6 @@ export function compactValue(provider: ProviderView): string | null {
   if (provider.unavailableUntil !== undefined) return null;
   if (provider.id === "dsh") return provider.amount;
   const values = provider.windows.flatMap((item) => item.used === null ? [] : [item.used]);
-  return values.length === 0 ? null : `${Math.round(Math.max(...values))}%`;
+  const value = values.length === 0 ? "" : `${Math.round(Math.max(...values))}%`;
+  return [value, provider.api?.compact].filter(Boolean).join(" · ") || null;
 }
