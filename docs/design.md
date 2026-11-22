@@ -667,6 +667,30 @@ This is the complete list.
    The owner's controls and the hub's own work continue independently, and their changes advance the ticket version.
 9. **One sentence per line in Markdown prose.**
    The owner explicitly required this rule, checked in CI.
+10. **An exact allowlist for the app gateway.**
+    The owner explicitly required mail and Teams to be read-only through the gateway.
+    The hub checks each exact connector tool name against the allowlist in code and intersects it with the discovered read tools.
+    The hub refuses sending, replying, forwarding, deleting and every other operation outside that list.
+    This rule covers the app gateway and its brain tools.
+    The brain's shell in the hub container can access the shared ChatGPT login and could start a separate app server, so this rule does not constrain arbitrary shell commands.
+
+## Personal app gateway
+
+The hub uses the owner's ChatGPT connections to read Outlook, Gmail, Microsoft Teams and TickTick on request.
+One long-lived Codex app server calls the `codex_apps` MCP server directly on a read-only, ephemeral thread with plugins off and approvals disabled.
+No model turn runs in the app server.
+Calls have timeouts, and the gateway keeps its thread through timeouts and connector refusals.
+It replaces a thread when Codex reports it missing or the app server process exits.
+An initialization timeout stops the process because the gateway cannot tell whether the server created a thread.
+
+The gateway reads the connector inventory at hub startup and every five minutes.
+It discovers each Outlook account's link from the inventory and offers Gmail as one implicit mailbox.
+设置 → 连接 shows the gateway status and discovered mailboxes, Teams and TickTick.
+The brain can list or search mail by mailbox, read a message in pages with attachment names, list or search Teams chats and channels, and look up TickTick lists and tasks.
+Only active Claude and Codex turns can list or call these brain tools.
+The Codex brain uses the hub's tools for these apps with Codex's native apps disabled on its threads.
+The brain treats app content as untrusted data.
+The hub does not record tool arguments, raw results or connector error text in the topic history or hub logs.
 
 ## Tests
 
@@ -878,7 +902,7 @@ Values are copied on the NAS from the old secrets folder into the new deployment
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN` | NAS, `secrets/hub.env` | Creating and deleting runners' Access service tokens (Access: Service Tokens, Edit, nothing else) |
 | Cloudflare API token, `TUNNEL_TOKEN` | NAS, `secrets/cloudflare.env`, `secrets/tunnel.env` | The host name and its tunnel |
 | `WOODPECKER_SERVER`, `WOODPECKER_TOKEN` | NAS, hub environment | Reading CI results and logs |
-| The ChatGPT login for Codex | NAS, volume `superagent-codex-home` | The brain on GPT |
+| The ChatGPT login for Codex | NAS, volume `superagent2-brain-codex`, mounted by the brain and hub | The brain on GPT and the personal app gateway |
 | `BRAIN_CLAUDE_OAUTH_TOKEN` | NAS, `secrets/brain.env` | The brain on Claude |
 | The DeepSeek account login for `dsh` | On the runners; made once in the brain container | The brain on DeepSeek |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | NAS, `secrets/hub.env` | Push notifications |

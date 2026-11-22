@@ -31,6 +31,8 @@ ARG GH_VERSION=2.102.0
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends bash ca-certificates curl git jq less openssh-client procps rsync sudo tar unzip xz-utils \
  && rm -rf /var/lib/apt/lists/*
+RUN npm install --global @openai/codex@0.163.0 \
+ && npm cache clean --force
 RUN arch="$(dpkg --print-architecture)" \
  && curl --fail --silent --show-error --location "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o /tmp/gh.tar.gz \
  && tar -xzf /tmp/gh.tar.gz -C /tmp \

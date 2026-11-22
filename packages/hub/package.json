@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@super-agent2/catalog": "workspace:*",
+    "@super-agent2/programs": "workspace:*",
     "@super-agent2/protocol": "workspace:*",
     "@super-agent2/routing": "workspace:*",
     "cron-parser": "5.10.6",

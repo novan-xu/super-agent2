@@ -127,6 +127,14 @@ export function pushServiceOf(endpoint: string): PushServiceName {
   return "other";
 }
 
+export const AppGatewayStatus = z.object({
+  connected: z.boolean(),
+  mailboxes: z.array(z.object({ provider: z.enum(["outlook", "gmail"]), label: z.string() })),
+  teams: z.boolean(),
+  ticktick: z.boolean(),
+});
+export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
+
 export const SettingsSnapshot = z.object({
   machines: z.array(MachineStatus),
   canAdd: z.object({ cloudflare: z.boolean(), release: z.boolean() }),
@@ -138,6 +146,7 @@ export const SettingsSnapshot = z.object({
   subscriptions: z.array(Subscription),
   unavailable: z.array(ProviderUnavailable).default([]),
   devices: z.array(Device),
+  appGateway: AppGatewayStatus.optional(),
 });
 export type SettingsSnapshot = z.infer<typeof SettingsSnapshot>;
 

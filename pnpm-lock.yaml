@@ -224,6 +224,9 @@ importers:
       '@super-agent2/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@super-agent2/programs':
+        specifier: workspace:*
+        version: link:../programs
       '@super-agent2/protocol':
         specifier: workspace:*
         version: link:../protocol

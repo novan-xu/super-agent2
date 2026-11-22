@@ -25,6 +25,16 @@ export const HistoryItem = z.discriminatedUnion("kind", [
 ]);
 export type HistoryItem = z.infer<typeof HistoryItem>;
 
+export const privateAppTools = ["mail_mailboxes", "mail_search", "mail_read", "teams_chats", "teams_messages", "teams_search", "todo_lookup"] as const;
+
+export function isPrivateAppTool(name: string): name is (typeof privateAppTools)[number] {
+  return privateAppTools.some((tool) => name === tool);
+}
+
+export function isPrivateAppToolEvent(name: string): boolean {
+  return isPrivateAppTool(name.replace(/^(?:mcp__hub__|hub\.)/, ""));
+}
+
 const BrainQuote = z.object({
   id: MessageId,
   item: HistoryItem.optional(),

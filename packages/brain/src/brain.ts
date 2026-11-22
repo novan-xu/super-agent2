@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isPrivateAppToolEvent } from "@super-agent2/protocol";
 import type { BrainInput, BrainMessage, BrainProviders, HistoryItem, HubToBrain, Prepared, Provider, RunningTurn } from "@super-agent2/protocol";
 import type { Clock } from "@super-agent2/programs";
 import type { ProgramAdapter, ProgramEvent, ProgramHandle } from "@super-agent2/programs";
@@ -63,6 +64,7 @@ interface Live {
   readonly provider: Provider;
   readonly turn: string;
   readonly handle: ProgramHandle;
+  readonly privateCalls: Set<string>;
   session: string | null;
   attempt: Attempt | undefined;
   closed: boolean;
@@ -338,6 +340,10 @@ export function createBrain(options: BrainOptions): Brain {
         transport.send({ type: "text", conversation: state.id, turn: turn.id, block: prefix + event.block, delta: event.delta });
         return;
       case "tool.started":
+        if (isPrivateAppToolEvent(event.name)) {
+          live.privateCalls.add(event.call);
+          return;
+        }
         transport.send({
           type: "tool.started",
           conversation: state.id,
@@ -348,9 +354,15 @@ export function createBrain(options: BrainOptions): Brain {
         });
         return;
       case "tool.output":
+        if (live.privateCalls.has(event.call)) {
+          return;
+        }
         transport.send({ type: "tool.output", conversation: state.id, turn: turn.id, call: prefix + event.call, delta: event.delta });
         return;
       case "tool.finished":
+        if (live.privateCalls.has(event.call)) {
+          return;
+        }
         transport.send({
           type: "tool.finished",
           conversation: state.id,
@@ -397,7 +409,7 @@ export function createBrain(options: BrainOptions): Brain {
         }
       },
     );
-    live = { provider, turn: turn.id, handle, session, attempt: undefined, closed: false };
+    live = { provider, turn: turn.id, handle, privateCalls: new Set(), session, attempt: undefined, closed: false };
     return live;
   };
 
