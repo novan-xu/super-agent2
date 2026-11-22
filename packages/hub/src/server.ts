@@ -148,6 +148,7 @@ export const settingsPath = "/api/settings";
 export const brainOrderPath = "/api/brain/order";
 export const workerOrderPath = "/api/workers/order";
 export const repositoryAccountPath = "/api/repositories/account";
+export const repositoryOrderPath = "/api/repositories/order";
 export const repositoryPinPath = "/api/repositories/pin";
 export const repositoryAliasPath = "/api/repositories/alias";
 export const repositoryRefreshPath = "/api/repositories/refresh";
@@ -651,7 +652,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { budget: options.settings.budget() });
       return;
     }
-    if (((path === brainOrderPath || path === workerOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath) && method === "POST")) {
+    if (((path === brainOrderPath || path === workerOrderPath || path === repositoryAccountPath) && method === "PUT") || ((path === repositoryPinPath || path === repositoryAliasPath || path === repositoryOrderPath) && method === "POST")) {
       await serveSettingChange(request, response, path);
       return;
     }
@@ -862,6 +863,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
         settings.changed();
         sendJson(response, 200, settings.snapshot());
       }
+      return;
+    }
+    if (path === repositoryOrderPath) {
+      const given = parseJson(body, z.object({ repositories: z.array(RepositoryName) }).strict());
+      if (given === undefined) sendJson(response, 400, { error: "bad_request" });
+      else if (repositories === undefined || !repositories.setOrder(given.repositories)) sendJson(response, 409, { error: "pinned_set_changed" });
+      else { settings.changed(); sendJson(response, 200, settings.snapshot()); }
       return;
     }
     if (path === repositoryPinPath) {

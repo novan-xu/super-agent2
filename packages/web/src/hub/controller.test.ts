@@ -64,6 +64,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     setOrder: (role, order) => answer(`setOrder ${role} ${order.join(",")}`, settingsSnapshot(role === "brain" ? { brain: { linked: true, order: [...order], providers: [] } } : { workerOrder: [...order] })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
     setAlias: (repository, alias) => answer(`setAlias ${repository} ${alias}`, settingsSnapshot()),
+    setRepositoryOrder: (repositories) => answer(`setRepositoryOrder ${repositories.join(",")}`, settingsSnapshot()),
     setPinned: (repository, pinned) => answer(`setPinned ${repository} ${pinned}`, settingsSnapshot()),
     refreshRepositories: () => answer("refreshRepositories", {}),
     setTable: (table) => answer("setTable", { table }),

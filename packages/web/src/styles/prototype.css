@@ -50,6 +50,8 @@
   --surface: #1e1d1b;
   --surface-warm: #282624;
   --sunk: #111110;
+  --tabstrip: #000000;
+  --workbench-bg: #292825;
   --fg: #f3f1ed;
   --fg-2: #cdc9c2;
   --muted: #9c978f;
@@ -115,6 +117,8 @@
   --surface: #ffffff;
   --surface-warm: #f0eeeb;
   --sunk: #ecebe8;
+  --tabstrip: #d8d7d3;
+  --workbench-bg: #f6f5f3;
   --fg: #1b1a18;
   --fg-2: #3f3c38;
   --muted: #6b665f;

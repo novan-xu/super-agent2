@@ -165,6 +165,7 @@ export const hubApi = {
   setMachineStorage: (name: string, storage: StorageSettings) => call(`/api/machines/${encodeURIComponent(name)}/storage`, StorageSettings, storage, "PUT"),
   setOrder: (role: "brain" | "worker", order: readonly Provider[]) => call(role === "brain" ? "/api/brain/order" : "/api/workers/order", SettingsSnapshot, { order }, "PUT"),
   setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
+  setRepositoryOrder: (repositories: readonly string[]) => call("/api/repositories/order", SettingsSnapshot, { repositories }),
   setPinned: (repository: string, pinned: boolean) => call("/api/repositories/pin", SettingsSnapshot, { repository, pinned }),
   setAlias: (repository: string, alias: string | null) => call("/api/repositories/alias", SettingsSnapshot, { repository, alias }),
   refreshRepositories: () => call("/api/repositories/refresh", z.object({}), {}),

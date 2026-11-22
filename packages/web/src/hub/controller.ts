@@ -303,6 +303,10 @@ export class PageController {
     return this.changeSettings(() => this.options.api.setAlias(repository, alias));
   }
 
+  setRepositoryOrder(repositories: readonly string[]): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setRepositoryOrder(repositories));
+  }
+
   setPinned(repository: string, pinned: boolean): Promise<boolean> {
     return this.changeSettings(() => this.options.api.setPinned(repository, pinned));
   }
