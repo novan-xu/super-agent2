@@ -126,8 +126,8 @@ A worker does the same, decided by the hub.
   An open ticket can stay linked to an archived topic.
   The hub persists any missing finished-turn summaries before archiving, including when a program session is still open.
 - Archived topics stay in the stream and searchable history.
-  Routing leaves them out of automatic matching.
-  A direct message, quoted reply, move, handover or ticket notice to an archived topic makes it active again.
+  Routing can match topics archived within the past 24 hours that have an owner message or a linked ticket.
+  A routed or direct message, quoted reply, move, handover or ticket notice to an archived topic makes it active again.
 - Each existing conversation becomes a topic, keeping its history and saved program session IDs.
   It takes a repository if every ticket linked to it belongs to that repository.
   Existing ticket links are preserved, so a topic with tickets from different repositories or with a repository-free ticket stays in 日常.
@@ -142,7 +142,7 @@ A worker does the same, decided by the hub.
 - In the main stream the hub suggests a destination while the owner writes.
   Sending to the displayed or selected destination counts as owner placement.
   When the send has no destination, the hub routes it with rules and a score without a large-model call (#143, see [routing-evaluation.md](routing-evaluation.md)).
-  The candidates are the active topics in the composer's scope, except System, merged topics and topics with a merge pending, most recently active first.
+  The candidates are the active and recently archived topics in the composer's scope, except System, merged topics and topics with a merge pending, most recently active first.
   In this order:
 
   | Step | Rule |
@@ -153,11 +153,15 @@ A worker does the same, decided by the hub.
   | c | Score: the best similarity between the message and a topic's texts (its first owner message, its last five owner messages and its last three replies clipped to 320 characters), minus `decay × log2(1 + idle / 10 min)`. Join the best topic if it reaches the threshold and leads the runner-up by the margin. |
   | d | Otherwise open a new topic titled with the message's first line, marked as possibly belonging to the best-scoring candidate when there is one. |
 
+- At three or more active topics in a repository, automatic routing can only join active topics.
+  If the normal destination would add a topic, the router uses the best available active score for that repository and breaks ties by latest activity.
+  A titled brain handover at the cap uses bigram scores and chooses another active topic in the repository.
+  The owner can still choose a destination or open a new topic.
 - Routing uses the original message text as specified above.
   Topic renames do not affect the score.
 
 - Two configurations exist, with their constants together in `packages/routing`.
-  The primary one uses all five steps with `bge-small-zh-v1.5` (fp32, CLS pooling, normalised, compared by dot product) as the scorer: threshold 0.570, margin 0.096, decay 0.048.
+  The primary one uses all five steps with `bge-small-zh-v1.5` (fp32, CLS pooling, normalised, compared by dot product) as the scorer, with threshold 0.430, margin 0.050 and decay 0.048.
   The other uses steps b, c and d with character bigrams: threshold 0.055, margin 0.091, decay 0.18.
   `HUB_ROUTING_PRIMARY` (`model` by default, or `bigram`) picks the primary one; the other runs beside it as a shadow whenever it can.
 - The hub loads the model in the background after it starts, from the files baked into its image (`HUB_ROUTING_MODELS`, see [deploy.md](deploy.md)), and never downloads it.
@@ -170,11 +174,12 @@ A worker does the same, decided by the hub.
 - Every routing decision is stored in `routing_decisions` without the message's text: the owner's entry, scope, number of candidates, configuration, any fallback reason, rule, joined topic, the topic the entry was placed in, the best topic with the best and runner-up scores, and the shadow configuration's rule, topic and scores.
   Moving the entry later with 移到… records the destination and time beside the decision, so the owner's corrections become labels for the next evaluation.
   Brain handovers record their own destination and time.
+  Separate flags record when the repository cap chose the destination for routing or for a brain handover.
   A later owner move flags that the owner corrected the handover and preserves both destinations.
   The hub also logs one line for each initial decision.
 - In 日常 a new topic has no repository; in a repository composer it takes that repository.
   In all of 代码, an unambiguous name or `owner/name` limits matches to that repository's topics, except when the message cites a ticket or issue.
-  Known names come from active topics, open tickets including their related projects, and the repository catalog's pinned or discovered repositories.
+  Known names come from active and recently archived candidates, open tickets including their related projects, and the repository catalog's pinned or discovered repositories.
   A new topic in 代码 uses that repository when named, or waits for the brain to establish the repository with the owner.
 - The owner can move a message to another topic with 移到… and use a possible match in one tap.
   A message the hub routed carries a line naming the rule and whether it joined or opened a topic.

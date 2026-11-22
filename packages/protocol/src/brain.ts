@@ -32,7 +32,7 @@ const BrainQuote = z.object({
 });
 
 const BrainRouting = z.discriminatedUnion("placement", [
-  z.object({ placement: z.literal("existing"), rule: RoutingProposal.shape.decided.shape.rule }),
+  z.object({ placement: z.literal("existing"), rule: RoutingProposal.shape.decided.shape.rule, repositoryCap: z.literal(true).optional() }),
   z.object({
     placement: z.literal("new"), rule: RoutingProposal.shape.decided.shape.rule,
     candidate: z.object({ id: ConversationId, title: z.string(), summary: z.string() }).optional(),

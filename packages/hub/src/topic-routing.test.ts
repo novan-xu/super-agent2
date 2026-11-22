@@ -94,8 +94,8 @@ function topic(idleMinutes: number, options: { repository?: string; state?: "act
   const id = randomUUID();
   const at = clock.now() - idleMinutes * minute;
   database.connection
-    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, topic_state) VALUES (?, 'Topic', 'idle', ?, ?, ?, ?, ?)")
-    .run(id, at, at, options.system === true ? 1 : 0, options.repository ?? null, options.state ?? "active");
+    .prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, system, repository, topic_state, archived_at) VALUES (?, 'Topic', 'idle', ?, ?, ?, ?, ?, ?)")
+    .run(id, at, at, options.system === true ? 1 : 0, options.repository ?? null, options.state ?? "active", options.state === "archived" ? at : null);
   return id;
 }
 
@@ -182,7 +182,7 @@ describe("topic routing rules", () => {
     const second = topic(90);
     said(second, "beta", 90);
     replied(second, "PR 99 is ready for review", 90);
-    const archived = topic(120, { state: "archived" });
+    const archived = topic(25 * 60, { state: "archived" });
     ticket(7, second);
     ticket(8, first);
     ticket(9, archived);
@@ -242,14 +242,18 @@ describe("topic routing rules", () => {
     expect(level).toMatchObject({ topic: null, decided: { rule: "d" } });
     expect([first, second]).toContain(level.possibleMatch);
 
+    expect((await routing.route(message("alpha with gamma and delta"))).decided).toMatchObject({ rule: "c", topic: first });
+    clock.advance(30 * minute);
     const low = await routing.route(message("alpha with gamma and delta"));
     expect(low).toMatchObject({ topic: null, possibleMatch: first, decided: { rule: "d", best: first } });
   });
 
-  it("leaves out archived, merged, system and out-of-scope topics", async () => {
+  it("leaves out long-archived, merged, system and out-of-scope topics", async () => {
     const daily = topic(5);
     said(daily, "alpha", 5);
-    said(topic(1, { state: "archived" }), "alpha", 1);
+    said(topic(25 * 60, { state: "archived" }), "alpha", 25 * 60);
+    const merged = topic(1);
+    database.connection.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?").run(daily, merged);
     said(topic(1, { system: true }), "alpha", 1);
     said(topic(1, { repository: "owner/project" }), "alpha", 1);
     const routing = await router();
@@ -722,6 +726,7 @@ describe("routing in the hub", () => {
       rule: "c", topic, placed_in: topic, best_topic: topic, best_score: expect.any(Number), runner_up_score: null,
       shadow_configuration: "bigram", shadow_rule: "c", shadow_topic: topic, shadow_best_topic: topic, shadow_best_score: expect.any(Number), shadow_runner_up_score: null,
       moved_to: null, moved_at: null, owner_changed: 0, owner_placed: 0, brain_moved_to: null, brain_moved_at: null, brain_overridden: 0,
+      repository_cap: 0, brain_repository_cap: 0,
     }]);
     const logged = lines.filter((line) => line.startsWith("Topic routing decision "));
     expect(logged).toEqual([expect.stringContaining(`Topic routing decision ${routed.entry.id}: model rule c topic ${topic}`)]);
