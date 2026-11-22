@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { Conversation, HubToBrain, TopicMove } from "@super-agent2/protocol";
+import { type Conversation, type HubToBrain, openTicketStates, type TopicMove } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 
-export const defaultTopicArchiveMilliseconds = 86_400_000;
+export const defaultTopicArchiveMilliseconds = 2 * 60 * 60 * 1_000;
 
 export type TopicEdit<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: "not_found" | "conflict" };
 export type HandoverDestination = string | { readonly title: string };
@@ -64,12 +64,19 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const queued = connection.prepare("SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND taken = 0 LIMIT 1");
   const renameTopic = connection.prepare("UPDATE conversations SET title = ?, title_origin = 'owner', updated_at = ? WHERE id = ?");
   const archiveTopic = connection.prepare("UPDATE conversations SET topic_state = 'archived', updated_at = ? WHERE id = ? AND topic_state = 'active'");
-  const archiveCandidates = connection.prepare(`
-    SELECT c.id FROM conversations c
-    WHERE c.topic_state = 'active' AND c.system = 0 AND c.code_system = 0 AND c.merged_into IS NULL AND max(c.activity_at, c.created_at) <= ?
+  const archivable = `
+    c.topic_state = 'active' AND c.system = 0 AND c.code_system = 0 AND c.merged_into IS NULL
       AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = c.id AND t.state = 'running')
       AND NOT EXISTS (SELECT 1 FROM conversation_entries e WHERE e.conversation_id = c.id AND e.taken = 0)
       AND NOT EXISTS (SELECT 1 FROM topic_merges m WHERE m.source = c.id OR m.destination = c.id)
+  `;
+  const archiveCandidates = connection.prepare(`
+    SELECT c.id FROM conversations c WHERE max(c.activity_at, c.created_at) <= ? AND ${archivable}
+  `);
+  const emptyMoveSource = connection.prepare(`
+    SELECT 1 FROM conversations c WHERE c.id = ? AND ${archivable}
+      AND NOT EXISTS (SELECT 1 FROM conversation_entries e WHERE e.conversation_id = c.id AND e.kind = 'owner')
+      AND NOT EXISTS (SELECT 1 FROM tickets t WHERE t.conversation_id = c.id AND t.state IN (${openTicketStates.map(() => "?").join(", ")}))
   `);
   const saveTransfer = connection.prepare("INSERT INTO topic_transfers (entry, source, input, reset_session) VALUES (?, ?, ?, ?) ON CONFLICT(entry) DO NOTHING");
   const blockedByTransfer = connection.prepare(`
@@ -80,6 +87,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const clearSummary = connection.prepare("UPDATE turns SET topic_summary = NULL WHERE id = ? AND state <> 'running'");
   const transferOf = connection.prepare("SELECT * FROM topic_transfers WHERE entry = ?");
   const listTransfers = connection.prepare("SELECT * FROM topic_transfers ORDER BY rowid");
+  const transferFrom = connection.prepare("SELECT 1 FROM topic_transfers WHERE source = ? LIMIT 1");
   const findTransfer = connection.prepare("SELECT entry FROM topic_transfers WHERE source = ? AND input = ?");
   const releaseTransfer = connection.prepare("DELETE FROM topic_transfers WHERE source = ? AND input = ? RETURNING *");
   const markSessionReset = connection.prepare("UPDATE topic_transfers SET reset_session = 1 WHERE source = ? AND input = ?");
@@ -184,6 +192,13 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
   };
 
+  const archive = (id: string) => {
+    options.saveSummary(id);
+    return archiveTopic.run(clock.now(), id).changes > 0;
+  };
+
+  const archiveMovedSource = (id: string) => emptyMoveSource.get(id, ...openTicketStates) !== undefined && archive(id);
+
   const move = (
     id: string, destinationId: TopicMove["destination"],
     { expectedSource, title, byBrain = false }: { expectedSource?: string | undefined; title?: string; byBrain?: boolean } = {},
@@ -215,8 +230,11 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       }
       activate.run(now, now, target);
       incrementRevision.run();
-      return { target, transfer: Transfer.parse(transferOf.get(id)) };
+      return { target, transfer: Transfer.parse(transferOf.get(id)), archived: archiveMovedSource(source) };
     });
+    if (moved.archived) {
+      options.announce(source);
+    }
     options.announce(moved.target);
     options.historyChanged([source, moved.target]);
     withdraw(moved.transfer);
@@ -224,16 +242,13 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     return success(moved.target);
   };
 
-  const archive = (id: string) => {
-    const changed = transaction(() => {
-      options.saveSummary(id);
-      return archiveTopic.run(clock.now(), id).changes > 0;
-    });
+  const archiveAndAnnounce = (id: string) => {
+    const changed = transaction(() => archive(id));
     if (changed) {
       options.announce(id);
     }
   };
-  const archiveIdle = () => archiveCandidates.all(clock.now() - options.archiveMilliseconds).map((row) => Id.parse(row).id).forEach(archive);
+  const archiveIdle = () => archiveCandidates.all(clock.now() - options.archiveMilliseconds).map((row) => Id.parse(row).id).forEach(archiveAndAnnounce);
   const timer = setInterval(archiveIdle, Math.min(options.archiveMilliseconds, 60_000));
   timer.unref();
 
@@ -241,6 +256,11 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     resolve,
     pending,
     archiveIdle,
+    archiveAfterTurn: (id: string) => {
+      if (transferFrom.get(id) !== undefined) {
+        archiveMovedSource(id);
+      }
+    },
     revision: () => z.number().parse(selectRevision.get()?.["revision"]),
     close: () => clearInterval(timer),
     blocked: (conversation: string, seq: number) => pending(conversation) || blockedByTransfer.get(conversation, seq) !== undefined,
@@ -308,7 +328,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       if (topic === undefined) {
         return missing;
       }
-      archive(topic);
+      archiveAndAnnounce(topic);
       return success(topic);
     },
     archiveForBrain: (id: string, current: string): string => {
@@ -321,7 +341,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       if (pending(id)) return "merge pending";
       if (running.get(id) !== undefined) return "turn running";
       if (queued.get(id) !== undefined) return "untaken entries";
-      archive(id);
+      archiveAndAnnounce(id);
       return "archived";
     },
     merge: (sourceId: string, destinationId: string): TopicEdit<string> => {

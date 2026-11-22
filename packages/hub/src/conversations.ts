@@ -887,6 +887,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         advanceSession.run(turn.conversation, turn.provider, SeqRow.parse(selectConsumedSeq.get(turn.conversation)).seq, clock.now());
       }
       updateWorkState.run(runningTurnOf(turn.conversation) === undefined ? "idle" : "working", clock.now(), turn.conversation);
+      corrections.archiveAfterTurn(turn.conversation);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");

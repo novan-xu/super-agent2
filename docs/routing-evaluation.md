@@ -127,7 +127,7 @@ There was no second labeller, so label noise is not measured; topic boundaries i
 ## Method
 
 - Each data set is replayed in time order.
-  For every routed message the router sees the topics in the same scope that were active in the last 24 hours (the idle-archive time); the expected answer is the message's labelled topic if that topic is among them, otherwise a new topic.
+  For every routed message the router sees the topics in the same scope that were active in the last 24 hours (the idle archive time used for this replay); the expected answer is the message's labelled topic if that topic is among them, otherwise a new topic.
 - After each decision the message is placed into its labelled topic (as if the owner corrected a mistake), so errors do not cascade and each decision is counted on its own.
 - Messages addressed to a ticket and card buttons are not routed in the hub and are not counted, but they stay in their topics' history.
   The same routers counted over all 225 test messages are in the last section of the tool's output.
