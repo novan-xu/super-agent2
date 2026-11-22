@@ -12,6 +12,7 @@ import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { brainAbsentReason, brainRestartedReason } from "./conversations.js";
 import { openDatabase } from "./database.js";
+import { createTopicTidy } from "./topic-tidy.js";
 import type { Hub } from "./hub.js";
 import { migrations } from "./migrations.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -1484,6 +1485,38 @@ describe("topic corrections and archive policy", () => {
     expect(running.tickets.get(ticket.id)?.conversation).toBe(source);
     expect(service.tell(ticket.id, "Report after undo", "Read the report")).toBe(source);
     expect((await topicRequest(running, source, "/undo-merge", { destination })).status).toBe(409);
+  });
+
+  it("reports completed quiet tidy merges and retains per-source undo", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const source = service.create().id;
+    const destination = service.create().id;
+    service.tidyTopics("Review candidate topics");
+    const input = messages.findLast((message) => message.type === "input");
+    if (input?.type !== "input") throw new Error("Missing tidy input");
+    const current = { conversation: input.conversation, turn: "tidy-turn" };
+    link.receive({ type: "turn.started", ...current, inputs: [input.input.id], provider: "gpt", model: "test" });
+    const result = await requestBrainTool(running, "merge_topics", { destination, sources: [source] }, current);
+    expect(JSON.parse(result.text)).toEqual([{ topic: source, result: "merge queued" }]);
+    const merge = messages.findLast((message) => message.type === "topic.gates")?.pending[0]?.merge;
+    expect(merge).toBeDefined();
+    link.receive({ type: "topic.paused", conversation: destination, merge: merge! });
+    link.receive({ type: "topic.paused", conversation: source, merge: merge! });
+    let tick = () => {};
+    const tidy = createTopicTidy({ database: running.database, clock, conversations: service,
+      ticker: (callback) => { tick = callback; return () => {}; } });
+    try {
+      expect(service.entries(current.conversation)).toContainEqual(expect.objectContaining({ text: `Topics merged: ${source} → ${destination}.` }));
+      tick();
+      expect(service.entries(current.conversation)).toHaveLength(1);
+      expect(service.undoMerge(source, destination).ok).toBe(true);
+      const undo = messages.findLast((message) => message.type === "topic.gates")?.pending[0]?.merge;
+      link.receive({ type: "topic.paused", conversation: destination, merge: undo! });
+      link.receive({ type: "topic.paused", conversation: source, merge: undo! });
+      expect(service.get(source)?.id).toBe(source);
+    } finally { tidy.close(); }
   });
 
   it("reports why each source was skipped and requires a valid idle destination and an active caller", async () => {

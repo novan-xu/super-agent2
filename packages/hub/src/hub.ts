@@ -50,6 +50,7 @@ import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
 import { createInbox } from "./inbox.js";
 import { createHealthNotices } from "./health-notices.js";
+import { createTopicTidy } from "./topic-tidy.js";
 import { createWorkRequestServer } from "./work-requests.js";
 
 export interface HubOptions {
@@ -73,6 +74,7 @@ export interface HubOptions {
   readonly workSchedule?: (drain: () => void) => void;
   readonly scheduleTicker?: Ticker;
   readonly healthTicker?: Ticker;
+  readonly topicTidyTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
   readonly serviceTokens?: AccessServiceTokens;
   readonly inboxServiceTokens?: AccessServiceTokens;
@@ -139,6 +141,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let server: HubServer;
   let chains: Chains;
   let schedules: Schedules;
+  let topicTidy: ReturnType<typeof createTopicTidy> | undefined;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
   let reviews: DecisionReviews;
@@ -452,6 +455,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
   } catch (error) {
+    topicTidy?.close();
     health?.close();
     runners.close();
     database.close();
@@ -477,6 +481,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     verification.resume();
     taskTickets.resume();
     schedules.resume();
+    topicTidy = createTopicTidy({ database, clock, conversations, time: config.topicTidyTime, enabled: config.topicTidyEnabled,
+      ticker: options.topicTidyTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
     const warn = () => {
       try {
         admin.warnExpiring();
@@ -517,6 +523,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       address,
       ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
+        topicTidy?.close();
         health?.close();
         clearInterval(accessCheck);
         clearInterval(repositoryRefresh);
@@ -544,6 +551,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    topicTidy?.close();
     health?.close();
     runners.close();
     schedules?.close();

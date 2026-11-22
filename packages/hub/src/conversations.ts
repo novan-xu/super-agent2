@@ -116,6 +116,8 @@ export interface ConversationService {
   deliver(delivery: Delivery): string;
   writeDelivery(conversation: string, delivery: Delivery): string;
   writeConfirmation(conversation: string, turn: string, message: string): string;
+  tidyTopics(prompt: string): void;
+  tidyNotice(notice: string): void;
   writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string, source?: string): void;
   publishScheduleNotice(id: string): void;
   writeLightQuestion(conversation: string, id: string, message: string): void;
@@ -1464,6 +1466,12 @@ export function createConversationService(options: ConversationServiceOptions): 
     writeConfirmation: (conversation, turn, message) => writeEntry({
       conversation, turn, kind: "text", provider: providerOfTurn(turn), body: { text: message },
     }),
+    tidyTopics: (prompt) => {
+      postHubEntry({ conversation: noticeTarget(null), kind: "notice", turn: null, body: { text: "", topicTidy: true }, prompt, hidden: true });
+    },
+    tidyNotice: (notice) => {
+      addEntry({ conversation: noticeTarget(null), kind: "notice", turn: null, body: { text: notice } });
+    },
     writeScheduleNotice: (id, conversation, notice, prompt, source) => {
       writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice, source }, ...(prompt === undefined ? {} : { prompt }) });
     },
@@ -1489,7 +1497,15 @@ export function createConversationService(options: ConversationServiceOptions): 
     merge: corrections.merge,
     undoMerge: corrections.undoMerge,
     mergeForBrain: (current, turn, destination, sources) => link?.ready === true && assignmentTurn.get(turn, current) !== undefined
-      ? corrections.mergeForBrain(current, destination, sources) : undefined,
+      ? (() => {
+          const result = corrections.mergeForBrain(current, destination, sources);
+          const tidy = connection.prepare("SELECT 1 FROM conversation_entries WHERE turn_id = ? AND hidden = 1 AND json_extract(body, '$.topicTidy') = 1").get(turn);
+          if (tidy !== undefined) {
+            const record = connection.prepare("INSERT OR REPLACE INTO topic_tidy_merges (source, destination) VALUES (?, ?)");
+            result.filter(({ result: value }) => value === "merge queued").forEach(({ topic }) => record.run(topic, destination));
+          }
+          return result;
+        })() : undefined,
     archive: corrections.archive,
     archiveForBrain: corrections.archiveForBrain,
     archiveIdle: corrections.archiveIdle,

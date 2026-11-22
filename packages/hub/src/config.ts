@@ -66,6 +66,8 @@ const Environment = z.object({
       .transform(Number)
       .pipe(z.number().int().min(1, { error: "must be at least 1" })),
   ),
+  HUB_TOPIC_TIDY_TIME: unlessEmpty(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, { error: "must be HH:MM" })),
+  HUB_TOPIC_TIDY_ENABLED: unlessEmpty(z.enum(["true", "false"])),
   HUB_TOPIC_ARCHIVE_MS: unlessEmpty(z.string().regex(/^[1-9]\d*$/, { error: "must be a positive number of milliseconds" }).transform(Number).pipe(z.number().int().positive())),
   HUB_ROUTING_MODELS: unlessEmpty(z.string().refine(isAbsolutePath, { error: "must be an absolute folder" })),
   HUB_ROUTING_PRIMARY: unlessEmpty(z.enum(["model", "bigram"], { error: "must be model or bigram" })),
@@ -97,6 +99,8 @@ export interface Config {
   readonly firstPipelineAllowanceMinutes?: number;
   readonly deepseekLowBalance?: number;
   readonly topicArchiveMilliseconds?: number;
+  readonly topicTidyTime?: string;
+  readonly topicTidyEnabled?: boolean;
   readonly routingModels?: string;
   readonly routingPrimary?: "model" | "bigram";
 }
@@ -173,6 +177,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),
       ...(value.SUPERAGENT2_REVISION === undefined ? {} : { version: value.SUPERAGENT2_REVISION }),
       ...(value.HUB_SOURCE_REPOSITORY === undefined ? {} : { sourceRepository: value.HUB_SOURCE_REPOSITORY }),
+      ...(value.HUB_TOPIC_TIDY_TIME === undefined ? {} : { topicTidyTime: value.HUB_TOPIC_TIDY_TIME }),
+      ...(value.HUB_TOPIC_TIDY_ENABLED === undefined ? {} : { topicTidyEnabled: value.HUB_TOPIC_TIDY_ENABLED === "true" }),
       ...(value.HUB_TOPIC_ARCHIVE_MS === undefined ? {} : { topicArchiveMilliseconds: value.HUB_TOPIC_ARCHIVE_MS }),
       ...(value.HUB_DEEPSEEK_LOW_BALANCE === undefined ? {} : { deepseekLowBalance: value.HUB_DEEPSEEK_LOW_BALANCE }),
       ...(value.HUB_ROUTING_MODELS === undefined ? {} : { routingModels: value.HUB_ROUTING_MODELS }),
