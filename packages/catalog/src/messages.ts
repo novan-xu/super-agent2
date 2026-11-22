@@ -635,6 +635,8 @@ export const messages = {
   "mail.deadline": "截止时间：{deadline}。",
   "mail.reply": "建议回复。",
   "mail.skipped": "邮箱 {mailbox} 无法读取 {from} 至 {until} 的邮件，这段时间已跳过。",
+  "mail.filterFailed": "邮件预筛选连续失败，邮件仍在排队等待重试。",
+  "mail.filterRecovered": "邮件预筛选已恢复。",
   "mail.stalled": "邮箱 {mailbox} 已一小时没有读取进展。",
   "connections.brain": "大脑",
   "connections.devices": "通知设备",
