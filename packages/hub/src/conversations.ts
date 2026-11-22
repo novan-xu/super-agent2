@@ -25,6 +25,7 @@ import {
   finishedStates,
   type HistoryItem,
   type HubToBrain,
+  isPrivateAppToolEvent,
   type MemoryBrief,
   OwnerEntry,
   type Question,
@@ -124,6 +125,7 @@ export interface ConversationService {
   linked(): boolean;
   brainStatus(): BrainStatus;
   brainReady(): boolean;
+  activeTurnProvider(conversation: string, turn: string): Provider | undefined;
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
   watchBrain(listener: () => void): () => void;
@@ -1084,7 +1086,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "tool.started": {
-        if (!known(message.conversation, message.turn) || isQuiet(message.turn)) {
+        if (!known(message.conversation, message.turn) || isQuiet(message.turn) || isPrivateAppToolEvent(message.name)) {
           return;
         }
         const id = `${message.turn}:${message.call}`;
@@ -1649,6 +1651,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     linked: () => link !== undefined,
     brainStatus: () => brainStatus,
     brainReady: () => link?.ready === true,
+    activeTurnProvider: (conversation, turn) => {
+      const current = getTurn(turn);
+      return link?.ready === true && current?.state === "running" && current.conversation === conversation ? current.provider ?? undefined : undefined;
+    },
     providers: () => (link === undefined ? undefined : brainProviders),
     sendOrder: (order) => {
       sendToBrain({ type: "order", order: [...order] });

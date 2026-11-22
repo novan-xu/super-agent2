@@ -37,6 +37,24 @@ function startedWith(sent: readonly BrainMessage[]): Provider[] {
   return sent.flatMap((message) => (message.type === "turn.started" ? [message.provider] : []));
 }
 
+it.each([["gpt", "hub.mail_read"], ["claude", "mcp__hub__mail_read"]] as const)(
+  "keeps private %s app tool events off the hub link",
+  async (provider, name) => {
+    const { brain, sent, programs } = setup([provider]);
+    brain.receive({ type: "input", conversation: "c1", input: { id: "i1", source: "owner", text: "Read my mail", attachments: [] } });
+    const { handle } = await programs[provider].next();
+    handle.emit({ type: "tool.started", call: "mail", name, input: "Private mailbox" });
+    handle.emit({ type: "tool.output", call: "mail", delta: "Private output" });
+    handle.emit({ type: "tool.finished", call: "mail", output: "Private message", ok: true });
+    handle.emit({ type: "tool.started", call: "regular", name: "hub.read_ticket", input: "#" });
+    expect(sent.filter((event) => event.type.startsWith("tool."))).toEqual([
+      expect.objectContaining({ type: "tool.started", name: "hub.read_ticket" }),
+    ]);
+    handle.finish();
+    await brain.close();
+  },
+);
+
 describe("the brain's provider order", () => {
   it("is changed by the hub and applies to the next message", async () => {
     const { brain, sent, programs } = setup(["gpt", "claude", "deepseek"]);

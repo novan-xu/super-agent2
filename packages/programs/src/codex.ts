@@ -168,6 +168,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
       "features.skill_search": false,
       "features.skip_host_skill_discovery": true,
       "features.sleep_tool": false,
+      "features.apps": false,
     } : {}),
     ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [`mcp_servers.${server.name}`, { url: server.url, bearer_token_env_var: extraMcpVariable(index) }])),
   };

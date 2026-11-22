@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  type AppGatewayStatus,
   type BrainSettings,
   type Device,
   type EngineTable,
@@ -47,6 +48,7 @@ export interface SettingsOptions {
   readonly defaults: StartDefaults;
   readonly credentials: CredentialSource;
   readonly pushKey: string | undefined;
+  readonly appGateway?: () => AppGatewayStatus;
 }
 
 const orderKeys = { brain: "brain_order", worker: "worker_order" };
@@ -113,6 +115,7 @@ export function createSettings(options: SettingsOptions): Settings {
       subscriptions: [subscriptions.codex, subscriptions.claude],
       unavailable: options.defaults.unavailable(),
       devices: devices(),
+      ...(options.appGateway === undefined ? {} : { appGateway: options.appGateway() }),
     };
   };
 

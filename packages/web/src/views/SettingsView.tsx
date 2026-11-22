@@ -689,9 +689,28 @@ function InboxSources() {
 }
 
 function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
+  const gateway = settings.appGateway;
+  const connectedApps = gateway === undefined ? [] : [
+    ...gateway.mailboxes.map(({ provider, label }) => provider === "outlook" && label.includes("@") ? `Outlook · ${label}` : label),
+    ...(gateway.teams ? ["Microsoft Teams"] : []),
+    ...(gateway.ticktick ? ["TickTick"] : []),
+  ];
   return (
     <>
       <InboxSources />
+      {gateway === undefined ? null : (
+        <section className="section">
+          <div className="rows">
+            <div className="srow">
+              <span className={`dot ${gateway.connected ? "dot--ok" : "dot--bad"}`} />
+              <div className="srow-text">
+                <span className="srow-title">{text(gateway.connected ? "connections.appGatewayConnected" : "connections.appGatewayDisconnected")}</span>
+                {connectedApps.length === 0 ? null : <span className="srow-help">{connectedApps.join("、")}</span>}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
       <section className="section">
         <div className="section-head">
           <h2>{text("connections.github")}</h2>

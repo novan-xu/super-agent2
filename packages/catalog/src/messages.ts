@@ -622,6 +622,8 @@ export const messages = {
   "appearance.accent.rose": "玫红",
   "appearance.accent.graphite": "石墨",
   "connections.github": "GitHub",
+  "connections.appGatewayConnected": "ChatGPT · 已连接",
+  "connections.appGatewayDisconnected": "ChatGPT · 未连接",
   "connections.brain": "大脑",
   "connections.devices": "通知设备",
   "connections.configured": "有令牌",

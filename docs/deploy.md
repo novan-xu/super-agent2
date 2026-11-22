@@ -26,6 +26,7 @@ Every path the script deletes or moves is checked to be inside its own folder an
 | The owner's attachments | volume `superagent2-brain-link`, folder `attachments` (`HUB_ATTACHMENTS_DIR` for the hub, `BRAIN_ATTACHMENTS_DIR` for the brain, both `/var/lib/superagent2/link/attachments`); kept, never pruned, and not part of a release's database backup |
 | Hub's home folder (`known_hosts`, `gh` and `git` settings) | volume `superagent2-hub-home` |
 | Codex, Claude Code and `dsh` logins and sessions | volumes `superagent2-brain-codex`, `superagent2-brain-claude`, `superagent2-brain-dsh` |
+| Personal app gateway login | shares `superagent2-brain-codex` with the brain, mounted at `/home/node/.codex` in both containers |
 | Brain's working folder | volume `superagent2-brain-workspace` |
 | Images | `superagent2-hub` and `superagent2-brain`, tagged `current`, `previous` and the commit; commit tags other than the running and the previous version are removed after each release |
 | Topic routing model | inside the hub image, `/opt/superagent2/models/Xenova/bge-small-zh-v1.5` (`HUB_ROUTING_MODELS`); no volume, see [The routing model](#the-routing-model) |
@@ -399,12 +400,23 @@ Nothing is authorized for the hub on the NAS host: it gets no key and needs none
   The login is kept on the volume `superagent2-brain-dsh`.
 - **Codex, if its login is refused.**
   `docker exec -it superagent2-brain codex login --device-auth`, then follow the link on any device.
+  The brain and the hub's app gateway use the same `auth.json` in the shared volume.
 - **Claude, if its token stops working.**
   Make a new one with `claude setup-token` on a computer, put it as `BRAIN_CLAUDE_OAUTH_TOKEN=<token>` in `/share/Container/superagent2/secrets/brain.env` (mode 600), and recreate the brain with `bash /share/Container/superagent2/deploy.sh up`.
 - **Notifications on the phone.**
   Open the host name on the phone and sign in.
   On an iPhone, add the page to the home screen (Share, then Add to Home Screen) and open it from there, since iPhone allows push only for a page on the home screen.
   Then turn on 通知 next to 等你 in 工作台 and allow notifications.
+
+## Personal app gateway
+
+Compose sets `HUB_APP_GATEWAY=1` so the hub starts its own Codex app server and uses the owner's ChatGPT connections.
+The hub image installs the same pinned Codex CLI version as the brain image.
+No separate app token or connection setup is needed in the hub.
+Link or repair Outlook, Gmail, Microsoft Teams and TickTick in the owner's ChatGPT account.
+The hub reads the connector inventory at startup and every five minutes.
+After deployment, check 设置 → 连接 for the discovered accounts, then ask the brain to list recent Outlook and Gmail mail and read a message from a recent Teams chat.
+Gateway logs report failure categories and HTTP status when available without connector error text.
 
 ## Woodpecker from the hub
 

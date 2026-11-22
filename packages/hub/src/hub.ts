@@ -3,6 +3,7 @@ import { createModelDiscovery } from "./model-discovery.js";
 import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
+import { AppGateway } from "./app-gateway.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
 import { type Clock, type Sleep, systemClock } from "./clock.js";
@@ -55,6 +56,7 @@ import { createWorkRequestServer } from "./work-requests.js";
 
 export interface HubOptions {
   readonly config: Config;
+  readonly appGateway?: AppGateway;
   readonly keySource?: KeySource;
   readonly clock?: Clock;
   readonly environment?: Environment;
@@ -126,6 +128,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const clock = options.clock ?? systemClock;
   const { config } = options;
   const environment = options.environment ?? process.env;
+  const appGateway = options.appGateway ?? (config.appGateway ? new AppGateway({
+    cwd: config.dataDir,
+    environment,
+    report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
+  }) : undefined);
   const extraMcp = extraMcpFromEnvironment(environment);
   const database = openDatabase({ dataDir: config.dataDir, clock, ...(config.ticketTimeZone === undefined ? {} : { ticketTimeZone: config.ticketTimeZone }) });
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
@@ -379,6 +386,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       defaults,
       credentials,
       pushKey: config.vapid?.publicKey,
+      ...(appGateway === undefined ? {} : { appGateway: () => appGateway.status() }),
     });
     const current = settings;
     settingsChanged = () => current.changed();
@@ -407,6 +415,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         conversations,
         memories,
         attachments,
+        ...(appGateway === undefined ? {} : { appGateway }),
         tickets: {
           tickets,
           tasks: taskTickets,
@@ -497,6 +506,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     void repositoryDiscovery.refresh();
     const repositoryRefresh = setInterval(() => void repositoryDiscovery.refresh(), repositoryRefreshMilliseconds);
     repositoryRefresh.unref();
+    appGateway?.start(settingsChanged);
     return {
       database,
       commands,
@@ -531,6 +541,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         repositoryDiscovery.close();
         settings.close();
         try {
+          await appGateway?.close();
           runners.close();
           await Promise.all([server.close(), closeWorkRequests?.()]);
         } finally {
@@ -555,6 +566,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     health?.close();
     runners.close();
     schedules?.close();
+    await appGateway?.close();
     await Promise.allSettled([address === undefined ? undefined : server.close(), closeWorkRequests?.()]);
     taskTickets.close();
     await taskTickets.idle();

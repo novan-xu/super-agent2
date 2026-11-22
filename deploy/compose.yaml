@@ -25,6 +25,7 @@ services:
     env_file:
       - ${SUPERAGENT2_ROOT:?run this file through deploy.sh}/secrets/hub.env
     environment:
+      HUB_APP_GATEWAY: "1"
       HUB_CONVERTER_URL: http://converter:3000
       HUB_DATA_DIR: /var/lib/superagent2/hub
       HUB_PORT: "8080"
@@ -46,6 +47,7 @@ services:
       - hub-data:/var/lib/superagent2/hub
       - brain-link:/var/lib/superagent2/link
       - hub-home:/home/node
+      - brain-codex:/home/node/.codex
       - ${SUPERAGENT2_ROOT}/secrets/work-sources:/run/superagent2/work-sources:ro
       - ${SUPERAGENT2_ROOT}/projects:${SUPERAGENT2_ROOT}/projects
     healthcheck:

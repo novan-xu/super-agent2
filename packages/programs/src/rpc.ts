@@ -9,6 +9,8 @@ export class RpcError extends Error {
   }
 }
 
+export class RpcTimeout extends Error {}
+
 const Incoming = z.looseObject({
   id: z.union([z.string(), z.number()]).optional(),
   method: z.string().optional(),
@@ -25,23 +27,37 @@ export interface RpcOptions {
 }
 
 export interface Rpc {
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(method: string, params?: unknown, timeoutMilliseconds?: number): Promise<unknown>;
   notify(method: string, params?: unknown): void;
   handle(message: unknown): void;
   failAll(reason: string): void;
 }
 
 export function createRpc(options: RpcOptions): Rpc {
-  const pending = new Map<string | number, { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void }>();
+  const pending = new Map<string | number, {
+    readonly resolve: (value: unknown) => void;
+    readonly reject: (error: Error) => void;
+    readonly timer: NodeJS.Timeout | undefined;
+  }>();
   let next = 1;
   const frame = (body: Record<string, unknown>) => (options.jsonrpc ? { jsonrpc: "2.0", ...body } : body);
   return {
-    request: (method, params) =>
+    request: (method, params, timeoutMilliseconds) =>
       new Promise((resolve, reject) => {
         const id = next;
         next += 1;
-        pending.set(id, { resolve, reject });
-        options.write(frame(params === undefined ? { id, method } : { id, method, params }));
+        const timer = timeoutMilliseconds === undefined ? undefined : setTimeout(() => {
+          pending.delete(id);
+          reject(new RpcTimeout(`${method} timed out`));
+        }, timeoutMilliseconds);
+        pending.set(id, { resolve, reject, timer });
+        try {
+          options.write(frame(params === undefined ? { id, method } : { id, method, params }));
+        } catch (error) {
+          pending.delete(id);
+          clearTimeout(timer);
+          reject(error);
+        }
       }),
     notify: (method, params) => {
       options.write(frame(params === undefined ? { method } : { method, params }));
@@ -75,6 +91,7 @@ export function createRpc(options: RpcOptions): Rpc {
         return;
       }
       pending.delete(message.id);
+      clearTimeout(waiter.timer);
       if (message.error !== undefined) {
         waiter.reject(new RpcError(message.error.code ?? -32603, message.error.message ?? "Unknown error"));
       } else {
@@ -83,6 +100,7 @@ export function createRpc(options: RpcOptions): Rpc {
     },
     failAll: (reason) => {
       for (const waiter of pending.values()) {
+        clearTimeout(waiter.timer);
         waiter.reject(new Error(reason));
       }
       pending.clear();
