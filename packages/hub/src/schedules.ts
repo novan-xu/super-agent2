@@ -67,7 +67,8 @@ function runPrompt(id: string, fields: ScheduleFields): string {
     `[hub] Scheduled run ${id} for ${JSON.stringify(fields.title)}. The owner has already confirmed this plan.`,
     ...(fields.repository === undefined ? [] : [`Related repository: ${fields.repository}.`]),
     ...(fields.machine === undefined ? [] : [`Requested work machine: ${fields.machine}.`]),
-    "Choose how to carry out the instruction now. Use run_scheduled_light_task for quiet worker work, or use the regular issue, chain and task tools and state defaults. The hub starts work from this run after you finish the turn. Report the result or what you arranged in Chinese.",
+    "Choose the normal path for this work: answer directly, use run_scheduled_light_task for quiet worker work, or open visible task tickets or issue chains. For code, arrange the chains and any required deployments in this turn. State defaults for every visible ticket this run opens.",
+    "Arrange only work opened by this run and report relevant work that is already pending. The hub starts this run's work at turn end and delivers light-task results here. Summarize the result or arrangement in Chinese in this topic.",
     `Instruction:\n${fields.instruction}`,
   ].join("\n");
 }

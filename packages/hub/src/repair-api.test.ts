@@ -369,7 +369,8 @@ describe("giving up a stuck chain", () => {
     expect(told?.prompt).toContain("the issues still open: #8, #9");
     expect(told?.prompt).toContain(`What waited for ticket ${ticketReference(chain)} now waits for ticket ${ticketReference(repair)}`);
     expect(told?.prompt).toContain("choose_defaults");
-    expect(told?.prompt).toContain("The hub uses the owner's worker order for the engine.");
+    expect(told?.prompt).toContain("Consider a higher difficulty if the failed run warrants it.");
+    expect(told?.prompt).toContain("with a fresh round count");
     expect(told?.prompt).toContain("The owner's words, which the repair's worker is given as well: 换个更强的模型试试");
     expect(told?.prompt).toContain(chain.decisions[0]?.chosen.en ?? "missing");
     expect(notices(running, conversation).map((entry) => entry.text)).not.toContain(`工单 ${chain.code.toUpperCase()} 停止了，排在它后面的工单 ${deployment} 由大脑决定是否继续`);

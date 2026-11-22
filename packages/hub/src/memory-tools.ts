@@ -9,21 +9,14 @@ const RecallArguments = z.object({});
 const ForgetArguments = z.object({ id: MemoryId, ownerAsked: z.boolean().optional() });
 
 const ownerAskedDescription =
-  "True only when the owner asked in this conversation for this; it lets you suggest again what the owner declined, deleted or kept before. Leave out otherwise.";
+  "True only for an explicit owner request to revisit a declined, deleted or kept memory.";
 
 export function memoryDefinitions() {
   return [
     {
       name: "remember",
       title: "Suggest a memory",
-      description: [
-        "Suggest one lasting fact about the owner for every later conversation, whichever model answers: a preference the owner stated or corrected, a standing fact about the owner's projects or machines that no repository records, how the owner likes things reported.",
-        "It does not change the memory. The suggestion waits in 记忆 until the owner confirms or declines it; only the owner changes the memory.",
-        "Write it in Simplified Chinese, which is exactly what the owner reads and what every later conversation is given; names and technical terms may stay as they are. Make it stand alone: name the project or machine it is about.",
-        "When it updates, corrects or covers memories you already have, name them in replaces: confirming it then replaces them. Prefer that to suggesting a near-copy beside them.",
-        "Refused: a text that is the same as a memory, as a suggestion still waiting, or as one the owner declined or deleted; and anything that looks like a credential.",
-        "Every answer includes your memory as it is now, the suggestions waiting, and what the owner set aside.",
-      ].join(" "),
+      description: "Suggest a lasting memory for the owner's confirmation.",
       inputSchema: {
         type: "object",
         properties: {
@@ -38,15 +31,13 @@ export function memoryDefinitions() {
     {
       name: "recall",
       title: "Read your memory",
-      description:
-        "List your memory with ids, the suggestions waiting for the owner, and what the owner declined or deleted. It is also given to you at the start of each conversation and whenever it changes.",
+      description: "Read memory IDs, pending suggestions and past declines or deletions.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
       name: "forget",
       title: "Suggest forgetting a memory",
-      description:
-        "Suggest removing a memory that no longer holds. The memory stays until the owner confirms in 记忆. To change what a memory says, suggest the new text with remember and replaces instead.",
+      description: "Suggest removing a memory for the owner's confirmation.",
       inputSchema: {
         type: "object",
         properties: {

@@ -474,6 +474,7 @@ describe("when every provider is unavailable", () => {
     expect(told).toHaveLength(1);
     expect(told[0]?.notice).toBe(text("notice.waitingForProvider", { ticket: ticket.code }));
     expect(told[0]?.prompt).toContain("waits for a provider");
+    expect(told[0]?.prompt).toContain("Leave the ticket waiting without guidance, stopping or reassignment.");
     tick?.();
     tick?.();
     expect(told).toHaveLength(1);

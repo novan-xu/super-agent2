@@ -1522,7 +1522,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       [
         `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) waits for a provider. Its program, ${programNames[previous.engine]}, reported itself unavailable: ${previous.reason ?? "no reason was given"}.`,
         `Every provider that could run it is unavailable now: ${engines.map((engine) => `${programNames[engine]} (${out?.get(engine)?.reason ?? "unavailable"})`).join("; ")}.`,
-        `The hub tries again by itself when the earliest of their times passes (${whenWords(until)}) or when an allowance reading shows one back. Nothing is asked of you, no guided round is counted and the ticket does not stop.`,
+        `The hub retries when the earliest wait ends (${whenWords(until)}) or an allowance reading shows a provider back. This takes no guided round. Leave the ticket waiting without guidance, stopping or reassignment.`,
         "Tell the owner in Chinese, in a line, that the ticket waits for a provider, and when it will be tried again if a time is known.",
       ].join("\n"),
     );
