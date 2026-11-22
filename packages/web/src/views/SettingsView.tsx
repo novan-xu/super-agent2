@@ -21,6 +21,7 @@ import {
   withCell,
 } from "@super-agent2/protocol";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
 import {
   availableNow,
@@ -76,6 +77,7 @@ const sectionIcons: Readonly<Record<SettingsSection, IconName>> = {
   repositories: "repo",
   connections: "connect",
   appearance: "sun",
+  usage: "hub",
 };
 
 function routeOf(section: SettingsSection | null): PageRoute {
@@ -776,6 +778,52 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
   );
 }
 
+const UsageReport = z.object({
+  daily: z.array(z.object({ day: z.string(), provider: z.string(), input: z.number().nullable(), cacheRead: z.number().nullable(), cacheWrite: z.number().nullable(), output: z.number().nullable(), reasoning: z.number().nullable(), costUsd: z.number().nullable(), attempts: z.number() })),
+  topics: z.array(z.object({ topic: z.string(), title: z.string(), tokens: z.number() })),
+  seeds: z.array(z.object({ turn: z.string(), at: z.number(), provider: z.string(), title: z.string(), seed: z.record(z.string(), z.number()) })),
+});
+type UsageRow = z.infer<typeof UsageReport>["daily"][number];
+
+function UsageSection() {
+  const [report, setReport] = useState<z.infer<typeof UsageReport> | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/brain/usage", { signal: controller.signal, cache: "no-store" }).then(async (response) => {
+      if (!response.ok) throw new Error("Usage request failed");
+      setReport(UsageReport.parse(await response.json()));
+    }).catch(() => { if (!controller.signal.aborted) setError(true); });
+    return () => controller.abort();
+  }, []);
+  if (error) return <div role="alert">{text("usage.error")}</div>;
+  if (report === null) return <div role="status">{text("usage.loading")}</div>;
+  const number = (value: number | null) => value === null ? "?" : value.toLocaleString();
+  const totals = [...new Set(report.daily.map((item) => item.provider))].map((provider): UsageRow => {
+    const rows = report.daily.filter((item) => item.provider === provider);
+    const sum = (key: "input" | "cacheRead" | "cacheWrite" | "output" | "reasoning" | "costUsd") => {
+      const values = rows.flatMap((item) => item[key] === null ? [] : [item[key]]);
+      return values.length === 0 ? null : values.reduce((a, b) => a + b, 0);
+    };
+    return { day: "", provider, input: sum("input"), cacheRead: sum("cacheRead"), cacheWrite: sum("cacheWrite"), output: sum("output"), reasoning: sum("reasoning"), costUsd: sum("costUsd"), attempts: rows.reduce((a, b) => a + b.attempts, 0) };
+  });
+  const row = (item: UsageRow) => <tr key={`${item.day}-${item.provider}`}><td>{item.day}</td><td>{item.provider}</td><td>{number(item.input)}</td><td>{number(item.cacheRead)}</td><td>{number(item.cacheWrite)}</td><td>{number(item.output)}</td></tr>;
+  return <>
+    <section className="section"><div className="section-head"><h2>{text("usage.totals")}</h2></div>
+      {totals.length === 0 ? <div>{text("usage.empty")}</div> : <div style={{ overflowX: "auto" }}><table className="usage-table"><thead><tr><th>{text("usage.date")}</th><th>{text("usage.provider")}</th><th>{text("usage.input")}</th><th>{text("usage.cacheRead")}</th><th>{text("usage.cacheWrite")}</th><th>{text("usage.output")}</th></tr></thead><tbody>{totals.map(row)}</tbody></table></div>}
+    </section>
+    <section className="section"><div className="section-head"><h2>{text("usage.daily")}</h2></div>
+      {report.daily.length === 0 ? <div>{text("usage.empty")}</div> : <div style={{ overflowX: "auto" }}><table className="usage-table"><thead><tr><th>{text("usage.date")}</th><th>{text("usage.provider")}</th><th>{text("usage.input")}</th><th>{text("usage.cacheRead")}</th><th>{text("usage.cacheWrite")}</th><th>{text("usage.output")}</th></tr></thead><tbody>{report.daily.map(row)}</tbody></table></div>}
+    </section>
+    <section className="section"><div className="section-head"><h2>{text("usage.seeds")}</h2></div>
+      {report.seeds.length === 0 ? <div>{text("usage.empty")}</div> : <div className="rows">{report.seeds.map((item, index) => <details className="srow usage-seed" key={`${item.turn}-${index}`}><summary>{item.title || item.turn} ? {item.provider} ? {new Date(item.at).toLocaleString()}</summary><div>{(["input", "quote", "summary", "history", "memory", "tickets", "board", "status"] as const).map((key) => <div key={key}>{text(`usage.seed.${key}`)}: {number(item.seed[key] ?? null)}</div>)}</div></details>)}</div>}
+    </section>
+    <section className="section"><div className="section-head"><h2>{text("usage.topics")}</h2></div>
+      {report.topics.length === 0 ? <div>{text("usage.empty")}</div> : <div className="rows">{report.topics.map((topic) => <div className="srow" key={topic.topic}><span className="srow-text">{topic.title || topic.topic}</span><span>{number(topic.tokens)}</span></div>)}</div>}
+    </section>
+  </>;
+}
+
 export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now }: SettingsViewProps) {
   const active = section ?? firstSection;
   const link = (target: SettingsSection | null) => {
@@ -783,6 +831,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
     return { href: pagePath(route), onClick: (event: React.MouseEvent) => followLink(event, () => navigate(route)) };
   };
   const body = () => {
+    if (active === "usage") return <UsageSection />;
     if (active === "appearance") {
       return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
     }

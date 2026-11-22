@@ -928,6 +928,14 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const receive = (message: BrainMessage) => {
     switch (message.type) {
+      case "usage.attempt": {
+        if (known(message.conversation, message.turn)) connection.prepare(`INSERT INTO brain_usage (turn, attempt, topic, provider, model, at, seed) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (turn, attempt) DO UPDATE SET model = excluded.model, seed = coalesce(excluded.seed, brain_usage.seed)`).run(message.turn, message.attempt, message.conversation, message.provider, message.model, clock.now(), message.seed === null ? null : JSON.stringify(message.seed));
+        return;
+      }
+      case "usage.update": {
+        if (known(message.conversation, message.turn)) connection.prepare(`UPDATE brain_usage SET model = ?, input = ?, cache_read = ?, cache_write = ?, output = ?, reasoning = ?, cost_usd = ? WHERE turn = ? AND attempt = ? AND topic = ?`).run(message.model, message.input, message.cacheRead, message.cacheWrite, message.output, message.reasoning, message.costUsd, message.turn, message.attempt, message.conversation);
+        return;
+      }
       case "providers": {
         brainProviders = message;
         publishBrainStatus();

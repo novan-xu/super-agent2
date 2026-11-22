@@ -207,7 +207,19 @@ const Withdrawn = z.object({ type: z.literal("input.withdrawn"), conversation: C
 const Withdrawing = Withdrawn.extend({ type: z.literal("input.withdrawing"), turn: z.string().min(1) });
 const TopicPaused = z.object({ type: z.literal("topic.paused"), conversation: ConversationId, merge: z.string().min(1) });
 
+export const UsageAttempt = z.object({
+  type: z.literal("usage.attempt"), conversation: ConversationId, turn: z.string().min(1), attempt: z.number().int().positive(),
+  provider: Provider, model: z.string(), seed: z.record(z.string(), z.number().int().nonnegative()).nullable(),
+});
+export const UsageUpdate = z.object({
+  type: z.literal("usage.update"), conversation: ConversationId, turn: z.string().min(1), attempt: z.number().int().positive(), model: z.string(),
+  input: z.number().int().nonnegative().nullable(), cacheRead: z.number().int().nonnegative().nullable(), cacheWrite: z.number().int().nonnegative().nullable(),
+  output: z.number().int().nonnegative().nullable(), reasoning: z.number().int().nonnegative().nullable(), costUsd: z.number().nonnegative().nullable(),
+});
+
 export const BrainMessage = z.discriminatedUnion("type", [
+  UsageAttempt,
+  UsageUpdate,
   BrainHello,
   TurnStarted,
   InputTaken,

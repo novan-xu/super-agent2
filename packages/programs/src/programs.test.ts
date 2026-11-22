@@ -89,6 +89,26 @@ describe("extra MCP servers", () => {
   });
 });
 
+describe("dsh usage", () => {
+  it("reports per-call token fields from assistant messages", async () => {
+    const source = fakeDshSource.replace('message: { id: "a1", content:', 'usage: { inputTokens: 12, outputTokens: 7, cacheReadTokens: 40, reasoningTokens: 2 }, message: { id: "a1", content:');
+    const log = new EventLog();
+    track(dshAdapter(settings(writeFake(directory, "dsh-usage.mjs", source), "deepseek", "high")).open(options(null), log.listener)).start("hello");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 12, cacheRead: 40, cacheWrite: null, output: 7, reasoning: 2, costUsd: null });
+  });
+});
+
+describe("Codex usage", () => {
+  it("reports last-turn tokens and separates cached input", async () => {
+    const source = fakeCodexSource.replace('tokenUsage: { modelContextWindow: 272000 }', 'tokenUsage: { modelContextWindow: 272000, last: { inputTokens: 120, cachedInputTokens: 80, cacheWriteInputTokens: 3, outputTokens: 20, reasoningOutputTokens: 5 } }');
+    const log = new EventLog();
+    track(codexAdapter(settings(writeFake(directory, "codex-usage.mjs", source), "gpt", "high")).open(options(null), log.listener)).start("report capacity");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 40, cacheRead: 80, cacheWrite: 3, output: 20, reasoning: 5, costUsd: null });
+  });
+});
+
 describe("reported model input capacity", () => {
   it.each([
     ["codex", codexAdapter, fakeCodexSource, "gpt-6-astra", 272_000],

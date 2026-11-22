@@ -56,6 +56,7 @@ interface Attempt {
   readonly provider: Provider;
   readonly mode: Mode;
   readonly freshSession: boolean;
+  usage?: Extract<ProgramEvent, { type: "usage" }>;
 }
 
 interface Live {
@@ -315,9 +316,21 @@ export function createBrain(options: BrainOptions): Brain {
     const { turn } = attempt;
     const prefix = `${attempt.token}.`;
     switch (event.type) {
+      case "usage": {
+        const previous = attempt.usage;
+        const add = (a: number | null, b: number | null) => a === null ? b : b === null ? a : a + b;
+        const usage = attempt.provider === "gpt" || previous === undefined ? event : {
+          ...event, input: add(previous.input, event.input), cacheRead: add(previous.cacheRead, event.cacheRead), cacheWrite: add(previous.cacheWrite, event.cacheWrite),
+          output: add(previous.output, event.output), reasoning: add(previous.reasoning, event.reasoning), costUsd: add(previous.costUsd, event.costUsd),
+        };
+        attempt.usage = usage;
+        transport.send({ ...usage, type: "usage.update", conversation: state.id, turn: turn.id, attempt: attempt.token, model: turn.model });
+        return;
+      }
       case "model":
         if (event.model.trim() !== "") {
           turn.model = event.model;
+          transport.send({ type: "usage.attempt", conversation: state.id, turn: turn.id, attempt: attempt.token, provider: attempt.provider, model: turn.model, seed: null });
           tell();
         }
         return;
@@ -441,6 +454,7 @@ export function createBrain(options: BrainOptions): Brain {
     turn.tokens += 1;
     const attempt: Attempt = { turn, token: turn.tokens, provider, mode, freshSession };
     turn.current = attempt;
+    transport.send({ type: "usage.attempt", conversation: state.id, turn: turn.id, attempt: attempt.token, provider, model: adapterOf(provider).model, seed: null });
     turn.provider = provider;
     turn.tried.add(provider);
     const call: PrepareCall = {
@@ -492,7 +506,7 @@ export function createBrain(options: BrainOptions): Brain {
       }
     }
 
-    let prompt: ReturnType<typeof topicPrompt>;
+    let prompt: { text: string; images: import("@super-agent2/programs").PromptImage[]; estimates?: Record<string, number> };
     try {
       if (prepared.board !== undefined || prepared.seed !== undefined || prepared.automaticTitle === true || turn.inputs.some((input) => input.quote !== undefined || input.routing !== undefined || input.needsRepository === true)) {
         prompt = preparePrompt(state, provider, turn.inputs, prepared, mode === "continue");
@@ -511,6 +525,7 @@ export function createBrain(options: BrainOptions): Brain {
         state.live = live;
       }
       live.attempt = attempt;
+      transport.send({ type: "usage.attempt", conversation: state.id, turn: turn.id, attempt: attempt.token, provider, model: turn.model, seed: (freshSession || prepared.session === null) ? (prompt.estimates ?? null) : null });
       turn.started = true;
       live.handle.start(prompt.text, prompt.images);
     } catch (error) {

@@ -38,7 +38,7 @@ function boardTitle(entry: TopicBoardEntry): string {
   return `- ${entry.id} ${title}${project}${state}`;
 }
 
-export function topicPrompt(options: PromptOptions): { text: string; images: PromptImage[] } {
+export function topicPrompt(options: PromptOptions): { text: string; images: PromptImage[]; estimates: Record<string, number> } {
   const { conversation, inputs, prepared, provider, capacity, softShare, attachments } = options;
   const cost = (text: string) => estimateTokens(text, provider);
   const make = (section: Section, text: string): Part => ({ section, text, tokens: cost(text) + 1, visible: true });
@@ -193,5 +193,10 @@ export function topicPrompt(options: PromptOptions): { text: string; images: Pro
     }
   }
   const quotedImages = quoteParts.flatMap(({ visible, quote }) => visible && quote.item?.kind === "owner" ? [quote.item] : []);
-  return { text, images: promptImages([...inputs, ...quotedImages], attachments) };
+  const estimates: Record<string, number> = { input: cost(input), quote: 0, summary: 0, history: 0, memory: 0, tickets: 0, board: 0, status: 0 };
+  for (const part of parts.filter((part) => part.visible)) {
+    const section = part.section === "ticket" || part.section === "otherTicket" ? "tickets" : part.section;
+    estimates[section] = (estimates[section] ?? 0) + part.tokens;
+  }
+  return { text, images: promptImages([...inputs, ...quotedImages], attachments), estimates };
 }

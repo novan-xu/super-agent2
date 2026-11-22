@@ -38,7 +38,11 @@ const TurnCompleted = z.looseObject({
 });
 const TokenUsage = z.looseObject({
   threadId: z.string(),
-  tokenUsage: z.looseObject({ modelContextWindow: z.number().int().positive() }),
+  turnId: z.string().optional(),
+  tokenUsage: z.looseObject({
+    modelContextWindow: z.number().int().positive().nullable().optional(),
+    last: z.object({ inputTokens: z.number().int().nonnegative(), cachedInputTokens: z.number().int().nonnegative(), cacheWriteInputTokens: z.number().int().nonnegative().optional(), outputTokens: z.number().int().nonnegative(), reasoningOutputTokens: z.number().int().nonnegative() }).optional().catch(undefined),
+  }),
 });
 const RateLimits = z.looseObject({
   rateLimits: z.looseObject({
@@ -224,8 +228,10 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
       }
       case "thread/tokenUsage/updated": {
         const event = TokenUsage.safeParse(params);
-        if (event.success && event.data.threadId === threadId) {
-          listener({ type: "capacity", tokens: event.data.tokenUsage.modelContextWindow });
+        if (event.success && event.data.threadId === threadId && relevant(event.data.turnId)) {
+          const { modelContextWindow, last } = event.data.tokenUsage;
+          if (modelContextWindow != null) listener({ type: "capacity", tokens: modelContextWindow });
+          if (last !== undefined) listener({ type: "usage", input: Math.max(0, last.inputTokens - last.cachedInputTokens), cacheRead: last.cachedInputTokens, cacheWrite: last.cacheWriteInputTokens ?? null, output: last.outputTokens, reasoning: last.reasoningOutputTokens, costUsd: null });
         }
         return;
       }
@@ -305,7 +311,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   const ready = (async () => {
     await client.request("initialize", {
       clientInfo: { name: settings.client ?? "super-agent2-brain", title: settings.client ?? "Super-agent2 brain", version: "0.0.0" },
-      capabilities: { experimentalApi: false, optOutNotificationMethods: tools === null ? ["thread/tokenUsage/updated"] : [] },
+      capabilities: { experimentalApi: false, optOutNotificationMethods: [] },
     });
     client.notify("initialized");
     const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never", sandbox: "danger-full-access", config };
