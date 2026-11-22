@@ -26,6 +26,7 @@ export const secretVariables: readonly string[] = [
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
+  "OPENAI_ADMIN_KEY",
   "DEEPSEEK_API_KEY",
   "VAPID_PRIVATE_KEY",
   "SUPER_AGENT_HUB_TOKEN",

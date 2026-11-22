@@ -4,7 +4,7 @@ import { text, type Value, type Values } from "./text.js";
 
 const keys = Object.keys(messages) as MessageKey[];
 
-const keptAsTheyAre = ["Super-agent2", "hub", "GitHub", "macOS", "Windows", "Claude Code", "Codex", "dsh", "Antigravity", "PR", "Woodpecker", "Cloudflare", "nas", "ChatGPT", "GPT", "Claude", "DeepSeek", "Apple", "Chrome", "Firefox", "Edge"];
+const keptAsTheyAre = ["Super-agent2", "OpenAI", "API", "USD", "hub", "GitHub", "macOS", "Windows", "Claude Code", "Codex", "dsh", "Antigravity", "PR", "Woodpecker", "Cloudflare", "nas", "ChatGPT", "GPT", "Claude", "DeepSeek", "Apple", "Chrome", "Firefox", "Edge"];
 
 function withoutPlaceholders(value: string): string {
   return value.replace(/\{\w+\}/g, "");

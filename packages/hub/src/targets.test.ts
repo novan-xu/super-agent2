@@ -4,6 +4,9 @@ import { defaultTargets } from "./hub.js";
 import { commandEnvironment } from "./targets.js";
 
 describe("commandEnvironment", () => {
+  it("does not pass the OpenAI admin key to commands", () => {
+    expect(commandEnvironment({ openai_admin_key: "admin-private", PATH: "/bin" }, {})).toEqual({ PATH: "/bin" });
+  });
   it("keeps the hub's environment, drops both account tokens and adds the credentials", () => {
     const environment = commandEnvironment(
       { PATH: "/bin", GITHUB_TOKEN_NOVAN_XU: "a", GITHUB_TOKEN_NUOFAN_ISLAND: "b", GH_TOKEN: "old", EMPTY: undefined },

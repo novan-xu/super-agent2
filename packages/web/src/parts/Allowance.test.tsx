@@ -58,3 +58,15 @@ describe("allowance components", () => {
   });
 
 });
+
+it("shows API costs under GPT, with budget thresholds and without a budget", () => {
+  const base = { subscriptions: [], unavailable: [] };
+  const render = (cost: { state: "available" | "unknown"; amount: number | null; currency: string | null; readAt: number | null; budget: number | null }) => renderToStaticMarkup(<AllowanceSidebar report={{ ...base, openaiCost: cost }} now={0} refresh={() => undefined} />);
+  expect(renderToStaticMarkup(<AllowanceSidebar report={base} now={0} refresh={() => undefined} />)).not.toContain("API 本月");
+  expect(render({ state: "available", amount: 12.34, currency: "USD", readAt: 1, budget: null })).toContain("API 本月 $12.34");
+  expect(render({ state: "available", amount: 75, currency: "USD", readAt: 1, budget: 100 })).toContain("allowance-text--warn");
+  const bad = render({ state: "available", amount: 90, currency: "USD", readAt: 1, budget: 100 });
+  expect(bad).toContain("allowance-text--bad");
+  expect(bad).toContain("剩余 $10.00 · 已用 90%");
+  expect(render({ state: "unknown", amount: 90, currency: "USD", readAt: 1, budget: 100 })).toContain("API 本月 未知");
+});

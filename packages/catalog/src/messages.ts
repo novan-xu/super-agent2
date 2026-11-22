@@ -12,6 +12,13 @@ export const messages = {
   "allowance.unavailableUntil": "不可用，约 {time} 恢复",
   "allowance.open": "查看供应商额度",
   "allowance.balance": "余额",
+  "allowance.apiMonth": "API 本月 {amount}",
+  "allowance.apiUnknown": "API 本月 未知",
+  "allowance.apiRemaining": "剩余 {amount} · 已用 {percent}%",
+  "usage.openaiBudget": "OpenAI API 月预算 (USD)",
+  "usage.budgetSave": "保存",
+  "usage.budgetError": "保存失败，请输入正数或留空",
+  "usage.budgetSaved": "已保存",
 
   "navigation.workbench": "工作台",
   "navigation.conversation": "对话",

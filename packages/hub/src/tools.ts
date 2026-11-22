@@ -295,6 +295,7 @@ export interface TicketTools {
   readonly schedules?: Schedules;
   readonly chains?: ChainArranger;
   readonly defaults?: StartDefaults;
+  readonly openaiCost?: () => import("@super-agent2/protocol").OpenAICost;
   readonly runners?: Runners;
   readonly work?: WorkService;
   readonly verification?: VerificationService;
@@ -1367,7 +1368,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.defaults === undefined) {
           return undefined;
         }
-        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines(), tools.defaults.unavailable(), tools.defaults.balance()) };
+        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines(), tools.defaults.unavailable(), tools.defaults.balance(), tools.openaiCost?.()) };
       }
       case "recheck_machines": {
         if (tools.runners === undefined) return undefined;

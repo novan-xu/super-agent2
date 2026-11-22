@@ -1026,3 +1026,7 @@ The dsh adapter uses its HTTP MCP client.
 Antigravity loads extra servers from a temporary configuration directory passed with `--add-dir`.
 The configuration starts a stdio bridge that authenticates to the HTTP MCP server with the token from its environment.
 The per-session permissions allow calls to the configured MCP servers, and the adapter removes the temporary directory when it closes.
+
+The allowance panel includes OpenAI API month-to-date costs within GPT when the hub has an `OPENAI_ADMIN_KEY`.
+The hub polls organization costs every 15 minutes using the ticket time zone for the month boundary and retains the last successful reading when a request fails.
+An optional USD monthly budget can be set or cleared in usage settings; it is informational and does not restrict API calls.

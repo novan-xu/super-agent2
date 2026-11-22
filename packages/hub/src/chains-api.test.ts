@@ -730,6 +730,19 @@ describe("start defaults", () => {
     expect((await cardOf(running, 1)).choice).toMatchObject({ machine: "mini", engine: "codex", model: "gpt-6.1-sol", effort: "high", missing: [] });
   });
 
+  it("saves and clears an optional OpenAI budget without exposing an API line without a key", async () => {
+    const running = await start();
+    const budgetPath = "/api/settings/openai-budget";
+    expect((await ownerSend(running, budgetPath, { budget: 50 }, { method: "PUT" })).status).toBe(200);
+    expect(running.settings.snapshot().openaiBudget).toBe(50);
+    expect((await ownerSend(running, budgetPath, { budget: 0 }, { method: "PUT" })).status).toBe(400);
+    expect((await ownerSend(running, budgetPath, { budget: null }, { method: "PUT" })).status).toBe(200);
+    expect(running.settings.snapshot().openaiBudget).toBeNull();
+    const response = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    expect(await response.json()).not.toHaveProperty("openaiCost");
+    expect((await callBrainTool(running, "read_allowance", {})).text).not.toContain("OpenAI API:");
+  });
+
   it("broadcasts fresh allowance windows and requests online runners to refresh", async () => {
     const running = await start();
     const inbox = await page(running);

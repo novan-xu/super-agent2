@@ -113,7 +113,11 @@ export function currentSubscription(program: AllowanceProgram, readings: readonl
   };
 }
 
+export const OpenAICost = z.object({ state: z.enum(["available", "unknown"]), amount: z.number().finite().nullable(), currency: z.string().nullable(), readAt: z.number().nullable(), budget: z.number().positive().nullable() });
+export type OpenAICost = z.infer<typeof OpenAICost>;
+
 export const AllowanceList = z.object({
+  openaiCost: OpenAICost.optional(),
   subscriptions: z.array(Subscription),
   balance: Balance.optional(),
 });
