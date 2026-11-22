@@ -13,7 +13,7 @@ it("renders fixed tabs, counts and status in persistent opening order", () => {
     { repository: "org/running", account: "novan-xu", chosen: false, pinned: true, pinnedOrder: 1, alias: "Running" },
     { repository: "org/legacy", account: "novan-xu", chosen: false, pinned: true },
     { repository: "org/closed", account: "novan-xu", chosen: false, pinned: false },
-  ]} tickets={[running, pending]} topics={[]} waiting={{ ...initialWaiting, cards: [startCard(2, { ticket: pending })] }} selected="org/waiting" select={() => undefined} pin={async () => true} />);
+  ]} tickets={[running, pending]} topics={[]} waiting={{ ...initialWaiting, cards: [startCard(2, { ticket: pending })] }} selected="org/waiting" select={() => undefined} order={async () => true} pin={async () => true} />);
   expect(html.indexOf(text("workbench.all"))).toBeLessThan(html.indexOf(text("conversation.daily")));
   expect(html.indexOf(text("conversation.daily"))).toBeLessThan(html.indexOf("org/legacy"));
   expect(html.indexOf("org/legacy")).toBeLessThan(html.indexOf("org/running"));

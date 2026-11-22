@@ -139,7 +139,7 @@ export function Shell(props: ShellProps) {
         </nav>
         <div className="body">
           <header className={props.headerTabs === undefined ? "top" : "top top--workbench"}>
-            <div className="top-title">
+            <div className={props.headerTabs === undefined ? "top-title" : "sr-only"}>
               <h1>{titleOf(current)}</h1>
               {props.subtitle === undefined || props.subtitle === null ? null : (
                 <>

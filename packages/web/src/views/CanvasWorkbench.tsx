@@ -153,7 +153,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       }}
       onPointerMove={(event) => {
         if (drag.current?.pointer === event.pointerId && drag.current.portrait === portrait) {
-          const size = drag.current.size + drag.current.position - (portrait ? event.clientY : event.clientX);
+          const size = drag.current.size + (portrait ? drag.current.position - event.clientY : event.clientX - drag.current.position);
           if (portrait) changeHeight(size); else changeWidth(size);
         }
       }}
@@ -161,8 +161,8 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
       onDoubleClick={() => { if (portrait) { setPreferredHeight(null); savePanelHeight(null); } else changeWidth(defaultPanelWidth); }}
       onKeyDown={(event) => {
-        const increase = portrait ? "ArrowUp" : "ArrowLeft";
-        const decrease = portrait ? "ArrowDown" : "ArrowRight";
+        const increase = portrait ? "ArrowUp" : "ArrowRight";
+        const decrease = portrait ? "ArrowDown" : "ArrowLeft";
         if (event.key !== increase && event.key !== decrease) return;
         event.preventDefault();
         const delta = event.key === increase ? 24 : -24;

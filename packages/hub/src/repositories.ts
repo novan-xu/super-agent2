@@ -10,6 +10,7 @@ export interface RepositoryAccounts {
   list(): RepositoryAccount[];
   set(repository: string, account: GitHubAccount): boolean;
   setPinned(repository: string, pinned: boolean): boolean;
+  setOrder(repositories: readonly string[]): boolean;
   setAlias(repository: string, alias: string | null): boolean;
   replaceDiscovered(accounts: readonly GitHubAccount[], found: readonly DiscoveredRepository[]): void;
 }
@@ -138,6 +139,22 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       if (known === undefined) return false;
       setPin.run(known.repository, Number(pinned), Number(pinned));
       return true;
+    },
+    setOrder: (order) => {
+      connection.exec("BEGIN IMMEDIATE");
+      try {
+        const pinned = list().filter((row) => row.pinned);
+        const names = new Map(pinned.map((row) => [row.repository.toLowerCase(), row.repository]));
+        const keys = order.map((name) => name.toLowerCase());
+        if (keys.length !== names.size || new Set(keys).size !== names.size || keys.some((key) => !names.has(key))) {
+          connection.exec("ROLLBACK");
+          return false;
+        }
+        const update = connection.prepare("UPDATE repositories SET pinned_order = ? WHERE repository = ?");
+        keys.forEach((key, index) => update.run(index + 1, names.get(key)!));
+        connection.exec("COMMIT");
+        return true;
+      } catch (error) { connection.exec("ROLLBACK"); throw error; }
     },
     setAlias: (repository, alias) => {
       const known = list().find((row) => row.repository.toLowerCase() === repository.toLowerCase());

@@ -117,12 +117,12 @@ describe("workbench panel resizing", () => {
     splitter().setPointerCapture = vi.fn();
     await act(async () => {
       splitter().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, button: 0, clientX: 800 }));
-      splitter().dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 650 }));
+      splitter().dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 950 }));
       splitter().dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
     });
     expect(width()).toBe("530px");
     expect(localStorage.getItem("workbench.panelWidth")).toBe("530");
-    await act(async () => splitter().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" })));
+    await act(async () => splitter().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })));
     expect(splitter().getAttribute("aria-valuenow")).toBe("554");
     layoutWidth = 700;
     await act(async () => window.dispatchEvent(new Event("resize")));

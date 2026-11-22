@@ -347,7 +347,7 @@ export function App() {
       suggestions={page.memory.suggestions.length}
       allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
       collapsedAllowance={<AllowanceRings report={page.allowance} now={now} />}
-      headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} /> : undefined}
+      headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} order={(repositories) => controller.setRepositoryOrder(repositories)} /> : undefined}
       actions={
         route.view === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>

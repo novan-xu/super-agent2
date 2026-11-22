@@ -575,6 +575,32 @@ describe("the other settings", () => {
     expect(SettingsSnapshot.parse(await removed.json()).repositories[0]?.pinned).toBe(false);
   });
 
+  it("validates and persists the complete pinned repository order", async () => {
+    const running = await start();
+    for (const repository of ["org/first", "org/second"]) {
+      running.repositories.set(repository, "nuofan-island");
+      expect(running.repositories.setPinned(repository, true)).toBe(true);
+    }
+    const path = "/api/repositories/order";
+    expect((await fetch(`${base(running)}${path}`, { method: "POST" })).status).toBe(403);
+    for (const repositories of [["org/first"], ["org/first", "org/first"], ["org/first", "org/unknown"]]) {
+      expect((await owner(running, path, "POST", { repositories })).status).toBe(409);
+    }
+    expect((await owner(running, path, "POST", { repositories: "bad" })).status).toBe(400);
+    const updates: SettingsSnapshot[] = [];
+    const unsubscribe = running.settings.subscribe((snapshot) => updates.push(snapshot));
+    const response = await owner(running, path, "POST", { repositories: ["ORG/SECOND", "org/first"] });
+    expect(response.status).toBe(200);
+    const ordered = (snapshot: SettingsSnapshot) => snapshot.repositories.filter((row) => row.pinned).sort((a, b) => (a.pinnedOrder ?? 0) - (b.pinnedOrder ?? 0)).map((row) => row.repository);
+    expect(ordered(SettingsSnapshot.parse(await response.json()))).toEqual(["org/second", "org/first"]);
+    expect(ordered(updates.at(-1)!)).toEqual(["org/second", "org/first"]);
+    unsubscribe();
+    await running.close();
+    hub = undefined;
+    const restarted = await start();
+    expect(ordered(restarted.settings.snapshot())).toEqual(["org/second", "org/first"]);
+  });
+
   it("validates, publishes and persists repository aliases", async () => {
     const running = await start();
     const path = "/api/repositories/alias";
