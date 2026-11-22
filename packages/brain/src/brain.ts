@@ -386,6 +386,7 @@ export function createBrain(options: BrainOptions): Brain {
     const handle = adapter.open(
       {
         session,
+        toolset: "brain",
         tools: { url: options.tools.url, token: options.tools.token, conversation: state.id, turn: turn.id },
         extraMcp,
         workspace: options.workspace,

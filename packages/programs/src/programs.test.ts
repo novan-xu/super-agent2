@@ -109,6 +109,44 @@ describe("Codex usage", () => {
   });
 });
 
+describe("brain-only toolsets", () => {
+  const extra = [
+    { name: "Agent_wring", url: "http://example.test/wring", token: "wring-token" },
+    { name: "Loom", url: "http://example.test/loom", token: "loom-token" },
+  ];
+  it("restricts Claude built-ins while keeping all MCP servers configured", async () => {
+    const log = new EventLog();
+    const adapter = claudeAdapter(settings(writeFake(directory, "claude-brain.mjs", fakeClaudeSource), "claude", "high"));
+    track(adapter.open({ ...options(null), toolset: "brain", extraMcp: extra }, log.listener)).start("hello");
+    await log.ended();
+    const { args } = readLog(logFile)[0] as { args: string[] };
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Glob,Grep,WebSearch,WebFetch,ToolSearch");
+    expect(args).toContain("--disable-slash-commands");
+    const config = JSON.parse(args[args.indexOf("--mcp-config") + 1]!);
+    expect(Object.keys(config.mcpServers).sort()).toEqual(["Agent_wring", "Loom", "hub"]);
+  });
+  it("limits Codex plan, agents and skills without changing MCP servers", async () => {
+    const log = new EventLog();
+    const adapter = codexAdapter({ ...settings(writeFake(directory, "codex-brain.mjs", fakeCodexSource), "gpt", "high"), codexConfig: { "tools.update_plan.enabled": true, "features.multi_agent_v2": true } });
+    track(adapter.open({ ...options(null), toolset: "brain", extraMcp: extra }, log.listener)).start("hello");
+    await log.ended();
+    const start = readLog(logFile).find((entry) => entry["method"] === "thread/start") as { params: { config: Record<string, unknown> } };
+    expect(start.params.config).toMatchObject({ "tools.update_plan.enabled": false, "features.multi_agent": false, "features.multi_agent_v2": false, "features.skill_search": false, "features.skip_host_skill_discovery": true, "features.sleep_tool": false });
+    expect(Object.keys(start.params.config)).toEqual(expect.arrayContaining(["mcp_servers.hub", "mcp_servers.Agent_wring", "mcp_servers.Loom"]));
+  });
+  it("restricts dsh writes and extra tools while retaining read, web and MCP", () => {
+    const patch = dshPatch("http://hub", null, extra, "brain");
+    expect(patch).toContain("- id: tool-fs\n  config:\n    write: false\n    edit: false");
+    for (const id of ["tool-bash", "tool-pwsh", "tool-subagent", "tool-workflow", "tool-skill", "tool-goal", "tool-todo", "plan-mode"]) expect(patch).toContain(`- id: ${id}\n  disabled: true`);
+    expect(patch).not.toContain("- id: tool-web");
+    expect(patch).not.toContain("- id: tool-fs-search");
+    expect(patch).toContain('serverName: "Agent_wring"');
+    expect(patch).toContain('serverName: "Loom"');
+    expect(patch).toContain("serverName: hub");
+    expect(dshPatch(null)).not.toContain("- id: tool-fs");
+  });
+});
+
 describe("reported model input capacity", () => {
   it.each([
     ["codex", codexAdapter, fakeCodexSource, "gpt-6-astra", 272_000],

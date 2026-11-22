@@ -24,6 +24,7 @@ export interface ToolEndpoint {
 
 export interface OpenOptions {
   readonly session: string | null;
+  readonly toolset?: "brain" | "worker";
   readonly tools: ToolEndpoint | null;
   readonly extraMcp?: readonly ExtraMcpServer[];
   readonly workspace: string;

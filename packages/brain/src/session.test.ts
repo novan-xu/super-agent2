@@ -312,6 +312,7 @@ describe("the brain's session", () => {
     await say(conversation.id, "Hello");
     const first = await programs.gpt.next();
     expect(first.handle.options.extraMcp).toEqual([{ name: "Agent_wring", url: definition.url, token: "example-secret" }]);
+    expect(first.handle.options.toolset).toBe("brain");
   });
   it("bypasses routing for topic input and quotes, including steering a live session and reading a long quote", async () => {
     const running = await startHub();

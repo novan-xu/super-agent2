@@ -86,6 +86,8 @@ describe("programs opened for a worker, without the hub's tools", () => {
     const first = readLog(logFile)[0] as { args: string[]; env: { token: string | null } };
     expect(first.env.token).toBeNull();
     expect(first.args).toContain("--dangerously-skip-permissions");
+    expect(first.args).not.toContain("--tools");
+    expect(first.args).not.toContain("--disable-slash-commands");
     expect(first.args[first.args.indexOf("--mcp-config") + 1]).toBe('{"mcpServers":{}}');
     expect(first.args).toContain("--strict-mcp-config");
   });
