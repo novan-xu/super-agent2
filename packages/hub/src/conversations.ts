@@ -121,6 +121,10 @@ export interface ConversationService {
   tidyNotice(notice: string): void;
   writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string, source?: string): void;
   publishScheduleNotice(id: string): void;
+  writeMailReview(id: string, topic: string, prompt: string): void;
+  deliverMailReview(id: string): void;
+  mailReviewOf(conversation: string, turn: string): string | undefined;
+  mailReviewReady(): boolean;
   writeLightQuestion(conversation: string, id: string, message: string): void;
   linked(): boolean;
   brainStatus(): BrainStatus;
@@ -174,6 +178,7 @@ export interface Delivery {
 
 export interface ConversationServiceOptions {
   readonly extraMcp?: readonly import("@super-agent2/protocol").ExtraMcpServer[];
+  readonly mailReviewEnabled?: boolean;
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly commands: CommandService;
@@ -425,7 +430,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const toHistoryItem = (raw: unknown) => historyItem(raw, references.get);
   const topics = createTopicContext(options.database, toHistoryItem, (id) => corrections.resolve(id) ?? id);
   const listeners = new Set<ConversationListener>();
-  let link: { readonly connection: BrainConnection; ready: boolean } | undefined;
+  let link: { readonly connection: BrainConnection; ready: boolean; mailReview: boolean } | undefined;
   let closing = false;
   let brainProviders: BrainProviders | undefined;
   let lastTurnModel: string | null = null;
@@ -508,6 +513,10 @@ export function createConversationService(options: ConversationServiceOptions): 
     FROM conversation_entries WHERE turn_id = ? AND taken = 1 AND kind IN ('notice', 'delivery') AND prompt IS NOT NULL ORDER BY seq`);
   const ownerAppInput = connection.prepare(`SELECT 1 FROM conversation_entries
     WHERE conversation_id = ? AND turn_id = ? AND taken = 1 AND kind = 'owner' AND hidden = 0 LIMIT 1`);
+  const findMailReview = connection.prepare(`SELECT id FROM conversation_entries
+    WHERE conversation_id = ? AND turn_id = ? AND taken = 1 AND hidden = 1 AND json_extract(body, '$.mailReview') = 1 LIMIT 1`);
+  const mailReviewOf = (conversation: string, turn: string): string | undefined =>
+    z.string().optional().parse(findMailReview.get(conversation, turn)?.["id"]);
   const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND owner_placed IS NOT 1 AND moved_at IS NULL AND brain_moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
@@ -798,6 +807,9 @@ export function createConversationService(options: ConversationServiceOptions): 
     if (row.prompt === null || row.taken !== 0 || corrections.blocked(row.conversation_id, row.seq)) {
       return;
     }
+    const mailReview = row.hidden === 1 && row.kind === "notice"
+      && z.object({ mailReview: z.literal(true) }).safeParse(JSON.parse(row.body)).success;
+    if (mailReview && (options.mailReviewEnabled !== true || link?.mailReview !== true)) return;
     const body = row.kind === "owner" ? Body.parse(JSON.parse(row.body)) : undefined;
     const attached = z.array(Attachment).catch([]).parse(body?.attachments ?? []);
     const scheduleRun = row.kind === "notice" ? scheduledInput.get(row.id, row.id)?.id : undefined;
@@ -807,6 +819,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       text: row.prompt + (row.kind === "owner" ? (options.lightTaskContext?.(row.conversation_id, row.id) ?? "") + (options.scheduleContext?.(row.conversation_id, row.id) ?? "") : ""),
       attachments: forBrain(attached),
       ...(typeof scheduleRun === "string" ? { scheduleRun } : {}),
+      ...(mailReview ? { mailReview: true } : {}),
       ...(body?.questionResponse === undefined ? {} : { questionResponse: body.questionResponse }),
     };
     const routing = routingNote(row, body?.possibleMatch);
@@ -871,6 +884,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const writeRestartNotice = (turn: Turn): string | undefined => {
+    if (mailReviewOf(turn.conversation, turn.id) !== undefined) return undefined;
     const inputs = z.array(z.object({ prompt: z.string(), restart_of: z.string().nullable() })).parse(priorHubInputs.all(turn.id));
     if (inputs.some((input) => input.restart_of !== null)) return undefined;
     const run = schedules.forTurn({ id: turn.id, conversation: turn.conversation });
@@ -903,7 +917,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       }
       finishTurn.run(outcome, reason, clock.now(), id);
       topics.finish(turn.conversation, id, outcome);
-      if (applied) {
+      if (applied && mailReviewOf(turn.conversation, id) === undefined) {
         advanceSession.run(turn.conversation, turn.provider, SeqRow.parse(selectConsumedSeq.get(turn.conversation)).seq, clock.now());
       }
       updateWorkState.run(runningTurnOf(turn.conversation) === undefined ? "idle" : "working", clock.now(), turn.conversation);
@@ -966,6 +980,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       case "hello": {
         if (link !== undefined) {
           link.ready = true;
+          link.mailReview = message.mailReview === true;
         }
         const order = options.order?.();
         if (order !== undefined) {
@@ -1139,6 +1154,12 @@ export function createConversationService(options: ConversationServiceOptions): 
         return;
       }
       case "prepare": {
+        const running = runningTurnOf(message.conversation);
+        if (running !== undefined && mailReviewOf(message.conversation, running.id) !== undefined) {
+          sendToBrain({ type: "prepared", request: message.request, session: null, history: [],
+            memory: message.provider === "deepseek" ? null : options.memory?.brief(message.conversation, null) ?? null });
+          return;
+        }
         const topic = selectConversation.get(message.conversation);
         if (topic?.["merged_into"] != null) {
           sendToBrain({ type: "prepared", request: message.request, session: null, history: [], memory: null });
@@ -1480,6 +1501,16 @@ export function createConversationService(options: ConversationServiceOptions): 
     writeScheduleNotice: (id, conversation, notice, prompt, source) => {
       writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice, source }, ...(prompt === undefined ? {} : { prompt }) });
     },
+    writeMailReview: (id, conversation, prompt) => {
+      writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: "", mailReview: true }, prompt, hidden: true });
+    },
+    deliverMailReview: (id) => {
+      const row = EntryRow.optional().parse(selectEntry.get(id));
+      if (row !== undefined) deliver(row);
+    },
+    mailReviewOf,
+    mailReviewReady: () => link?.ready === true && link.mailReview && (brainProviders?.providers.some(({ provider, available, until }) =>
+      provider !== "deepseek" && (available || (until !== null && until <= clock.now()))) ?? false),
     publishScheduleNotice: (id) => {
       const row = EntryRow.optional().parse(selectEntry.get(id));
       if (row === undefined) return;
@@ -1673,7 +1704,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     attach: (connection) => {
       const previous = link;
-      const current = { connection, ready: false };
+      const current = { connection, ready: false, mailReview: false };
       link = current;
       brainProviders = undefined;
       lastTurnModel = null;

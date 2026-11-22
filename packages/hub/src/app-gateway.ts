@@ -102,6 +102,7 @@ export class AppGateway {
   private accounts: Mailbox[] = [];
   private refreshing: Promise<void> | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private inventoryAvailable = false;
 
   constructor(private readonly options: AppGatewayOptions) {
     this.server = new AppServer(options);
@@ -140,6 +141,10 @@ export class AppGateway {
     return this.accounts;
   }
 
+  hasInventory(): boolean {
+    return this.inventoryAvailable;
+  }
+
   has(tool: string): boolean {
     return this.tools.has(tool);
   }
@@ -159,6 +164,7 @@ export class AppGateway {
     const tools = new Map<string, z.infer<typeof Tool>>();
     const visited = new Set<string>();
     let cursor: string | undefined;
+    let foundApps = false;
     try {
       do {
         const page = Inventory.safeParse(await this.server.request("mcpServerStatus/list", {
@@ -170,6 +176,7 @@ export class AppGateway {
         }
         const apps = page.data.data.find(({ name }) => name === "codex_apps");
         if (apps !== undefined) {
+          foundApps = true;
           for (const [name, value] of Object.entries(apps.tools)) {
             if (!readTools.has(name) && !writeTools.has(name)) {
               continue;
@@ -190,9 +197,11 @@ export class AppGateway {
           visited.add(cursor);
         }
       } while (cursor !== undefined);
+      this.inventoryAvailable = foundApps;
     } catch (error) {
       this.options.report?.(error instanceof AppGatewayError ? error.message : new AppGatewayError("invalid response").message);
       tools.clear();
+      this.inventoryAvailable = false;
     }
     this.tools = tools;
     this.accounts = mailboxes(tools);

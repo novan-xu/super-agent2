@@ -94,7 +94,7 @@ function sender(value: unknown): string {
   return string(value, address["address"], field["email_address"], field["address"], field["email"], address["name"], field["name"]);
 }
 
-function envelope(raw: unknown) {
+export function mailEnvelope(raw: unknown) {
   const row = record(raw);
   const id = string(row["id"], row["message_id"], row["email_id"]);
   if (id === "") {
@@ -145,7 +145,7 @@ async function searchMail(gateway: AppGateway, mailbox: Mailbox, { query, limit,
       ...(query === undefined ? {} : { query }),
       ...(page === undefined ? {} : { next_page_token: page }),
     }));
-    return { messages: rows(reply["emails"]).map(envelope), nextPage: string(reply["next_page_token"]) || null };
+    return { messages: rows(reply["emails"]).map(mailEnvelope), nextPage: string(reply["next_page_token"]) || null };
   }
   if (typeof page === "string") {
     throw new AppInputError("Outlook pagination needs the nextPage number from the previous result.");
@@ -155,7 +155,7 @@ async function searchMail(gateway: AppGateway, mailbox: Mailbox, { query, limit,
     : await gateway.call("microsoft_outlook_email.search_messages", { link_id: mailbox.link, query, size: limit, from_index: page ?? 0 }));
   const next = Offset.safeParse(reply["next_from_index"]);
   return {
-    messages: rows(reply["value"] ?? reply["results"]).map(envelope),
+    messages: rows(reply["value"] ?? reply["results"]).map(mailEnvelope),
     nextPage: reply["has_more"] !== false && next.success && next.data > (page ?? 0) ? next.data : null,
   };
 }
@@ -221,7 +221,7 @@ async function readMail(gateway: AppGateway, mailbox: Mailbox, { message_id, off
   }
   const bodyPage = content.body.slice(offset, offset + 8000).replace(/[\uD800-\uDBFF]$/u, "");
   return {
-    ...envelope({ ...message, id: message_id }),
+    ...mailEnvelope({ ...message, id: message_id }),
     body: bodyPage,
     attachments: content.attachments,
     nextOffset: offset + bodyPage.length < content.body.length ? offset + bodyPage.length : null,

@@ -161,7 +161,7 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
           },
         }),
     ...settings.codexConfig,
-    ...(options.toolset === "brain" ? {
+    ...(options.toolset === "brain" || options.toolset === "mail" ? {
       "tools.update_plan.enabled": false,
       "features.multi_agent": false,
       "features.multi_agent_v2": false,
@@ -169,6 +169,12 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
       "features.skip_host_skill_discovery": true,
       "features.sleep_tool": false,
       "features.apps": false,
+    } : {}),
+    ...(options.toolset === "mail" ? {
+      "features.shell_tool": false,
+      "features.unified_exec": false,
+      "features.plugins": false,
+      web_search: "disabled",
     } : {}),
     ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [`mcp_servers.${server.name}`, { url: server.url, bearer_token_env_var: extraMcpVariable(index) }])),
   };
@@ -290,6 +296,9 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
   };
 
   const onRequest = (method: string): unknown => {
+    if (options.toolset === "mail") {
+      throw new Error("Mail review declines server requests");
+    }
     if (method.endsWith("requestApproval")) {
       return { decision: "accept" };
     }
@@ -323,14 +332,15 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
       capabilities: { experimentalApi: false, optOutNotificationMethods: [] },
     });
     client.notify("initialized");
-    const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never", sandbox: "danger-full-access", config };
+    const common = { model: settings.model, cwd: options.workspace, approvalPolicy: "never",
+      sandbox: options.toolset === "mail" ? "read-only" : "danger-full-access", config };
     const reportModel = (result: z.infer<typeof ThreadResult>) => {
       if (result.model !== undefined) {
         listener({ type: "model", model: result.model, effort: result.reasoningEffort ?? null });
       }
     };
     if (threadId === undefined) {
-      const result = ThreadResult.parse(await client.request("thread/start", common));
+      const result = ThreadResult.parse(await client.request("thread/start", options.toolset === "mail" ? { ...common, ephemeral: true } : common));
       threadId = result.thread.id;
       listener({ type: "session", session: threadId });
       reportModel(result);

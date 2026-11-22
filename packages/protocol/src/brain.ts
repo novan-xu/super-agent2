@@ -37,7 +37,8 @@ export function isPrivateAppTool(name: string): name is (typeof privateAppTools)
 }
 
 export function isPrivateAppToolEvent(name: string): boolean {
-  return isPrivateAppTool(name.replace(/^(?:mcp__hub__|hub\.)/, ""));
+  const tool = name.replace(/^(?:mcp__hub__|hub\.)/, "");
+  return tool === "report_mail_triage" || isPrivateAppTool(tool);
 }
 
 const BrainQuote = z.object({
@@ -65,6 +66,7 @@ export const BrainInput = z.object({
   questionResponse: z.object({ card: MessageId, answers: QuestionAnswers }).optional(),
   needsRepository: z.literal(true).optional(),
   scheduleRun: z.uuid().optional(),
+  mailReview: z.literal(true).optional(),
 });
 export type BrainInput = z.infer<typeof BrainInput>;
 
@@ -99,6 +101,7 @@ export const BrainHello = z.object({
   type: z.literal("hello"),
   protocol: ProtocolVersion,
   running: z.array(RunningTurn),
+  mailReview: z.literal(true).optional(),
 });
 export type BrainHello = z.infer<typeof BrainHello>;
 

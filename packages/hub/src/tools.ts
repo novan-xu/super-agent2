@@ -42,6 +42,7 @@ import { z } from "zod";
 import type { AppGateway } from "./app-gateway.js";
 import { appDefinitions, appToolCall, appToolError } from "./app-tools.js";
 import type { AppTodos } from "./app-todos.js";
+import { mailTriageDefinition, mailTriageTool, type MailTriage } from "./mail-triage.js";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
@@ -283,6 +284,7 @@ export interface ToolServerOptions {
   readonly attachments?: AttachmentStore;
   readonly appGateway?: AppGateway;
   readonly appTodos?: AppTodos;
+  readonly mailTriage?: MailTriage;
 }
 
 export interface TicketTools {
@@ -841,6 +843,8 @@ function heldText(command: CommandRecord): string {
 
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
+  const reviewOf = (conversation: string | undefined, turn: string | undefined) =>
+    conversation === undefined || turn === undefined ? undefined : conversations.mailReviewOf(conversation, turn);
   const gatewayFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal): AppGateway | undefined => {
     if (conversation === undefined || turn === undefined || aborted.aborted) {
       return undefined;
@@ -1486,13 +1490,32 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       return { status: 200, body: errorBody(id, -32602, "Invalid tool call") };
     }
     const { name } = parsed.data;
+    const args = parsed.data.arguments ?? {};
+    const review = reviewOf(conversation, turn);
+    if (review !== undefined) {
+      const triage = options.mailTriage;
+      const provider = conversations.activeTurnProvider(conversation!, turn!);
+      if (triage === undefined || provider === undefined || provider === "deepseek" || aborted.aborted) {
+        return { status: 200, body: errorBody(id, -32602, "Mail review is unavailable for this turn.") };
+      }
+      if (name === mailTriageTool) {
+        const recorded = triage.record(review, provider, args);
+        return { status: 200, body: resultBody(id, {
+          content: [{ type: "text", text: recorded ? "Mail review recorded." : "Pass unique IDs from this mail review batch." }],
+          isError: !recorded,
+        }) };
+      }
+      if (name !== "mail_read" || !triage.includes(review, args["mailbox"], args["message_id"])) {
+        return { status: 200, body: errorBody(id, -32602, "Only mail in this batch can be read during a mail review.") };
+      }
+    }
     if (isPrivateAppTool(name)) {
       const gateway = gatewayFor(conversation, turn, aborted);
       if (gateway === undefined) {
         return { status: 200, body: errorBody(id, -32602, "App tools require an active Claude or Codex turn with the app gateway enabled.") };
       }
       try {
-        const data = await appToolCall(gateway, name, parsed.data.arguments ?? {}, appWritesFor(conversation, turn, aborted));
+        const data = await appToolCall(gateway, name, args, review === undefined ? appWritesFor(conversation, turn, aborted) : undefined);
         if (gatewayFor(conversation, turn, aborted) !== gateway) {
           return { status: 200, body: errorBody(id, -32602, "The app tool's turn has ended or changed providers.") };
         }
@@ -1639,8 +1662,15 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         case "ping":
           return { status: 200, body: resultBody(id, {}) };
-        case "tools/list":
-          return { status: 200, body: resultBody(id, { tools: definitions(gatewayFor(conversation, turn, aborted), appWritesFor(conversation, turn, aborted) !== undefined) }) };
+        case "tools/list": {
+          const gateway = gatewayFor(conversation, turn, aborted);
+          if (reviewOf(conversation, turn) !== undefined) {
+            const tools = gateway === undefined || options.mailTriage === undefined ? []
+              : [...appDefinitions(gateway).filter(({ name }) => name === "mail_read"), mailTriageDefinition];
+            return { status: 200, body: resultBody(id, { tools }) };
+          }
+          return { status: 200, body: resultBody(id, { tools: definitions(gateway, appWritesFor(conversation, turn, aborted) !== undefined) }) };
+        }
         case "tools/call":
           return call(id, message.params, conversation, turn, aborted);
         default:

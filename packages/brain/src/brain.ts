@@ -65,6 +65,7 @@ interface Live {
   readonly turn: string;
   readonly handle: ProgramHandle;
   readonly privateCalls: Set<string>;
+  readonly mailReview: boolean;
   session: string | null;
   attempt: Attempt | undefined;
   closed: boolean;
@@ -102,6 +103,8 @@ interface State {
 
 export const defaultIdleMilliseconds = 2 * 60 * 60 * 1000;
 
+const isolated = (input: BrainInput | undefined) => input?.scheduleRun !== undefined || input?.mailReview === true;
+
 const idleSchedule: Schedule = (callback, milliseconds) => {
   const timer = setTimeout(callback, Math.min(milliseconds, 2 ** 31 - 1));
   timer.unref();
@@ -132,6 +135,7 @@ export function createBrain(options: BrainOptions): Brain {
   let selections = 0;
   const choice = createProviderChoice(options.order.filter((provider) => adapters.has(provider)), options.clock);
   const providerForNextTurn = () => choice.candidates()[0] ?? choice.order()[0];
+  const mailProviders = () => choice.candidates().filter((provider) => provider !== "deepseek" && choice.reasons().get(provider)?.until !== null);
   const model = (): string | null => {
     let latest: TurnRun | undefined;
     for (const { turn } of states.values()) {
@@ -169,6 +173,7 @@ export function createBrain(options: BrainOptions): Brain {
     setOrder: (order) => {
       const changed = choice.setOrder(order.filter((provider) => adapters.has(provider)));
       tell();
+      if (changed) pump();
       return changed;
     },
     markUnavailable: (provider, reason, until) => {
@@ -242,7 +247,9 @@ export function createBrain(options: BrainOptions): Brain {
     state.turn = undefined;
     state.used = ++uses;
     state.idleAt = options.clock.now();
-    transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason, applied });
+    const mailReview = turn.inputs[0]?.mailReview === true;
+    transport.send({ type: "turn.finished", conversation: state.id, turn: turn.id, outcome, reason: mailReview ? null : reason, applied: applied && !mailReview });
+    if (mailReview) dropLive(state);
     tell();
     if (turn.withdrawing.size > 0) {
       dropLive(state);
@@ -253,7 +260,8 @@ export function createBrain(options: BrainOptions): Brain {
     pump();
   };
 
-  const nextProvider = (turn: TurnRun): Provider | undefined => providers.candidates().find((provider) => !turn.tried.has(provider));
+  const nextProvider = (turn: TurnRun): Provider | undefined =>
+    (turn.inputs[0]?.mailReview === true ? mailProviders() : providers.candidates()).find((provider) => !turn.tried.has(provider));
 
   const unavailableSummary = (): string =>
     providers
@@ -286,7 +294,7 @@ export function createBrain(options: BrainOptions): Brain {
       from: attempt.provider,
       to: next,
       model: turn.model,
-      reason,
+      reason: turn.inputs[0]?.mailReview === true ? "Mail review provider unavailable." : reason,
     });
     track(run(state, turn, next, "continue", false));
     tell();
@@ -302,7 +310,7 @@ export function createBrain(options: BrainOptions): Brain {
     }
     if (event.type === "session") {
       live.session = event.session;
-      transport.send({ type: "session", conversation: state.id, provider: live.provider, session: event.session });
+      if (!live.mailReview) transport.send({ type: "session", conversation: state.id, provider: live.provider, session: event.session });
       return;
     }
     const attempt = live.attempt;
@@ -316,6 +324,7 @@ export function createBrain(options: BrainOptions): Brain {
       return;
     }
     const { turn } = attempt;
+    if (live.mailReview && (event.type === "text" || event.type.startsWith("tool."))) return;
     const prefix = `${attempt.token}.`;
     switch (event.type) {
       case "usage": {
@@ -394,13 +403,14 @@ export function createBrain(options: BrainOptions): Brain {
 
   const openLive = (state: State, turn: TurnRun, provider: Provider, session: string | null): Live => {
     const adapter = adapterOf(provider);
+    const mailReview = turn.inputs[0]?.mailReview === true;
     let live: Live | undefined;
     const handle = adapter.open(
       {
-        session,
-        toolset: "brain",
+        session: mailReview ? null : session,
+        toolset: mailReview ? "mail" : "brain",
         tools: { url: options.tools.url, token: options.tools.token, conversation: state.id, turn: turn.id },
-        extraMcp,
+        extraMcp: mailReview ? [] : extraMcp,
         workspace: options.workspace,
       },
       (event) => {
@@ -409,7 +419,7 @@ export function createBrain(options: BrainOptions): Brain {
         }
       },
     );
-    live = { provider, turn: turn.id, handle, privateCalls: new Set(), session, attempt: undefined, closed: false };
+    live = { provider, turn: turn.id, handle, privateCalls: new Set(), mailReview, session, attempt: undefined, closed: false };
     return live;
   };
 
@@ -422,7 +432,7 @@ export function createBrain(options: BrainOptions): Brain {
   const steerQueued = async (state: State) => {
     const live = state.live;
     const turn = state.turn;
-    if (live === undefined || turn === undefined || turn.inputs[0]?.scheduleRun !== undefined
+    if (live === undefined || turn === undefined || isolated(turn.inputs[0])
       || live.attempt !== turn.current || !turn.started || state.steering || state.pause !== undefined) {
       return;
     }
@@ -430,7 +440,7 @@ export function createBrain(options: BrainOptions): Brain {
     try {
       while (state.queue.length > 0 && state.turn === turn && state.live === live && !turn.interrupting && state.pause === undefined) {
         const input = state.queue[0];
-        if (input === undefined || input.scheduleRun !== undefined) {
+        if (input === undefined || isolated(input)) {
           return;
         }
         const prepared = await transport.prepare({ conversation: state.id, provider: live.provider, exclude: [], fresh: false, steer: true });
@@ -521,7 +531,9 @@ export function createBrain(options: BrainOptions): Brain {
 
     let prompt: { text: string; images: import("@super-agent2/programs").PromptImage[]; estimates?: Record<string, number> };
     try {
-      if (prepared.board !== undefined || prepared.seed !== undefined || prepared.automaticTitle === true || turn.inputs.some((input) => input.quote !== undefined || input.routing !== undefined || input.needsRepository === true)) {
+      if (turn.inputs[0]?.mailReview === true) {
+        prompt = { text: turnPrompt([], turn.inputs, prepared.memory, attachments), images: [] };
+      } else if (prepared.board !== undefined || prepared.seed !== undefined || prepared.automaticTitle === true || turn.inputs.some((input) => input.quote !== undefined || input.routing !== undefined || input.needsRepository === true)) {
         prompt = preparePrompt(state, provider, turn.inputs, prepared, mode === "continue");
       } else if (mode === "fresh") {
         prompt = { text: turnPrompt(prepared.history, turn.inputs, prepared.memory, attachments), images: promptImages(turn.inputs, attachments) };
@@ -549,12 +561,8 @@ export function createBrain(options: BrainOptions): Brain {
     await steerQueued(state);
   };
 
-  const startTurn = (state: State) => {
-    const provider = providerForNextTurn();
-    if (provider === undefined) {
-      return;
-    }
-    const scheduled = state.queue.findIndex((input) => input.scheduleRun !== undefined);
+  const startTurn = (state: State, provider: Provider) => {
+    const scheduled = state.queue.findIndex(isolated);
     const turn: TurnRun = {
       id: newId(),
       inputs: state.queue.splice(0, scheduled < 0 ? state.queue.length : Math.max(1, scheduled)),
@@ -722,11 +730,13 @@ export function createBrain(options: BrainOptions): Brain {
       .sort((a, b) => a.waiting - b.waiting);
     let open = [...states.values()].filter(occupiesSlot).length;
     for (const state of waiting) {
+      const provider = state.queue[0]?.mailReview === true ? mailProviders()[0] : providerForNextTurn();
+      if (provider === undefined) continue;
       if (state.live !== undefined || open < maximumOpen) {
         if (state.live === undefined) {
           open += 1;
         }
-        startTurn(state);
+        startTurn(state, provider);
       } else if (![...states.values()].some((candidate) => candidate.retiring !== undefined && candidate.turn === undefined)) {
         const oldest = [...states.values()].filter((candidate) =>
           candidate.live !== undefined && candidate.turn === undefined && !candidate.steering
@@ -739,8 +749,14 @@ export function createBrain(options: BrainOptions): Brain {
       }
     }
     const idleAt = Math.min(...[...states.values()].filter(idle).map((state) => state.idleAt));
-    if (Number.isFinite(idleAt)) {
-      cancelIdle = schedule(pump, Math.max(0, idleAt + idleMilliseconds - now));
+    const mailRetry = waiting.some((state) => state.queue[0]?.mailReview === true && state.turn === undefined)
+      ? Math.min(...choice.order().flatMap((provider) => {
+        const until = choice.reasons().get(provider)?.until;
+        return provider !== "deepseek" && until != null && until > now ? [until] : [];
+      })) : Infinity;
+    const wake = Math.min(idleAt + idleMilliseconds, mailRetry);
+    if (Number.isFinite(wake)) {
+      cancelIdle = schedule(pump, Math.max(0, wake - now));
     }
   };
 

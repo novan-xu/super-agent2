@@ -98,7 +98,7 @@ export function createHubLink(options: LinkOptions): HubLink {
     current.on("open", () => {
       open = true;
       report("Linked to the hub");
-      current.send(JSON.stringify({ type: "hello", protocol: protocolVersion, running: runningForHello() } satisfies BrainMessage));
+      current.send(JSON.stringify({ type: "hello", protocol: protocolVersion, running: runningForHello(), mailReview: true } satisfies BrainMessage));
       const status = handlers?.status?.();
       if (status !== undefined) {
         current.send(JSON.stringify(status));

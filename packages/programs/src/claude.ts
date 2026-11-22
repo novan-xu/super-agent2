@@ -71,6 +71,7 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     claudeExtraConfig(options),
     "--strict-mcp-config",
     ...(options.toolset === "brain" ? ["--tools", "Read,Glob,Grep,WebSearch,WebFetch,ToolSearch", "--disable-slash-commands"] : []),
+    ...(options.toolset === "mail" ? ["--tools", "", "--disable-slash-commands", "--no-session-persistence"] : []),
     session.resume ? "--resume" : "--session-id",
     session.id,
   ];

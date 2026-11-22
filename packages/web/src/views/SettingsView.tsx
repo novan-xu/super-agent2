@@ -690,8 +690,9 @@ function InboxSources() {
 
 function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
   const gateway = settings.appGateway;
+  const mailboxLabel = (provider: string, label: string) => provider === "outlook" && label.includes("@") ? `Outlook · ${label}` : label;
   const connectedApps = gateway === undefined ? [] : [
-    ...gateway.mailboxes.map(({ provider, label }) => provider === "outlook" && label.includes("@") ? `Outlook · ${label}` : label),
+    ...gateway.mailboxes.flatMap(({ provider, label, reading }) => reading === undefined ? [mailboxLabel(provider, label)] : []),
     ...(gateway.teams ? ["Microsoft Teams"] : []),
     ...(gateway.ticktick ? ["TickTick"] : []),
   ];
@@ -708,6 +709,15 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
                 {connectedApps.length === 0 ? null : <span className="srow-help">{connectedApps.join("、")}</span>}
               </div>
             </div>
+            {gateway.mailboxes.map(({ provider, label, reading }, index) => reading === undefined ? null : (
+              <div className="srow" key={`${provider}-${index}`}>
+                <span className={`dot ${reading === "reading" ? "dot--ok" : reading === "stalled" ? "dot--bad" : ""}`} />
+                <div className="srow-text">
+                  <span className="srow-title">{mailboxLabel(provider, label)}</span>
+                  <span className="srow-help">{text(`connections.mail.${reading}`)}</span>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}
