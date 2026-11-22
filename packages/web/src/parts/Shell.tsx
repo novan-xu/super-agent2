@@ -49,6 +49,7 @@ export interface ShellProps {
   readonly linked: boolean;
   readonly model: string | null;
   readonly actions?: ReactNode;
+  readonly headerTabs?: ReactNode;
   readonly fill: boolean;
   readonly subtitle?: string | null;
   readonly toast: string | null;
@@ -118,7 +119,7 @@ export function Shell(props: ShellProps) {
           </div>
         </nav>
         <div className="body">
-          <header className="top">
+          <header className={props.headerTabs === undefined ? "top" : "top top--workbench"}>
             <div className="top-title">
               <h1>{titleOf(current)}</h1>
               {props.subtitle === undefined || props.subtitle === null ? null : (
@@ -128,6 +129,7 @@ export function Shell(props: ShellProps) {
                 </>
               )}
             </div>
+            {props.headerTabs}
             <div className="od-row">{props.actions}</div>
           </header>
           <main className={props.fill ? "main is-fill" : "main"} id="main" tabIndex={-1}>

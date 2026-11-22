@@ -23,6 +23,7 @@ import type { TopicActions } from "./views/TopicActions.js";
 import { HistoryView } from "./views/HistoryView.js";
 import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
+import { RepositoryTabs } from "./views/RepositoryTabs.js";
 import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
 import { type SettingsActions, SettingsView } from "./views/SettingsView.js";
 import { SchedulesView } from "./views/SchedulesView.js";
@@ -138,6 +139,7 @@ export function App() {
   const [workTopic, setWorkTopic] = useState<string | null>(null);
   const [rearranging, setRearranging] = useState(false);
   const rearrangeInFlight = useRef(false);
+  const [workPane, setWorkPane] = useState<"canvas" | "panel">("canvas");
   const [workTicket, setWorkTicket] = useState<number | null>(null);
   const pinnedRepositories = useMemo(() => page.settings?.repositories.filter((row) => row.pinned).map(({ repository, alias }) => ({ repository, alias })) ?? [], [page.settings?.repositories]);
   const selectWorkRepository = useCallback((repository: string | null | undefined) => { setWorkRepository(repository); setWorkTopic(null); }, []);
@@ -178,7 +180,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (route.view === "settings" && page.settings === null && page.status === "open") {
+    if ((route.view === "settings" || route.view === "workbench") && page.settings === null && page.status === "open") {
       void controller.loadSettings();
     }
   }, [controller, route.view, page.settings, page.status]);
@@ -344,6 +346,7 @@ export function App() {
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
       allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
+      headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} /> : undefined}
       actions={
         route.view === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>
@@ -381,7 +384,8 @@ export function App() {
       ) : route.view === "workbench" ? (
         <CanvasWorkbench
           tickets={page.tickets.open}
-          topics={page.list}
+          pane={workPane}
+          setPane={setWorkPane}
           pinnedRepositories={pinnedRepositories}
           waiting={page.waiting}
           actions={cardActions}

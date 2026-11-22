@@ -9,10 +9,10 @@ const noop = () => undefined;
 const first = ticket(1, { repository: "org/one", state: "working", work: workStatus() });
 const second = ticket(2, { repository: "org/one", waits: [{ ticket: 1, deployment: false, waived: false }], waitsFor: [1] });
 const props: CanvasWorkbenchProps = {
-  tickets: [first, second], topics: [], pinnedRepositories: [{ repository: "org/one" }], waiting: { ...initialWaiting, known: true },
+  tickets: [first, second], pinnedRepositories: [{ repository: "org/one" }], waiting: { ...initialWaiting, known: true },
   actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
-  panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
+  pane: "canvas", setPane: noop, panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
 };
 let host: HTMLDivElement;
 let root: Root;
@@ -87,21 +87,12 @@ describe("workbench panel resizing", () => {
 
   it("starts rearrangement and opens the conversation panel after it succeeds", async () => {
     const rearrange = vi.fn().mockResolvedValue(true);
-    await act(async () => root.render(<CanvasWorkbench {...props} rearrange={rearrange} />));
+    const setPane = vi.fn();
+    await act(async () => root.render(<CanvasWorkbench {...props} rearrange={rearrange} setPane={setPane} />));
     const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === "编排")!;
     await act(async () => button.click());
     expect(rearrange).toHaveBeenCalledOnce();
-    expect(host.querySelector(".wb-canvas")?.classList.contains("wb-mobile-hidden")).toBe(true);
-    expect(host.querySelectorAll(".wb-mobile-tabs button")[1]?.getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("selects the real repository when its alias is clicked", async () => {
-    const selectRepository = vi.fn();
-    await act(async () => root.render(<CanvasWorkbench {...props} pinnedRepositories={[{ repository: "org/one", alias: "Project" }]} selectRepository={selectRepository} />));
-    const button = host.querySelector<HTMLButtonElement>('button[title="org/one"]')!;
-    expect(button.textContent).toContain("Project");
-    await act(async () => button.click());
-    expect(selectRepository).toHaveBeenCalledWith("org/one");
+    expect(setPane).toHaveBeenCalledWith("panel");
   });
 
   it("opens the ticket when a start-card link outlives its card", async () => {
@@ -133,9 +124,9 @@ describe("workbench panel resizing", () => {
     expect(localStorage.getItem("workbench.panelWidth")).toBe("530");
     await act(async () => splitter().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" })));
     expect(splitter().getAttribute("aria-valuenow")).toBe("554");
-    layoutWidth = 900;
+    layoutWidth = 700;
     await act(async () => window.dispatchEvent(new Event("resize")));
-    expect(width()).toBe("452px");
+    expect(width()).toBe("432px");
     layoutWidth = 1200;
     await act(async () => window.dispatchEvent(new Event("resize")));
     expect(width()).toBe("554px");

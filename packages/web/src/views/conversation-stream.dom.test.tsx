@@ -194,7 +194,7 @@ describe("switching conversation streams", () => {
     const scroller = log().parentElement;
 
     const select = async (label: string) => {
-      const button = [...host.querySelectorAll<HTMLButtonElement>(".wb-repo")].find((button) => button.querySelector(".od-truncate")?.textContent === label)!;
+      const button = [...host.querySelectorAll<HTMLButtonElement>(".wb-tab-select")].find((button) => button.querySelector(".od-truncate")?.textContent === label)!;
       await act(async () => button.click());
     };
     await select(text("conversation.daily"));
@@ -218,7 +218,7 @@ describe("switching conversation streams", () => {
   });
 });
 
-it("starts on archived repositories and updates the workbench rail after pinning and unpinning", async () => {
+it("starts on archived repositories and updates the workbench tabs after pinning and unpinning", async () => {
   const archived = "owner/empty";
   let snapshot = settingsSnapshot({
     repositories: [
@@ -252,7 +252,7 @@ it("starts on archived repositories and updates the workbench rail after pinning
   const visit = async (path: string) => act(async () => host.querySelector<HTMLAnchorElement>(`a[href="${path}"]`)!.click());
   const toggle = async (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label} ${archived}"]`)!.click());
   const titles = () => [...host.querySelectorAll(".srow-title")].map((row) => row.textContent);
-  const rail = () => [...host.querySelectorAll(".wb-repos .od-truncate")].map((row) => row.textContent);
+  const rail = () => [...host.querySelectorAll(".wb-tabs .od-truncate")].map((row) => row.textContent);
   const archivedTab = () => host.querySelector(".repository-tabs button:last-child");
   expect(fetcher).toHaveBeenCalledWith("/api/repositories/refresh", expect.objectContaining({ method: "POST" }));
   expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
@@ -353,4 +353,46 @@ it("redirects the old History URL into Settings and loads the history", async ()
   expect(host.querySelector('a[href="/settings/history"][aria-current="page"]')).not.toBeNull();
   expect(host.querySelector(`input[aria-label="${text("history.search")}"]`)).not.toBeNull();
   expect(fetcher).toHaveBeenCalledWith("/api/tickets?scope=ended", expect.anything());
+});
+
+it("opens and closes repository tabs through the shared pin API", async () => {
+  let snapshot = settingsSnapshot({ repositories: [
+    { repository: "owner/one", account: "novan-xu", chosen: false, pinned: true },
+    { repository: "owner/two", account: "novan-xu", chosen: false, pinned: false, alias: "Second" },
+  ] });
+  let fail = false;
+  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/repositories/pin") {
+      if (fail) return Response.json({}, { status: 500 });
+      const { repository, pinned } = JSON.parse(String(init?.body));
+      snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, pinned } : row) };
+      return Response.json(snapshot);
+    }
+    if (path === "/api/settings") return Response.json(snapshot);
+    return Response.json({}, { status: 404 });
+  }));
+  await act(async () => root.render(<App />));
+  await act(async () => { TestSocket.current.open(); TestSocket.current.deliver({ type: "settings", settings: snapshot }); });
+  await act(async () => host.querySelector<HTMLAnchorElement>('a[href="/workbench"]')!.click());
+  const tabs = () => [...host.querySelectorAll<HTMLButtonElement>(".wb-tab-select")];
+  expect(tabs().slice(0, 2).map((tab) => tab.textContent)).toEqual([text("workbench.all"), text("conversation.daily")]);
+  expect(host.querySelectorAll(".wb-tab-close")).toHaveLength(1);
+  await act(async () => host.querySelector<HTMLButtonElement>(".wb-add")!.click());
+  expect(host.querySelector(".wb-repo-option")?.textContent).toBe("Second");
+  const filter = host.querySelector<HTMLInputElement>(`input[aria-label="${text("workbench.filterRepositories")}"]`)!;
+  expect(document.activeElement).toBe(filter);
+  await act(async () => filter.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+  expect(document.activeElement).toBe(host.querySelector(".wb-repo-option"));
+  await act(async () => host.querySelector<HTMLButtonElement>(".wb-repo-option")!.click());
+  expect(snapshot.repositories[1]?.pinned).toBe(true);
+  expect(tabs().find((tab) => tab.title === "owner/two")?.getAttribute("aria-pressed")).toBe("true");
+  fail = true;
+  await act(async () => host.querySelector<HTMLButtonElement>(`[aria-label="${text("workbench.closeRepository", { repository: "owner/two" })}"]`)!.click());
+  expect(snapshot.repositories[1]?.pinned).toBe(true);
+  expect(tabs().find((tab) => tab.title === "owner/two")?.getAttribute("aria-pressed")).toBe("true");
+  fail = false;
+  await act(async () => host.querySelector<HTMLButtonElement>(`[aria-label="${text("workbench.closeRepository", { repository: "owner/two" })}"]`)!.click());
+  expect(snapshot.repositories[1]?.pinned).toBe(false);
+  expect(tabs()[0]?.getAttribute("aria-pressed")).toBe("true");
+  expect(tabs().some((tab) => tab.title === "owner/two")).toBe(false);
 });

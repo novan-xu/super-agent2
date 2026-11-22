@@ -1229,6 +1229,10 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE mail_messages ADD COLUMN group_end INTEGER;
     `,
   },
+  {
+    version: 61,
+    sql: `ALTER TABLE repositories ADD COLUMN pinned_order INTEGER;`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

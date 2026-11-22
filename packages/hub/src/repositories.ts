@@ -26,6 +26,7 @@ const CatalogRow = z.object({
   repository: z.string(),
   account: GitHubAccount.nullable(),
   pinned: z.number(),
+  pinned_order: z.number().nullable(),
   alias: z.string().nullable(),
   listed: z.number(),
   github_archived: z.number(),
@@ -49,7 +50,10 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
   );
   const remove = connection.prepare("DELETE FROM repository_accounts WHERE repository = ?");
   const setPin = connection.prepare(
-    "INSERT INTO repositories (repository, pinned) VALUES (?, ?) ON CONFLICT (repository) DO UPDATE SET pinned = excluded.pinned",
+    `INSERT INTO repositories (repository, pinned, pinned_order)
+     VALUES (?, ?, CASE WHEN ? = 1 THEN (SELECT coalesce(max(pinned_order), 0) + 1 FROM repositories) ELSE NULL END)
+     ON CONFLICT (repository) DO UPDATE SET pinned = excluded.pinned,
+       pinned_order = CASE WHEN excluded.pinned = 0 THEN NULL WHEN repositories.pinned = 1 THEN repositories.pinned_order ELSE excluded.pinned_order END`,
   );
   const setAlias = connection.prepare("INSERT INTO repositories (repository, alias) VALUES (?, ?) ON CONFLICT (repository) DO UPDATE SET alias = excluded.alias");
   const clearListed = connection.prepare("UPDATE repositories SET listed = 0 WHERE account = ? AND listed = 1");
@@ -104,7 +108,7 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       const key = repository.toLowerCase();
       const stored = catalog.get(key);
       const override = overrides.get(key);
-      return { repository, account: override ?? stored?.account ?? accountFor(repository), chosen: override !== undefined, pinned: stored?.pinned === 1, ...(stored?.alias == null ? {} : { alias: stored.alias }) };
+      return { repository, account: override ?? stored?.account ?? accountFor(repository), chosen: override !== undefined, pinned: stored?.pinned === 1, ...(stored?.pinned_order == null ? {} : { pinnedOrder: stored.pinned_order }), ...(stored?.alias == null ? {} : { alias: stored.alias }) };
     });
   };
 
@@ -132,7 +136,7 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       const key = repository.toLowerCase();
       const known = list().find((row) => row.repository.toLowerCase() === key);
       if (known === undefined) return false;
-      setPin.run(known.repository, Number(pinned));
+      setPin.run(known.repository, Number(pinned), Number(pinned));
       return true;
     },
     setAlias: (repository, alias) => {
