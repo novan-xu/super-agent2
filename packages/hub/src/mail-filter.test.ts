@@ -31,6 +31,21 @@ it("requires a valid kind for every kept item and states the requested exception
   for (const phrase of ["GitHub CI", "loyalty", "one-time verification", "security alerts", "password resets", "bills with a due date", "memory keep rules override"]) expect(mailFilterConfig.instructions).toContain(phrase);
 });
 
+it("states the owner's membership, shipping and ignore rules without excluding memberships", () => {
+  const instructions = mailFilterConfig.instructions;
+  for (const phrase of [
+    "keep changes to the owner's own memberships and subscriptions, including expiration, cancellation and upcoming renewal",
+    "shipping or delivery updates for the owner's orders, including shipped, out for delivery, delivered, delivery problems and expected-today package digests",
+    "loyalty points, stars and rewards expiring and promotional upsells",
+    "receipts, plain order confirmations, payment-succeeded or payment-scheduled confirmations and daily card activity summaries",
+    "meeting invitations, acceptances, declines, reschedules and cancellations, including from colleagues",
+    "project status or file-sharing FYIs that do not ask the owner to act or decide",
+    "platform engagement prompts such as authorship claims, mentions and profile views",
+    "bills with a due date", "real people directly asking for something", "membership-change", "shipping-update",
+  ]) expect(instructions).toContain(phrase);
+  expect(instructions).not.toContain("membership, subscription-trial and similar marketing expiry reminders");
+});
+
 it("reports merged representatives and counts in dry runs", async () => {
   const call = vi.fn(async () => ({ emails: [
     { id: "1", from_: "a@example.com", subject: "One", snippet: "s", email_ts: "2026-11-20T00:00:00Z" },
