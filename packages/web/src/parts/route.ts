@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 export type Navigate = (route: PageRoute, replace?: boolean) => void;
 
 function current(): PageRoute {
+  if (window.location.pathname.replace(/\/$/, "") === "/history") {
+    window.history.replaceState(window.history.state, "", "/settings/history");
+    return { view: "settings", section: "history" };
+  }
   return pageRoute(window.location.pathname, window.location.search) ?? { view: "home" };
 }
 

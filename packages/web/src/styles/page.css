@@ -472,3 +472,5 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
   .voice-control .voice-hint { max-width: 4.5rem; line-height: 1.2; }
   .voice-control .btn { min-width: 36px; justify-content: center; }
 }
+
+.set-body > .page { max-width: none; padding: 0; }

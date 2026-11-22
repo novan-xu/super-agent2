@@ -14,7 +14,6 @@ interface Destination {
 const main: readonly Destination[] = [
   { view: "workbench", icon: "inbox", label: text("navigation.workbench") },
   { view: "conversations", icon: "chat", label: text("navigation.conversation") },
-  { view: "history", icon: "history", label: text("navigation.history") },
   { view: "memory", icon: "memory", label: text("navigation.memory") },
   { view: "schedules", icon: "calendar", label: text("navigation.schedules") },
 ];
@@ -25,7 +24,7 @@ export function viewOf(route: PageRoute, ticketFrom: PageView = "workbench"): Pa
   if (route.view === "home" || route.view === "transfer") {
     return "conversations";
   }
-  return route.view === "ticket" ? ticketFrom : route.view;
+  return route.view === "ticket" ? (ticketFrom === "history" ? "settings" : ticketFrom) : route.view;
 }
 
 export function titleOf(view: PageView): string {
