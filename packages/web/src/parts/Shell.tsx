@@ -1,6 +1,6 @@
 import { text } from "@super-agent2/catalog";
 import type { PageRoute, PageView } from "@super-agent2/protocol";
-import type { MouseEvent, ReactNode } from "react";
+import { type MouseEvent, type ReactNode, useState } from "react";
 import type { SocketStatus } from "../hub/socket.js";
 import { Icon, type IconName, Logo } from "./icons.js";
 import type { Navigate } from "./route.js";
@@ -56,6 +56,7 @@ export interface ShellProps {
   readonly waiting: number;
   readonly suggestions?: number;
   readonly allowance?: ReactNode;
+  readonly collapsedAllowance?: ReactNode;
   readonly children?: ReactNode;
 }
 
@@ -63,7 +64,19 @@ export function countOf(view: PageView, waiting: number, suggestions = 0): numbe
   return view === "workbench" ? waiting : view === "memory" ? suggestions : 0;
 }
 
+const sidebarKey = "sidebar.collapsed";
+
+function loadCollapsed(): boolean {
+  try { return localStorage.getItem(sidebarKey) === "true"; } catch { return false; }
+}
+
 export function Shell(props: ShellProps) {
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const toggleSidebar = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(sidebarKey, String(next)); } catch {}
+  };
   const current = viewOf(props.route, props.ticketFrom);
   const count = (view: PageView) => countOf(view, props.waiting, props.suggestions);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
@@ -73,6 +86,7 @@ export function Shell(props: ShellProps) {
       href={props.hrefOf(destination.view)}
       aria-label={count(destination.view) > 0 ? `${destination.label} ${count(destination.view)}` : destination.label}
       aria-current={current === destination.view ? "page" : undefined}
+      title={destination.label}
       onClick={(event) => followLink(event, () => props.navigate(props.destinationOf(destination.view)))}
     >
       {inner}
@@ -94,14 +108,15 @@ export function Shell(props: ShellProps) {
   const online = props.status === "open";
   return (
     <>
-      <div className="app">
+      <div className={collapsed ? "app app--collapsed" : "app"}>
         <nav className="side" aria-label={text("navigation.main")}>
-          <div className="brand">
+          <div className="side-head"><div className="brand">
             <Logo />
             <span>{text("app.name")}</span>
-          </div>
+          </div><button className="side-toggle icon-btn" type="button" aria-label={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} title={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} aria-expanded={!collapsed} onClick={toggleSidebar}><Icon name="chev" /></button></div>
           <ul className="nav">{main.map(navItem)}</ul>
-          {props.allowance}
+          <div className="side-allowance-full">{props.allowance}</div>
+          <div className="side-allowance-rings">{props.collapsedAllowance}</div>
           <div className="side-foot">
             <div className="hub-card">
               <div className="hub-line">
@@ -114,6 +129,10 @@ export function Shell(props: ShellProps) {
                 <span>{text("brain.name")}</span>
                 <span className="od-fill mono od-truncate">{props.linked ? (props.model ?? "") : text("brain.offline")}</span>
               </div>
+            </div>
+            <div className="side-status-compact">
+              <span tabIndex={0} role="img" aria-label={`${text("hub.name")} ${online ? text("hub.online") : text("hub.reconnecting")}`} title={`${text("hub.name")} ${online ? text("hub.online") : text("hub.reconnecting")}`} className={`dot ${online ? "dot--ok" : "dot--warn"}`} />
+              <span tabIndex={0} role="img" aria-label={`${text("brain.name")} ${online && props.linked ? (props.model ?? text("hub.online")) : text("brain.offline")}`} title={`${text("brain.name")} ${online && props.linked ? (props.model ?? text("hub.online")) : text("brain.offline")}`} className={`dot ${online && props.linked ? "dot--ok" : "dot--bad"}`} />
             </div>
             <ul className="nav">{foot.map(navItem)}</ul>
           </div>

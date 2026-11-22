@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AllowanceCompact, AllowanceSidebar } from "./Allowance.js";
+import { AllowanceCompact, AllowanceRings, AllowanceSidebar } from "./Allowance.js";
 
 describe("allowance components", () => {
   it("renders an unknown compact line and the expandable full panel", () => {
@@ -69,4 +69,26 @@ it("shows API costs under GPT, with budget thresholds and without a budget", () 
   expect(bad).toContain("allowance-text--bad");
   expect(bad).toContain("剩余 $10.00 · 已用 90%");
   expect(render({ state: "unknown", amount: 90, currency: "USD", readAt: 1, budget: 100 })).toContain("API 本月 未知");
+});
+
+it("renders the most-used window as a ring with accessible window and API details", () => {
+  const report = {
+    subscriptions: [
+      { program: "codex" as const, state: "available" as const, remainingPercent: 25, resetsAt: null, readAt: 10, machine: "mini", windows: [{ name: "secondary", usedPercent: 75, durationMinutes: 10080, resetsAt: 10000 }] },
+      { program: "claude" as const, state: "available" as const, remainingPercent: 10, resetsAt: null, readAt: 10, machine: "mini", windows: [{ name: "session", usedPercent: 40, resetsAt: null }, { name: "weekly_all", usedPercent: 90, resetsAt: 20000 }] },
+    ],
+    unavailable: [],
+    openaiCost: { state: "available" as const, amount: 1, currency: "USD", readAt: 1, budget: 100 },
+  };
+  const rings = renderToStaticMarkup(<AllowanceRings report={report} now={0} />);
+  expect(rings).toContain('allowance-ring--warn');
+  expect(rings).toContain('stroke-dasharray="75 100"');
+  expect(rings).toContain('allowance-ring--bad');
+  expect(rings).toContain('stroke-dasharray="90 100"');
+  expect(rings).toContain('allowance-ring--unknown');
+  expect(rings).toContain('aria-describedby="allowance-ring-claude"');
+  expect(rings).toContain('id="allowance-ring-claude"');
+  expect(rings).toContain('40%');
+  expect(rings).toContain('API 本月 $1.00');
+  expect(rings).toContain('class="allowance-reset"');
 });

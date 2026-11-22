@@ -12,7 +12,7 @@ import { conversationRepositories, scopeOfTopic, topicScopeKey, workbenchScope }
 import { initialPushFacts, pushPhase } from "./live/push.js";
 import type { Verdict } from "./live/waiting.js";
 import { Icon } from "./parts/icons.js";
-import { AllowanceSidebar } from "./parts/Allowance.js";
+import { AllowanceSidebar, AllowanceRings } from "./parts/Allowance.js";
 import { useRoute } from "./parts/route.js";
 import { Shell } from "./parts/Shell.js";
 import { failureText } from "./views/HoldCard.js";
@@ -346,6 +346,7 @@ export function App() {
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
       allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
+      collapsedAllowance={<AllowanceRings report={page.allowance} now={now} />}
       headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} /> : undefined}
       actions={
         route.view === "memory" ? (
