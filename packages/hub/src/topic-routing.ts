@@ -3,6 +3,7 @@ import { type Clock, type Sleep, systemClock, systemSleep } from "./clock.js";
 import { ticketReferences } from "./ticket-codes.js";
 import { openTicketStates, RoutingProposal, type TopicScope } from "@super-agent2/protocol";
 import {
+  adjusted,
   bigramConfiguration,
   bigramSimilarity,
   bigramVector,
@@ -12,6 +13,7 @@ import {
   configurations,
   decide,
   endsWithQuestion,
+  hour,
   namedReferences,
   ownerTextLimit,
   rank,
@@ -40,6 +42,8 @@ export interface RoutingOptions {
 }
 
 export const defaultSendWaitMilliseconds = 2000;
+const archivedCandidateWindow = 24 * hour;
+const repositoryTopicLimit = 3;
 
 export type RoutingPurpose = "send" | "preview";
 
@@ -56,16 +60,26 @@ export interface RoutingMessage {
 }
 
 type ConfigurationDecision = RoutingProposal["decided"];
+type Scores = ReadonlyMap<string, number>;
+
+interface Evaluation {
+  readonly decision: ConfigurationDecision;
+  readonly scores: Scores;
+}
 
 export interface Routing extends RoutingProposal {
   readonly topic: string | null;
   readonly repository: string | null;
+  readonly scores: Scores;
 }
 
 export interface TopicRouter {
   route(message: RoutingMessage, options?: RouteOptions): Promise<Routing>;
   routeNow(message: RoutingMessage, reason: string): Routing;
   repositoryFor(text: string, scope: TopicScope): string | null;
+  recentlyArchived(topic: string): boolean;
+  cappedTopic(repository: string | null, proposed: string | undefined, scores: Scores): string | undefined;
+  cappedHandover(repository: string | null, source: string, message: string, at: number): string | undefined;
   record(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, at: number, owner: { ownerChanged: boolean; ownerPlaced: boolean }): void;
   log(entry: string, placedIn: string, scope: TopicScope["kind"], routing: RoutingProposal, ownerChanged: boolean): void;
   refresh(): void;
@@ -105,6 +119,7 @@ interface Computation {
 }
 
 const TopicRow = z.object({ id: z.string(), repository: z.string().nullable(), activity: z.number().int() });
+const RepositoryTopic = TopicRow.extend({ merge_pending: z.literal([0, 1]) });
 const EntryRow = z.object({ id: z.string(), kind: z.string(), body: z.string() });
 const ItemRow = EntryRow.extend({ streaming: z.number().int().optional() });
 const Id = z.object({ id: z.string() });
@@ -206,18 +221,30 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const { connection } = database;
   const primary = options.primary ?? "model";
   const report = options.report ?? (() => undefined);
+  const mergePending = "EXISTS (SELECT 1 FROM topic_merges WHERE source = c.id OR destination = c.id)";
+  const eligibleTopic = "c.merged_into IS NULL AND c.system = 0 AND c.code_system = 0";
+  const recentArchive = `c.archived_at >= ? AND (
+    EXISTS (SELECT 1 FROM conversation_entries e WHERE e.conversation_id = c.id AND e.kind = 'owner')
+    OR EXISTS (SELECT 1 FROM tickets t WHERE t.conversation_id = c.id)
+  )`;
   const listTopics = connection.prepare(`
-    SELECT id, repository, max(activity_at, created_at) AS activity FROM conversations
-    WHERE topic_state = 'active' AND merged_into IS NULL AND system = 0
+    SELECT id, repository, max(activity_at, created_at) AS activity FROM conversations c
+    WHERE (topic_state = 'active' OR (${recentArchive})) AND ${eligibleTopic}
       AND (CASE ? WHEN 'daily' THEN repository IS NULL AND needs_repository = 0
         WHEN 'code' THEN repository IS NOT NULL OR needs_repository = 1
         WHEN 'repository' THEN repository = ? COLLATE NOCASE ELSE 1 END)
-      AND NOT EXISTS (SELECT 1 FROM topic_merges WHERE source = conversations.id OR destination = conversations.id)
+      AND NOT ${mergePending}
+    ORDER BY activity DESC, rowid DESC
+  `);
+  const refreshTopics = connection.prepare(`
+    SELECT id FROM conversations c WHERE (topic_state = 'active' OR (${recentArchive})) AND ${eligibleTopic}
     ORDER BY max(activity_at, created_at) DESC, rowid DESC
   `);
-  const activeTopics = connection.prepare(`
-    SELECT id FROM conversations WHERE topic_state = 'active' AND merged_into IS NULL AND system = 0
-    ORDER BY max(activity_at, created_at) DESC, rowid DESC
+  const recentlyArchived = connection.prepare(`SELECT 1 FROM conversations c WHERE c.id = ? AND ${recentArchive}`);
+  const activeRepositoryTopics = connection.prepare(`
+    SELECT id, repository, max(activity_at, created_at) AS activity, ${mergePending} AS merge_pending FROM conversations c
+    WHERE repository = ? COLLATE NOCASE AND topic_state = 'active' AND ${eligibleTopic}
+    ORDER BY merge_pending, activity DESC, rowid DESC
   `);
   const firstOwner = connection.prepare("SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq LIMIT 1");
   const recentOwners = connection.prepare(`SELECT id, kind, body FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner' ORDER BY seq DESC LIMIT ${recentOwnerItems}`);
@@ -242,8 +269,8 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const insertDecision = connection.prepare(`
     INSERT INTO routing_decisions (
       entry, decided_at, scope, candidates, configuration, fallback_reason, rule, topic, placed_in, best_topic, best_score, runner_up_score,
-      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score, owner_changed, owner_placed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      shadow_configuration, shadow_rule, shadow_topic, shadow_best_topic, shadow_best_score, shadow_runner_up_score, owner_changed, owner_placed, repository_cap
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const selectVector = connection.prepare("SELECT vector FROM routing_vectors WHERE entry = ? AND model = ? AND text_hash = ?");
@@ -255,6 +282,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   `);
 
   const clock = options.clock ?? systemClock;
+  const archiveCutoff = () => clock.now() - archivedCandidateWindow;
   const sleep = options.sleep ?? systemSleep;
   const sendWait = options.sendWaitMilliseconds ?? defaultSendWaitMilliseconds;
   const vectors = new Map<string, { readonly text: string; readonly vector: Vector }>();
@@ -347,7 +375,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   };
 
   const gather = (message: RoutingMessage): Context => {
-    const rows = listTopics.all(message.scope.kind, message.scope.kind === "repository" ? message.scope.repository : null).map((row) => TopicRow.parse(row));
+    const rows = listTopics.all(archiveCutoff(), message.scope.kind, message.scope.kind === "repository" ? message.scope.repository : null).map((row) => TopicRow.parse(row));
     const repository = repositoryFor(message.text, message.scope, rows);
     const references = namedReferences(message.text, true);
     const eligible = message.scope.kind === "code" && repository !== null && references.length === 0
@@ -364,23 +392,29 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     };
   };
 
-  const scoresOf = (context: Context, messageVector: Vector, vectorOf: (item: Item) => Vector, similarity: (left: Vector, right: Vector) => number): number[] =>
-    context.topics.map((topic) => topic.items.reduce((best, item) => Math.max(best, similarity(messageVector, vectorOf(item))), -Infinity));
+  const scoreOf = (items: readonly Item[], messageVector: Vector, vectorOf: (item: Item) => Vector, similarity: (left: Vector, right: Vector) => number): number =>
+    items.reduce((best, item) => Math.max(best, similarity(messageVector, vectorOf(item))), -Infinity);
 
-  const evaluate = (configuration: Configuration, context: Context, scores: readonly number[]): ConfigurationDecision => {
+  const scoresOf = (context: Context, messageVector: Vector, vectorOf: (item: Item) => Vector, similarity: (left: Vector, right: Vector) => number): number[] =>
+    context.topics.map((topic) => scoreOf(topic.items, messageVector, vectorOf, similarity));
+
+  const evaluate = (configuration: Configuration, context: Context, scores: readonly number[]): Evaluation => {
     const choice = decide(context.input, configuration.rules, scores);
     const ranking = rank(context.input.candidates, scores, configuration.rules.time);
     return {
-      configuration: configuration.name,
-      rule: RoutingProposal.shape.decided.shape.rule.parse(choice.rule),
-      topic: choice.topic,
-      best: ranking.best,
-      bestScore: finite(ranking.bestScore),
-      runnerUpScore: finite(ranking.runnerUpScore),
+      decision: {
+        configuration: configuration.name,
+        rule: RoutingProposal.shape.decided.shape.rule.parse(choice.rule),
+        topic: choice.topic,
+        best: ranking.best,
+        bestScore: finite(ranking.bestScore),
+        runnerUpScore: finite(ranking.runnerUpScore),
+      },
+      scores: new Map(context.topics.map(({ id, idleMs }, index) => [id, adjusted(scores[index]!, idleMs, configuration.rules.time)])),
     };
   };
 
-  const bigramDecision = (context: Context): ConfigurationDecision => {
+  const bigramDecision = (context: Context): Evaluation => {
     const messageVector = bigramVector(context.message.text.slice(0, ownerTextLimit));
     return evaluate(bigramConfiguration, context, scoresOf(context, messageVector, (item) => bigramVector(item.text), bigramSimilarity));
   };
@@ -530,7 +564,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return vector;
   };
 
-  const modelDecision = async (scorer: Scorer, context: Context, demand: Demand): Promise<ConfigurationDecision> => {
+  const modelDecision = async (scorer: Scorer, context: Context, demand: Demand): Promise<Evaluation> => {
     if (context.topics.length === 0) {
       return evaluate(configurations.model, context, []);
     }
@@ -543,7 +577,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return evaluate(configurations.model, context, scoresOf(context, messageVector!, (item) => itemVectors.get(item.id)!, scorer.similarity));
   };
 
-  const boundedDecision = async (decision: Promise<ConfigurationDecision>): Promise<ConfigurationDecision | undefined> => {
+  const boundedDecision = async (decision: Promise<Evaluation>): Promise<Evaluation | undefined> => {
     const stop = new AbortController();
     try {
       return await Promise.race([decision, sleep(sendWait, stop.signal).then(() => undefined)]);
@@ -561,7 +595,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     }
     const known = new Map<string, string>();
     const names = [
-      ...(topics ?? listTopics.all(scope.kind, null).map((row) => TopicRow.parse(row)))
+      ...(topics ?? listTopics.all(archiveCutoff(), scope.kind, null).map((row) => TopicRow.parse(row)))
         .flatMap(({ repository }) => (repository === null ? [] : [repository])),
       ...knownRepositories.all(...openTicketStates).map((row) => Repository.parse(row).repository),
     ];
@@ -573,17 +607,36 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
     return namedRepository(text, [...known.values()]);
   };
 
-  const finish = (context: Context, decided: ConfigurationDecision, shadow: ConfigurationDecision | null, fallback: string | null): Routing => ({
+  const finish = (context: Context, { decision: decided, scores }: Evaluation, shadow: Evaluation | null, fallback: string | null): Routing => ({
     candidates: context.topics.length,
     topic: decided.topic,
     possibleMatch: decided.topic === null ? (decided.best ?? context.topics[0]?.id) : undefined,
-    repository: decided.topic === null ? context.repository : null,
+    repository: context.repository,
+    scores,
     decided,
-    shadow,
+    shadow: shadow?.decision ?? null,
     fallback,
   });
 
-  const allItems = (): Item[] => activeTopics.all().flatMap((row) => itemsOf(Id.parse(row).id));
+  const allItems = (): Item[] => refreshTopics.all(archiveCutoff()).flatMap((row) => itemsOf(Id.parse(row).id));
+
+  const repositoryTopics = (repository: string | null) => repository === null ? []
+    : activeRepositoryTopics.all(repository).map((row) => RepositoryTopic.parse(row));
+
+  const bestActive = (topics: readonly z.infer<typeof RepositoryTopic>[], score: (topic: z.infer<typeof RepositoryTopic>) => number): string | undefined => {
+    const pending = topics[0]?.merge_pending;
+    let best: string | undefined;
+    let bestScore = -Infinity;
+    for (const topic of topics) {
+      if (topic.merge_pending !== pending) break;
+      const value = score(topic);
+      if (best === undefined || value > bestScore) {
+        best = topic.id;
+        bestScore = value;
+      }
+    }
+    return best;
+  };
 
   const runRefresh = async (scorer: Scorer) => {
     while (dirty && !closed) {
@@ -643,11 +696,26 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
 
   return {
     repositoryFor,
+    recentlyArchived: (id) => recentlyArchived.get(id, archiveCutoff()) !== undefined,
+    cappedTopic: (repository, proposed, scores) => {
+      const active = repositoryTopics(repository);
+      return active.length < repositoryTopicLimit || active.some(({ id }) => id === proposed) ? undefined
+        : bestActive(active, ({ id }) => scores.get(id) ?? -Infinity);
+    },
+    cappedHandover: (repository, source, message, at) => {
+      const active = repositoryTopics(repository);
+      if (active.length < repositoryTopicLimit) return undefined;
+      const vector = bigramVector(message.slice(0, ownerTextLimit));
+      return bestActive(active.filter(({ id }) => id !== source), ({ id, activity }) => {
+        const value = scoreOf(itemsOf(id), vector, (item) => bigramVector(item.text), bigramSimilarity);
+        return adjusted(value, Math.max(0, at - activity), bigramConfiguration.rules.time);
+      });
+    },
     route: async (message, { purpose = "preview", signal } = {}) => {
       signal?.throwIfAborted();
       const context = gather(message);
       const bigram = bigramDecision(context);
-      let modelResult: ConfigurationDecision | undefined;
+      let modelResult: Evaluation | undefined;
       let reason: string | null = null;
       const state = model;
       if (state.kind === "ready") {
@@ -682,13 +750,14 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
         entry, at, scope, routing.candidates, decided.configuration, routing.fallback, decided.rule, decided.topic, placedIn,
         decided.best, decided.bestScore, decided.runnerUpScore,
         shadow?.configuration ?? null, shadow?.rule ?? null, shadow?.topic ?? null, shadow?.best ?? null, shadow?.bestScore ?? null, shadow?.runnerUpScore ?? null,
-        Number(ownerChanged), Number(ownerPlaced),
+        Number(ownerChanged), Number(ownerPlaced), Number(routing.repositoryCap === true),
       );
     },
     log: (entry, placedIn, scope, routing, ownerChanged) => {
       const parts = [
         `Topic routing decision ${entry}: ${describe(routing.decided)} placed in ${placedIn}`,
         `${routing.candidates} candidates in ${scope}`,
+        ...(routing.repositoryCap === true ? ["repository topic cap"] : []),
         ...(ownerChanged ? ["destination changed by owner"] : []),
         `shadow ${routing.shadow === null ? "none" : describe(routing.shadow)}`,
         ...(routing.fallback === null ? [] : [`fallback: ${routing.fallback}`]),

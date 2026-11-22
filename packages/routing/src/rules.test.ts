@@ -5,7 +5,7 @@ import { bgeSmallZh, type ModelSpec, modelIdentity } from "./model.js";
 import { characterLength, endsWithQuestion, namedReferences, referencesIn } from "./signals.js";
 import { bigramScorer, bigramUnits } from "./vectors.js";
 
-const flat: Rules = { ...modelConfiguration.rules, time: { kind: "decay", beta: 0 } };
+const flat: Rules = { ...modelConfiguration.rules, threshold: 0.5, margin: 0.125, time: { kind: "decay", beta: 0 } };
 
 function candidate(topic: string, idleMinutes: number, extra: Partial<RouteCandidate> = {}): RouteCandidate {
   return { topic, idleMs: idleMinutes * minute, open: false, openCard: false, referenced: false, ...extra };
@@ -18,10 +18,10 @@ function input(candidates: readonly RouteCandidate[], extra: Partial<RouteInput>
 describe("rules", () => {
   it("joins at the threshold and at the margin, not below either", () => {
     const pair = input([candidate("a", 60), candidate("b", 60)]);
-    expect(decide(pair, flat, [0.57, 0.47])).toEqual({ topic: "a", rule: "c" });
-    expect(decide(pair, flat, [0.5699, 0.1])).toEqual({ topic: null, rule: "d" });
-    expect(decide(pair, flat, [0.7, 0.603])).toEqual({ topic: "a", rule: "c" });
-    expect(decide(pair, flat, [0.7, 0.6041])).toEqual({ topic: null, rule: "d" });
+    expect(decide(pair, flat, [0.5, 0.25])).toEqual({ topic: "a", rule: "c" });
+    expect(decide(pair, flat, [0.4999, 0.1])).toEqual({ topic: null, rule: "d" });
+    expect(decide(pair, flat, [0.75, 0.625])).toEqual({ topic: "a", rule: "c" });
+    expect(decide(pair, flat, [0.75, 0.6251])).toEqual({ topic: null, rule: "d" });
     expect(decide(pair, flat, [0.1, 0.8])).toEqual({ topic: "b", rule: "c" });
     expect(decide(pair, flat, undefined)).toEqual({ topic: null, rule: "d" });
   });

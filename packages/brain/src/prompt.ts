@@ -88,7 +88,8 @@ export function inputText(inputs: readonly BrainInput[], root: string = defaultA
     if (routing === undefined) {
       return text;
     }
-    const note = `[hub] Message ${input.entry ?? input.id} was routed here (${routingRules[routing.rule]}, ${routing.placement} topic). Hand over only if it clearly belongs elsewhere. If unsure, answer here.`;
+    const rule = routing.placement === "existing" && routing.repositoryCap === true ? "repository topic cap" : routingRules[routing.rule];
+    const note = `[hub] Message ${input.entry ?? input.id} was routed here (${rule}, ${routing.placement} topic). Hand over only if it clearly belongs elsewhere. If unsure, answer here.`;
     const candidate = routing.placement === "new" ? routing.candidate : undefined;
     const lines = candidate === undefined ? [note] : [
       note,

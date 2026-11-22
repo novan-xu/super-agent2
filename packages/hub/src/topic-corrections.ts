@@ -30,7 +30,7 @@ interface TopicCorrectionsOptions {
   readonly send: (message: HubToBrain) => boolean;
   readonly topic: (id: string) => Conversation | undefined;
   readonly isRouted: (entry: string) => boolean;
-  readonly createMoveDestination: (entry: string, at: number, title?: string) => string;
+  readonly createMoveDestination: (entry: string, at: number, title?: string) => { target: string; repositoryCap?: true };
   readonly announce: (id: string) => void;
   readonly historyChanged: (topics: string[]) => void;
   readonly ticketsChanged: (ids: number[]) => void;
@@ -102,7 +102,7 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       body = json_remove(body, '$.possibleMatch') WHERE id = ?
   `);
   const correctRouting = connection.prepare("UPDATE routing_decisions SET moved_to = ?, moved_at = ?, brain_overridden = (brain_moved_at IS NOT NULL) WHERE entry = ?");
-  const correctBrainRouting = connection.prepare("UPDATE routing_decisions SET brain_moved_to = ?, brain_moved_at = ? WHERE entry = ?");
+  const correctBrainRouting = connection.prepare("UPDATE routing_decisions SET brain_moved_to = ?, brain_moved_at = ?, brain_repository_cap = ? WHERE entry = ?");
   const activate = connection.prepare("UPDATE conversations SET topic_state = 'active', activity_at = max(activity_at, ?), updated_at = ? WHERE id = ?");
   const saveMerge = connection.prepare("INSERT INTO topic_merges (id, source, destination) VALUES (?, ?, ?)");
   const selectMerge = connection.prepare("SELECT * FROM topic_merges WHERE id = ?");
@@ -218,10 +218,11 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     }
     const now = clock.now();
     const moved = transaction(() => {
-      const target = destination ?? options.createMoveDestination(id, now, title);
+      const { target, repositoryCap } = destination === null ? options.createMoveDestination(id, now, title) : { target: destination };
       saveTransfer.run(id, source, owner.delivery_id ?? id, Number(owner.turn_id !== null));
       moveEntry.run(target, target, randomUUID(), Number(byBrain), id);
-      (byBrain ? correctBrainRouting : correctRouting).run(target, now, id);
+      if (byBrain) correctBrainRouting.run(target, now, Number(repositoryCap === true), id);
+      else correctRouting.run(target, now, id);
       if (owner.turn_id !== null) {
         revoke.run(owner.turn_id, source);
         if (clearSummary.run(owner.turn_id).changes > 0) {

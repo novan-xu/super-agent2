@@ -1103,6 +1103,19 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX brain_usage_at ON brain_usage(at);
     `,
   },
+  {
+    version: 54,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN archived_at INTEGER;
+      UPDATE conversations SET archived_at = updated_at WHERE topic_state = 'archived';
+      CREATE TRIGGER topic_archive_time AFTER UPDATE OF topic_state ON conversations
+      WHEN NEW.topic_state <> OLD.topic_state BEGIN
+        UPDATE conversations SET archived_at = CASE WHEN NEW.topic_state = 'archived' THEN NEW.updated_at END WHERE id = NEW.id;
+      END;
+      ALTER TABLE routing_decisions ADD COLUMN repository_cap INTEGER NOT NULL DEFAULT 0 CHECK (repository_cap IN (0, 1));
+      ALTER TABLE routing_decisions ADD COLUMN brain_repository_cap INTEGER NOT NULL DEFAULT 0 CHECK (brain_repository_cap IN (0, 1));
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
