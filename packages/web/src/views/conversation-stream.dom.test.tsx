@@ -322,3 +322,23 @@ it("edits and saves Antigravity's model order on the Models page", async () => {
   await act(async () => buttons(text("models.save"))[0]!.click());
   expect(snapshot.table.antigravity).toEqual([flash, hydrogen]);
 });
+
+it("shows usage totals, daily provider figures, and top topics", async () => {
+  const daily = [
+    { day: "2026-11-21", provider: "gpt", input: 20, cacheRead: 80, cacheWrite: null, output: 5, reasoning: 2, costUsd: null, attempts: 1 },
+    { day: "2026-11-20", provider: "gpt", input: 10, cacheRead: 40, cacheWrite: null, output: 3, reasoning: 1, costUsd: null, attempts: 1 },
+  ];
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => path === "/api/brain/usage"
+    ? Response.json({ daily, topics: [{ topic: "topic-1", title: "Test topic", tokens: 158 }], seeds: [{ turn: "turn-1", at: 1, provider: "gpt", title: "Test topic", seed: { input: 42 } }] })
+    : Response.json({}, { status: 404 })));
+  window.history.replaceState(null, "", "/settings/usage");
+  await act(async () => root.render(<App />));
+  const tables = host.querySelectorAll("table");
+  expect(tables).toHaveLength(2);
+  expect(tables[0]?.textContent).toContain("120");
+  expect(tables[0]?.textContent).toContain("30");
+  expect(tables[1]?.textContent).toContain("2026-11-21");
+  expect(host.textContent).toContain("Test topic");
+  expect(host.textContent).toContain("158");
+  expect(host.textContent).toContain("42");
+});

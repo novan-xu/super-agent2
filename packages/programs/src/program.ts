@@ -3,6 +3,7 @@ import type { ExtraMcpServer, Provider } from "@super-agent2/protocol";
 export type ProgramEvent =
   | { readonly type: "session"; readonly session: string }
   | { readonly type: "capacity"; readonly tokens: number }
+  | { readonly type: "usage"; readonly input: number | null; readonly cacheRead: number | null; readonly cacheWrite: number | null; readonly output: number | null; readonly reasoning: number | null; readonly costUsd: number | null }
   | { readonly type: "model"; readonly model: string; readonly effort: string | null }
   | { readonly type: "text"; readonly block: string; readonly delta: string }
   | { readonly type: "tool.started"; readonly call: string; readonly name: string; readonly input: string }

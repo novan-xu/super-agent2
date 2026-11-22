@@ -442,3 +442,8 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .ticket-jump { position: sticky; bottom: calc(96px + env(safe-area-inset-bottom)); height: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 2; transform: translateY(-100px); pointer-events: none; }
 .ticket-jump .icon-btn { width: 44px; height: 44px; min-height: 44px; pointer-events: auto; background: var(--surface); }
 .ticket-jump .icon-btn[aria-disabled="true"] { opacity: 0.4; cursor: default; color: var(--fg-2); border-color: transparent; }
+
+.usage-table { width: 100%; border-collapse: collapse; text-align: left; }
+.usage-table th, .usage-table td { padding: var(--space-2); border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.usage-seed { display: block; }
+.usage-seed summary { cursor: pointer; }

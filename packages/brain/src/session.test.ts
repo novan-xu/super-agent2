@@ -21,7 +21,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Brain, type BrainOptions, createBrain } from "./brain.js";
 import { createHubLink, type HubLink, type Schedule } from "./link.js";
-import type { OpenOptions } from "@super-agent2/programs";
+import { claudeAdapter, codexAdapter, type OpenOptions } from "@super-agent2/programs";
+import { fakeClaudeSource, fakeCodexSource, writeFake } from "../../programs/src/testing/programs.js";
 import { FakeProgram } from "./testing/fake.js";
 
 let dataDir: string;
@@ -226,6 +227,81 @@ async function callTool(options: OpenOptions, name: string, args: Record<string,
   const body = (await response.json()) as { result: { content: { text: string }[] } };
   return body.result.content.map((item) => item.text).join("\n");
 }
+
+describe("brain usage accounting", () => {
+  it.each(["gpt", "claude"] as const)("stores real %s adapter events through the hub", async (provider) => {
+    const hub = await startHub();
+    const source = provider === "gpt"
+      ? fakeCodexSource.replace('notify("turn/started", { turn: { id: turnId } });', 'notify("turn/started", { turn: { id: turnId } }); notify("thread/tokenUsage/updated", { turnId, tokenUsage: { modelContextWindow: 200000, last: { inputTokens: 100, cachedInputTokens: 60, outputTokens: 12, reasoningOutputTokens: 2 } } });')
+      : fakeClaudeSource.replace('subtype: "success", is_error: false, user_message_uuids: uuids, ...extra', 'subtype: "success", is_error: false, user_message_uuids: uuids, usage: { input_tokens: 40, cache_read_input_tokens: 60, output_tokens: 12 }, ...extra');
+    const settings = { program: writeFake(dataDir, `${provider}.mjs`, source), model: "test-model", effort: "high", environment: { ...process.env, FAKE_LOG: join(dataDir, "program.log") }, clock };
+    const adapter = provider === "gpt" ? codexAdapter(settings) : claudeAdapter(settings);
+    link = createHubLink({ hubUrl: hubUrl(), token, schedule: manualSchedule });
+    brain = createBrain({ adapters: new Map([[provider, adapter]]), order: [provider], transport: link, clock, tools: { url: `${hubUrl()}${brainToolsPath}`, token }, workspace: dataDir });
+    const current = brain;
+    link.bind({ receive: (message) => current.receive(message), running: () => current.running() });
+    link.connect();
+    const topic = await newConversation();
+    await say(topic.id, "Record usage");
+    await turnEnded(topic.id, 1);
+    expect(hub.database.connection.prepare("SELECT provider, input, cache_read, output FROM brain_usage WHERE topic = ?").get(topic.id)).toEqual({ provider, input: 40, cache_read: 60, output: 12 });
+  });
+  it("stores each provider attempt, preserving missing fields and seed estimates", async () => {
+    const hub = await startHub();
+    startBrain(["gpt", "claude"]);
+    const topic = await newConversation();
+    await say(topic.id, "Account for this turn");
+    const first = await programs.gpt.next();
+    first.handle.emit({ type: "model", model: "reported-model", effort: null });
+    first.handle.emit({ type: "usage", input: 20, cacheRead: 80, cacheWrite: null, output: 7, reasoning: 2, costUsd: null });
+    first.handle.emit({ type: "usage", input: 25, cacheRead: 90, cacheWrite: null, output: 8, reasoning: 3, costUsd: null });
+    first.handle.emit({ type: "unavailable", reason: "limit", until: null });
+    const second = await programs.claude.next();
+    second.handle.emit({ type: "usage", input: 10, cacheRead: 40, cacheWrite: 5, output: 6, reasoning: null, costUsd: 0.1 });
+    second.handle.finish();
+    await turnEnded(topic.id, 1);
+    const rows = hub.database.connection.prepare("SELECT provider, model, input, cache_read, cache_write, output, reasoning, cost_usd, seed FROM brain_usage WHERE topic = ? ORDER BY attempt").all(topic.id);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ provider: "gpt", model: "reported-model", input: 25, cache_read: 90, cache_write: null, output: 8, reasoning: 3, cost_usd: null });
+    expect(rows[1]).toMatchObject({ provider: "claude", input: 10, cache_read: 40, cache_write: 5, output: 6, reasoning: null, cost_usd: 0.1 });
+    expect(JSON.parse(String(rows[0]?.["seed"]))).toMatchObject({ input: expect.any(Number), memory: expect.any(Number), board: expect.any(Number) });
+    hub.database.connection.prepare("UPDATE brain_usage SET at = ? WHERE topic = ?").run(Date.now(), topic.id);
+    const response = await owner("/api/brain/usage");
+    expect(response.status).toBe(200);
+    const report = await response.json() as { daily: unknown[]; topics: unknown[] };
+    expect(report.daily).toContainEqual(expect.objectContaining({ provider: "gpt", input: 25, cacheRead: 90, output: 8 }));
+    expect(report.daily).toContainEqual(expect.objectContaining({ provider: "claude", input: 10, cacheRead: 40, cacheWrite: 5, output: 6 }));
+    expect(report.topics).toContainEqual(expect.objectContaining({ topic: topic.id, tokens: 184 }));
+  });
+  it("records seed estimates only when opening a new session", async () => {
+    const hub = await startHub();
+    startBrain(["gpt"]);
+    const topic = await newConversation();
+    await say(topic.id, "First");
+    const first = await programs.gpt.next();
+    first.handle.emit({ type: "session", session: "saved-session" });
+    first.handle.finish();
+    await turnEnded(topic.id, 1);
+    await say(topic.id, "Second");
+    const second = await programs.gpt.next();
+    second.handle.finish();
+    await turnEnded(topic.id, 2);
+    const rows = hub.database.connection.prepare("SELECT seed FROM brain_usage WHERE topic = ? ORDER BY rowid").all(topic.id);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.["seed"]).not.toBeNull();
+    expect(rows[1]?.["seed"]).toBeNull();
+  });
+  it("records an attempt even when no usage is reported", async () => {
+    const hub = await startHub();
+    startBrain(["deepseek"]);
+    const topic = await newConversation();
+    await say(topic.id, "Hello");
+    const { handle } = await programs.deepseek.next();
+    handle.finish();
+    await turnEnded(topic.id, 1);
+    expect(hub.database.connection.prepare("SELECT provider, input, output FROM brain_usage WHERE topic = ?").get(topic.id)).toEqual({ provider: "deepseek", input: null, output: null });
+  });
+});
 
 describe("the brain's session", () => {
   it("receives the hub's extra MCP servers before opening a program", async () => {

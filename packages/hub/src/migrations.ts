@@ -1091,6 +1091,18 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX schedules_triggers ON schedules(json_extract(fields, '$.recurrence.trigger')) WHERE state = 'active';
     `,
   },
+  {
+    version: 53,
+    sql: `
+      CREATE TABLE brain_usage (
+        turn TEXT NOT NULL REFERENCES turns(id), attempt INTEGER NOT NULL, topic TEXT NOT NULL REFERENCES conversations(id),
+        provider TEXT NOT NULL, model TEXT NOT NULL, at INTEGER NOT NULL, seed TEXT,
+        input INTEGER, cache_read INTEGER, cache_write INTEGER, output INTEGER, reasoning INTEGER, cost_usd REAL,
+        PRIMARY KEY (turn, attempt)
+      ) STRICT;
+      CREATE INDEX brain_usage_at ON brain_usage(at);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

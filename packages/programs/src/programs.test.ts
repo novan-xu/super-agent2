@@ -39,6 +39,17 @@ function track<T extends ProgramHandle>(handle: T): T {
   return handle;
 }
 
+describe("Claude usage", () => {
+  it("reports the usage and cost from a result", async () => {
+    const source = fakeClaudeSource.replace('subtype: "success", is_error: false, user_message_uuids: uuids, ...extra', 'subtype: "success", is_error: false, user_message_uuids: uuids, usage: { input_tokens: 12, cache_read_input_tokens: 30, cache_creation_input_tokens: 4, output_tokens: 7 }, total_cost_usd: 0.01, ...extra');
+    const adapter = claudeAdapter(settings(writeFake(directory, "claude-usage.mjs", source), "claude", "high"));
+    const log = new EventLog();
+    track(adapter.open(options(null), log.listener)).start("hello");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 12, cacheRead: 30, cacheWrite: 4, output: 7, reasoning: null, costUsd: 0.01 });
+  });
+});
+
 describe("extra MCP servers", () => {
   const server = { name: "Agent_wring", url: "http://mini:3000/mcp", token: "extra-example-secret" };
   it("configures dsh with an environment reference", () => {
@@ -75,6 +86,26 @@ describe("extra MCP servers", () => {
     const start = entries.find((entry) => entry["method"] === "thread/start") as { params: { config: Record<string, unknown> } };
     expect(start.params.config["mcp_servers.Agent_wring"]).toEqual({ url: server.url, bearer_token_env_var: "SUPER_AGENT_EXTRA_MCP_TOKEN_0" });
     expect(Boolean(start.params.config["mcp_servers.hub"])).toBe(role === "brain");
+  });
+});
+
+describe("dsh usage", () => {
+  it("reports per-call token fields from assistant messages", async () => {
+    const source = fakeDshSource.replace('message: { id: "a1", content:', 'usage: { inputTokens: 12, outputTokens: 7, cacheReadTokens: 40, reasoningTokens: 2 }, message: { id: "a1", content:');
+    const log = new EventLog();
+    track(dshAdapter(settings(writeFake(directory, "dsh-usage.mjs", source), "deepseek", "high")).open(options(null), log.listener)).start("hello");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 12, cacheRead: 40, cacheWrite: null, output: 7, reasoning: 2, costUsd: null });
+  });
+});
+
+describe("Codex usage", () => {
+  it("reports last-turn tokens and separates cached input", async () => {
+    const source = fakeCodexSource.replace('tokenUsage: { modelContextWindow: 272000 }', 'tokenUsage: { modelContextWindow: 272000, last: { inputTokens: 120, cachedInputTokens: 80, cacheWriteInputTokens: 3, outputTokens: 20, reasoningOutputTokens: 5 } }');
+    const log = new EventLog();
+    track(codexAdapter(settings(writeFake(directory, "codex-usage.mjs", source), "gpt", "high")).open(options(null), log.listener)).start("report capacity");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 40, cacheRead: 80, cacheWrite: 3, output: 20, reasoning: 5, costUsd: null });
   });
 });
 

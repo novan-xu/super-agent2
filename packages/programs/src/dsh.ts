@@ -20,6 +20,7 @@ const SessionEvent = z.looseObject({
 });
 
 const AssistantMessage = z.looseObject({
+  usage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative(), cacheReadTokens: z.number().int().nonnegative().optional(), cacheWriteTokens: z.number().int().nonnegative().optional(), reasoningTokens: z.number().int().nonnegative().optional() }).optional().catch(undefined),
   message: z.looseObject({
     id: z.string().optional(),
     content: z.array(z.looseObject({ type: z.string(), text: z.string().optional() })).optional(),
@@ -299,6 +300,8 @@ function openDsh(settings: ProgramSettings, options: OpenOptions, listener: Prog
         if (!parsed.success) {
           return;
         }
+        const usage = parsed.data.usage;
+        if (usage !== undefined) listener({ type: "usage", input: usage.inputTokens, output: usage.outputTokens, cacheRead: usage.cacheReadTokens ?? null, cacheWrite: usage.cacheWriteTokens ?? null, reasoning: usage.reasoningTokens ?? null, costUsd: null });
         const text = textOf(parsed.data.message.content);
         if (text !== "") {
           listener({ type: "text", block: parsed.data.message.id ?? randomUUID(), delta: text });

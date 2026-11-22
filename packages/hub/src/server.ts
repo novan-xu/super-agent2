@@ -593,6 +593,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 200, { holds });
       return;
     }
+    if (path === "/api/brain/usage" && method === "GET") {
+      const db = options.database.connection;
+      const daily = db.prepare(`SELECT date(at / 1000, 'unixepoch') AS day, provider, sum(input) AS input, sum(cache_read) AS cacheRead, sum(cache_write) AS cacheWrite, sum(output) AS output, sum(reasoning) AS reasoning, sum(cost_usd) AS costUsd, count(*) AS attempts FROM brain_usage WHERE at >= unixepoch('now', 'start of day', '-6 days') * 1000 AND at < unixepoch('now', 'start of day', '+1 day') * 1000 GROUP BY day, provider ORDER BY day DESC, provider`).all();
+      const topics = db.prepare(`SELECT u.topic, c.title, sum(coalesce(u.input, 0) + coalesce(u.cache_read, 0) + coalesce(u.cache_write, 0) + coalesce(u.output, 0)) AS tokens FROM brain_usage u JOIN conversations c ON c.id = u.topic WHERE u.at >= unixepoch('now', 'start of day', '-6 days') * 1000 AND u.at < unixepoch('now', 'start of day', '+1 day') * 1000 AND (u.input IS NOT NULL OR u.cache_read IS NOT NULL OR u.cache_write IS NOT NULL OR u.output IS NOT NULL) GROUP BY u.topic ORDER BY tokens DESC LIMIT 10`).all();
+      const seeds = db.prepare(`SELECT u.turn, u.at, u.provider, c.title, u.seed FROM brain_usage u JOIN conversations c ON c.id = u.topic WHERE u.seed IS NOT NULL ORDER BY u.at DESC LIMIT 20`).all().map((row) => ({ ...row, seed: JSON.parse(String(row["seed"])) as unknown }));
+      sendJson(response, 200, { daily, topics, seeds });
+      return;
+    }
     if (path === settingsPath && method === "GET" && options.settings !== undefined) {
       sendJson(response, 200, options.settings.snapshot());
       return;
