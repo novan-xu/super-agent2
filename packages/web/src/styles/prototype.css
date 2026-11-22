@@ -51,7 +51,7 @@
   --surface-warm: #282624;
   --sunk: #111110;
   --tabstrip: #000000;
-  --workbench-bg: #292825;
+  --side-bg: #24221f;
   --fg: #f3f1ed;
   --fg-2: #cdc9c2;
   --muted: #9c978f;
@@ -118,7 +118,7 @@
   --surface-warm: #f0eeeb;
   --sunk: #ecebe8;
   --tabstrip: #d8d7d3;
-  --workbench-bg: #f6f5f3;
+  --side-bg: #ecebe8;
   --fg: #1b1a18;
   --fg-2: #3f3c38;
   --muted: #6b665f;
@@ -168,7 +168,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); height: 100%; }
 .side {
   display: flex; flex-direction: column; gap: var(--space-6); min-height: 0;
-  padding: var(--space-5) var(--space-3) var(--space-4); border-right: 1px solid var(--border-soft); background: var(--sunk);
+  padding: var(--space-5) var(--space-3) var(--space-4); border-right: 1px solid var(--border-soft); background: var(--side-bg);
 }
 .brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); font-family: var(--font-display); font-weight: 700; font-size: var(--title-card); letter-spacing: var(--tracking-display); }
 .brand .logo { flex: none; }
