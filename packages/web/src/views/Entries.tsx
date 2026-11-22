@@ -46,11 +46,16 @@ const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, q
         {entry.taken ? null : (
           <span className="dot dot--mute" role="img" aria-label={text("message.waiting")} title={text("message.waiting")} />
         )}
+        {entry.voiceTranscript === undefined ? null : <span className="voice-origin"><Icon name="phone" size={14} />{text("voice.call")}</span>}
         <span className="num">{clockOf(entry.at)}</span>
         {action}
       </div>
       {quoted}
       {entry.text === "" ? null : <div className="msg-text msg-plain">{entry.text}</div>}
+      {entry.voiceTranscript === undefined ? null : <details className="voice-entry-transcript">
+        <summary>{text("voice.transcript")}</summary>
+        <div className="msg-plain">{entry.voiceTranscript}</div>
+      </details>}
       <SentAttachments attachments={entry.attachments} />
       {match}
     </div>

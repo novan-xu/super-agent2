@@ -30,6 +30,14 @@ import {
   TicketList,
   TicketResponse,
   WorkerMessageResponse,
+  type VoiceConfirmation,
+  VoiceEnd,
+  type VoiceOffer,
+  VoiceSession,
+  VoiceStatus,
+  type VoiceToolCall,
+  VoiceToolResult,
+  voicePath,
   WorkEventList,
   type EngineTable,
   EngineTableBody,
@@ -104,6 +112,14 @@ export function historyPath(page: HistoryRequest): string {
   }
   return `/api/tickets?${parameters.toString()}`;
 }
+
+export const voiceApi = {
+  status: () => call(voicePath, VoiceStatus),
+  open: (offer: VoiceOffer, signal: AbortSignal) => call(`${voicePath}/session`, VoiceSession, offer, "POST", signal),
+  tool: (id: string, tool: VoiceToolCall, signal: AbortSignal) => call(`${voicePath}/${id}/tool`, VoiceToolResult, tool, "POST", signal),
+  confirm: (id: string, confirmation: VoiceConfirmation) => call(`${voicePath}/${id}/confirm`, StreamEntry, confirmation, "POST", AbortSignal.timeout(30_000)),
+  end: (id: string) => call(`${voicePath}/${id}/end`, VoiceEnd, {}, "POST", AbortSignal.timeout(5_000)),
+};
 
 export const hubApi = {
   rearrange: (repository: string | null | undefined) => call("/api/workbench/rearrange", ConversationResponse, { repository }),

@@ -472,3 +472,27 @@ The totals include mailbox IDs, which can be passed as `--mailbox <id>` to restr
 The results contain private mail metadata and should be stored accordingly.
 Inside the brain container, run `node /app/packages/hub/dist/mail-filter-dry-run.js --days 30 --out /path/to/results.json` from the brain shell using its Codex login.
 The command reads mail only and does not require a running hub or its database.
+
+## GPT-Live voice calls
+
+Set `OPENAI_API_KEY` in `secrets/hub.env` on the NAS to enable voice calls for the owner.
+The project key needs access to `gpt-live-1.1` and the Responses model configured for delegation.
+The default delegation model is `gpt-6-luna`.
+Set `HUB_VOICE_DELEGATION_MODEL` in the same file to override it.
+Recreate the hub after changing its environment.
+The browser needs a secure origin and microphone permission, and the page must stay open during a call.
+
+The hub exchanges the WebRTC offer and answer with OpenAI over HTTPS.
+The negotiated media goes directly between the browser and OpenAI.
+The hub keeps the project key and GitHub credentials server-side.
+
+After deploying, run the smoke command on the NAS using the hub container's environment.
+
+```sh
+docker exec superagent2-hub node dist/voice-smoke-cli.js
+```
+
+A source checkout with the hub already built can also run `pnpm --filter @super-agent2/hub voice:smoke`.
+The smoke command uses the same Live model, prompts, delegation model, and tool catalog as the web application.
+It opens the documented Live WebSocket, supplies text input, and answers a delegated repository lookup with stub data.
+The command prints a pass result or a bounded diagnostic.

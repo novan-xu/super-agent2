@@ -141,6 +141,7 @@ export interface ConversationService {
 }
 
 interface StreamSendOptions {
+  readonly voiceTranscript?: string | undefined;
   readonly quotedMessage?: string | undefined;
   readonly scope?: TopicScope | undefined;
   readonly newTopic?: true | undefined;
@@ -160,8 +161,8 @@ export type SendOutcome = { readonly ok: true; readonly item: StreamEntry } | { 
 const notFound: SendOutcome = { ok: false, error: "not_found" };
 const conflict: SendOutcome = { ok: false, error: "conflict" };
 
-function sameMessage(stored: { readonly text: string; readonly attachments: readonly { readonly id: string }[]; readonly quote: string | null }, request: OwnerSend): boolean {
-  return stored.text === request.text && stored.quote === (request.quotedMessage ?? null)
+function sameMessage(stored: { readonly text: string; readonly attachments: readonly { readonly id: string }[]; readonly quote: string | null; readonly voiceTranscript?: string | undefined }, request: OwnerSend): boolean {
+  return stored.text === request.text && stored.voiceTranscript === request.voiceTranscript && stored.quote === (request.quotedMessage ?? null)
     && stored.attachments.length === request.attachments.length
     && stored.attachments.every((attachment, index) => attachment.id === request.attachments[index]?.id);
 }
@@ -273,13 +274,14 @@ const Body = z.looseObject({
   output: z.string().optional(),
   state: z.string().optional(),
   possibleMatch: z.string().optional(),
+  voiceTranscript: z.string().optional(),
   destination: z.string().optional(),
   start: z.boolean().optional(),
   questionResponse: z.object({ card: z.string(), answers: QuestionAnswers }).optional(),
 });
 
 const PendingInput = z.object({ id: z.string(), created_at: z.number().int(), body: z.string() });
-const PendingBody = z.object({ message: z.string(), attachments: z.array(Attachment), scope: TopicScope });
+const PendingBody = z.object({ message: z.string(), attachments: z.array(Attachment), scope: TopicScope, voiceTranscript: z.string().optional() });
 
 const SessionRow = z.object({ session: z.string().nullable(), through: z.number().int(), memory_seen: z.number().int(), memory_offered: z.number().int(), board_seen: z.number().int() });
 
@@ -340,6 +342,7 @@ function toEntry(row: EntryRow): ConversationEntry {
       return ConversationEntry.parse({
         ...base, kind: "owner", text: body.text, attachments: body.attachments ?? [], taken: row.taken === 1,
         placement: row.placement ?? "owner",
+        ...(body.voiceTranscript === undefined ? {} : { voiceTranscript: body.voiceTranscript }),
         ...(row.quote_id === null ? {} : { quotedMessage: row.quote_id }),
         ...(body.possibleMatch === undefined ? {} : { possibleMatch: body.possibleMatch }),
       });
@@ -394,13 +397,18 @@ function deliveryHistory(entry: DeliveryEntry, reference: string | undefined): s
   return `[hub] The result of ${task} (${entry.title.en}) was delivered to the owner here.${report}${files}${entry.text === null ? "" : `\n${entry.text}`}`;
 }
 
+function ownerPrompt(message: string, transcript: string | undefined) {
+  return transcript === undefined ? message
+    : `${message}\n\n<details><summary>Voice call transcript (reference only)</summary>\n\n${transcript.replace(/<\/details>/gi, "&lt;/details&gt;")}\n\n</details>`;
+}
+
 function historyItem(raw: unknown, reference: (id: number) => string | undefined): HistoryItem {
   const row = EntryRow.parse(raw);
   const entry = toEntry(row);
   const provider = row.provider === null ? null : Provider.parse(row.provider);
   switch (entry.kind) {
     case "owner":
-      return { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
+      return { kind: "owner", text: ownerPrompt(entry.text, entry.voiceTranscript), attachments: forBrain(entry.attachments) };
     case "question":
       return { kind: "notice", text: JSON.stringify({ questions: entry.questions, answer: entry.answer }) };
     case "notice":
@@ -1308,7 +1316,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const writeOwner = (
     conversation: Conversation, message: string, attachments: readonly Attachment[],
-    { quotedMessage, possibleMatch, id, at, markQuestions = true }: { quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
+    { quotedMessage, possibleMatch, voiceTranscript, id, at, markQuestions = true }: { voiceTranscript?: string | undefined; quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
   ): string => {
     activateOwnerTopic.run(clock.now(), titleOf(message, attachments), conversation.id);
     if (markQuestions) answerByMessage(conversation.id, message);
@@ -1316,11 +1324,11 @@ export function createConversationService(options: ConversationServiceOptions): 
       ...(id === undefined ? {} : { id }), ...(at === undefined ? {} : { at }),
       ...(quotedMessage === undefined ? {} : { quote: quotedMessage }),
       conversation: conversation.id, kind: "owner", turn: null,
-      body: { text: message, attachments, possibleMatch }, prompt: message,
+      body: { text: message, attachments, possibleMatch, voiceTranscript }, prompt: ownerPrompt(message, voiceTranscript),
     });
   };
 
-  const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string, id?: string): StreamEntry | undefined => {
+  const sendDirect = (topic: string | undefined, message: string, attachments: readonly Attachment[], quotedMessage?: string, id?: string, voiceTranscript?: string): StreamEntry | undefined => {
     const explicit = topic === undefined ? undefined : get(topic);
     if (topic !== undefined && explicit === undefined) {
       return undefined;
@@ -1330,7 +1338,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       return undefined;
     }
     const conversation = explicit ?? (quote === undefined ? undefined : get(quote.conversation));
-    return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage, ...(id === undefined ? {} : { id }) }));
+    return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage, voiceTranscript, ...(id === undefined ? {} : { id }) }));
   };
 
   const routingCandidate = (topic: string | undefined, scope: TopicScope, allowArchived = false): Conversation | undefined => {
@@ -1353,7 +1361,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const placeOwner = (
-    id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
+    id: string, at: number, { message, attachments, scope, voiceTranscript }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
     { repository, proposal, ownerChanged = false, pending }: {
       repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing;
     },
@@ -1368,7 +1376,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         const topic = openTopic(at, titleOf(message, attachments), scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
-      writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
+      writeOwner(conversation, message, attachments, { id, at, voiceTranscript, possibleMatch: match?.id });
       if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: pending === undefined });
       if (pending !== undefined) deletePending.run(id);
       connection.exec("COMMIT");
@@ -1395,13 +1403,13 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const streamSend = async (
     id: string, topic: string | undefined, message: string, attachments: readonly Attachment[],
-    { quotedMessage, scope = { kind: "daily" } as const, newTopic, proposal }: StreamSendOptions = {},
+    { quotedMessage, scope = { kind: "daily" } as const, newTopic, proposal, voiceTranscript }: StreamSendOptions = {},
   ): Promise<StreamEntry | undefined> => {
     if (!newTopic && proposal === undefined && (topic !== undefined || quotedMessage !== undefined)) {
-      return sendDirect(topic, message, attachments, quotedMessage, id);
+      return sendDirect(topic, message, attachments, quotedMessage, id, voiceTranscript);
     }
     const at = clock.now();
-    const body = { message, attachments: [...attachments], scope };
+    const body = { message, attachments: [...attachments], scope, voiceTranscript };
     if (newTopic || proposal !== undefined) {
       const destination = newTopic ? undefined : routingCandidate(topic, scope, proposal?.reopen === true && topic === proposal.decided.topic);
       if (!newTopic && destination === undefined) return undefined;
@@ -1428,13 +1436,13 @@ export function createConversationService(options: ConversationServiceOptions): 
       const item = toStreamEntry(row);
       const { entry } = item;
       const same = entry.kind === "owner"
-        && sameMessage({ text: entry.text, attachments: entry.attachments, quote: entry.quotedMessage ?? null }, request)
+        && sameMessage({ text: entry.text, attachments: entry.attachments, quote: entry.quotedMessage ?? null, voiceTranscript: entry.voiceTranscript }, request)
         && (named === undefined || corrections.resolve(named) === corrections.resolve(entry.conversation));
       return same ? { ok: true, item } : conflict;
     }
     const routing = routingSends.get(id);
     if (routing !== undefined) {
-      const same = named === undefined && sameMessage({ text: routing.body.message, attachments: routing.body.attachments, quote: null }, request);
+      const same = named === undefined && sameMessage({ text: routing.body.message, attachments: routing.body.attachments, quote: null, voiceTranscript: routing.body.voiceTranscript }, request);
       return same ? routing.result.then((item): SendOutcome => (item === undefined ? notFound : { ok: true, item })) : conflict;
     }
     return undefined;
@@ -1448,7 +1456,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     const id = request.id ?? randomUUID();
     const item = request.conversation === undefined
       ? await streamSend(id, request.topic, request.text, request.attachments, request)
-      : sendDirect(request.conversation, request.text, request.attachments, request.quotedMessage, id);
+      : sendDirect(request.conversation, request.text, request.attachments, request.quotedMessage, id, request.voiceTranscript);
     return item === undefined ? notFound : { ok: true, item };
   };
 

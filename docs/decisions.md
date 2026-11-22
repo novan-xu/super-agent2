@@ -3796,3 +3796,27 @@ Other options were routing a path through the existing hub listener or issuing C
 The hub keeps acceptance receipts for seven days and counts new receipts against a rolling limit of 60 per minute per source.
 It requires an idempotency key to link retries to the original acceptance so a restart or lost response cannot duplicate the request or reset the rate window.
 Other options were keeping receipts indefinitely or adopting the inbox's per-process rate limit.
+
+## GPT-Live voice calls (#289)
+
+### WebRTC negotiation
+
+The owner-only hub endpoint exchanges the browser's SDP using GPT-Live's `POST /v1/live/sessions`.
+The browser sends media directly to OpenAI over WebRTC and uses the hub for signaling and permitted tools.
+The ephemeral client-secret flow would require using the separate Realtime API with a different model and delegation protocol.
+
+### Confirmed hand-off
+
+GPT-Live reads back the key points and waits for spoken agreement before proposing a summary.
+The owner confirms the exact pending summary in the page before routing it.
+Accepting spoken agreement alone would rely on the model's interpretation of speech and tool results.
+The router uses the agreed summary and the scope where the call started.
+The brain also receives the transcript as reference, and the conversation renders it in a collapsed section.
+Routing the entire transcript could let incidental context dominate topic selection.
+
+### Reconnect and usage
+
+The page retains the full unsent transcript and seeds a replacement call with its most recent excerpt.
+This preserves context during reconnect without storing unfinished calls on the hub.
+Voice billing remains in OpenAI's usage dashboard because the existing settings view measures brain program usage.
+Showing calls there would require a voice-duration data model and display.

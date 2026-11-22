@@ -1,3 +1,4 @@
+import { VoiceCall } from "./VoiceCall.js";
 import { text } from "@super-agent2/catalog";
 import { type Conversation, type ConversationEntry, type ReviewedStreamDestination, type StreamEntry as StreamRecord, type StreamPreview, type StreamPreviewRequest, type TopicScope, topicInScope } from "@super-agent2/protocol";
 import { type KeyboardEvent, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -72,6 +73,7 @@ export function TopicList({ list, current, hrefOf, open, now, showRepository, ed
 interface ComposerProps {
   readonly working: boolean;
   readonly canStop: boolean;
+  readonly voiceScope?: TopicScope | undefined;
   readonly send: ComposerSend;
   readonly stop: () => void;
   readonly draftKey: string;
@@ -93,7 +95,7 @@ interface QuotePreview {
   readonly text: string;
 }
 
-export function TopicComposer({ working, canStop, send, stop, draftKey, quote, clearQuote, routing }: ComposerProps) {
+export function TopicComposer({ working, canStop, voiceScope, send, stop, draftKey, quote, clearQuote, routing }: ComposerProps) {
   const [saved] = useState(() => loadComposerDraft(draftKey));
   const [draft, setDraft] = useState(saved.text);
   const [choice, setChoice] = useState(saved.destination);
@@ -226,6 +228,7 @@ export function TopicComposer({ working, canStop, send, stop, draftKey, quote, c
         />
         <div className="composer-foot">
           <AttachButton add={attaching.add} />
+          {voiceScope === undefined ? null : <VoiceCall scope={voiceScope} />}
           {routeDraft ? (
             <select className="field composer-destination" aria-label={text("conversation.destination")}
               value={destination === undefined ? "" : destination.topic ?? newTopicOption}
@@ -375,7 +378,7 @@ export function ConversationView(props: ConversationViewProps) {
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
-          quote={quotes[draftKey]} clearQuote={clearQuote}
+          quote={quotes[draftKey]} clearQuote={clearQuote} voiceScope={scope}
           routing={conversation === null && props.previewStream !== undefined ? {
             scope, topics: filtered, status: props.status, preview: props.previewStream,
           } : undefined} />

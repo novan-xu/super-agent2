@@ -85,6 +85,7 @@ export const OwnerEntry = z.object({
   text: z.string(),
   attachments: z.array(Attachment).default([]),
   taken: z.boolean(),
+  voiceTranscript: z.string().optional(),
   quotedMessage: MessageId.optional(),
   possibleMatch: ConversationId.optional(),
   placement: z.enum(["router-joined", "router-opened", "owner"]).optional(),
