@@ -928,7 +928,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "archive_topics",
         title: "Archive topics",
-        description: "Archive topics only at the owner's request. Idle topics archive automatically.",
+        description: "Archive topics only at the owner's request. Idle topics archive automatically after two hours.",
         inputSchema: z.toJSONSchema(ArchiveTopicsArguments, { io: "input" }),
       },
       {

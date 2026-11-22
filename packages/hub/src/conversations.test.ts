@@ -1347,10 +1347,10 @@ describe("topic corrections and archive policy", () => {
     }
     const db = running.database.connection;
     db.prepare("UPDATE turns SET topic_summary = NULL WHERE id = ?").run("idle-turn");
-    clock.advance(86_399_999);
+    clock.advance(7_199_999);
     service.archiveIdle();
     expect(service.get(idle)?.topicState).toBe("active");
-    clock.advance(1);
+    clock.advance(2);
     service.archiveIdle();
     expect(service.get(idle)?.topicState).toBe("archived");
     expect(service.get(pending)?.topicState).toBe("active");
@@ -1386,6 +1386,68 @@ describe("topic corrections and archive policy", () => {
     await expect.poll(() => running.conversations.get(topic)?.topicState, { interval: 10 }).toBe("archived");
   });
 
+  it("counts a ticket notice as activity after the notice has been processed", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link } = connect(running);
+    const topic = service.create().id;
+    const ticket = openTicket(running, topic);
+    clock.advance(3_600_000);
+    service.tell(ticket.id, "Ticket update", "Read the update");
+    const notice = service.entries(topic).at(-1)!;
+    const turn = { conversation: topic, turn: "notice-turn" };
+    link.receive({ type: "turn.started", ...turn, inputs: [notice.id], provider: "gpt", model: "model" });
+    link.receive({ type: "turn.finished", ...turn, outcome: "completed", reason: null });
+
+    clock.advance(3_600_001);
+    service.archiveIdle();
+    expect(service.get(topic)?.topicState).toBe("active");
+    clock.advance(3_600_000);
+    service.archiveIdle();
+    expect(service.get(topic)?.topicState).toBe("archived");
+  });
+
+  it("archives the source as soon as its last queued owner message is moved", async () => {
+    const { conversations: service } = await start();
+    const source = service.create().id;
+    const destination = service.create().id;
+    const final = service.create().id;
+    const owner = service.send(source, "Move this request")!;
+
+    expect(service.move(owner.id, destination, source)).toEqual({ ok: true, value: destination });
+    expect(service.get(source)?.topicState).toBe("archived");
+    expect(service.entries(destination)).toMatchObject([{ id: owner.id, taken: false }]);
+    expect(service.move(owner.id, final, destination)).toEqual({ ok: true, value: final });
+    expect(service.get(destination)?.topicState).toBe("archived");
+    expect(service.entries(final)).toMatchObject([{ id: owner.id, taken: false }]);
+    service.send(source, "Reopen this topic");
+    expect(service.get(source)?.topicState).toBe("active");
+  });
+
+  it.each(["none", "owner message", "open ticket", "queued notice"] as const)(
+    "checks for an empty source when a handover's interrupted turn ends, with %s remaining",
+    async (remaining) => {
+      const running = await start();
+      const service = running.conversations;
+      const { link } = connect(running);
+      const routed = (await service.sendToStream(undefined, "Try this request elsewhere", []))!;
+      const source = routed.topic.id;
+      const destination = service.create().id;
+      const turn = { conversation: source, turn: "handover-turn" };
+      const other = remaining === "owner message" ? service.send(source, "Keep this request") : undefined;
+      if (remaining === "open ticket") openTicket(running, source);
+      link.receive({ type: "turn.started", ...turn, inputs: [routed.entry.id, ...(other === undefined ? [] : [other.id])], provider: "gpt", model: "model" });
+      link.receive({ type: "tool.started", ...turn, call: "handover", name: "handover", input: "{}" });
+      if (remaining === "queued notice") service.writeScheduleNotice("scheduled", source, "Schedule notice", "Handle this notice");
+
+      expect(service.handover(source, turn.turn, destination, routed.entry.id)).toEqual({ ok: true, value: routed.entry.id });
+      expect(service.get(source)?.topicState).toBe("active");
+      link.receive({ type: "turn.finished", ...turn, outcome: "interrupted", reason: null });
+      expect(service.get(source)?.topicState).toBe(remaining === "none" ? "archived" : "active");
+      expect(service.entries(source)).toContainEqual(expect.objectContaining({ kind: "tool", name: "handover" }));
+    },
+  );
+
   it("moves an idle input to a new topic atomically and rejects a repeated move from the old topic", async () => {
     const running = await start();
     const service = running.conversations;
@@ -1406,6 +1468,7 @@ describe("topic corrections and archive policy", () => {
     expect(response.status).toBe(200);
     const { conversation: destination } = ConversationResponse.parse(await response.json());
     expect(destination).toMatchObject({ title: "Planning.md", repository: "owner/project", topicState: "active" });
+    expect(service.get(source)?.topicState).toBe("active");
     expect(service.entries(source).some(({ id }) => id === owner.id)).toBe(false);
     expect(service.entries(destination.id)).toMatchObject([{ id: owner.id, placement: "owner", attachments: [attachment] }]);
     expect((await request()).status).toBe(409);
