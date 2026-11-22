@@ -831,7 +831,7 @@ function OpenAIBudget({ budget }: { readonly budget: number | null }) {
   return <section className="section"><form onSubmit={(event) => void save(event)}><label>{text("usage.openaiBudget")} <input type="number" min="0.01" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} /></label> <button type="submit">{text("usage.budgetSave")}</button>{error ? <span role="alert">{text("usage.budgetError")}</span> : saved ? <span role="status">{text("usage.budgetSaved")}</span> : null}</form></section>;
 }
 
-function UsageSection({ budget }: { readonly budget: number | null }) {
+function UsageSection({ budget }: { readonly budget: number | null | undefined }) {
   const [report, setReport] = useState<z.infer<typeof UsageReport> | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -842,8 +842,8 @@ function UsageSection({ budget }: { readonly budget: number | null }) {
     }).catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, []);
-  if (error) return <><OpenAIBudget budget={budget} /><div role="alert">{text("usage.error")}</div></>;
-  if (report === null) return <><OpenAIBudget budget={budget} /><div role="status">{text("usage.loading")}</div></>;
+  if (error) return <>{budget === undefined ? null : <OpenAIBudget budget={budget} />}<div role="alert">{text("usage.error")}</div></>;
+  if (report === null) return <>{budget === undefined ? null : <OpenAIBudget budget={budget} />}<div role="status">{text("usage.loading")}</div></>;
   const number = (value: number | null) => value === null ? "?" : value.toLocaleString();
   const totals = [...new Set(report.daily.map((item) => item.provider))].map((provider): UsageRow => {
     const rows = report.daily.filter((item) => item.provider === provider);
@@ -855,7 +855,7 @@ function UsageSection({ budget }: { readonly budget: number | null }) {
   });
   const row = (item: UsageRow) => <tr key={`${item.day}-${item.provider}`}><td>{item.day}</td><td>{item.provider}</td><td>{number(item.input)}</td><td>{number(item.cacheRead)}</td><td>{number(item.cacheWrite)}</td><td>{number(item.output)}</td></tr>;
   return <>
-    <OpenAIBudget budget={budget} />
+    {budget === undefined ? null : <OpenAIBudget budget={budget} />}
     <section className="section"><div className="section-head"><h2>{text("usage.totals")}</h2></div>
       {totals.length === 0 ? <div>{text("usage.empty")}</div> : <div style={{ overflowX: "auto" }}><table className="usage-table"><thead><tr><th>{text("usage.date")}</th><th>{text("usage.provider")}</th><th>{text("usage.input")}</th><th>{text("usage.cacheRead")}</th><th>{text("usage.cacheWrite")}</th><th>{text("usage.output")}</th></tr></thead><tbody>{totals.map(row)}</tbody></table></div>}
     </section>
@@ -878,7 +878,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
     return { href: pagePath(route), onClick: (event: React.MouseEvent) => followLink(event, () => navigate(route)) };
   };
   const body = () => {
-    if (active === "usage") return settings === null ? <div role="status">{text("settings.loading")}</div> : <UsageSection budget={settings.openaiBudget ?? null} />;
+    if (active === "usage") return <UsageSection budget={settings === null ? undefined : settings.openaiBudget ?? null} />;
     if (active === "appearance") {
       return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
     }
