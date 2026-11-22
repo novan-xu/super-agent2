@@ -708,6 +708,33 @@ The hub saves a receipt with the connection and task IDs and the list ID when kn
 An undo without a receipt ID selects the latest creation in that topic.
 The gateway never replays a delivered write when the app server exits or the answer times out.
 
+### Mail intake and triage
+
+The built-in mail job reads linked Outlook and Gmail mailboxes every five minutes.
+It begins with the five minutes before the first poll, overlaps later successful windows and deduplicates by mailbox and message ID.
+It skips sent mail and drafts by connector filters and known owner addresses.
+Each mailbox advances independently, so a slow connector can leave other mailboxes reading.
+
+A timeout narrows that mailbox's next time slice down to one minute.
+After three timeouts on the same minute, the hub checks the following minute before it skips anything.
+When the following minute reads successfully, the hub moves past the bad minute and posts the mailbox and skipped time range in 邮件.
+A mailbox without progress for one hour gets one stalled notice during that incident.
+设置 → 连接 shows each mailbox's intake status.
+
+The mail job uses dedicated hidden brain turns because service-triggered schedules show their input and post a completion notice for silent runs.
+New mail waits for a Claude or Codex brain that supports mail review.
+These turns use an isolated session, the owner's memory, and untrusted JSON containing the message IDs, senders, subjects and snippets.
+Their hub tools are limited to reading messages in the current batch and reporting its triage result.
+The brain reads bodies only for mail that may need attention.
+The hub keeps unfinished mail queued for retry and clears the private prompt when that review attempt ends.
+
+An actionable result goes to the 日常 topic 邮件 with the sender, subject, requested action, any deadline and whether a reply is worthwhile.
+Routine mail produces no notice.
+The hub batches ordinary summaries at most once every 30 minutes, with a separate immediate path for mail the brain marks time-critical.
+Each published summary sends one generic push with the number of actionable messages and a link to 邮件.
+The lock-screen push contains no sender, subject or message content.
+When the owner follows up on a summary, the brain can locate the message by its mailbox, sender and subject.
+
 ## Tests
 
 No test fails because something took longer than expected.

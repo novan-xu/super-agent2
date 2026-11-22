@@ -417,6 +417,8 @@ Link or repair Outlook, Gmail, Microsoft Teams and TickTick in the owner's ChatG
 The hub reads the connector inventory at startup and every five minutes.
 After deployment, check 设置 → 连接 for the discovered accounts, then ask the brain to list recent Outlook and Gmail mail and read a message from a recent Teams chat.
 Gateway logs report failure categories and HTTP status when available without connector error text.
+Mail intake starts with the app gateway and shows each mailbox's reading status in 设置 → 连接.
+Set `HUB_MAIL_INTAKE=0` in `hub.env` to pause polling and background mail review while preserving on-demand app tools.
 
 ## Woodpecker from the hub
 

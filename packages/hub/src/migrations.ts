@@ -1165,6 +1165,54 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX ticktick_receipts_topic ON ticktick_receipts(topic);
     `,
   },
+  {
+    version: 58,
+    sql: `
+      CREATE TABLE mail_cursors (
+        mailbox TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        cursor INTEGER NOT NULL,
+        floor INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        progress_at INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        failed INTEGER NOT NULL DEFAULT 0,
+        timeouts INTEGER NOT NULL DEFAULT 0,
+        stalled INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      CREATE TABLE mail_messages (
+        id INTEGER PRIMARY KEY,
+        mailbox TEXT NOT NULL REFERENCES mail_cursors(mailbox),
+        message TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        sender TEXT,
+        subject TEXT,
+        snippet TEXT,
+        batch TEXT,
+        checked INTEGER NOT NULL DEFAULT 0,
+        action TEXT,
+        urgent INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(mailbox, message)
+      ) STRICT;
+      CREATE INDEX mail_messages_pending ON mail_messages(received_at, id) WHERE checked = 0 AND batch IS NULL;
+      CREATE INDEX mail_messages_review ON mail_messages(batch) WHERE batch IS NOT NULL;
+      CREATE INDEX mail_messages_action ON mail_messages(received_at, id) WHERE action IS NOT NULL;
+      CREATE TABLE mail_review_batch (
+        id TEXT PRIMARY KEY REFERENCES conversation_entries(id),
+        slot INTEGER UNIQUE NOT NULL DEFAULT 1 CHECK(slot = 1),
+        result TEXT,
+        provider TEXT
+      ) STRICT;
+      CREATE TABLE mail_review_state (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        topic TEXT REFERENCES conversations(id),
+        published_at INTEGER,
+        retry_at INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      INSERT INTO mail_review_state (id) VALUES (1);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

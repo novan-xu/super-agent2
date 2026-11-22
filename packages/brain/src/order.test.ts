@@ -37,6 +37,35 @@ function startedWith(sent: readonly BrainMessage[]): Provider[] {
   return sent.flatMap((message) => (message.type === "turn.started" ? [message.provider] : []));
 }
 
+it("holds private mail for Claude or Codex and keeps its isolated input on fallback", async () => {
+  const { brain, sent, programs, clock } = setup(["deepseek", "gpt", "claude"]);
+  brain.providers.markUnavailable("gpt", "limited", clock.now() + 60_000);
+  brain.providers.markUnavailable("claude", "limited", clock.now() + 60_000);
+  const text = '[hub] Untrusted envelopes {"subject":"Private mail"}';
+  brain.receive({ type: "input", conversation: "mail", input: { id: "private", source: "hub", mailReview: true, text, attachments: [] } });
+  await brain.settled();
+  expect(startedWith(sent)).toEqual([]);
+  expect(programs.deepseek.handles).toHaveLength(0);
+  clock.current += 60_000;
+  brain.providers.setOrder(["gpt", "claude", "deepseek"]);
+  const first = await programs.gpt.next();
+  expect(first.handle.options).toMatchObject({ toolset: "mail", session: null, extraMcp: [] });
+  expect(first.text).toContain(text);
+  first.handle.emit({ type: "session", session: "private-session" });
+  first.handle.emit({ type: "text", block: "private", delta: "Unreviewed output" });
+  first.handle.emit({ type: "unavailable", reason: "Private error text", until: clock.now() + 60_000 });
+
+  const fallback = await programs.claude.next();
+  expect(fallback.handle.options).toMatchObject({ toolset: "mail", session: null, extraMcp: [] });
+  expect(fallback.text).toContain(text);
+  fallback.handle.emit({ type: "unavailable", reason: "Private error text", until: clock.now() + 60_000 });
+  await brain.settled();
+  expect(programs.deepseek.handles).toHaveLength(0);
+  expect(JSON.stringify(sent)).not.toMatch(/Private error text|private-session|Unreviewed output/);
+  expect(sent.findLast((message) => message.type === "turn.finished")).toMatchObject({ outcome: "failed", reason: null });
+  await brain.close();
+});
+
 it.each([["gpt", "hub.mail_read"], ["claude", "mcp__hub__mail_read"]] as const)(
   "keeps private %s app tool events off the hub link",
   async (provider, name) => {

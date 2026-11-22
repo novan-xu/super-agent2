@@ -5,6 +5,8 @@ import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { AppGateway } from "./app-gateway.js";
 import { createAppTodos } from "./app-todos.js";
+import { createMailIntake } from "./mail-intake.js";
+import { createMailTriage, type MailTriage } from "./mail-triage.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
 import { type Clock, type Sleep, systemClock } from "./clock.js";
@@ -58,6 +60,8 @@ import { createWorkRequestServer } from "./work-requests.js";
 export interface HubOptions {
   readonly config: Config;
   readonly appGateway?: AppGateway;
+  readonly mailPollTicker?: Ticker;
+  readonly mailTriageTicker?: Ticker;
   readonly keySource?: KeySource;
   readonly clock?: Clock;
   readonly environment?: Environment;
@@ -134,6 +138,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     environment,
     report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
   }) : undefined);
+  const mailEnabled = appGateway !== undefined && (config.mailIntake ?? (config.appGateway === true));
   const extraMcp = extraMcpFromEnvironment(environment);
   const database = openDatabase({ dataDir: config.dataDir, clock, ...(config.ticketTimeZone === undefined ? {} : { ticketTimeZone: config.ticketTimeZone }) });
   const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
@@ -150,6 +155,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let chains: Chains;
   let schedules: Schedules;
   let topicTidy: ReturnType<typeof createTopicTidy> | undefined;
+  let mailIntake: ReturnType<typeof createMailIntake> | undefined;
+  let mailTriage: MailTriage | undefined;
   let verification: VerificationService;
   let loop: FailureLoop | undefined;
   let reviews: DecisionReviews;
@@ -237,6 +244,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const routingModels = config.routingModels;
     conversations = createConversationService({
       extraMcp: extraMcp.brain,
+      mailReviewEnabled: mailEnabled,
       lightTaskContext: (topic, message) => lightQuestions.context(topic, message),
       scheduleContext: (topic, message) => schedules?.context(topic, message) ?? "",
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => settings?.brainOrder(),
@@ -387,7 +395,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       defaults,
       credentials,
       pushKey: config.vapid?.publicKey,
-      ...(appGateway === undefined ? {} : { appGateway: () => appGateway.status() }),
+      ...(appGateway === undefined ? {} : { appGateway: () => {
+        const status = appGateway.status();
+        return { ...status, mailboxes: mailIntake?.status() ?? status.mailboxes };
+      } }),
     });
     const current = settings;
     settingsChanged = () => current.changed();
@@ -399,6 +410,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       config.vapid === undefined
         ? undefined
         : createPushService({ database, clock, settings: config.vapid, fetch: options.pushFetch ?? fetch, waiting });
+    if (appGateway !== undefined && mailEnabled) {
+      const report = options.report ?? ((line: string) => process.stderr.write(`${line}\n`));
+      mailTriage = createMailTriage({ database, clock, conversations, push, ticker: options.mailTriageTicker, report });
+      mailIntake = createMailIntake({
+        database, clock, gateway: appGateway, ownerEmail: config.ownerEmail, ticker: options.mailPollTicker, report,
+        writeNotice: mailTriage.writeNotice, changed: () => { settingsChanged(); mailTriage?.pump(); },
+      });
+    }
     health = createHealthNotices({ database, clock, runners, defaults, conversations, push, ticker: options.healthTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
     server = createHubServer({
       ...(config.converterUrl === undefined ? {} : { converterUrl: config.converterUrl }),
@@ -417,6 +436,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         memories,
         attachments,
         ...(appGateway === undefined ? {} : { appGateway, appTodos: createAppTodos(database, clock) }),
+        ...(mailTriage === undefined ? {} : { mailTriage }),
         tickets: {
           tickets,
           tasks: taskTickets,
@@ -507,7 +527,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     void repositoryDiscovery.refresh();
     const repositoryRefresh = setInterval(() => void repositoryDiscovery.refresh(), repositoryRefreshMilliseconds);
     repositoryRefresh.unref();
-    appGateway?.start(settingsChanged);
+    mailTriage?.start();
+    appGateway?.start(() => {
+      settingsChanged();
+      void mailIntake?.poll().catch(() => options.report?.("Mail intake: storage failure"));
+    });
+    mailIntake?.start();
     return {
       database,
       commands,
@@ -535,6 +560,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
         topicTidy?.close();
+        mailIntake?.close();
+        mailTriage?.close();
         health?.close();
         clearInterval(accessCheck);
         clearInterval(repositoryRefresh);
@@ -543,6 +570,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         settings.close();
         try {
           await appGateway?.close();
+          await mailIntake?.idle();
           runners.close();
           await Promise.all([server.close(), closeWorkRequests?.()]);
         } finally {
@@ -564,10 +592,13 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     };
   } catch (error) {
     topicTidy?.close();
+    mailIntake?.close();
+    mailTriage?.close();
     health?.close();
     runners.close();
     schedules?.close();
     await appGateway?.close();
+    await mailIntake?.idle();
     await Promise.allSettled([address === undefined ? undefined : server.close(), closeWorkRequests?.()]);
     taskTickets.close();
     await taskTickets.idle();

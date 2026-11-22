@@ -127,9 +127,12 @@ export function pushServiceOf(endpoint: string): PushServiceName {
   return "other";
 }
 
+export const MailReading = z.enum(["waiting", "reading", "stalled"]);
+export type MailReading = z.infer<typeof MailReading>;
+
 export const AppGatewayStatus = z.object({
   connected: z.boolean(),
-  mailboxes: z.array(z.object({ provider: z.enum(["outlook", "gmail"]), label: z.string() })),
+  mailboxes: z.array(z.object({ provider: z.enum(["outlook", "gmail"]), label: z.string(), reading: MailReading.optional() })),
   teams: z.boolean(),
   ticktick: z.boolean(),
 });

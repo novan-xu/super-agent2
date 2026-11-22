@@ -56,6 +56,7 @@ const Environment = z.object({
   HUB_BRAIN_TOKEN_FILE: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_CONVERTER_URL: unlessEmpty(z.url()),
   HUB_APP_GATEWAY: unlessEmpty(z.enum(["0", "1"])),
+  HUB_MAIL_INTAKE: unlessEmpty(z.enum(["0", "1"])),
   HUB_PAGE_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
@@ -93,6 +94,7 @@ export interface Config {
   readonly brainTokenFile: string;
   readonly converterUrl?: string;
   readonly appGateway?: boolean;
+  readonly mailIntake?: boolean;
   readonly pageDir?: string;
   readonly attachmentsDir?: string;
   readonly vapid?: VapidSettings;
@@ -175,6 +177,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
       ...(value.HUB_CONVERTER_URL === undefined ? {} : { converterUrl: value.HUB_CONVERTER_URL.replace(/\/+$/, "") }),
       ...(value.HUB_APP_GATEWAY === undefined ? {} : { appGateway: value.HUB_APP_GATEWAY === "1" }),
+      ...(value.HUB_MAIL_INTAKE === undefined ? {} : { mailIntake: value.HUB_MAIL_INTAKE === "1" }),
       pageDir: value.HUB_PAGE_DIR ?? defaultPageDir,
       attachmentsDir: value.HUB_ATTACHMENTS_DIR ?? join(value.HUB_DATA_DIR, "attachments"),
       ...(vapid.settings === undefined ? {} : { vapid: vapid.settings }),

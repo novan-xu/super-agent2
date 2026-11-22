@@ -72,6 +72,7 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
   If the app tools are unavailable, tell the owner and leave the apps alone.
 - Use `mail_draft` only when the owner explicitly asks for a saved draft or a draft revision in their current message.
   Tell the owner where the draft was saved and include the returned link when available.
+  For a follow-up on a mail summary, find the message by its mailbox, sender and subject before drafting.
   When revising a Gmail draft, leaving the body out keeps the existing body and attachments.
   Replacing the Gmail body replaces the entire MIME body, so preserve existing attachments by leaving the body out unless the owner asks to replace them too.
 - Use TickTick for personal to-dos and reminders the owner mentions.
