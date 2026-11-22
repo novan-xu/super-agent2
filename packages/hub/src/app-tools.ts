@@ -133,7 +133,10 @@ async function searchMail(gateway: AppGateway, mailbox: Mailbox, { query, limit,
     ? await gateway.call("microsoft_outlook_email.list_messages", { link_id: mailbox.link, top: limit, skip: page ?? 0, order_by: "receivedDateTime desc" })
     : await gateway.call("microsoft_outlook_email.search_messages", { link_id: mailbox.link, query, size: limit, from_index: page ?? 0 }));
   const next = Offset.safeParse(reply["next_from_index"]);
-  return { messages: rows(reply["value"] ?? reply["results"]).map(envelope), nextPage: next.success && next.data > (page ?? 0) ? next.data : null };
+  return {
+    messages: rows(reply["value"] ?? reply["results"]).map(envelope),
+    nextPage: reply["has_more"] !== false && next.success && next.data > (page ?? 0) ? next.data : null,
+  };
 }
 
 function gmailContent(message: Record<string, unknown>) {

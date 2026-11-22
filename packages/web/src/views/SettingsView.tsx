@@ -704,7 +704,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
             <div className="srow">
               <span className={`dot ${gateway.connected ? "dot--ok" : "dot--bad"}`} />
               <div className="srow-text">
-                <span className="srow-title">ChatGPT · {text(gateway.connected ? "connections.appGatewayConnected" : "connections.appGatewayDisconnected")}</span>
+                <span className="srow-title">{text(gateway.connected ? "connections.appGatewayConnected" : "connections.appGatewayDisconnected")}</span>
                 {connectedApps.length === 0 ? null : <span className="srow-help">{connectedApps.join("、")}</span>}
               </div>
             </div>
