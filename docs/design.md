@@ -128,6 +128,8 @@ A worker does the same, decided by the hub.
 - A topic automatically archives after two hours without a new owner message, brain answer or ticket notice, once it has no running or queued turn.
   The hub checks idle topics every minute or at the configured age if shorter.
   Set `HUB_TOPIC_ARCHIVE_MS` to change the age.
+  The hub also reviews similar idle topics daily at 05:00 America/New_York without creating an owner schedule.
+  Set `HUB_TOPIC_TIDY_TIME` to an `HH:MM` local time or `HUB_TOPIC_TIDY_ENABLED=false` to disable this review.
   System is exempt.
   An open ticket can stay linked to an archived topic.
   The hub persists any missing finished-turn summaries before archiving, including when a program session is still open.

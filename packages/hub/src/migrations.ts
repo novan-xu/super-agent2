@@ -1143,6 +1143,13 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX topic_merge_history_by_destination ON topic_merge_history (destination);
     `,
   },
+  {
+    version: 56,
+    sql: `
+      CREATE TABLE topic_tidy_state (id INTEGER PRIMARY KEY CHECK (id = 1), next_at INTEGER NOT NULL, time TEXT NOT NULL) STRICT;
+      CREATE TABLE topic_tidy_merges (source TEXT PRIMARY KEY, destination TEXT NOT NULL) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

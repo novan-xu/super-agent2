@@ -935,7 +935,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "merge_topics",
         title: "Merge topics",
-        description: "Merge idle topics about the same subject at the owner's request or on an approved schedule.",
+        description: "Merge idle topics about the same subject at the owner's request, on an approved schedule, or during the hub's built-in topic tidy.",
         inputSchema: z.toJSONSchema(MergeTopicsArguments, { io: "input" }),
       },
       {
