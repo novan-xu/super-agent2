@@ -29,6 +29,8 @@ services:
       HUB_DATA_DIR: /var/lib/superagent2/hub
       HUB_PORT: "8080"
       HUB_HOST: 0.0.0.0
+      HUB_WORK_REQUEST_PORT: "8081"
+      HUB_WORK_SOURCES_DIR: /run/superagent2/work-sources
       HUB_BRAIN_TOKEN_FILE: /var/lib/superagent2/link/brain.token
       HUB_ATTACHMENTS_DIR: /var/lib/superagent2/link/attachments
       HUB_PROJECT_FOLDERS: ${SUPERAGENT2_ROOT}/projects
@@ -44,6 +46,7 @@ services:
       - hub-data:/var/lib/superagent2/hub
       - brain-link:/var/lib/superagent2/link
       - hub-home:/home/node
+      - ${SUPERAGENT2_ROOT}/secrets/work-sources:/run/superagent2/work-sources:ro
       - ${SUPERAGENT2_ROOT}/projects:${SUPERAGENT2_ROOT}/projects
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

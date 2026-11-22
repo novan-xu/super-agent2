@@ -114,7 +114,7 @@ export interface ConversationService {
   deliver(delivery: Delivery): string;
   writeDelivery(conversation: string, delivery: Delivery): string;
   writeConfirmation(conversation: string, turn: string, message: string): string;
-  writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string): void;
+  writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string, source?: string): void;
   publishScheduleNotice(id: string): void;
   writeLightQuestion(conversation: string, id: string, message: string): void;
   linked(): boolean;
@@ -1425,8 +1425,8 @@ export function createConversationService(options: ConversationServiceOptions): 
     writeConfirmation: (conversation, turn, message) => writeEntry({
       conversation, turn, kind: "text", provider: providerOfTurn(turn), body: { text: message },
     }),
-    writeScheduleNotice: (id, conversation, notice, prompt) => {
-      writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice }, ...(prompt === undefined ? {} : { prompt }) });
+    writeScheduleNotice: (id, conversation, notice, prompt, source) => {
+      writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice, source }, ...(prompt === undefined ? {} : { prompt }) });
     },
     publishScheduleNotice: (id) => {
       const row = EntryRow.optional().parse(selectEntry.get(id));

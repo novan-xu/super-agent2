@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { protocolVersion, ScheduleHistory, ScheduleList, startingEngineTable, ticketReference, type BrainInput, type HubToRunner, type Schedule, type ScheduleFields } from "@super-agent2/protocol";
@@ -25,6 +25,9 @@ const light = {
   reason: { en: "A routine operation", zh: "例行操作" },
 };
 const standard = { difficulty: "standard", platform: "any", reason: light.reason };
+const loomToken = "L".repeat(64);
+const triggerFields = { ...fields, title: "整理 Loom", instruction: "Organize the due Loom material.", recurrence: { trigger: "loom" } } satisfies ScheduleFields;
+const loomRequest = { kind: "organize", text: "The daily organizing is due.", link: "https://loom.example/due" };
 
 let dataDir: string;
 let key: SigningKey;
@@ -35,7 +38,8 @@ async function start() {
   const github = fakeGitHub();
   github.repositories.set(repository, [1, 2, 3].map((number) => ({ number, title: `Work ${number}`, body: "Work on the project.", state: "open", pullRequest: false })));
   hub = await startTestHub({
-    config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials, targets: [github],
+    config: { ...testConfig(dataDir), workRequests: { port: 0, directory: dataDir } },
+    keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials, targets: [github],
     scheduleTicker: () => () => undefined,
   });
 }
@@ -80,7 +84,8 @@ function owner(topic: string, words: string): string {
 
 async function propose(link: BrainLink, topic: string, plan: ScheduleFields = fields, target?: string): Promise<string> {
   const asking = turn(link, topic, owner(topic, requested));
-  const result = await asking.call("propose_schedule", { ...plan, confirmation: "每周日凌晨三点清理 mac-mini 的空间，可以吗？", ...(target === undefined ? {} : { schedule: target }) });
+  const confirmation = "trigger" in plan.recurrence ? `收到 ${plan.recurrence.trigger} 的请求后整理知识库，可以吗？` : "每周日凌晨三点清理 mac-mini 的空间，可以吗？";
+  const result = await asking.call("propose_schedule", { ...plan, confirmation, ...(target === undefined ? {} : { schedule: target }) });
   expect(result.isError, result.text).toBe(false);
   const proposal = hub.conversations.entries(topic).findLast((entry) => entry.kind === "text")?.id;
   if (proposal === undefined) throw new Error("Could not find the proposed schedule");
@@ -136,6 +141,19 @@ async function request(path: string, method = "GET", body?: unknown, trusted = t
     method, headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), ...(body === undefined ? {} : {
       "content-type": "application/json", origin: trusted ? base : "https://untrusted.example",
     }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+function registerSource(source = "loom", token = loomToken): void {
+  writeFileSync(join(dataDir, `${source}.sha256`), `${createHash("sha256").update(token).digest("hex")}\n`);
+}
+
+function workRequest(idempotencyKey: string, { source = "loom", token = loomToken, body = loomRequest, port = hub.workRequestAddress?.port }: {
+  source?: string; token?: string; body?: { kind: string; text: string; link?: string }; port?: number;
+} = {}): Promise<Response> {
+  return fetch(`http://127.0.0.1:${port}/work-requests/${source}`, {
+    method: "POST", headers: { "content-type": "application/json", "idempotency-key": idempotencyKey,
+      ...(token === "" ? {} : { authorization: `Bearer ${token}` }) }, body: JSON.stringify(body),
   });
 }
 
@@ -344,5 +362,139 @@ describe("scheduled work", () => {
     expect(inputs.filter((item) => item.scheduleRun !== undefined)).toHaveLength(1);
     expect((await request(`/${created.id}/delete`, "POST", {})).status).toBe(200);
     expect(ScheduleList.parse(await (await request("")).json()).schedules).toEqual([]);
+  });
+});
+
+describe("service-triggered schedules", () => {
+  it("runs a confirmed plan with labelled service data and starts its work after the turn", async () => {
+    registerSource();
+    const topic = hub.conversations.create().id;
+    const { link, inputs } = brain();
+    const proposal = await propose(link, topic, triggerFields);
+    expect((await workRequest("before-confirmation")).status).toBe(409);
+    const schedule = await approve(link, topic, proposal);
+    expect(schedule).toMatchObject({ state: "active", nextAt: null, recurrence: { trigger: "loom" } });
+    const mac = runner("mac-mini");
+    const response = await workRequest("organize-today");
+    expect(response.status).toBe(202);
+    const receipt = await response.json() as { id: string };
+    expect(receipt).toEqual({ id: expect.any(String) });
+    const input = inputs.at(-1)!;
+    expect(input).toMatchObject({ source: "hub", scheduleRun: input.id, text: expect.stringContaining(triggerFields.instruction) });
+    expect(input.text).toContain('request data from the service "loom"');
+    expect(input.text).toContain("untrusted data");
+    expect(JSON.parse(input.text.split("\n").at(-1)!)).toEqual({ requests: [{ ...receipt, ...loomRequest }] });
+    expect(hub.conversations.entries(topic).at(-1)).toMatchObject({ kind: "notice", source: "loom", text: expect.stringContaining(loomRequest.text) });
+    const scheduled = turn(link, topic, input.id);
+    expect(await scheduled.call("propose_schedule", { ...triggerFields, confirmation: "确认？" })).toMatchObject({ isError: true });
+    await openLight(scheduled);
+    expect(hub.tickets.list()).toMatchObject([{ state: "pending", scheduleRun: input.id }]);
+    expect(mac.sent.filter((message) => message.type === "work.task")).toHaveLength(0);
+    scheduled.finish();
+    expect(mac.sent.filter((message) => message.type === "work.task")).toHaveLength(1);
+    expect(hub.schedules.history(schedule.id)?.runs).toMatchObject([{ id: input.id, state: "running" }]);
+    expect(hub.schedules.list().schedules[0]).toMatchObject({ state: "active", nextAt: null });
+    expect((await workRequest("organize-follow-up")).status).toBe(202);
+    expect(inputs.at(-1)?.id).toBe(input.id);
+    const ticket = hub.tickets.list()[0]!;
+    mac.link.receive({ type: "work.event", ticket: ticket.id, attempt: 1, seq: 1, at: clock.now(),
+      event: { kind: "delivered", text: "Material organized.", files: [], report: { en: "Done", zh: "完成" } } });
+    hub.schedules.tick();
+    expect(hub.schedules.history(schedule.id)?.runs.map((run) => run.state)).toEqual(["queued", "completed"]);
+  });
+
+  it("restricts the endpoint and isolates requests by source and schedule state", async () => {
+    registerSource();
+    const otherToken = "O".repeat(64);
+    registerSource("other", otherToken);
+    const created = await request("", "POST", { fields: triggerFields });
+    expect(created.status).toBe(200);
+    const schedule = ScheduleList.parse(await created.json()).schedules[0]!;
+    expect((await workRequest("public", { port: hub.address.port })).status).toBe(404);
+    expect((await workRequest("missing", { token: "" })).status).toBe(401);
+    expect((await workRequest("wrong", { token: otherToken })).status).toBe(401);
+    expect((await workRequest("unknown", { source: "unknown" })).status).toBe(401);
+    expect((await workRequest("another", { source: "other", token: otherToken })).status).toBe(409);
+    expect((await workRequest("")).status).toBe(400);
+    expect((await workRequest("invalid", { body: { ...loomRequest, text: " " } })).status).toBe(400);
+    expect((await workRequest("before-pause")).status).toBe(202);
+    expect((await request(`/${schedule.id}/pause`, "POST", {})).status).toBe(200);
+    expect(hub.schedules.list().schedules[0]).toMatchObject({ state: "paused", nextAt: null });
+    expect((await workRequest("while-paused")).status).toBe(409);
+    expect((await request(`/${schedule.id}/resume`, "POST", {})).status).toBe(200);
+    expect(hub.schedules.list().schedules[0]).toMatchObject({ state: "active", nextAt: null });
+    const { inputs } = brain();
+    hub.schedules.tick();
+    expect(inputs).toEqual([]);
+    expect((await request(`/${schedule.id}/delete`, "POST", {})).status).toBe(200);
+    expect((await workRequest("after-delete")).status).toBe(409);
+    const rotated = "R".repeat(64);
+    registerSource("loom", rotated);
+    expect((await workRequest("rotated-out")).status).toBe(401);
+    expect((await workRequest("rotated-in", { token: rotated })).status).toBe(409);
+  });
+
+  it("fans out and keeps one follow-up batch per schedule across a queued or running turn", async () => {
+    registerSource();
+    const first = hub.schedules.save(triggerFields);
+    const second = hub.schedules.save({ ...triggerFields, title: "更新 Loom 主题" });
+    hub.schedules.save({ ...triggerFields, recurrence: { trigger: "other" } });
+    const { link, inputs } = brain();
+    const initial = await workRequest("initial");
+    expect(initial.status).toBe(202);
+    const receipt = await initial.json();
+    expect(inputs).toHaveLength(2);
+    const schedules = [first, second].map((id) => hub.schedules.list().schedules.find((schedule) => schedule.id === id)!);
+    const runs = schedules.map((schedule) => schedule.lastRun!.id);
+    const active = turn(link, schedules[0]!.topic, runs[0]!);
+    const duplicate = await workRequest("initial");
+    expect(duplicate.status).toBe(202);
+    expect(await duplicate.json()).toEqual(receipt);
+    expect((await workRequest("initial", { body: { ...loomRequest, text: "Different request with the same key" } })).status).toBe(409);
+    for (let index = 0; index < 10; index++) {
+      expect((await workRequest(`burst-${index}`, { body: { kind: "topic", text: `Topic ${index}` } })).status).toBe(202);
+    }
+    expect(inputs).toHaveLength(2);
+    expect(hub.schedules.history(first)?.runs).toMatchObject([{ state: "running" }]);
+    expect(hub.schedules.history(second)?.runs).toMatchObject([{ state: "queued" }]);
+    active.finish();
+    turn(link, schedules[1]!.topic, runs[1]!).finish();
+    expect(inputs).toHaveLength(4);
+    for (const input of inputs.slice(2)) {
+      expect(JSON.parse(input.text.split("\n").at(-1)!)).toMatchObject({
+        requests: Array.from({ length: 10 }, (_, index) => ({ kind: "topic", text: `Topic ${index}` })),
+      });
+    }
+    expect((await workRequest("initial")).status).toBe(202);
+    hub.schedules.tick();
+    expect(inputs).toHaveLength(4);
+  });
+
+  it("persists pending requests and idempotency across a hub restart and limits each source", async () => {
+    registerSource();
+    registerSource("other", "O".repeat(64));
+    const schedule = hub.schedules.save(triggerFields);
+    hub.schedules.save({ ...triggerFields, recurrence: { trigger: "other" } });
+    const original = await workRequest("original");
+    expect(original.status).toBe(202);
+    const receipt = await original.json();
+    for (let index = 1; index < 60; index++) expect((await workRequest(`rate-${index}`)).status).toBe(202);
+    expect((await workRequest("limited")).status).toBe(429);
+    expect((await workRequest("original", { source: "other", token: "O".repeat(64) })).status).toBe(202);
+    expect(hub.schedules.history(schedule)?.runs).toEqual([]);
+    await hub.close();
+    await start();
+    expect(await (await workRequest("limited")).json()).toEqual({ error: "rate_limited" });
+    clock.advance(minute);
+    const full = await workRequest("limited");
+    expect(full.status).toBe(429);
+    expect(await full.json()).toEqual({ error: "queue_full" });
+    const { inputs } = brain();
+    const duplicate = await workRequest("original");
+    expect(duplicate.status).toBe(202);
+    expect(await duplicate.json()).toEqual(receipt);
+    expect(inputs).toHaveLength(2);
+    expect((await workRequest("limited")).status).toBe(202);
+    expect(inputs).toHaveLength(2);
   });
 });

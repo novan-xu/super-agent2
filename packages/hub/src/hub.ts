@@ -50,6 +50,7 @@ import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
 import { createInbox } from "./inbox.js";
 import { createHealthNotices } from "./health-notices.js";
+import { createWorkRequestServer } from "./work-requests.js";
 
 export interface HubOptions {
   readonly config: Config;
@@ -115,6 +116,7 @@ export interface Hub {
   readonly settings: Settings;
   readonly attachments: AttachmentStore;
   readonly address: AddressInfo;
+  readonly workRequestAddress?: AddressInfo;
   close(): Promise<void>;
 }
 
@@ -455,13 +457,22 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     database.close();
     throw error;
   }
+  let address: AddressInfo | undefined;
+  let closeWorkRequests: (() => Promise<void>) | undefined;
   try {
     const failures = loop;
     if (failures === undefined) {
       throw new Error("The failure loop was not created");
     }
     work?.resume();
-    const address = await server.listen(config.port, config.host);
+    address = await server.listen(config.port, config.host);
+    let workRequestAddress: AddressInfo | undefined;
+    if (config.workRequests !== undefined) {
+      const { port, directory } = config.workRequests;
+      const workRequests = createWorkRequestServer(directory, schedules, options.report ?? ((line) => process.stderr.write(`${line}\n`)));
+      workRequestAddress = await workRequests.listen(port, config.host);
+      closeWorkRequests = workRequests.close;
+    }
     chains.resume();
     verification.resume();
     taskTickets.resume();
@@ -504,6 +515,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       settings,
       attachments,
       address,
+      ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
         health?.close();
         clearInterval(accessCheck);
@@ -513,7 +525,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         settings.close();
         try {
           runners.close();
-          await server.close();
+          await Promise.all([server.close(), closeWorkRequests?.()]);
         } finally {
           taskTickets.close();
           await taskTickets.idle();
@@ -535,6 +547,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     health?.close();
     runners.close();
     schedules?.close();
+    await Promise.allSettled([address === undefined ? undefined : server.close(), closeWorkRequests?.()]);
     taskTickets.close();
     await taskTickets.idle();
     verification.close();

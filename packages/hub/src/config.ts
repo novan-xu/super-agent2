@@ -43,6 +43,8 @@ const Environment = z.object({
     .pipe(z.number().int().max(65535, { error: "must be between 0 and 65535" }))
     .default(8080),
   HUB_HOST: z.string().min(1, { error: "must not be empty" }).default("0.0.0.0"),
+  HUB_WORK_REQUEST_PORT: unlessEmpty(z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().max(65535))),
+  HUB_WORK_SOURCES_DIR: unlessEmpty(z.string().refine(isAbsolutePath, { error: "must be an absolute folder" })),
   HUB_TICKET_TIME_ZONE: unlessEmpty(z.string().refine(validTicketTimeZone, { error: "must be a valid time zone, such as America/New_York" })),
   HUB_PROJECT_FOLDERS: z
     .string()
@@ -82,6 +84,7 @@ export interface Config {
   readonly dataDir: string;
   readonly port: number;
   readonly host: string;
+  readonly workRequests?: { readonly port: number; readonly directory: string };
   readonly ticketTimeZone?: string;
   readonly projectFolders: readonly string[];
   readonly brainTokenFile: string;
@@ -138,6 +141,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
   if (value.ACCESS_INBOX_AUD !== undefined && (value.ACCESS_INBOX_AUD === value.ACCESS_AUD || value.ACCESS_INBOX_AUD === value.ACCESS_RUNNER_AUD)) {
     return { ok: false, problems: ["ACCESS_INBOX_AUD must be the audience tag of a separate inbox application"] };
   }
+  const { HUB_WORK_REQUEST_PORT: workPort, HUB_WORK_SOURCES_DIR: workDirectory } = value;
+  if ((workPort === undefined) !== (workDirectory === undefined)) {
+    return { ok: false, problems: ["HUB_WORK_REQUEST_PORT and HUB_WORK_SOURCES_DIR must be set together"] };
+  }
+  if (workPort !== undefined && workPort !== 0 && workPort === value.HUB_PORT) {
+    return { ok: false, problems: ["HUB_WORK_REQUEST_PORT must differ from HUB_PORT"] };
+  }
   const vapid = vapidSettings(value);
   if (vapid.problems.length > 0) {
     return { ok: false, problems: vapid.problems };
@@ -153,6 +163,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,
       host: value.HUB_HOST,
+      ...(workPort === undefined || workDirectory === undefined ? {} : { workRequests: { port: workPort, directory: workDirectory } }),
       ...(value.HUB_TICKET_TIME_ZONE === undefined ? {} : { ticketTimeZone: value.HUB_TICKET_TIME_ZONE }),
       projectFolders: value.HUB_PROJECT_FOLDERS,
       brainTokenFile: value.HUB_BRAIN_TOKEN_FILE ?? join(value.HUB_DATA_DIR, brainTokenFileName),
