@@ -119,6 +119,12 @@ A worker does the same, decided by the hub.
   Old topic links resolve to that destination, and its next turn gets the combined history through the seed.
   The destination keeps its repository when the owner combines topics across projects.
   The System topic can receive a merge and keeps its own address.
+  The destination's topic actions can undo a recorded merge and restore the source's original history and ticket ownership.
+  Messages and work that arrived later stay in the destination.
+  This applies to new merges made by the owner or the brain.
+- The brain can queue a batch of idle topics for one destination with `merge_topics` during an owner turn or an approved scheduled run.
+  Each source must be in the destination's repository or in the same daily scope.
+  The tool reports a reason for each skipped topic.
 - A topic automatically archives after two hours without a new owner message, brain answer or ticket notice, once it has no running or queued turn.
   The hub checks idle topics every minute or at the configured age if shorter.
   Set `HUB_TOPIC_ARCHIVE_MS` to change the age.

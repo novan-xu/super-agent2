@@ -178,7 +178,7 @@ export function createBrain(options: BrainOptions): Brain {
       tell();
     },
   };
-  const merged = new Set<string>();
+  const merged = new Map<string, string>();
   const work = new Set<Promise<void>>();
   let uses = 0;
   let arrivals = 0;
@@ -626,11 +626,7 @@ export function createBrain(options: BrainOptions): Brain {
       stateOf(source);
       stateOf(destination);
     }
-    for (const { source, destination } of message.merged) {
-      if (merged.has(source)) {
-        continue;
-      }
-      merged.add(source);
+    const reset = (source: string, destination: string) => {
       for (const id of [source, destination]) {
         const state = states.get(id);
         if (state !== undefined) {
@@ -639,6 +635,17 @@ export function createBrain(options: BrainOptions): Brain {
           dropLive(state);
         }
       }
+    };
+    const sources = new Set(message.merged.map(({ source }) => source));
+    for (const [source, destination] of merged) {
+      if (sources.has(source)) continue;
+      merged.delete(source);
+      reset(source, destination);
+    }
+    for (const { source, destination } of message.merged) {
+      if (merged.has(source)) continue;
+      merged.set(source, destination);
+      reset(source, destination);
     }
     for (const state of states.values()) {
       const merge = pending.get(state.id);

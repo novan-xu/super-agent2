@@ -15,6 +15,7 @@ import { openDatabase } from "./database.js";
 import type { Hub } from "./hub.js";
 import { migrations } from "./migrations.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
+import { requestBrainTool, startToolTurn } from "./testing/brain-tools.js";
 import { fakeTarget, testCredentials } from "./testing/commands.js";
 import { startTestHub } from "./testing/http.js";
 
@@ -338,7 +339,7 @@ describe("the hub's tools for the brain", () => {
     const list = (await (await mcp(running, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as {
       result: { tools: { name: string; description: string }[] };
     };
-    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "set_topic_title", "archive_topics", "handover", "file_issue", "open_ticket", "open_task_ticket", "start_light_task", "answer_light_task", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "propose_schedule", "create_schedule", "list_schedules", "pause_schedule", "resume_schedule", "delete_schedule", "run_scheduled_light_task", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "recheck_machines", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
+    expect(list.result.tools.map((tool) => tool.name)).toEqual(["run_command", "read_command", "stop_command", "read_quote", "set_topic_repository", "set_topic_title", "archive_topics", "merge_topics", "handover", "file_issue", "open_ticket", "open_task_ticket", "start_light_task", "answer_light_task", "list_tickets", "read_ticket", "message_worker", "record_decision", "stop_ticket", "open_repair_ticket", "propose_schedule", "create_schedule", "list_schedules", "pause_schedule", "resume_schedule", "delete_schedule", "run_scheduled_light_task", "arrange_chains", "report_deployment", "proceed_ticket", "set_engine_row", "read_allowance", "recheck_machines", "choose_defaults", "merge_ticket", "guide_ticket", "describe_stuck", "remember", "recall", "forget", "ask_owner", "read_topic_board", "read_topic_history", "search_topic_history", "read_seed_material"]);
     expect(list.result.tools[0]?.description).toContain("in the hub container");
     expect(await (await mcp(running, { jsonrpc: "2.0", id: 4, method: "resources/list" })).json()).toMatchObject({ error: { code: -32601 } });
     expect((await mcp(running, undefined, "GET")).status).toBe(405);
@@ -1426,6 +1427,100 @@ describe("topic corrections and archive policy", () => {
       ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
     });
   }
+
+  it.each(["owner", "brain"] as const)("undoes a merge made by the %s and restores history and open ticket ownership", async (actor) => {
+    const running = await start();
+    const service = running.conversations;
+    const { link, messages } = connect(running);
+    const scope = { kind: "repository", repository: "owner/project" } as const;
+    const ticket = openTicket(running, undefined, "owner/PROJECT");
+    const source = ticket.conversation!;
+    const sourceEntry = service.send(source, "Original source history")!;
+    const sourceTurn = { conversation: source, turn: "origin" };
+    link.receive({ type: "turn.started", ...sourceTurn, inputs: [sourceEntry.id], provider: "gpt", model: "test" });
+    link.receive({ type: "turn.finished", ...sourceTurn, outcome: "completed", reason: null });
+    const destination = openTicket(running, undefined, scope.repository).conversation!;
+    const extra = openTicket(running, undefined, scope.repository).conversation!;
+    service.archive(source);
+    const sourceTitle = service.get(source)!.title;
+    const archivedAt = clock.now();
+    clock.advance(minute);
+
+    if (actor === "owner") {
+      expect((await topicRequest(running, source, "/merge", { destination })).status).toBe(200);
+    } else {
+      const current = startToolTurn(link, service.create().id);
+      const result = await requestBrainTool(running, "merge_topics", { destination, sources: [source, extra] }, current);
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(result.text)).toEqual([{ topic: source, result: "merge queued" }, { topic: extra, result: "merge queued" }]);
+    }
+    const merge = messages.findLast((message) => message.type === "topic.gates")?.pending[0]?.merge;
+    expect(merge).toBeDefined();
+    link.receive({ type: "topic.paused", conversation: destination, merge: merge! });
+    link.receive({ type: "topic.paused", conversation: source, merge: merge! });
+    if (actor === "brain") {
+      expect(service.get(source)).toMatchObject({ id: source, mergePending: true });
+      link.receive({ type: "topic.paused", conversation: extra, merge: merge! });
+      expect(service.get(extra)?.id).toBe(destination);
+    }
+    expect(service.get(source)?.id).toBe(destination);
+    expect(service.get(destination)?.mergedSources).toContainEqual({ id: source, title: sourceTitle });
+    expect(service.entries(destination)).toContainEqual(expect.objectContaining({ id: sourceEntry.id }));
+    expect(running.tickets.get(ticket.id)?.conversation).toBe(destination);
+    expect(service.tell(ticket.id, "Report after the merge", "Read the report")).toBe(destination);
+    const later = service.send(destination, "A new destination message")!;
+
+    expect((await topicRequest(running, source, "/undo-merge", { destination })).status).toBe(200);
+    const undo = messages.findLast((message) => message.type === "topic.gates")?.pending[0]?.merge;
+    expect(undo).toBeDefined();
+    link.receive({ type: "topic.paused", conversation: source, merge: undo! });
+    link.receive({ type: "topic.paused", conversation: destination, merge: undo! });
+    expect(service.get(source)).toMatchObject({ id: source, topicState: "archived" });
+    expect(running.database.connection.prepare("SELECT archived_at FROM conversations WHERE id = ?").get(source)).toEqual({ archived_at: archivedAt });
+    expect(service.entries(source)).toMatchObject([{ id: sourceEntry.id, seq: sourceEntry.seq }]);
+    expect(service.detail(source)?.turns).toMatchObject([{ id: sourceTurn.turn, conversation: source }]);
+    expect(service.entries(destination)).toMatchObject([{ text: "Report after the merge" }, { id: later.id }]);
+    expect(service.get(destination)?.mergedSources?.some(({ id }) => id === source)).not.toBe(true);
+    expect(running.tickets.get(ticket.id)?.conversation).toBe(source);
+    expect(service.tell(ticket.id, "Report after undo", "Read the report")).toBe(source);
+    expect((await topicRequest(running, source, "/undo-merge", { destination })).status).toBe(409);
+  });
+
+  it("reports why each source was skipped and requires a valid idle destination and an active caller", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link } = connect(running);
+    const current = startToolTurn(link, service.create().id);
+    const destination = service.create().id;
+    const valid = service.create().id;
+    const busy = startToolTurn(link, service.create().id).conversation;
+    const waiting = service.create().id;
+    service.send(waiting, "Queued owner message");
+    const system = service.tell(null, "System notice", "System prompt");
+    const merged = service.create().id;
+    const unresolved = (await service.sendToStream(undefined, "Unassigned repository", [], { newTopic: true, scope: { kind: "code" } }))!.topic.id;
+    const foreign = openTicket(running, undefined, "owner/foreign").conversation!;
+    const mixed = openTicket(running, undefined, "owner/mixed").conversation!;
+    const db = running.database.connection;
+    db.prepare("UPDATE conversations SET merged_into = ? WHERE id = ?").run(destination, merged);
+    db.prepare("UPDATE conversations SET repository = NULL WHERE id = ?").run(mixed);
+    const pending = service.create().id;
+    expect(service.merge(pending, service.create().id).ok).toBe(true);
+    const call = (target: string, sources: string[], caller = current) => requestBrainTool(running, "merge_topics", { destination: target, sources }, caller);
+
+    for (const [target, reason] of [["missing", "not found"], [system, "system topic"], [busy, "turn running"], [waiting, "untaken entries"], [merged, "already merged"], [unresolved, "repository unresolved"], [pending, "merge pending"]]) {
+      const reply = await call(target!, [valid]);
+      expect(JSON.parse(reply.text)).toEqual([{ topic: valid, result: `destination ${reason}` }]);
+    }
+    expect((await call(destination, [valid], { ...current, turn: "missing" })).isError).toBe(true);
+    const sources = [current.conversation, destination, system, busy, waiting, merged, unresolved, foreign, mixed, pending, "missing", valid, valid];
+    const reply = await call(destination, sources);
+    expect(reply.isError).toBe(false);
+    expect(JSON.parse(reply.text)).toEqual(sources.map((topic, index) => ({ topic, result: [
+      "current topic", "destination topic", "system topic", "turn running", "untaken entries", "already merged", "repository unresolved",
+      "different repository", "open ticket in a different repository", "merge pending", "not found", "merge queued", "duplicate source",
+    ][index] })));
+  });
 
   it("archives idle topics with open tickets, saves a missing summary and wakes on each form of direct activity", async () => {
     const running = await start();

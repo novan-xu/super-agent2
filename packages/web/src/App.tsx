@@ -210,6 +210,7 @@ export function App() {
     rename: (source: string, title: string) => controller.renameTopic(source, title),
     archive: (source: string) => controller.archiveTopic(source),
     merge: (source: string, destination: string) => controller.mergeTopic(source, destination),
+    undoMerge: (source: string, destination: string) => controller.undoTopicMerge(source, destination),
     move: (source, message, destination) => controller.moveMessage(source, message, destination),
   }), [controller]);
 

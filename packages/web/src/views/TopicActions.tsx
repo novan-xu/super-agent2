@@ -7,6 +7,7 @@ export interface TopicActions {
   rename(source: string, title: string): Promise<boolean>;
   archive(source: string): Promise<boolean>;
   merge(source: string, destination: string): Promise<boolean>;
+  undoMerge(source: string, destination: string): Promise<boolean>;
   move(source: string, message: string, destination: TopicMove["destination"]): Promise<boolean>;
 }
 
@@ -18,11 +19,12 @@ export function titleOf(topic: { readonly title: string } | undefined): string {
   return topic?.title || text("conversation.untitled");
 }
 
-type Operation = "rename" | "archive" | "merge" | "move";
+type Operation = "rename" | "archive" | "merge" | "undoMerge" | "move";
 const operationText = {
   rename: "conversation.rename",
   archive: "conversation.archive",
   merge: "conversation.merge",
+  undoMerge: "conversation.undoMerge",
   move: "conversation.move",
 } as const;
 
@@ -49,6 +51,8 @@ export function TopicActionDialog({ edit, list, actions, done }: {
   const source = edit.message === undefined ? edit.topic.id : edit.source;
   const label = operation === null ? titleOf(edit.topic) : text(operationText[operation]);
   const targets = list.filter((topic) => topic.id !== source && topic.mergedInto === undefined && (operation !== "merge" || !topic.mergePending));
+  const mergedSources = edit.topic?.mergedSources ?? [];
+  const firstMerged = mergedSources[0];
   const submit = async () => {
     if (operation === null || busy) {
       return;
@@ -57,6 +61,7 @@ export function TopicActionDialog({ edit, list, actions, done }: {
     const ok = operation === "rename" ? await actions.rename(source, title)
       : operation === "archive" ? await actions.archive(source)
       : operation === "merge" ? await actions.merge(source, destination)
+      : operation === "undoMerge" ? await actions.undoMerge(destination, source)
       : edit.message !== undefined && await actions.move(source, edit.message, destination === newTopicOption ? null : destination);
     if (ok) {
       dialog.current?.close();
@@ -81,6 +86,9 @@ export function TopicActionDialog({ edit, list, actions, done }: {
             {edit.topic?.system || edit.topic?.mergePending ? null : (
               <button className="btn" type="button" onClick={() => setOperation("merge")}>{text("conversation.merge")}</button>
             )}
+            {firstMerged === undefined || edit.topic?.mergePending ? null : (
+              <button className="btn" type="button" onClick={() => { setDestination(firstMerged.id); setOperation("undoMerge"); }}>{text("conversation.undoMerge")}</button>
+            )}
             {edit.topic?.topicState === "archived" ? null : (
               <button className="btn" type="button" onClick={() => setOperation("archive")}>{text("conversation.archive")}</button>
             )}
@@ -90,7 +98,12 @@ export function TopicActionDialog({ edit, list, actions, done }: {
             {operation === "rename" ? (
               <input className="field" aria-label={text("conversation.topicName")} value={title} maxLength={120}
                 required onChange={(event) => setTitle(event.target.value)} />
-            ) : operation === "archive" ? <p className="dlg-text">{titleOf(edit.topic)}</p> : (
+            ) : operation === "archive" ? <p className="dlg-text">{titleOf(edit.topic)}</p> : operation === "undoMerge" ? (
+              <select className="field" aria-label={text("conversation.undoMerge")} value={destination} required
+                onChange={(event) => setDestination(event.target.value)}>
+                {mergedSources.map((topic) => <option key={topic.id} value={topic.id}>{titleOf(topic)}</option>)}
+              </select>
+            ) : (
               <select className="field" aria-label={text("conversation.destination")} value={destination} required
                 onChange={(event) => setDestination(event.target.value)}>
                 <option value="">{text("conversation.chooseDestination")}</option>

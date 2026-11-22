@@ -1116,6 +1116,33 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE routing_decisions ADD COLUMN brain_repository_cap INTEGER NOT NULL DEFAULT 0 CHECK (brain_repository_cap IN (0, 1));
     `,
   },
+  {
+    version: 55,
+    sql: `
+      ALTER TABLE topic_merges RENAME TO topic_merges_previous;
+      CREATE TABLE topic_merges (
+        id TEXT NOT NULL,
+        source TEXT PRIMARY KEY REFERENCES conversations (id),
+        destination TEXT NOT NULL REFERENCES conversations (id),
+        operation TEXT NOT NULL DEFAULT 'merge' CHECK (operation IN ('merge', 'undo'))
+      ) STRICT;
+      INSERT INTO topic_merges (id, source, destination) SELECT id, source, destination FROM topic_merges_previous;
+      DROP TABLE topic_merges_previous;
+      CREATE INDEX topic_merges_by_id ON topic_merges (id);
+      CREATE INDEX topic_merges_by_destination ON topic_merges (destination);
+      CREATE TABLE topic_merge_history (
+        source TEXT PRIMARY KEY REFERENCES conversations (id),
+        destination TEXT NOT NULL REFERENCES conversations (id),
+        topic_state TEXT NOT NULL,
+        archived_at INTEGER,
+        entries TEXT NOT NULL,
+        turns TEXT NOT NULL,
+        tickets TEXT NOT NULL,
+        commands TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX topic_merge_history_by_destination ON topic_merge_history (destination);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

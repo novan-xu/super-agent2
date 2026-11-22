@@ -104,6 +104,7 @@ const SetTopicTitleArguments = z.strictObject({
   title: z.string().trim().min(1).max(80).describe("A short, single-line title in the owner's language"),
 });
 const ArchiveTopicsArguments = z.strictObject({ topics: z.array(z.string().min(1)).min(1).max(100) });
+const MergeTopicsArguments = z.strictObject({ destination: ConversationId, sources: z.array(ConversationId).min(1).max(100) });
 
 const CodeKind = z.enum(codeKinds);
 
@@ -932,6 +933,12 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         inputSchema: z.toJSONSchema(ArchiveTopicsArguments, { io: "input" }),
       },
       {
+        name: "merge_topics",
+        title: "Merge topics",
+        description: "Merge idle topics about the same subject at the owner's request or on an approved schedule.",
+        inputSchema: z.toJSONSchema(MergeTopicsArguments, { io: "input" }),
+      },
+      {
         name: "handover",
         title: "Hand over an owner message",
         description: "Move the latest owner message or the given message ID in this turn, with attachments and quote. Set ownerRequested for an explicit move. The turn stops and the destination answers.",
@@ -1488,6 +1495,20 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           break;
         }
         result = { text: JSON.stringify(args.data.topics.map((topic) => ({ topic, result: conversations.archiveForBrain(topic, conversation) }))) };
+        break;
+      }
+      case "merge_topics": {
+        const args = MergeTopicsArguments.safeParse(parsed.data.arguments);
+        if (!args.success || conversation === undefined || turn === undefined || aborted.aborted) {
+          result = { text: "An active topic turn, a destination and 1 to 100 source topic IDs are required.", isError: true };
+          break;
+        }
+        if (options.tickets?.tickets.scheduleForTurn({ conversation, id: turn })?.authorized === false) {
+          result = { text: "This scheduled run is no longer authorized.", isError: true };
+          break;
+        }
+        const merged = conversations.mergeForBrain(conversation, turn, args.data.destination, args.data.sources);
+        result = merged === undefined ? { text: "An active topic turn is required.", isError: true } : { text: JSON.stringify(merged) };
         break;
       }
       case "handover": {

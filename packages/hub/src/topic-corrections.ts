@@ -16,8 +16,10 @@ const success = <T>(value: T): TopicEdit<T> => ({ ok: true, value });
 const Id = z.object({ id: z.string() });
 const HandoverInput = Id.extend({ handed_over: z.number() });
 const Transfer = z.object({ entry: z.string(), source: z.string(), input: z.string(), reset_session: z.number() });
-const Merge = z.object({ id: z.string(), source: z.string(), destination: z.string() });
-const Alias = Merge.omit({ id: true });
+const Alias = z.object({ source: z.string(), destination: z.string() });
+const Merge = Alias.extend({ id: z.string(), operation: z.enum(["merge", "undo"]) });
+type Merge = z.infer<typeof Merge>;
+const MergeSource = Id.extend({ title: z.string() });
 const Movable = z.object({
   id: z.string(), conversation_id: z.string(), turn_id: z.string().nullable(), delivery_id: z.string().nullable(),
 });
@@ -104,11 +106,53 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
   const correctRouting = connection.prepare("UPDATE routing_decisions SET moved_to = ?, moved_at = ?, brain_overridden = (brain_moved_at IS NOT NULL) WHERE entry = ?");
   const correctBrainRouting = connection.prepare("UPDATE routing_decisions SET brain_moved_to = ?, brain_moved_at = ?, brain_repository_cap = ? WHERE entry = ?");
   const activate = connection.prepare("UPDATE conversations SET topic_state = 'active', activity_at = max(activity_at, ?), updated_at = ? WHERE id = ?");
-  const saveMerge = connection.prepare("INSERT INTO topic_merges (id, source, destination) VALUES (?, ?, ?)");
-  const selectMerge = connection.prepare("SELECT * FROM topic_merges WHERE id = ?");
-  const mergeOf = connection.prepare("SELECT * FROM topic_merges WHERE source = ? OR destination = ?");
+  const saveMerge = connection.prepare("INSERT INTO topic_merges (id, source, destination, operation) VALUES (?, ?, ?, ?)");
+  const selectMerge = connection.prepare("SELECT * FROM topic_merges WHERE id = ? ORDER BY rowid");
+  const mergeOf = connection.prepare("SELECT 1 FROM topic_merges WHERE source = ? OR destination = ? LIMIT 1");
   const listMerges = connection.prepare("SELECT * FROM topic_merges ORDER BY rowid");
+  const mergeIds = connection.prepare("SELECT DISTINCT id FROM topic_merges");
   const deleteMerge = connection.prepare("DELETE FROM topic_merges WHERE id = ?");
+  const saveMergeHistory = connection.prepare(`
+    INSERT INTO topic_merge_history (source, destination, topic_state, archived_at, entries, turns, tickets, commands)
+    SELECT c.id, ?, c.topic_state, c.archived_at,
+      (SELECT json_group_array(json_array(id, seq, delivery_id)) FROM conversation_entries WHERE conversation_id = c.id),
+      (SELECT json_group_array(id) FROM turns WHERE conversation_id = c.id),
+      (SELECT json_group_array(id) FROM tickets WHERE conversation_id = c.id),
+      (SELECT json_group_array(command_id) FROM brain_commands WHERE conversation_id = c.id)
+    FROM conversations c WHERE c.id = ?
+  `);
+  const undoableSources = connection.prepare(`
+    SELECT c.id, c.title FROM topic_merge_history h JOIN conversations c ON c.id = h.source
+    WHERE h.destination = ? AND c.merged_into = h.destination ORDER BY c.updated_at DESC, c.id
+  `);
+  const undoable = connection.prepare("SELECT 1 FROM topic_merge_history WHERE source = ? AND destination = ?");
+  const deleteMergeHistory = connection.prepare("DELETE FROM topic_merge_history WHERE source = ?");
+  const restoreEntries = connection.prepare(`
+    UPDATE conversation_entries AS e SET conversation_id = ?, seq = json_extract(origin.value, '$[1]')
+    FROM json_each((SELECT entries FROM topic_merge_history WHERE source = ?)) origin
+    WHERE e.conversation_id = ? AND e.id = json_extract(origin.value, '$[0]') AND e.delivery_id IS json_extract(origin.value, '$[2]')
+  `);
+  const restoreTurns = connection.prepare(`
+    UPDATE turns SET conversation_id = ? WHERE conversation_id = ?
+    AND id IN (SELECT value FROM json_each((SELECT turns FROM topic_merge_history WHERE source = ?)))
+  `);
+  const restoreTickets = connection.prepare(`
+    UPDATE tickets SET conversation_id = ? WHERE conversation_id = ?
+    AND id IN (SELECT value FROM json_each((SELECT tickets FROM topic_merge_history WHERE source = ?))) RETURNING id
+  `);
+  const restoreCommands = connection.prepare(`
+    UPDATE brain_commands SET conversation_id = ? WHERE conversation_id = ?
+    AND command_id IN (SELECT value FROM json_each((SELECT commands FROM topic_merge_history WHERE source = ?)))
+  `);
+  const restoreSource = connection.prepare(`
+    UPDATE conversations AS c SET merged_into = NULL, topic_state = h.topic_state, archived_at = h.archived_at, updated_at = ?
+    FROM topic_merge_history h WHERE c.id = ? AND h.source = c.id
+  `);
+  const touchTopic = connection.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?");
+  const foreignOpenTicket = connection.prepare(`
+    SELECT 1 FROM tickets WHERE conversation_id = ? AND coalesce(repository, project) IS NOT ? COLLATE NOCASE
+    AND state IN (${openTicketStates.map(() => "?").join(", ")}) LIMIT 1
+  `);
   const beginSequences = connection.prepare("UPDATE conversation_entries SET seq = -stream_seq WHERE conversation_id IN (?, ?)");
   const mergeEntries = connection.prepare(`
     WITH combined AS MATERIALIZED (
@@ -145,51 +189,125 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
 
   const pending = (topic: string) => mergeOf.get(topic, topic) !== undefined;
   const withdraw = ({ source, input }: z.infer<typeof Transfer>) => options.send({ type: "input.withdraw", conversation: source, input });
-  const gates = () => {
+  const gates = (force = false) => {
     const pending = listMerges.all().map((row) => {
-      const { id, ...pair } = Merge.parse(row);
-      return { merge: id, ...pair };
+      const { id, source, destination } = Merge.parse(row);
+      return { merge: id, source, destination };
     });
     const merged = listAliases.all().map((row) => Alias.parse(row));
-    if (pending.length > 0 || merged.length > 0) {
+    if (force || pending.length > 0 || merged.length > 0) {
       options.send({ type: "topic.gates", pending, merged });
     }
   };
 
-  const finishMerge = ({ id, source, destination }: z.infer<typeof Merge>) => {
+  const mergePair = ({ source, destination }: Merge, now: number) => {
+    saveMergeHistory.run(destination, source);
+    beginSequences.run(source, destination);
+    mergeEntries.run(source, destination, destination);
+    mergeTurns.run(destination, source);
+    mergeCommands.run(destination, source);
+    const tickets = mergeTickets.all(destination, source);
+    discardVersions.run(source, destination);
+    mergeSource.run(destination, now, source);
+    mergeDestination.run(now, source, destination);
+    return tickets;
+  };
+
+  const undoPair = ({ source, destination }: Merge, now: number) => {
+    restoreEntries.run(source, source, destination);
+    restoreTurns.run(source, destination, source);
+    restoreCommands.run(source, destination, source);
+    const tickets = restoreTickets.all(source, destination, source);
+    discardVersions.run(source, destination);
+    forgetSessions.run(source);
+    forgetSessions.run(destination);
+    restoreSource.run(now, source);
+    touchTopic.run(now, destination);
+    deleteMergeHistory.run(source);
+    return tickets;
+  };
+
+  const mergeGroup = (id: string) => selectMerge.all(id).map((row) => Merge.parse(row));
+
+  const affectedTopics = (merges: readonly Merge[]) => [...new Set(merges.flatMap(({ source, destination }) => [source, destination]))];
+
+  const finishMerge = (first: Merge, merges: readonly Merge[]) => {
     const now = clock.now();
+    const { id, destination, operation } = first;
+    const topics = affectedTopics(merges);
+    const undo = operation === "undo";
     const ticketIds = transaction(() => {
-      beginSequences.run(source, destination);
-      mergeEntries.run(source, destination, destination);
-      mergeTurns.run(destination, source);
-      mergeCommands.run(destination, source);
-      const ids = mergeTickets.all(destination, source).map((row) => z.number().parse(row["id"]));
-      discardVersions.run(source, destination);
-      mergeSource.run(destination, now, source);
-      mergeDestination.run(now, source, destination);
+      const tickets = merges.flatMap((merge) => (undo ? undoPair : mergePair)(merge, now));
       deleteMerge.run(id);
       incrementRevision.run();
-      return ids;
+      return tickets.map((row) => z.number().parse(row["id"]));
     });
     acknowledgements.delete(id);
-    gates();
-    options.announce(source);
-    options.announce(destination);
+    gates(undo);
+    topics.forEach(options.announce);
     options.ticketsChanged(ticketIds);
-    options.historyChanged([source, destination]);
-    options.deliverTopic(destination);
+    options.historyChanged(topics);
+    if (undo) topics.forEach(options.deliverTopic);
+    else options.deliverTopic(destination);
   };
 
   const finishOfflineMerges = () => {
     if (options.ready()) {
       return;
     }
-    for (const row of listMerges.all()) {
-      const merge = Merge.parse(row);
-      if ([merge.source, merge.destination].every((id) => running.get(id) === undefined && queued.get(id) === undefined)) {
-        finishMerge(merge);
+    for (const row of mergeIds.all()) {
+      const merges = mergeGroup(Id.parse(row).id);
+      const first = merges[0];
+      if (first !== undefined && affectedTopics(merges).every((id) => running.get(id) === undefined && queued.get(id) === undefined)) {
+        finishMerge(first, merges);
       }
     }
+  };
+
+  const queueMerge = (sources: readonly string[], destination: string, operation: Merge["operation"]) => {
+    const id = randomUUID();
+    transaction(() => sources.forEach((source) => saveMerge.run(id, source, destination, operation)));
+    sources.forEach(options.announce);
+    options.announce(destination);
+    gates();
+    finishOfflineMerges();
+  };
+
+  const mergeGuard = (id: string, topic: Conversation | undefined): string | undefined => {
+    if (topic === undefined) return "not found";
+    if (topic.mergedInto !== undefined) return "already merged";
+    if (topic.system === true) return "system topic";
+    if (topic.needsRepository === true) return "repository unresolved";
+    if (pending(id)) return "merge pending";
+    if (running.get(id) !== undefined) return "turn running";
+    if (queued.get(id) !== undefined) return "untaken entries";
+    return undefined;
+  };
+
+  const mergeForBrain = (current: string, destination: string, sources: readonly string[]) => {
+    const target = options.topic(destination);
+    const targetProblem = mergeGuard(destination, target);
+    if (target === undefined || targetProblem !== undefined) {
+      return sources.map((topic) => ({ topic, result: `destination ${targetProblem ?? "not found"}` }));
+    }
+    const accepted = new Set<string>();
+    const results = sources.map((topic) => {
+      const result = () => {
+        if (topic === current) return "current topic";
+        if (topic === destination) return "destination topic";
+        if (accepted.has(topic)) return "duplicate source";
+        const source = options.topic(topic);
+        const problem = mergeGuard(topic, source);
+        if (problem !== undefined) return problem;
+        if (source?.repository?.toLowerCase() !== target.repository?.toLowerCase()) return "different repository";
+        if (foreignOpenTicket.get(topic, target.repository, ...openTicketStates) !== undefined) return "open ticket in a different repository";
+        accepted.add(topic);
+        return "merge queued";
+      };
+      return { topic, result: result() };
+    });
+    if (accepted.size > 0) queueMerge([...accepted], destination, "merge");
+    return results;
   };
 
   const archive = (id: string) => {
@@ -267,12 +385,14 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
     blocked: (conversation: string, seq: number) => pending(conversation) || blockedByTransfer.get(conversation, seq) !== undefined,
     sync: () => {
       acknowledgements.clear();
-      gates();
+      gates(true);
       for (const row of listTransfers.all()) {
         withdraw(Transfer.parse(row));
       }
     },
     finishOfflineMerges,
+    mergeForBrain,
+    mergedSources: (id: string) => undoableSources.all(id).map((row) => MergeSource.parse(row)),
     move: (id: string, destination: TopicMove["destination"], expectedSource?: string) => move(id, destination, { expectedSource }),
     withdrawing: (source: string, turn: string, input: string) => {
       if (findTransfer.get(source, input) !== undefined) {
@@ -357,27 +477,30 @@ export function createTopicCorrections(options: TopicCorrectionsOptions) {
       if (options.topic(source)?.system === true || pending(source) || pending(destination)) {
         return conflict;
       }
-      saveMerge.run(randomUUID(), source, destination);
-      options.announce(source);
-      options.announce(destination);
-      gates();
-      finishOfflineMerges();
+      queueMerge([source], destination, "merge");
       return success(destination);
     },
+    undoMerge: (source: string, destination: string): TopicEdit<string> => {
+      const from = options.topic(source);
+      const target = options.topic(destination);
+      if (from === undefined || target === undefined) return missing;
+      if (from.mergedInto !== destination || target.mergedInto !== undefined || undoable.get(source, destination) === undefined
+        || pending(source) || pending(destination)) return conflict;
+      queueMerge([source], destination, "undo");
+      return success(source);
+    },
     paused: (id: string, topic: string) => {
-      const row = selectMerge.get(id);
-      if (row === undefined) {
-        return;
-      }
-      const merge = Merge.parse(row);
-      if ((topic !== merge.source && topic !== merge.destination) || running.get(topic) !== undefined) {
+      const merges = mergeGroup(id);
+      const first = merges[0];
+      const topics = affectedTopics(merges);
+      if (first === undefined || !topics.includes(topic) || running.get(topic) !== undefined) {
         return;
       }
       const ready = acknowledgements.get(id) ?? new Set<string>();
       ready.add(topic);
       acknowledgements.set(id, ready);
-      if (ready.has(merge.source) && ready.has(merge.destination)) {
-        finishMerge(merge);
+      if (topics.every((topic) => ready.has(topic))) {
+        finishMerge(first, merges);
       }
     },
   };
