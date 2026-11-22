@@ -724,12 +724,15 @@ A mailbox without progress for one hour gets one stalled notice during that inci
 
 Before brain review, a Codex-only filter examines batches of up to 20 envelopes and the owner's confirmed memory in an ephemeral, read-only session with apps and tools disabled.
 It keeps only clear requests for action or decisions, real deadlines or risks, and messages covered by a memory keep rule; uncertain mail is ignored.
+The filter ignores GitHub CI notices, marketing expiry reminders and one-time codes unless confirmed memory keeps them, while preserving security alerts, password resets, bills with a due date and requests from real people.
+Kept messages with the same sender address and kind in one batch are merged deterministically into the newest representative, with a count and received-time range for review.
+Merged envelopes are marked checked and cleared like ignored mail, and the representative retains its group information through review retries.
 Ignored envelopes are marked checked and their sender, subject and snippet are cleared.
 A failed or invalid filter answer leaves the batch queued with exponential backoff capped at one hour, and never sends it unfiltered to the brain.
 After three failures the hub posts one notice in 邮件 without a push, followed by one recovery notice when filtering succeeds.
 
 The historical dry run uses the same filter against connected mailboxes without a hub database, cursor changes, notices or brain turns.
-It reports each decision and per-mailbox totals for owner review before deployment.
+It reports each decision, its representative when merged, group counts and per-mailbox merge totals for owner review before deployment.
 See `docs/deploy.md` for the checkout and container commands.
 
 The mail job uses dedicated hidden brain turns because service-triggered schedules show their input and post a completion notice for silent runs.

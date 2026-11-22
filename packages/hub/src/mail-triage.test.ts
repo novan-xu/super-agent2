@@ -78,7 +78,7 @@ it("keeps background review private and delivers only actionable batches with ge
   hub = await startTestHub({
     config: { ...testConfig(folder), mailIntake: true, vapid: generateVapidKeys() },
     clock, appGateway: gateway,
-    mailFilter: async (messages) => messages.map(({ item }) => ({ item, action: "keep", reason: "Review" })),
+    mailFilter: async (messages) => messages.map(({ item }) => ({ item, action: "keep", reason: "Review", kind: "review" })),
     mailPollTicker: (tick) => { tickMail = tick; return () => undefined; },
     mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
   });
@@ -199,9 +199,9 @@ it("filters before review, retries invalid answers and reports failure and recov
     mailFilter: async (messages) => {
       attempt += 1;
       if (attempt === 1) return [];
-      if (attempt === 2) return [{ item: 99999, action: "keep", reason: "Unknown" }];
+      if (attempt === 2) return [{ item: 99999, action: "keep", reason: "Unknown", kind: "review" }];
       if (attempt === 3 || attempt === 4) throw new Error("private mail must not be logged");
-      return messages.map(({ item, subject }) => ({ item, action: subject === "Important" ? "keep" : "ignore", reason: "Test" }));
+      return messages.map(({ item, subject }) => subject === "Important" ? { item, action: "keep", reason: "Test", kind: "review" } : { item, action: "ignore", reason: "Test" });
     },
     mailPollTicker: () => () => undefined,
     mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
@@ -251,4 +251,39 @@ it("starts no brain turn when all mail is ignored", async () => {
   await settledTurn();
   expect(sent.filter((entry) => entry.type === "input")).toHaveLength(0);
   expect(hub.database.connection.prepare("SELECT checked, sender, subject, snippet FROM mail_messages").get()).toEqual({ checked: 1, sender: null, subject: null, snippet: null });
+});
+
+it("merges matching sender and kind within a batch and preserves groups on retry", async () => {
+  collect("one", "Sign-in");
+  collect("two", "Sign-in");
+  collect("three", "Sign-in");
+  collect("four", "Password reset");
+  mails[1] = { ...mails[1]!, from_: "Example <TEST-SENDER@example.com>", email_ts: new Date(clock.now() - 500).toISOString() };
+  hub = await startTestHub({
+    config: { ...testConfig(folder), mailIntake: true }, clock, appGateway: fakeGateway(),
+    mailFilter: async (messages) => messages.map(({ item, subject }) => ({ item, action: "keep", reason: "Security", kind: subject === "Sign-in" ? "sign-in" : "password-reset" })),
+    mailPollTicker: () => () => undefined,
+    mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
+  });
+  const sent: HubToBrain[] = [];
+  const brain = hub.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+  await settledTurn();
+  brain.receive({ type: "hello", protocol: protocolVersion, running: [], mailReview: true });
+  brain.receive({ type: "providers", order: ["gpt"], providers: [{ provider: "gpt", model: "gpt", effort: "high", available: true, until: null }] });
+  tickTriage();
+  await settledTurn();
+  const inputs = () => sent.filter((entry) => entry.type === "input");
+  const envelopes = () => (JSON.parse(inputs().at(-1)!.input.text.split("\n").at(-1)!) as { untrustedMailEnvelopes: { id: number; message_id: string; groupCount: number; groupReceivedFrom: string; groupReceivedTo: string }[] }).untrustedMailEnvelopes;
+  expect(envelopes()).toHaveLength(2);
+  expect(envelopes()).toContainEqual(expect.objectContaining({ message_id: "two", groupCount: 3, groupReceivedFrom: new Date(clock.now() - 1000).toISOString(), groupReceivedTo: new Date(clock.now() - 500).toISOString() }));
+  expect(hub.database.connection.prepare("SELECT checked, sender, subject, snippet FROM mail_messages WHERE message = 'one'").get()).toEqual({ checked: 1, sender: null, subject: null, snippet: null });
+  const input = inputs()[0]!;
+  const scope = { conversation: input.conversation, turn: randomUUID() };
+  brain.receive({ type: "turn.started", ...scope, provider: "gpt", model: "gpt", inputs: [input.input.id] });
+  brain.receive({ type: "turn.finished", ...scope, outcome: "failed", reason: null });
+  tickTriage();
+  clock.advance(60_000);
+  tickTriage();
+  await settledTurn();
+  expect(envelopes()).toContainEqual(expect.objectContaining({ message_id: "two", groupCount: 3 }));
 });
