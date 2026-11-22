@@ -467,6 +467,8 @@ The existing 5 MiB HTML preview limit applies to each delivered page, including 
 
 On a work machine, install the repository dependencies with `pnpm install`, build with `pnpm --filter "@super-agent2/hub..." build`, and sign in to Codex with the linked mail apps available.
 Run `pnpm --filter hub mail-filter-dry-run --days 30 --memory-file /path/to/memory.txt --out /path/to/results.json`.
+For a fixed window, replace `--days 30` with `--since 2026-11-01T00:00:00Z --until 2026-11-16T00:00:00Z`; the start is inclusive and the end is exclusive.
+Each result includes its kind for kept mail and its `merged_into` representative when applicable; `mergedInto` remains available for existing consumers.
 The memory file and output path are optional; without an output path the JSON is written to standard output.
 The totals include mailbox IDs, which can be passed as `--mailbox <id>` to restrict a later run.
 The results contain private mail metadata and should be stored accordingly.

@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { dryRun } from "./mail-filter-dry-run.js";
-import { mailFilterConfig, validateFilter } from "./mail-filter.js";
+import { dryRun, parseWindow } from "./mail-filter-dry-run.js";
+import { mailFilterConfig, mailFilterOutputSchema, validateFilter } from "./mail-filter.js";
 
 it("requires exactly one known decision with a short single-line reason", () => {
   const messages = [{ item: 1, mailbox: "Gmail", sender: "a", subject: "b", snippet: "c" }];
@@ -16,7 +16,7 @@ it("reads every historical page and only returns results", async () => {
     : { emails: [{ id: "2", from_: "b@example.com", subject: "Two", snippet: "s", email_ts: "2026-11-20T00:00:00Z" }] });
   const result = await dryRun({ call, mailboxes: () => [{ id: "gmail", provider: "gmail", label: "Gmail" }] },
     async (messages) => messages.map(({ item }) => ({ item, action: "ignore", reason: "Routine" })),
-    { days: 30, now: Date.parse("2026-11-22T00:00:00Z"), memory: "" });
+    { from: Date.parse("2026-10-23T00:00:00Z"), until: Date.parse("2026-11-22T00:00:00Z"), memory: "" });
   expect(call).toHaveBeenCalledTimes(2);
   expect(call.mock.calls.every(([name]) => name === "gmail.search_emails")).toBe(true);
   expect(result).toMatchObject({ rows: [{ subject: "One" }, { subject: "Two" }], totals: [{ mailbox: "Gmail", kept: 0, ignored: 2 }], filterCalls: 1 });
@@ -38,7 +38,35 @@ it("reports merged representatives and counts in dry runs", async () => {
   ] }));
   const result = await dryRun({ call, mailboxes: () => [{ id: "gmail", provider: "gmail", label: "Gmail" }] },
     async (messages) => messages.map(({ item }) => ({ item, action: "keep", reason: "Alert", kind: "alert" })),
-    { days: 30, now: Date.parse("2026-11-22T00:00:00Z"), memory: "" });
-  expect(result.rows).toMatchObject([{ mergedInto: "2", groupCount: 0 }, { mergedInto: null, groupCount: 2 }]);
+    { from: Date.parse("2026-10-23T00:00:00Z"), until: Date.parse("2026-11-22T00:00:00Z"), memory: "" });
+  expect(result.rows).toMatchObject([{ kind: "alert", mergedInto: "2", merged_into: "2", groupCount: 0 }, { kind: "alert", mergedInto: null, merged_into: null, groupCount: 2 }]);
   expect(result.totals).toMatchObject([{ kept: 2, merged: 1 }]);
+});
+
+it("uses a service-compatible schema while retaining strict decision validation", () => {
+  expect(JSON.stringify(mailFilterOutputSchema)).not.toContain('"oneOf"');
+  const messages = [{ item: 1, mailbox: "Gmail", sender: "a", subject: "b", snippet: "c" }];
+  expect(() => validateFilter({ items: [{ item: 1, action: "ignore", reason: "x", kind: "alert" }] }, messages)).toThrow();
+});
+
+it("parses either relative days or a fixed inclusive-exclusive window", () => {
+  const since = "2026-11-01T00:00:00Z"; const until = "2026-11-02T00:00:00Z";
+  expect(parseWindow(new Map([["--since", since], ["--until", until]]), 0)).toEqual({ from: Date.parse(since), until: Date.parse(until) });
+  expect(parseWindow(new Map([["--days", "1"]]), Date.parse(until))).toEqual({ from: Date.parse(since), until: Date.parse(until) });
+  for (const values of [[ ["--since", since] ], [["--since", until], ["--until", since]], [["--days", "1"], ["--since", since], ["--until", until]], [["--days", "0"]], [["--since", "bad"], ["--until", until]]]) {
+    expect(() => parseWindow(new Map(values as [string, string][]), 0)).toThrow();
+  }
+});
+
+it("includes the start and excludes the end of a fixed window", async () => {
+  const call = vi.fn(async (_name: string, _args: Record<string, unknown>) => ({ emails: [
+    { id: "before", from_: "a@example.com", email_ts: "2026-10-31T23:59:59Z" },
+    { id: "start", from_: "a@example.com", email_ts: "2026-11-01T00:00:00Z" },
+    { id: "end", from_: "a@example.com", email_ts: "2026-11-02T00:00:00Z" },
+  ] }));
+  const result = await dryRun({ call, mailboxes: () => [{ id: "gmail", provider: "gmail", label: "Gmail" }] },
+    async (messages) => messages.map(({ item }) => ({ item, action: "ignore", reason: "Routine" })),
+    { from: Date.parse("2026-11-01T00:00:00Z"), until: Date.parse("2026-11-02T00:00:00Z"), memory: "" });
+  expect(result.rows.map((row) => row.messageId)).toEqual(["start"]);
+  expect(call.mock.calls[0]?.[1]).toMatchObject({ query: expect.stringContaining(`after:${Date.parse("2026-11-01T00:00:00Z") / 1000 - 1}`) });
 });

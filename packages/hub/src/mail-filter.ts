@@ -15,10 +15,12 @@ export interface FilterEnvelope {
   readonly snippet: string;
 }
 const reason = z.string().min(1).max(300).refine((s) => s.trim().length > 0 && !/[\r\n\u2028\u2029]/u.test(s));
-const Decision = z.discriminatedUnion("action", [
+const variants = [
   z.strictObject({ item: z.number().int().positive(), action: z.literal("keep"), reason, kind: z.string().max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u) }),
   z.strictObject({ item: z.number().int().positive(), action: z.literal("ignore"), reason }),
-]);
+] as const;
+const Decision = z.discriminatedUnion("action", variants);
+export const mailFilterOutputSchema = z.toJSONSchema(z.strictObject({ items: z.array(z.union(variants)) }), { io: "input" });
 const Answer = z.strictObject({ items: z.array(Decision) });
 export type FilterDecision = z.infer<typeof Decision>;
 export type MailFilter = (messages: readonly FilterEnvelope[], memory: string) => Promise<FilterDecision[]>;
@@ -94,7 +96,7 @@ export function codexMailFilter(cwd: string, environment: Readonly<Record<string
       try {
         await client.request("turn/start", { threadId: thread.thread.id, model: mailFilterConfig.model, effort: mailFilterConfig.effort,
           input: [{ type: "text", text: `${mailFilterConfig.instructions}\n${JSON.stringify({ confirmedMemory: memory, untrustedMail: messages })}`, text_elements: [] }],
-          outputSchema: z.toJSONSchema(Answer, { io: "input" }),
+          outputSchema: mailFilterOutputSchema,
         }, 30_000);
         return validateFilter(JSON.parse(await done) as unknown, messages);
       } finally { clearTimeout(timer); }
