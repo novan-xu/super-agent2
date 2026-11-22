@@ -119,7 +119,7 @@ A worker does the same, decided by the hub.
   Old topic links resolve to that destination, and its next turn gets the combined history through the seed.
   The destination keeps its repository when the owner combines topics across projects.
   The System topic can receive a merge and keeps its own address.
-- A topic automatically archives after 24 hours without a new owner message, brain answer or ticket notice, once it has no running or queued turn.
+- A topic automatically archives after two hours without a new owner message, brain answer or ticket notice, once it has no running or queued turn.
   The hub checks idle topics every minute or at the configured age if shorter.
   Set `HUB_TOPIC_ARCHIVE_MS` to change the age.
   System is exempt.
@@ -192,6 +192,7 @@ A worker does the same, decided by the hub.
 - A move or handover changes where the original message belongs and queues it at the destination.
   Pending work on that message is removed from the source.
   If the source is answering it, that turn is interrupted before the destination handles it.
+  The hub archives the source after the move or interrupted turn if it has no owner messages, running turns, queued input or open tickets.
   Earlier replies stay in their source topic and completed work is kept.
 
 ### Session lifecycle
