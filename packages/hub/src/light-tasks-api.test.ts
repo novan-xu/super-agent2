@@ -444,6 +444,31 @@ describe("light tasks", () => {
     expect(await preview.text()).toBe(savedHtml);
   });
 
+  it("delivers duplicate UTF-8 article names separately and serves downloads and previews", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const ticket = await agreed(link, topic, article);
+    const name = "文章：标题.html";
+    replyArticle = (_request, response) => response.writeHead(200, {
+      "content-type": "text/html",
+      "content-disposition": `inline; filename="fallback.html"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    }).end(savedHtml);
+    run.show(ticket.id, 1, { kind: "delivered", products: [product, otherProduct], text: null, report, files: [] });
+    const names = [name, "文章：标题 (2).html"];
+    await expect.poll(() => entries(topic).at(-1), { timeout: 5_000 }).toMatchObject({ files: names.map((fileName) => ({ name: fileName })) });
+    for (const fileName of names) {
+      const path = `/api/tickets/${ticket.id}/files/${encodeURIComponent(fileName)}`;
+      const response = await get(path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toBe(`attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      expect(await response.text()).toBe(savedHtml);
+      const preview = await get(`${path}/render`);
+      expect(preview.status).toBe(200);
+      expect(await preview.text()).toBe(savedHtml);
+    }
+  });
+
   it("ends a failed article fetch through the light-task retry flow without delivering a partial result", async () => {
     const { link, inputs } = connectBrain();
     const run = connectRunner();
