@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "mail-filter-dry-run": "node dist/mail-filter-dry-run.js"
+    "mail-filter-dry-run": "node dist/mail-filter-dry-run.js",
+    "voice:smoke": "node dist/voice-smoke-cli.js"
   },
   "dependencies": {
     "@super-agent2/catalog": "workspace:*",

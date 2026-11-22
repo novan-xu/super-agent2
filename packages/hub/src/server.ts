@@ -34,6 +34,7 @@ import {
   streamLargestPage,
   streamPageSize,
   streamPath,
+  voicePath,
   streamPreviewPath,
   topicInScope,
   TopicRename,
@@ -125,6 +126,9 @@ import { InboxMessage, InboxName, type Inbox } from "./inbox.js";
 import { isJson, parseJson, readBody } from "./http-json.js";
 
 export const healthPath = "/health";
+import { voiceRequest } from "./voice-api.js";
+import type { VoiceService } from "./voice.js";
+
 export const sessionPath = "/api/session";
 export const socketPath = "/ws";
 export const commandsPath = "/api/commands";
@@ -206,6 +210,7 @@ export interface HubServerOptions {
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
   readonly conversations?: ConversationService;
+  readonly voice?: VoiceService;
   readonly tools?: ToolServer;
   readonly brainToken?: BrainTokenCheck;
   readonly page?: PageFiles;
@@ -281,7 +286,8 @@ type Body =
   | ScheduleHistory
   | SettingsSnapshot
   | MachineAdded
-  | MachineRevoked;
+  | MachineRevoked
+  | Awaited<ReturnType<typeof voiceRequest>>["body"];
 
 function sendJson(response: ServerResponse, status: number, body: Body, headOnly = false): void {
   const text = JSON.stringify(body);
@@ -558,6 +564,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (declaresTooLarge(request)) {
       refuseTooLarge(request, response);
+      return;
+    }
+    if (path === voicePath || path.startsWith(`${voicePath}/`)) {
+      if (identity.kind !== "person") {
+        request.resume();
+        sendJson(response, 403, { error: "forbidden" });
+        return;
+      }
+      const result = await voiceRequest(options.voice, identity.subject, method, path, request);
+      sendJson(response, result.status, result.body);
       return;
     }
     if (path === sessionPath && method === "GET") {

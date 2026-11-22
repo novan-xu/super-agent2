@@ -1,3 +1,4 @@
+import { createVoice } from "./voice.js";
 import { codexMailFilter, type MailFilter } from "./mail-filter.js";
 import { extraMcpFromEnvironment } from "./extra-mcp.js";
 import { createModelDiscovery } from "./model-discovery.js";
@@ -78,6 +79,7 @@ export interface HubOptions {
   readonly adjustSubscriptions?: SubscriptionAdjustment;
   readonly forgeFetch?: Fetch;
   readonly gitHubBase?: string;
+  readonly liveFetch?: typeof fetch;
   readonly verificationTicker?: Ticker;
   readonly workTicker?: Ticker;
   readonly workSchedule?: (drain: () => void) => void;
@@ -460,6 +462,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       settings,
       admin,
       repositories,
+      voice: createVoice({
+        clock, conversations, topics: conversations.topics, repositories, credentials,
+        fetch: options.forgeFetch ?? fetch, base: options.gitHubBase,
+        apiKey: environment.OPENAI_API_KEY, model: environment.HUB_VOICE_DELEGATION_MODEL?.trim() || undefined,
+        liveFetch: options.liveFetch,
+      }),
       refreshRepositories: repositoryDiscovery.refresh,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,

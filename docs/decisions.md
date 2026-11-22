@@ -3796,3 +3796,23 @@ Other options were routing a path through the existing hub listener or issuing C
 The hub keeps acceptance receipts for seven days and counts new receipts against a rolling limit of 60 per minute per source.
 It requires an idempotency key to link retries to the original acceptance so a restart or lost response cannot duplicate the request or reset the rate window.
 Other options were keeping receipts indefinitely or adopting the inbox's per-process rate limit.
+
+## GPT-Live voice calls (#289)
+
+- **Chosen:** Exchange the browser's SDP through the owner-only hub endpoint using GPT-Live's `POST /v1/live/sessions`.
+  The browser sends media directly to OpenAI over WebRTC and uses only the hub for signaling and permitted tools.
+- **Why:** The documented GPT-Live API negotiates WebRTC through session creation; the ephemeral client-secret example uses the separate Realtime API.
+- **Other options:** Use the Realtime API's client secrets and change the voice model and delegation protocol.
+
+- **Chosen:** Let GPT-Live read back the key points and wait for spoken agreement before proposing a summary.
+  Require the owner to confirm the exact pending summary in the page before routing it.
+  Route the summary in the scope where the call started, and attach the transcript as reference for the brain and as a collapsed section in the conversation.
+- **Why:** The hub can enforce an explicit owner action independently of how GPT-Live interprets speech or tool results.
+  The router uses the agreed summary so the full transcript does not dominate topic selection.
+- **Other options:** Accept the model's interpretation of spoken agreement as the only authorization, or make the composer route the entire transcript.
+
+- **Chosen:** Keep unsubmitted transcripts in the page and seed a replacement call with only the most recent excerpt.
+  Leave voice billing in OpenAI's usage dashboard.
+- **Why:** Reconnect can preserve context without persisting unfinished calls.
+  The existing settings view shows brain program usage and has no voice-duration dimension.
+- **Other options:** Persist unfinished calls on the hub, or add a dedicated voice usage data model and settings view.
