@@ -217,7 +217,7 @@ const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) })
 const ticketCodeSchema = (what: string) => ({
   type: "string",
   pattern: ticketReferencePattern,
-  description: `${what}. Use a code such as AA for the newest match or AA-2026-11-19 for an exact ticket.`,
+  description: what,
 });
 
 const generatedSchema = (what: string) => ({
@@ -297,16 +297,12 @@ function loopDefinitions() {
     {
       name: "guide_ticket",
       title: "Guide a failed ticket's worker into another round",
-      description: [
-        `When the hub tells you a ticket failed (a red workflow, a worker that ended without a pull request, a task worker that handed back that its task failed, a worker that crashed or was lost), read the failure and write guidance for its worker: what failed and why, and what to change. The worker then tries again, on the same branch or in the same folders, resuming its session where it can. That is one guided round. After ${roundCap} guided rounds without passing, the hub stops the ticket for the owner, and this tool refuses it; nothing you call can start a ${roundCap + 1}th round or lower the count.`,
-        "A failure of the machine (lost, prepare) starts a retry that is not counted, once in a row.",
-        "Refused for a ticket whose worker still runs (use message_worker), for a ticket with nothing failed, and for a ticket stopped for the owner.",
-      ].join(" "),
+      description: "Retry a failed ticket with guidance. Use message_worker while its worker is still running.",
       inputSchema: {
         type: "object",
         properties: {
           ticket: ticketCodeSchema("The failed ticket"),
-          guidance: generatedSchema("guidance to the worker: what failed and why, and what to change; the worker gets the English, the owner sees the Chinese in the ticket's timeline"),
+          guidance: generatedSchema("guidance to the worker"),
         },
         required: ["ticket", "guidance"],
         additionalProperties: false,
@@ -315,8 +311,7 @@ function loopDefinitions() {
     {
       name: "describe_stuck",
       title: "Say where a stopped ticket is stuck",
-      description:
-        "For a ticket the hub stopped for the owner at the retry cap: say in a few sentences where it is stuck, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the ticket's card in 等你. It does not resume the ticket; only the owner does, on the card.",
+      description: "Record the diagnosis of a ticket stuck at the retry cap for the owner's card.",
       inputSchema: {
         type: "object",
         properties: {
@@ -349,11 +344,7 @@ function verificationDefinitions() {
     {
       name: "merge_ticket",
       title: "Merge a ticket with the verification rules skipped",
-      description: [
-        "Merge the pull request of a ticket in verifying now, skipping the verification rules. Use it only when the owner asked for the rules to be skipped.",
-        "The pull request's current head is merged once, as an ordinary merge: the issues it closes are closed. When that closes the last open issue of the chain, the ticket is merged: its worktree is removed, the tickets that wait for it begin, and you are told whether the change needs deploying. Otherwise its worker continues with the open issues, and the rules apply again to its next pull request.",
-        "A conflict with the default branch still goes back to the worker; once it hands back again the rules apply, and you call this again if the owner still wants them skipped.",
-      ].join(" "),
+      description: "Skip verification for one verifying pull request only when the owner asks. A merge conflict still goes back to the worker.",
       inputSchema: {
         type: "object",
         properties: {
@@ -394,7 +385,7 @@ function defaultsDefinitions() {
     {
       name: "set_engine_row",
       title: "Change one start-defaults row",
-      description: "Change one engine row only after the owner agrees in this conversation. Changed model and effort pairs must be offered by an online machine.",
+      description: "Change one engine row after owner agreement in this conversation. Use model and effort pairs offered by an online machine.",
       inputSchema: {
         type: "object",
         properties: {
@@ -411,24 +402,22 @@ function defaultsDefinitions() {
     {
       name: "read_allowance",
       title: "Read provider allowances",
-      description:
-        "Read the latest GPT and Claude subscription allowances, the Antigravity Gemini Models quota and the DeepSeek balance from the runners. See which worker programs reported themselves unavailable and which work machines are online with their programs and free slots.",
+      description: "Read subscription quotas, DeepSeek balance, unavailable providers and online worker capacity.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
       name: "recheck_machines",
       title: "Recheck worker programs",
-      description: "Ask one machine or all machines to probe their worker programs again, then return their versions, model counts and problems. Offline or unresponsive machines are reported.",
+      description: "Reprobe worker programs on the named machine or all machines. Report offline machines and timeouts to the owner.",
       inputSchema: { type: "object", properties: { machine: { type: "string", minLength: 1 } }, additionalProperties: false },
     },
     {
       name: "choose_defaults",
       title: "State each chain's kind, difficulty and platform",
       description: [
-        "For each chain you arranged and each pending task ticket you opened, state its kind, difficulty and platform (macos, windows or any). Give each issue's difficulty when a chain has issues. The chain takes the highest one. Give a one-line reason for the difficulty in English with a Chinese copy for the owner's card.",
-        "Difficulty: mechanical is a fixed procedure with a known result; standard is bounded implementation or diagnosis; complex is reasoning across modules, state or concurrency changes, or an open design decision.",
-        "The hub defaults to the first available provider in the owner's worker order in Settings. Writing tries Antigravity first. The hub chooses the machine using the platform, the runner offers and the free slots, and chooses the model and effort from its table by engine and difficulty. A deployment uses its designated machine.",
-        "These are defaults: the owner can change the machine, engine, model and effort on the card, and the owner's choice wins. Rearranging a chain's issues clears what was stated for it; state it again.",
+        "Give each issue's difficulty for code chains and one difficulty for a task.",
+        "Use mechanical for fixed procedures, standard for bounded work, and complex for cross-module, state, concurrency or open design work.",
+        "Writing defaults to Antigravity. Other work follows the owner's worker order.",
       ].join(" "),
       inputSchema: {
         type: "object",
@@ -443,7 +432,7 @@ function defaultsDefinitions() {
                 kind: {
                   type: "string",
                   enum: [...ticketKinds],
-                  description: "For a code ticket: parameter (a value, constant or copy change with no logic change), fix, feature, refactor, maintenance (dependencies and CI). For a task ticket: writing (prose with nothing to do with code) or operation (anything done on a machine)",
+                  description: "Code kinds include parameter for copy or value changes without logic, and maintenance for dependencies or CI. Task kinds are writing and operation.",
                 },
                 issues: {
                   type: "array",
@@ -458,7 +447,7 @@ function defaultsDefinitions() {
                   },
                   description: "Every issue of the chain with its difficulty",
                 },
-                difficulty: { type: "string", enum: [...difficulties], description: "For a task ticket, which has no issues: its difficulty (standard when omitted for writing, whose model does not depend on it)" },
+                difficulty: { type: "string", enum: [...difficulties], description: "Task difficulty, defaulting to standard for writing" },
                 reason: generatedSchema("one-line reason for the chain's difficulty"),
                 platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
               },
@@ -489,13 +478,9 @@ function chainDefinitions() {
       name: "arrange_chains",
       title: "Arrange pending tickets into chains",
       description: [
-        "State the chains and the order between them, over issues whose tickets are pending (not started). Each chain becomes one ticket: its issues, worked on in the order given, handed once to one worker, which opens as many pull requests for them as it sees fit; the hub merges each one and gives the worker the rest, and the chain is merged when every issue of it is closed.",
-        "Put on one chain the issues that depend on one another, and the issues that touch the same code and so cannot be worked on at the same time. Independent issues go on separate chains, which run in parallel.",
-        "Cut a chain where the next issue is in another repository, needs another platform, or needs the earlier work merged (or merged and deployed) first: the issues after the cut are a chain of their own whose `after` names the earlier chain, and it begins by itself once that has merged (and, with after_deployment, once a task ticket that deploys it is done, or you record the deployment with report_deployment). A chain may also come after a task ticket, such as the deployment, by its code: it begins once that ticket is done.",
-        "`after` names other chains of this call by name, or tickets by code (use a dated code if a chain name matches a bare code); a ticket that has already started can be named, which is how later work follows a started chain. A started chain is closed: its issues cannot be arranged again. A task ticket arranged after a chain you rearrange follows the chains its issues went to.",
-        "Every issue of a pending ticket you touch must be named. A chain of several issues needs its own title and summary in English and Chinese; a chain that keeps one ticket's issues keeps that ticket's title. Tickets whose issues all went to other chains are closed as joined.",
-        "The whole arrangement is checked first: one that has a cycle, or names an issue or ticket that does not exist, is refused and nothing changes. Calling it again with a new arrangement rearranges.",
-        "Only the owner starts a chain, with 开始 on its card in 工作台; you cannot start one.",
+        "Include every issue of each pending ticket you rearrange.",
+        "Give a multi-issue chain a bilingual title and summary. A chain keeping one ticket's issues can keep its title and summary.",
+        "Fix refused arrangements before retrying.",
       ].join(" "),
       inputSchema: {
         type: "object",
@@ -512,9 +497,9 @@ function chainDefinitions() {
                 after: {
                   type: "array",
                   items: { type: "string" },
-                  description: "What must merge, or be done, before this chain begins: chain names of this call, or ticket codes such as AA or AA-2026-11-19",
+                  description: "Chain names in this call or existing ticket codes, including started tickets. Use a dated code to avoid a name collision.",
                 },
-                after_deployment: { type: "boolean", description: "Also wait until the earlier work is deployed: a task ticket that deploys it is done, or you record it with report_deployment" },
+                after_deployment: { type: "boolean", description: "Also wait for the earlier work to be deployed" },
                 title: generatedSchema("chain title"),
                 summary: generatedSchema("one or two sentence chain summary"),
                 kind: { type: "string", enum: [...codeKinds], description: "The chain's kind, if not its first ticket's" },
@@ -532,8 +517,7 @@ function chainDefinitions() {
     {
       name: "report_deployment",
       title: "Record merged work as deployed",
-      description:
-        "Record that the merged work of a code ticket is deployed by other means than a task ticket that deploys it (which marks what it deploys by itself): the owner deployed it by hand, say. Tickets arranged to wait for its deployment begin by themselves once everything else they wait for has merged.",
+      description: "Mark merged work deployed after a deployment outside a deployment task. This satisfies deployment dependencies.",
       inputSchema: {
         type: "object",
         properties: { ticket: ticketCodeSchema("The merged ticket whose work is deployed") },
@@ -544,8 +528,7 @@ function chainDefinitions() {
     {
       name: "proceed_ticket",
       title: "Let a waiting ticket go ahead",
-      description:
-        "A ticket the owner started waits for others to merge or be done. When one of those stops, you are told, and decide: stop the waiting ticket with stop_ticket, or let it go ahead with this tool, which drops its wait on every stopped ticket; it then begins once what it still waits for has merged or is done.",
+      description: "Drop all stopped prerequisites of a waiting ticket. Other prerequisites still apply.",
       inputSchema: {
         type: "object",
         properties: { ticket: ticketCodeSchema("The waiting ticket") },
@@ -590,21 +573,15 @@ function ticketDefinitions() {
     {
       name: "file_issue",
       title: "File an issue and open its ticket",
-      description: [
-        "Create a GitHub issue in a repository, as the account that owns it, and open a pending ticket for it.",
-        "Usually one issue per piece of work. Write the title and body in English so the issue stands alone: the worker knows only its issues and the repository. The body is a fairly complete plan in advising language (suggested, recommended), with firm wording only for what the owner explicitly required. Record what you decided on the owner's behalf with record_decision against the ticket this opens.",
-        "The title and the summary also carry a Chinese copy, which is what the owner sees.",
-        "Calling it again with the same repository, title and body after a failure does not create a second issue: an issue already there is used.",
-        "This is a shortcut over run_command with gh; anything it does not cover can still be done that way, and open_ticket makes a ticket for an issue filed otherwise. A code ticket is for repository work that ends in pull requests; anything else a worker does on a machine is a task ticket (open_task_ticket).",
-      ].join(" "),
+      description: "Create a GitHub issue and pending ticket. On partial failure retry with the same arguments to reuse the issue.",
       inputSchema: {
         type: "object",
         properties: {
           repository: { type: "string", description: "The repository as owner/name" },
           title: generatedSchema("issue title"),
           summary: generatedSchema("one or two sentence summary"),
-          body: { type: "string", description: "The issue body in English Markdown, a plan: background, goal, a suggested approach, what is in and out of scope, open points each with a recommended option, and what done means" },
-          kind: { type: "string", enum: [...codeKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
+          body: { type: "string", description: "Issue plan in English Markdown" },
+          kind: { type: "string", enum: [...codeKinds] },
           ...startChoices,
         },
         required: ["repository", "title", "summary", "body", "kind"],
@@ -614,8 +591,7 @@ function ticketDefinitions() {
     {
       name: "open_ticket",
       title: "Open a ticket for an existing issue",
-      description:
-        "Open a pending ticket for an issue that already exists on GitHub, for example one filed with gh through run_command. The English title is read from GitHub. If the issue already has a ticket that has not stopped, that ticket is returned.",
+      description: "Open or reuse a ticket for a GitHub issue. The English title comes from GitHub.",
       inputSchema: {
         type: "object",
         properties: {
@@ -623,7 +599,7 @@ function ticketDefinitions() {
           issue: { type: "integer", minimum: 1, description: "The issue number" },
           title_zh: { type: "string", description: "The issue title in Simplified Chinese, for the owner" },
           summary: generatedSchema("one or two sentence summary"),
-          kind: { type: "string", enum: [...codeKinds], description: "parameter: a value, constant or copy change with no logic change; maintenance: dependencies and CI" },
+          kind: { type: "string", enum: [...codeKinds] },
           ...startChoices,
         },
         required: ["repository", "issue", "title_zh", "summary", "kind"],
@@ -633,31 +609,20 @@ function ticketDefinitions() {
     {
       name: "open_task_ticket",
       title: "Open a task ticket",
-      description: [
-        "Open a pending task ticket: anything a worker does on a work machine that is not a code ticket's pull requests. Prose (a translation, an article, an email, a summary), an operation on a machine (deploying a repository, running a script, setting something up, checking something there), and anything else in words. A worker does it on a machine, in a scratch folder, and hands back an outcome (done or failed), a report, and any text and files; repository-less tasks and their results appear in daily, and repository tasks remain in their repository. Nothing is verified. A task ticket whose worker hands back failed goes through the failure loop like any failed work.",
-        "Decide by purpose and substance, never by file type. A README, developer documentation, code comments, a changelog or release notes for a repository, and the translation of engineering documents (specifications, design documents, API references) are code work: file an issue for them with file_issue. A text file is not code work just because it is a file, and a document is not prose just because it is long.",
-        "kind is writing for prose with nothing to do with code, which Antigravity does by default, or operation for anything done on a machine, which a code engine does by default.",
-        "Give the task in English, with a Chinese title and summary for the owner: what to do, the result wanted, what done means, and anything the owner said that matters. The worker knows only this task, the material and, when one is named, the repository; not this conversation.",
-        "Give the material in `material`: for each piece, its name (a plain file name), where it comes from (`source`), and its text when you have it, verbatim; a piece without `text` is described by its source only. A file the owner attached in this conversation is passed on as the file itself, by its attachment id in `attachment`, with a name that keeps its extension.",
-        `When the task needs a repository (a deployment, a script that lives in it), name it in \`repository\`, and the worker gets a checkout of it beside its scratch folder, at \`commit\`: a SHA, a branch (its head when the work begins), or "${mergedCommit}", the final merge commit of the code chain of that repository this ticket comes \`after\`, filled in by the hub when the work begins. Without \`commit\`, the default branch's head when the work begins.`,
-        "When a task concerns a repository but needs no checkout, name it in project and leave repository empty. File it in that repository's topic or a daily topic that can move there. Use project for work such as managing secrets or checking service configuration.",
-        `With \`deploy\` true the task is to deploy the repository by its ${deploymentFile} (where it runs, how to deploy, how to check health, how to roll back): the hub reads the file on the default branch and runs the ticket only on the machine it names; the worker deploys, checks health, rolls back when the new version does not come up, and reports what happened. Opened after a code chain of that repository, its commit is "${mergedCommit}" unless you name another.`,
-        "`after` names tickets this one waits for, by code: it begins by itself once they have merged or are done. Arranged after a chain that is not started yet, the owner's one 开始 on that chain starts both, and the work begins when the chain has merged. Arranged after a ticket already started, it waits for its own 开始.",
-        "Afterwards state its defaults with choose_defaults (kind writing or operation), as for any ticket. The owner starts it; you cannot start it.",
-      ].join(" "),
+      description: "Open a visible worker task in scratch, optionally with a checkout or deployment.",
       inputSchema: {
         type: "object",
         properties: {
           title: generatedSchema("ticket title"),
           summary: generatedSchema("one or two sentence summary"),
-          task: { type: "string", description: "What to do, in English: the work, the result wanted and what done means, anything the owner said that matters" },
-          kind: { type: "string", enum: [...taskKinds], description: "writing: prose with nothing to do with code; operation: anything done on a machine" },
+          task: { type: "string", description: "Standalone work instructions in English" },
+          kind: { type: "string", enum: [...taskKinds] },
           material: materialSchema,
           repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
           project: { type: "string", description: "The related repository as owner/name, when the task needs no checkout" },
-          commit: { type: "string", description: `The commit of the checkout: a SHA, a branch, or "${mergedCommit}" for the final merge commit of the code chain it comes after` },
+          commit: { type: "string", description: `SHA, branch, or "${mergedCommit}" for the preceding chain's final merge commit. If omitted, use the default branch at start, or "${mergedCommit}" for a deployment after its code chain.` },
           deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
-          after: { type: "array", items: ticketCodeSchema("A ticket this one waits for") },
+          after: { type: "array", items: ticketCodeSchema("Ticket to wait for until merged or done. A dependency already started does not authorize this task.") },
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
         },
@@ -668,7 +633,7 @@ function ticketDefinitions() {
     {
       name: "start_light_task",
       title: "Start an everyday task",
-      description: "Start work that needs no checkout, code change or deployment when the owner request is understood. Ask an ordinary question first if unclear. The task stays in its current topic without assigning a repository. Use a daily topic with or without a project label. In a repository topic, project must match the topic repository. The hub uses the owner's worker order in Settings, with Antigravity first for writing. For Agent_wring articles use kind writing and mode agent_wring. The worker authors and saves the HTML, and the hub delivers the saved HTML files with the task title. For standalone ingestion, polling or saving without writing use kind operation and mode agent_wring. Use ownerEngine only when the owner explicitly selected a provider. Code changes, deployments and explicit requests to open a ticket use the regular tools.",
+      description: "Start a light worker task in this topic. Writing tries Antigravity first, then the configured worker order.",
       inputSchema: {
         type: "object",
         properties: {
@@ -677,7 +642,7 @@ function ticketDefinitions() {
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
           project: { type: "string", description: "The related repository as owner/name, used as a task label" },
-          mode: { type: "string", enum: LightTaskMode.options, description: "Use agent_wring for Agent_wring ingestion, polling, saving, or article writing. Otherwise use transfer." },
+          mode: { type: "string", enum: LightTaskMode.options, description: "Defaults to transfer" },
           material: materialSchema,
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
@@ -691,7 +656,7 @@ function ticketDefinitions() {
     {
       name: "answer_light_task",
       title: "Relay the owner's answer to a light-task worker",
-      description: "When the owner answers a waiting worker's question in this topic, relay their original message and any attachments. Use the internal reference supplied with that question. Stop requests use stop_ticket.",
+      description: "Relay the owner's original answer and attachments to the waiting light-task worker.",
       inputSchema: { type: "object", properties: { ticket: ticketCodeSchema("The internal light task reference") }, required: ["ticket"], additionalProperties: false },
     },
     {
@@ -710,7 +675,7 @@ function ticketDefinitions() {
     {
       name: "read_ticket",
       title: "Read a ticket",
-      description: "Read a ticket and remember its current version for this topic. Use this before making changes to the ticket. Shows its issues, state, choices, branch, pull request, dependencies, history, and decisions with the owner's reviews.",
+      description: "Read ticket details, including progress, verification wait and reviewed decisions.",
       inputSchema: {
         type: "object",
         properties: { ticket: ticketCodeSchema("The ticket code") },
@@ -721,8 +686,7 @@ function ticketDefinitions() {
     {
       name: "message_worker",
       title: "Send a message to a ticket's worker",
-      description:
-        "Send a message to the worker running a ticket, in English. It reaches the worker in the middle of its work (or as its next turn when its program cannot take a message mid-turn). Use it to correct or guide a worker; the owner can do the same from the page.",
+      description: "Send a correction, guidance or attachments to a running worker.",
       inputSchema: {
         type: "object",
         properties: {
@@ -731,7 +695,7 @@ function ticketDefinitions() {
           attachments: {
             type: "array",
             items: { type: "string", description: "An attachment id" },
-            description: "Files the owner attached in this conversation to pass on to the worker, by their attachment ids; each reaches the worker's machine as the file itself",
+            description: "Owner attachment IDs",
           },
         },
         required: ["ticket", "text"],
@@ -741,11 +705,7 @@ function ticketDefinitions() {
     {
       name: "record_decision",
       title: "Record a decision made on the owner's behalf",
-      description: [
-        "Record, against a ticket, something you chose on the owner's behalf where the owner might have chosen differently: an assumption you made when filing its issues or task, what you told its worker in a guided round or a message, how you arranged, cut or joined the work. The test is whether the owner would have wanted to be asked.",
-        "The record lives in the hub, not in this conversation, so a new conversation or another model loses nothing. The owner sees each decision on the ticket's page, with 可以 and a box for an opinion; it is listed in the ticket's end report (merged, done, stuck or stopped); and once the owner has gone through the ticket's decisions, every opinion comes back to you in one message. Nothing waits on the review.",
-        "You can record at any time, in any state of the ticket. The same decision recorded twice is kept once. Workers record their own decisions when they hand in; do not record those again.",
-      ].join(" "),
+      description: "Record a choice for the owner's later review in any ticket state.",
       inputSchema: {
         type: "object",
         properties: {
@@ -761,7 +721,7 @@ function ticketDefinitions() {
     {
       name: "stop_ticket",
       title: "Stop a ticket",
-      description: "Stop an open ticket and record why. A stopped ticket does not start again; if the owner later wants its work finished, open_repair_ticket opens a new ticket that continues it.",
+      description: "Stop an open ticket and record why.",
       inputSchema: {
         type: "object",
         properties: {
@@ -775,12 +735,7 @@ function ticketDefinitions() {
     {
       name: "open_repair_ticket",
       title: "Open a repair ticket for a stopped ticket",
-      description: [
-        "Open a pending repair ticket that carries on the work a stopped ticket left, when the owner asks for that in conversation: the work of a ticket the owner stopped, or one you stopped, and that they now want finished.",
-        "For a code ticket the repair holds the issues still open and continues on the same branch (its worker hands in the open pull request again, or a new one); what is merged stays merged. For a task ticket it is the same task. The repair keeps the kind, difficulty, platform and repository; what waited for the stopped ticket waits for the repair; its worker is given what the earlier workers did and what failed.",
-        "Refused when the ticket has not stopped (a stuck ticket is the owner's to decide on its card, where giving it up opens a repair by itself), when it was joined into another ticket, when it already has a repair (repair that one instead, if it stopped too), or when nothing remains.",
-        "Afterwards state its defaults with choose_defaults, as for any ticket. The owner starts it; you cannot start it.",
-      ].join(" "),
+      description: "Open a pending repair for stopped work with a remainder. Repair the latest stopped ticket in its lineage. The owner handles stuck tickets on their card.",
       inputSchema: {
         type: "object",
         properties: { ticket: ticketCodeSchema("The stopped ticket whose work should go on") },
@@ -795,12 +750,17 @@ function scheduleDefinitions() {
   return [
     {
       name: "propose_schedule",
-      description: "Show a short Chinese confirmation with the schedule's work, trigger or timing, and scope. Write the instruction in English. Use recurrence.cron for five numeric cron fields in the hub time zone, recurrence.at for an epoch timestamp in milliseconds, or recurrence.trigger for the registered service name the owner wants to trigger the work. Supply schedule to propose replacing an existing plan. End the turn and wait for the owner's agreement in this topic.",
+      description: [
+        "Read list_schedules first for existing plans and the hub time zone.",
+        "Write the run's scope and limits in English. In the Chinese confirmation, state what runs, where, and when or from which service.",
+        "Use a five-field numeric cron in hub time, an epoch timestamp in milliseconds, or a registered service name. Pass schedule to revise a plan.",
+        "End the turn after proposing.",
+      ].join(" "),
       inputSchema: z.toJSONSchema(ScheduleProposalArguments, { io: "input" }),
     },
     {
       name: "create_schedule",
-      description: "Activate the current proposed schedule or save its proposed revision after the owner explicitly agrees in a newer message in this topic within 24 hours. This confirmation covers all of its future runs.",
+      description: "Activate a proposal after explicit owner agreement in a newer message in this topic within 24 hours. Propose again if scope changed or it expired.",
       inputSchema: z.toJSONSchema(ScheduleConfirmArguments, { io: "input" }),
     },
     {
@@ -815,7 +775,7 @@ function scheduleDefinitions() {
     })),
     {
       name: "run_scheduled_light_task",
-      description: "Open a quiet light task in the current confirmed scheduled run. Scope, instructions and the project label work like start_light_task. The hub starts it after the turn and publishes the result in the same topic without assigning a repository.",
+      description: "Stage a light task in the current scheduled run with the same task inputs as start_light_task.",
       inputSchema: z.toJSONSchema(ScheduledLightArguments, { io: "input" }),
     },
   ];
@@ -904,12 +864,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "run_command",
         title: "Run a shell command",
-        description: [
-          "Run a shell command in the hub's own container on the NAS, with the owner's credentials, and wait until it ends.",
-          "It is the only place a command of yours runs: nothing runs on the NAS host, and nothing on a work machine. Use a worker for work on a machine. Use light tasks for everyday work in 日常 or repository operations that need no checkout, code change or deployment. Use regular tickets for the other work or when the owner asks for a ticket.",
-          `The chosen GitHub account's token is in GH_TOKEN and GITHUB_TOKEN (default ${defaultGitHubAccount}).`,
-          "A command that cannot be undone is held until the owner confirms it; the answer then says so, and the outcome is told later.",
-        ].join(" "),
+        description: `Run a command and wait for its result in the hub container. gh uses the selected account's GH_TOKEN (default ${defaultGitHubAccount}).`,
         inputSchema: {
           type: "object",
           properties: {
@@ -950,7 +905,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "read_quote",
         title: "Read a quoted message",
-        description: "Read a quote referenced by an owner message in this topic. Start at offset 0 and use each returned next offset until it is null.",
+        description: "Read an owner message's quote in this topic using the returned offsets.",
         inputSchema: {
           type: "object",
           properties: { id: { type: "string" }, offset: { type: "integer", minimum: 0, default: 0 } },
@@ -961,25 +916,25 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "set_topic_repository",
         title: "Set the repository for this topic",
-        description: "Move a daily or pending code topic into a repository, or pass null to move a topic back to daily. Code and task tickets must be compatible with the destination. Light tasks do not restrict the move. Supply a topic ID to move another topic at the owner's request.",
+        description: "Assign a compatible daily or pending code topic to a repository. Pass null for daily. Light tasks do not constrain the move. Supply another topic ID only at the owner's request.",
         inputSchema: z.toJSONSchema(AssignRepositoryArguments, { io: "input" }),
       },
       {
         name: "set_topic_title",
         title: "Set the title of this topic",
-        description: "Propose a descriptive title in the owner's language for this topic. It takes effect when the turn completes. Owner titles are protected. Use up to 20 Chinese or 40 Latin characters on one line.",
+        description: "Name this topic at turn end. Use one line with up to 20 Chinese or 40 Latin characters. Leave owner titles alone.",
         inputSchema: z.toJSONSchema(SetTopicTitleArguments, { io: "input" }),
       },
       {
         name: "archive_topics",
         title: "Archive topics",
-        description: "Archive the specified topics only when the owner asks. Current, system, merged, busy and already archived topics are skipped with a reason.",
+        description: "Archive topics only at the owner's request. Idle topics archive automatically.",
         inputSchema: z.toJSONSchema(ArchiveTopicsArguments, { io: "input" }),
       },
       {
         name: "handover",
         title: "Hand over an owner message",
-        description: "Move a message when the owner asks or its automatic routing is clearly wrong. If unsure or it is a new aspect of the same subject, answer here. The current turn stops and the destination answers.",
+        description: "Move the latest owner message or the given message ID in this turn, with attachments and quote. Set ownerRequested for an explicit move. The turn stops and the destination answers.",
         inputSchema: z.toJSONSchema(HandoverArguments, { io: "input" }),
       },
       ...(options.tickets === undefined ? [] : ticketDefinitions()),

@@ -226,6 +226,8 @@ describe("scheduled work", () => {
     const mac = runner("mac-mini");
     const schedule = await approve(link, topic, await propose(link, topic, { ...fields, repository }));
     const run = fire(schedule, inputs);
+    expect(inputs.at(-1)?.text).toContain("State defaults for every visible ticket this run opens.");
+    expect(inputs.at(-1)?.text).toContain("Arrange only work opened by this run");
     const scheduled = turn(link, topic, run);
     for (const issue of [1, 2]) expect((await scheduled.call("open_ticket", { ...issueArgs, issue })).isError).toBe(false);
     expect((await scheduled.call("read_ticket", { ticket: ticketReference(other) })).isError).toBe(false);

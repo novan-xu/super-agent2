@@ -260,7 +260,8 @@ describe("the failure loop, unattended", () => {
     expect(told?.prompt).toContain("FAIL src/greet.test.ts: expected hello, got hi");
     expect(told?.prompt).toMatch(/\[the first \d+ of \d+ characters are cut; this is the end, where the failure is\]/);
     expect(told?.prompt).toContain("Your guidance starts round 1");
-    expect(told?.prompt).toContain("guide_ticket");
+    expect(told?.prompt).toContain("In guide_ticket, quote the key error, explain its cause");
+    expect(told?.prompt).toContain("keep the checks intact");
 
     const guided = await callBrainTool(running, "guide_ticket", { ticket: ticket.code, guidance: guidance(1) }, conversation);
     expect(guided.isError, guided.text).toBe(false);
@@ -348,7 +349,8 @@ describe("the retry cap", () => {
     expect(sent.filter((message) => message.type === "work.stop")).toEqual([]);
     const told = notices(running, conversation).at(-1);
     expect(told?.text).toBe(`工单 ${ticket.code.toUpperCase()} 引导 3 轮还没通过，已停下等你决定`);
-    expect(told?.prompt).toContain("describe_stuck");
+    expect(told?.prompt).toContain("Call describe_stuck once in English and Chinese");
+    expect(told?.prompt).toContain("a repair worker can pick up the work");
     expect(told?.prompt).toContain("attempt 4 could not find greet.ts");
     expect(told?.prompt).toContain("FAIL greet.test.ts in attempt 4");
     const card = running.waiting.cards().find((entry) => entry.kind === "stuck");

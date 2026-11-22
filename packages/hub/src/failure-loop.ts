@@ -77,6 +77,13 @@ export const ownerGaveUpReason = { en: "The owner gave it up after its guided ro
 
 const everyTicket = 100_000;
 
+const retryAdvice = [
+  "Find the decisive error. Use read_ticket and inspect the code if the evidence is unclear.",
+  "In guide_ticket, quote the key error, explain its cause and give the worker a concrete change and a command to check it, in English with a Chinese copy.",
+  "For an external failure, explain it and retry the same work. If a failure repeats, look for a different cause.",
+  "Leave the fix to the worker and keep the checks intact. Record a decision if your advice changes the scope or approach.",
+];
+
 function described(ticket: Ticket): string {
   return `ticket ${ticketReference(ticket)} (${ticket.title.en})`;
 }
@@ -136,7 +143,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         report.evidence,
         `The hub stopped it for the owner. Its branch, its pull request and the worker's output are kept, nothing runs for it, and no round can start: guide_ticket refuses it. The owner decides on its card in 等你, where they can resume it with a fresh count, or give it up, which stops it and opens a repair ticket that continues the work.`,
         ...chainProgress(stuck),
-        "Now call describe_stuck once with where it is stuck, in English with a Chinese copy, in a few sentences: what the work is, what keeps failing, what each round tried, and what you think the owner should decide. The owner reads the Chinese on the card. Then tell the owner in Chinese, in a line or two, that it waits for them.",
+        "Use read_ticket if you need the round history. Call describe_stuck once in English and Chinese with the goal, recurring failure, each round's attempt and your recommendation. Write it so a repair worker can pick up the work. Tell the owner briefly in Chinese that it waits for their decision.",
         ...decisionReport(stuck),
       ].join("\n"),
     );
@@ -163,6 +170,9 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
       ? `Guided rounds so far: ${ticket.round} of ${roundCap}. Your guidance starts round ${next.round}${next.round === roundCap ? ", the last: if it fails too, the hub stops the ticket for the owner" : ""}.`
       : `This failure is the machine's, not the worker's, so your guidance starts a retry that is not counted as a guided round (still ${ticket.round} of ${roundCap}). A second failure of the machine in a row is counted.`;
     const verifying = report.failure.kind === "workflow";
+    const providerBlock = report.failure.kind === "program"
+      ? ["The hub handles temporary provider unavailability separately. If no machine offers a compatible provider, guide only if you can identify what to change. Otherwise report the blocker for a visible ticket."]
+      : [];
     tell(
       ticket.id,
       text(verifying ? "notice.verificationFailed" : "notice.workerFailed", { ticket: ticket.code }),
@@ -170,9 +180,11 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         `[hub] ${described(ticket)} failed: ${failureWords[report.failure.kind]}.`,
         report.evidence,
         counting,
+        ...providerBlock,
+        ...retryAdvice,
         ticket.light === undefined
-          ? "Read the failure, then call guide_ticket with your guidance to the worker: what failed and why, and what to change. The worker tries again on the same branch. Do not do the worker's work yourself. Stop it with stop_ticket only if it cannot be done. Tell the owner in Chinese, in a line or two, what failed and what you told the worker."
-          : "Read the failure and call guide_ticket to retry the light task with guidance. The hub reports a terminal failure in the conversation. Do not send a progress reply or do the worker's work.",
+          ? "Use stop_ticket only if the work cannot be done. Tell the owner briefly in Chinese what failed and what you told the worker."
+          : "Handle this light-task retry internally. The hub reports terminal failure in the conversation.",
       ].join("\n"),
     );
   };
@@ -272,6 +284,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
         words === "" ? "The owner gave no words." : `The owner's words to you: ${words}`,
         `The failure it stopped on: ${failureWords[stuck.failure.kind]}${stuck.failure.detail === "" ? "" : `: ${stuck.failure.detail}`}`,
         ...(evidence === "" ? [] : [evidence]),
+        ...retryAdvice,
         `Now call guide_ticket with your guidance to the worker, taking the owner's words into account; it starts round 1 of the new count${isMachineFailure(stuck.failure.kind) ? ", or a retry that is not counted, since the failure was the machine's" : ""}. Tell the owner in Chinese what you told the worker.`,
       ].join("\n"),
     );

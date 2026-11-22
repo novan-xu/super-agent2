@@ -1,11 +1,12 @@
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-export const guidanceFile = fileURLToPath(new URL("../guidance/AGENTS.md", import.meta.url));
+const guidanceFiles = ["AGENTS.md", "deployment.md", "tasks.md"];
 
 export function prepareWorkspace(workspace: string): void {
   mkdirSync(workspace, { recursive: true });
-  copyFileSync(guidanceFile, join(workspace, "AGENTS.md"));
+  for (const file of guidanceFiles) {
+    copyFileSync(new URL(`../guidance/${file}`, import.meta.url), join(workspace, file));
+  }
   writeFileSync(join(workspace, "CLAUDE.md"), "@AGENTS.md\n");
 }
