@@ -723,8 +723,10 @@ A mailbox without progress for one hour gets one stalled notice during that inci
 设置 → 连接 shows each mailbox's intake status.
 
 Before brain review, a Codex-only filter examines batches of up to 20 envelopes and the owner's confirmed memory in an ephemeral, read-only session with apps and tools disabled.
-It keeps only clear requests for action or decisions, real deadlines or risks, and messages covered by a memory keep rule; uncertain mail is ignored.
-The filter ignores GitHub CI notices, marketing expiry reminders and one-time codes unless confirmed memory keeps them, while preserving security alerts, password resets, bills with a due date and requests from real people.
+It keeps clear requests for action or decisions, real deadlines or risks, changes to the owner's own memberships and subscriptions, shipping and delivery updates for the owner's orders, and messages covered by a memory keep rule; uncertain mail is ignored.
+It ignores GitHub CI notices, expiring loyalty points, stars and rewards, promotional upsells, one-time codes, receipts, order and payment confirmations, daily card activity summaries, meeting logistics, project status or file-sharing FYIs without a request, and platform engagement prompts unless confirmed memory keeps them.
+Security alerts, password resets, bills with a due date and direct requests from real people beyond meeting logistics remain eligible for review.
+Membership changes and shipping updates use the kinds `membership-change` and `shipping-update` respectively.
 Kept messages with the same sender address and kind in one batch are merged deterministically into the newest representative, with a count and received-time range for review.
 Merged envelopes are marked checked and cleared like ignored mail, and the representative retains its group information through review retries.
 Ignored envelopes are marked checked and their sender, subject and snippet are cleared.
