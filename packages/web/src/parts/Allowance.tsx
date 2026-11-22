@@ -1,7 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import type { AllowanceReport } from "@super-agent2/protocol";
 import { useRef } from "react";
-import { compactValue, providersOf, type ProviderView } from "../live/allowance.js";
+import { compactValue, providersOf, usageTone, type ProviderView } from "../live/allowance.js";
 import { Icon } from "./icons.js";
 
 function time(at: number): string {
@@ -28,6 +28,23 @@ function Panel({ report, now, refresh }: { readonly report: AllowanceReport | nu
 }
 export function AllowanceSidebar(props: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
   return <div className="allowance-sidebar"><Panel {...props} /></div>;
+}
+export function AllowanceRings({ report, now }: { readonly report: AllowanceReport | null; readonly now: number }) {
+  return <div className="allowance-rings">{providersOf(report, now).map((provider) => {
+    const values = provider.windows.flatMap((window) => window.used === null ? [] : [window.used]);
+    const used = values.length === 0 ? null : Math.max(...values);
+    const tone = provider.id === "dsh" ? provider.tone : usageTone(used);
+    const detail = `allowance-ring-${provider.id}`;
+    const initial = provider.compactName[0];
+    return <div className="allowance-ring-wrap" key={provider.id} role="group" tabIndex={0} aria-label={`${provider.name} ${used === null ? (provider.amount ?? text("allowance.unknown")) : text("allowance.used", { percent: Math.round(used) })}`} aria-describedby={detail}>
+      <svg className={`allowance-ring allowance-ring--${tone}`} viewBox="0 0 40 40" aria-hidden="true">
+        <circle className="allowance-ring-track" cx="20" cy="20" r="16" />
+        {used === null ? null : <circle className="allowance-ring-value" cx="20" cy="20" r="16" pathLength="100" strokeDasharray={`${used} 100`} />}
+      </svg>
+      <span className="allowance-ring-initial" aria-hidden="true">{initial}</span>
+      <div className="allowance-ring-detail" role="tooltip" id={detail}><Provider provider={provider} /></div>
+    </div>;
+  })}</div>;
 }
 export function AllowanceCompact(props: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
