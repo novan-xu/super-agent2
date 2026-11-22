@@ -124,7 +124,7 @@ function controlRows(control: DshControl | null): string[] {
 }
 
 export function dshPatch(url: string | null, control: DshControl | null = null, extra: readonly import("@super-agent2/protocol").ExtraMcpServer[] = [], toolset: OpenOptions["toolset"] = "worker"): string {
-  const disabled = ["tool-bash", "tool-pwsh", "tool-jobs", "tool-working-directory", "tool-skill", "tool-subagent-control", "tool-subagent-list-agents", "tool-subagent", "tool-subagent-fork", "tool-workflow", "tool-todo", "tool-goal", "workspace-dependencies"];
+  const disabled = ["tool-bash", "tool-pwsh", "tool-jobs", "tool-working-directory", "tool-skill", "tool-subagent-control", "tool-subagent-list-agents", "tool-subagent", "tool-subagent-fork", "tool-workflow", "tool-todo", "tool-goal", "plan-mode", "workspace-dependencies"];
   const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", "", ...(toolset === "brain" ? ["- id: tool-fs", "  config:", "    write: false", "    edit: false", ...disabled.flatMap((id) => [`- id: ${id}`, "  disabled: true"])] : [])];
   const rows = controlRows(control);
   for (const [index, server] of extra.entries()) {

@@ -137,7 +137,7 @@ describe("brain-only toolsets", () => {
   it("restricts dsh writes and extra tools while retaining read, web and MCP", () => {
     const patch = dshPatch("http://hub", null, extra, "brain");
     expect(patch).toContain("- id: tool-fs\n  config:\n    write: false\n    edit: false");
-    for (const id of ["tool-bash", "tool-pwsh", "tool-subagent", "tool-workflow", "tool-skill", "tool-goal", "tool-todo"]) expect(patch).toContain(`- id: ${id}\n  disabled: true`);
+    for (const id of ["tool-bash", "tool-pwsh", "tool-subagent", "tool-workflow", "tool-skill", "tool-goal", "tool-todo", "plan-mode"]) expect(patch).toContain(`- id: ${id}\n  disabled: true`);
     expect(patch).not.toContain("- id: tool-web");
     expect(patch).not.toContain("- id: tool-fs-search");
     expect(patch).toContain('serverName: "Agent_wring"');
