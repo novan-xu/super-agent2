@@ -25,7 +25,12 @@ export const HistoryItem = z.discriminatedUnion("kind", [
 ]);
 export type HistoryItem = z.infer<typeof HistoryItem>;
 
-export const privateAppTools = ["mail_mailboxes", "mail_search", "mail_read", "teams_chats", "teams_messages", "teams_search", "todo_lookup"] as const;
+export const appWriteTools = ["mail_draft", "add_todo", "undo_created"] as const;
+export const privateAppTools = ["mail_mailboxes", "mail_search", "mail_read", "teams_chats", "teams_messages", "teams_search", "todo_lookup", ...appWriteTools] as const;
+
+export function isAppWriteTool(name: string): name is (typeof appWriteTools)[number] {
+  return appWriteTools.some((tool) => name === tool);
+}
 
 export function isPrivateAppTool(name: string): name is (typeof privateAppTools)[number] {
   return privateAppTools.some((tool) => name === tool);

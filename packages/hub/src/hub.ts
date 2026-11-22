@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { AppGateway } from "./app-gateway.js";
+import { createAppTodos } from "./app-todos.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
 import { type Chains, createChains } from "./chains.js";
 import { type Clock, type Sleep, systemClock } from "./clock.js";
@@ -415,7 +416,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         conversations,
         memories,
         attachments,
-        ...(appGateway === undefined ? {} : { appGateway }),
+        ...(appGateway === undefined ? {} : { appGateway, appTodos: createAppTodos(database, clock) }),
         tickets: {
           tickets,
           tasks: taskTickets,

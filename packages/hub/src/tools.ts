@@ -41,6 +41,7 @@ import {
 import { z } from "zod";
 import type { AppGateway } from "./app-gateway.js";
 import { appDefinitions, appToolCall, appToolError } from "./app-tools.js";
+import type { AppTodos } from "./app-todos.js";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
 import type { CommandService } from "./commands.js";
@@ -281,6 +282,7 @@ export interface ToolServerOptions {
   readonly memories?: MemoryService;
   readonly attachments?: AttachmentStore;
   readonly appGateway?: AppGateway;
+  readonly appTodos?: AppTodos;
 }
 
 export interface TicketTools {
@@ -846,6 +848,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     const provider = conversations.activeTurnProvider(conversation, turn);
     return provider === "claude" || provider === "gpt" ? options.appGateway : undefined;
   };
+  const appWritesFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) => {
+    const todos = options.appTodos;
+    if (conversation === undefined || turn === undefined || todos === undefined) {
+      return undefined;
+    }
+    const authorized = () => gatewayFor(conversation, turn, aborted) !== undefined && conversations.ownerAppTurn(conversation, turn);
+    return authorized() ? { conversation, todos, authorized } : undefined;
+  };
 
   const materialsOf = (material: readonly z.infer<typeof MaterialArgument>[]) => {
     if (new Set(material.map((piece) => piece.name)).size !== material.length) {
@@ -871,7 +881,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     }) };
   };
 
-  const definitions = (gateway: AppGateway | undefined) => {
+  const definitions = (gateway: AppGateway | undefined, appWrites: boolean) => {
     return [
       {
         name: "run_command",
@@ -964,7 +974,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.memories === undefined ? [] : memoryDefinitions()),
       { name: "ask_owner", title: "Ask the owner", description: "Show all questions of a choice together. The owner's answer arrives later in this topic.", inputSchema: z.toJSONSchema(z.object({ questions: Questions }), { io: "input" }) },
       ...topicDefinitions(),
-      ...(gateway === undefined ? [] : appDefinitions(gateway)),
+      ...(gateway === undefined ? [] : appDefinitions(gateway, appWrites)),
     ];
   };
 
@@ -1482,7 +1492,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return { status: 200, body: errorBody(id, -32602, "App tools require an active Claude or Codex turn with the app gateway enabled.") };
       }
       try {
-        const data = await appToolCall(gateway, name, parsed.data.arguments ?? {});
+        const data = await appToolCall(gateway, name, parsed.data.arguments ?? {}, appWritesFor(conversation, turn, aborted));
         if (gatewayFor(conversation, turn, aborted) !== gateway) {
           return { status: 200, body: errorBody(id, -32602, "The app tool's turn has ended or changed providers.") };
         }
@@ -1630,7 +1640,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         case "ping":
           return { status: 200, body: resultBody(id, {}) };
         case "tools/list":
-          return { status: 200, body: resultBody(id, { tools: definitions(gatewayFor(conversation, turn, aborted)) }) };
+          return { status: 200, body: resultBody(id, { tools: definitions(gatewayFor(conversation, turn, aborted), appWritesFor(conversation, turn, aborted) !== undefined) }) };
         case "tools/call":
           return call(id, message.params, conversation, turn, aborted);
         default:

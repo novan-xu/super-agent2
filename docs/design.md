@@ -668,9 +668,10 @@ This is the complete list.
 9. **One sentence per line in Markdown prose.**
    The owner explicitly required this rule, checked in CI.
 10. **An exact allowlist for the app gateway.**
-    The owner explicitly required mail and Teams to be read-only through the gateway.
-    The hub checks each exact connector tool name against the allowlist in code and intersects it with the discovered read tools.
-    The hub refuses sending, replying, forwarding, deleting and every other operation outside that list.
+    The owner explicitly required Teams to stay read-only and mail writes to be limited to drafts requested by the owner.
+    The hub checks each exact connector tool name against the allowlist in code and intersects it with the discovered tools.
+    Sending, directly replying, forwarding and deleting mail are outside the allowlist.
+    The gateway's only writes are saving and revising drafts and creating and undoing TickTick to-dos.
     This rule covers the app gateway and its brain tools.
     The brain's shell in the hub container can access the shared ChatGPT login and could start a separate app server, so this rule does not constrain arbitrary shell commands.
 
@@ -691,6 +692,21 @@ Only active Claude and Codex turns can list or call these brain tools.
 The Codex brain uses the hub's tools for these apps with Codex's native apps disabled on its threads.
 The brain treats app content as untrusted data.
 The hub does not record tool arguments, raw results or connector error text in the topic history or hub logs.
+
+Write tools require an active turn that consumed a visible owner message and is outside a scheduled run.
+The brain sets the owner-request flag only for a draft, to-do, reminder or undo the owner requested in that message.
+The hub checks the turn and the flag without interpreting the owner's prose.
+`mail_draft` can save new messages and threaded replies in the selected linked Outlook or Gmail mailbox.
+The Gmail connector also supports updating an existing draft.
+A Gmail draft update that replaces the body replaces its MIME parts, including attachments.
+
+`add_todo` sends the task to a named open TickTick list or uses TickTick's configured creation list with inbox as its fallback.
+Dates are all-day tasks and local times use the same hub time zone as schedules.
+An explicitly requested timed reminder gets a TickTick notification at the due time.
+The hub saves a receipt with the connection and task IDs and the list ID when known.
+`undo_created` can delete only a task with a receipt that identifies its list on the current connection.
+An undo without a receipt ID selects the latest creation in that topic.
+The gateway never replays a delivered write when the app server exits or the answer times out.
 
 ## Tests
 

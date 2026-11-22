@@ -19,6 +19,20 @@ const readTools = new Set([
   "ticktick_to_do_list_calendar.search_task",
 ]);
 
+export const appWrites = {
+  gmailDraft: "gmail.create_draft",
+  gmailUpdate: "gmail.update_draft",
+  outlookDraft: "microsoft_outlook_email.draft_email",
+  outlookReply: "microsoft_outlook_email.create_reply_draft",
+  tickTickCreate: "ticktick_to_do_list_calendar.create_task",
+  tickTickDelete: "ticktick_to_do_list_calendar.delete_task",
+} as const;
+
+type AppWriteName = (typeof appWrites)[keyof typeof appWrites];
+const writeTools = new Set<string>(Object.values(appWrites));
+
+export class AppInputError extends Error {}
+
 const Fields = z.record(z.string(), z.unknown());
 const Link = z.object({
   link_id: z.string().min(1),
@@ -27,7 +41,7 @@ const Link = z.object({
 const Tool = z.object({
   name: z.string(),
   inputSchema: z.object({ properties: Fields.optional() }),
-  annotations: z.object({ readOnlyHint: z.literal(true) }),
+  annotations: z.object({ readOnlyHint: z.boolean() }),
   _meta: z.object({
     link_id: z.string().min(1).nullish(),
     link_accounts: z.array(Link).nullish(),
@@ -130,6 +144,10 @@ export class AppGateway {
     return this.tools.has(tool);
   }
 
+  connectionOf(tool: string): string | undefined {
+    return this.tools.get(tool)?._meta?.link_id ?? undefined;
+  }
+
   refresh(): Promise<void> {
     this.refreshing ??= this.discover().finally(() => {
       this.refreshing = undefined;
@@ -153,11 +171,11 @@ export class AppGateway {
         const apps = page.data.data.find(({ name }) => name === "codex_apps");
         if (apps !== undefined) {
           for (const [name, value] of Object.entries(apps.tools)) {
-            if (!readTools.has(name)) {
+            if (!readTools.has(name) && !writeTools.has(name)) {
               continue;
             }
             const tool = Tool.safeParse(value);
-            if (!tool.success || tool.data.name !== name) {
+            if (!tool.success || tool.data.name !== name || tool.data.annotations.readOnlyHint !== readTools.has(name)) {
               this.options.report?.(new AppGatewayError("invalid response").message);
               continue;
             }
@@ -184,16 +202,38 @@ export class AppGateway {
     if (!readTools.has(name)) {
       throw new AppGatewayError("tool not allowed");
     }
-    const tool = this.tools.get(name);
-    if (tool === undefined || (name.startsWith("microsoft_outlook_email.") && !tool._meta?.link_accounts?.some(({ link_id }) => link_id === args["link_id"]))) {
-      throw new AppGatewayError("tool unavailable");
-    }
     if ((name === "microsoft_outlook_email.list_attachments" && (args["content_mode"] !== "metadata_only" || args["attachment_ids"] != null))
       || (name === "gmail.read_email" && args["format"] !== "full")) {
       throw new AppGatewayError("tool not allowed");
     }
+    return this.callTool(name, args);
+  }
+
+  async write(name: AppWriteName, args: Record<string, unknown>, authorized: () => boolean): Promise<unknown> {
+    if (!writeTools.has(name)) {
+      throw new AppGatewayError("tool not allowed");
+    }
+    if (typeof authorized !== "function") {
+      throw new AppGatewayError("owner request required");
+    }
+    return this.callTool(name, args, authorized);
+  }
+
+  private async callTool(name: string, args: Record<string, unknown>, authorized?: () => boolean): Promise<unknown> {
+    const available = () => {
+      const tool = this.tools.get(name);
+      return tool !== undefined && (!name.startsWith("microsoft_outlook_email.")
+        || tool._meta?.link_accounts?.some(({ link_id }) => link_id === args["link_id"]) === true);
+    };
+    if (!available()) {
+      throw new AppGatewayError("tool unavailable");
+    }
     try {
-      const response = Reply.safeParse(await this.server.request("mcpServer/tool/call", { server: "codex_apps", tool: name, arguments: args }));
+      const response = Reply.safeParse(await this.server.request("mcpServer/tool/call", { server: "codex_apps", tool: name, arguments: args },
+        authorized === undefined ? undefined : () => {
+          if (!available()) throw new AppGatewayError("tool unavailable");
+          return authorized();
+        }));
       if (!response.success) {
         throw new AppGatewayError("invalid response");
       }
@@ -212,7 +252,10 @@ export class AppGateway {
         throw new AppGatewayError("invalid response");
       }
     } catch (error) {
-      const failure = error instanceof AppGatewayError ? error : new AppGatewayError("invalid response");
+      const normalized = error instanceof AppGatewayError ? error : new AppGatewayError("invalid response");
+      const failure = authorized !== undefined && (normalized.kind === "invalid response" || (normalized.status ?? 0) >= 500)
+        ? new AppGatewayError("write outcome unknown", normalized.status)
+        : normalized;
       this.options.report?.(failure.message);
       throw failure;
     }

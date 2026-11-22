@@ -1150,6 +1150,21 @@ export const migrations: readonly Migration[] = [
       CREATE TABLE topic_tidy_merges (source TEXT PRIMARY KEY, destination TEXT NOT NULL) STRICT;
     `,
   },
+  {
+    version: 57,
+    sql: `
+      CREATE TABLE ticktick_receipts (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL REFERENCES conversations(id),
+        connection TEXT NOT NULL,
+        task TEXT NOT NULL,
+        project TEXT,
+        created_at INTEGER NOT NULL,
+        undone_at INTEGER
+      ) STRICT;
+      CREATE INDEX ticktick_receipts_topic ON ticktick_receipts(topic);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
