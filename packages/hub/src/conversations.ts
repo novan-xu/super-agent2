@@ -126,6 +126,7 @@ export interface ConversationService {
   brainStatus(): BrainStatus;
   brainReady(): boolean;
   activeTurnProvider(conversation: string, turn: string): Provider | undefined;
+  ownerAppTurn(conversation: string, turn: string): boolean;
   providers(): BrainProviders | undefined;
   sendOrder(order: readonly Provider[]): void;
   watchBrain(listener: () => void): () => void;
@@ -505,6 +506,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   const continueSchedule = connection.prepare("UPDATE schedule_runs SET continuation_entry = ? WHERE id = ?");
   const priorHubInputs = connection.prepare(`SELECT prompt, json_extract(body, '$.restartOf') AS restart_of
     FROM conversation_entries WHERE turn_id = ? AND taken = 1 AND kind IN ('notice', 'delivery') AND prompt IS NOT NULL ORDER BY seq`);
+  const ownerAppInput = connection.prepare(`SELECT 1 FROM conversation_entries
+    WHERE conversation_id = ? AND turn_id = ? AND taken = 1 AND kind = 'owner' AND hidden = 0 LIMIT 1`);
   const selectOriginalRoute = connection.prepare("SELECT scope, placed_in FROM routing_decisions WHERE entry = ? AND owner_placed IS NOT 1 AND moved_at IS NULL AND brain_moved_at IS NULL");
   const hasQuote = connection.prepare(`
     SELECT 1 FROM conversation_entries WHERE conversation_id = ? AND quote_id = ? LIMIT 1
@@ -1655,6 +1658,8 @@ export function createConversationService(options: ConversationServiceOptions): 
       const current = getTurn(turn);
       return link?.ready === true && current?.state === "running" && current.conversation === conversation ? current.provider ?? undefined : undefined;
     },
+    ownerAppTurn: (conversation, turn) => ownerAppInput.get(conversation, turn) !== undefined
+      && schedules.forTurn({ conversation, id: turn }) === undefined,
     providers: () => (link === undefined ? undefined : brainProviders),
     sendOrder: (order) => {
       sendToBrain({ type: "order", order: [...order] });

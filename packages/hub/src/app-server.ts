@@ -1,7 +1,8 @@
 import { createRpc, invocationOf, type LineProcess, type Rpc, RpcError, RpcTimeout, spawnLines } from "@super-agent2/programs";
 import { z } from "zod";
 
-type AppFailure = "timeout" | "process unavailable" | "invalid response" | "tool refused" | "tool unavailable" | "tool not allowed";
+type AppFailure = "timeout" | "process unavailable" | "invalid response" | "tool refused" | "tool unavailable" | "tool not allowed"
+  | "owner request required" | "write outcome unknown";
 
 export class AppGatewayError extends Error {
   constructor(readonly kind: AppFailure, readonly status?: number) {
@@ -107,17 +108,20 @@ export class AppServer {
     return session.thread;
   }
 
-  async request(method: "mcpServerStatus/list" | "mcpServer/tool/call", args: Record<string, unknown>): Promise<unknown> {
+  async request(method: "mcpServerStatus/list" | "mcpServer/tool/call", args: Record<string, unknown>, beforeWrite?: () => boolean): Promise<unknown> {
     for (let attempt = 0; ; attempt += 1) {
       const session = this.connect();
       const thread = this.thread(session);
       let threadId: string | undefined;
       try {
         threadId = await thread;
+        if (beforeWrite !== undefined && !beforeWrite()) {
+          throw new AppGatewayError("owner request required");
+        }
         return await session.rpc.request(method, { ...args, threadId }, this.options.requestMilliseconds ?? 60_000);
       } catch (error) {
         if (error instanceof RpcTimeout) {
-          throw new AppGatewayError("timeout");
+          throw new AppGatewayError(beforeWrite !== undefined && threadId !== undefined ? "write outcome unknown" : "timeout");
         }
         if (error instanceof AppGatewayError) {
           throw error;
@@ -125,6 +129,9 @@ export class AppServer {
         const missing = threadId !== undefined && error instanceof RpcError && threadMissing.test(error.message);
         if (missing && session.thread === thread) {
           session.thread = undefined;
+        }
+        if (beforeWrite !== undefined && threadId !== undefined && !session.child.alive()) {
+          throw new AppGatewayError("write outcome unknown");
         }
         if (attempt === 0 && (missing || (!session.child.alive() && !this.closed))) {
           continue;
