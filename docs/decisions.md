@@ -3799,20 +3799,24 @@ Other options were keeping receipts indefinitely or adopting the inbox's per-pro
 
 ## GPT-Live voice calls (#289)
 
-- **Chosen:** Exchange the browser's SDP through the owner-only hub endpoint using GPT-Live's `POST /v1/live/sessions`.
-  The browser sends media directly to OpenAI over WebRTC and uses only the hub for signaling and permitted tools.
-- **Why:** The documented GPT-Live API negotiates WebRTC through session creation; the ephemeral client-secret example uses the separate Realtime API.
-- **Other options:** Use the Realtime API's client secrets and change the voice model and delegation protocol.
+### WebRTC negotiation
 
-- **Chosen:** Let GPT-Live read back the key points and wait for spoken agreement before proposing a summary.
-  Require the owner to confirm the exact pending summary in the page before routing it.
-  Route the summary in the scope where the call started, and attach the transcript as reference for the brain and as a collapsed section in the conversation.
-- **Why:** The hub can enforce an explicit owner action independently of how GPT-Live interprets speech or tool results.
-  The router uses the agreed summary so the full transcript does not dominate topic selection.
-- **Other options:** Accept the model's interpretation of spoken agreement as the only authorization, or make the composer route the entire transcript.
+The owner-only hub endpoint exchanges the browser's SDP using GPT-Live's `POST /v1/live/sessions`.
+The browser sends media directly to OpenAI over WebRTC and uses the hub for signaling and permitted tools.
+The ephemeral client-secret flow would require using the separate Realtime API with a different model and delegation protocol.
 
-- **Chosen:** Keep unsubmitted transcripts in the page and seed a replacement call with only the most recent excerpt.
-  Leave voice billing in OpenAI's usage dashboard.
-- **Why:** Reconnect can preserve context without persisting unfinished calls.
-  The existing settings view shows brain program usage and has no voice-duration dimension.
-- **Other options:** Persist unfinished calls on the hub, or add a dedicated voice usage data model and settings view.
+### Confirmed hand-off
+
+GPT-Live reads back the key points and waits for spoken agreement before proposing a summary.
+The owner confirms the exact pending summary in the page before routing it.
+Accepting spoken agreement alone would rely on the model's interpretation of speech and tool results.
+The router uses the agreed summary and the scope where the call started.
+The brain also receives the transcript as reference, and the conversation renders it in a collapsed section.
+Routing the entire transcript could let incidental context dominate topic selection.
+
+### Reconnect and usage
+
+The page retains the full unsent transcript and seeds a replacement call with its most recent excerpt.
+This preserves context during reconnect without storing unfinished calls on the hub.
+Voice billing remains in OpenAI's usage dashboard because the existing settings view measures brain program usage.
+Showing calls there would require a voice-duration data model and display.

@@ -477,7 +477,8 @@ The command reads mail only and does not require a running hub or its database.
 
 Set `OPENAI_API_KEY` in `secrets/hub.env` on the NAS to enable voice calls for the owner.
 The project key needs access to `gpt-live-1.1` and the Responses model configured for delegation.
-The default delegation model is `gpt-6-luna`; set `HUB_VOICE_DELEGATION_MODEL` in the same file to override it.
+The default delegation model is `gpt-6-luna`.
+Set `HUB_VOICE_DELEGATION_MODEL` in the same file to override it.
 Recreate the hub after changing its environment.
 The browser needs a secure origin and microphone permission, and the page must stay open during a call.
 
