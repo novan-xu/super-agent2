@@ -21,3 +21,24 @@ it("reads every historical page and only returns results", async () => {
   expect(call.mock.calls.every(([name]) => name === "gmail.search_emails")).toBe(true);
   expect(result).toMatchObject({ rows: [{ subject: "One" }, { subject: "Two" }], totals: [{ mailbox: "Gmail", kept: 0, ignored: 2 }], filterCalls: 1 });
 });
+
+it("requires a valid kind for every kept item and states the requested exceptions", () => {
+  const messages = [{ item: 1, mailbox: "Gmail", sender: "a@example.com", subject: "x", snippet: "" }];
+  for (const kind of [undefined, "", "New Device", "bad\nkind"]) {
+    expect(() => validateFilter({ items: [{ item: 1, action: "keep", reason: "x", ...(kind === undefined ? {} : { kind }) }] }, messages)).toThrow();
+  }
+  expect(validateFilter({ items: [{ item: 1, action: "keep", reason: "x", kind: "new-device" }] }, messages)).toHaveLength(1);
+  for (const phrase of ["GitHub CI", "loyalty", "one-time verification", "security alerts", "password resets", "bills with a due date", "memory keep rules override"]) expect(mailFilterConfig.instructions).toContain(phrase);
+});
+
+it("reports merged representatives and counts in dry runs", async () => {
+  const call = vi.fn(async () => ({ emails: [
+    { id: "1", from_: "a@example.com", subject: "One", snippet: "s", email_ts: "2026-11-20T00:00:00Z" },
+    { id: "2", from_: "A@example.com", subject: "Two", snippet: "s", email_ts: "2026-11-21T00:00:00Z" },
+  ] }));
+  const result = await dryRun({ call, mailboxes: () => [{ id: "gmail", provider: "gmail", label: "Gmail" }] },
+    async (messages) => messages.map(({ item }) => ({ item, action: "keep", reason: "Alert", kind: "alert" })),
+    { days: 30, now: Date.parse("2026-11-22T00:00:00Z"), memory: "" });
+  expect(result.rows).toMatchObject([{ mergedInto: "2", groupCount: 0 }, { mergedInto: null, groupCount: 2 }]);
+  expect(result.totals).toMatchObject([{ kept: 2, merged: 1 }]);
+});

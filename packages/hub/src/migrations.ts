@@ -1221,6 +1221,14 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE mail_review_state ADD COLUMN filter_notified INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 60,
+    sql: `
+      ALTER TABLE mail_messages ADD COLUMN group_count INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE mail_messages ADD COLUMN group_start INTEGER;
+      ALTER TABLE mail_messages ADD COLUMN group_end INTEGER;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

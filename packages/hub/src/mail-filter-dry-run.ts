@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { AppGateway, type Mailbox } from "./app-gateway.js";
-import { codexMailFilter, validateFilter, type MailFilter } from "./mail-filter.js";
+import { codexMailFilter, groupKept, validateFilter, type MailFilter } from "./mail-filter.js";
 import { incoming, pages } from "./mail-intake.js";
 
 interface DryRunOptions {
@@ -18,8 +18,8 @@ export async function dryRun(gateway: Pick<AppGateway, "call" | "mailboxes">, fi
   const selected = options.mailbox === undefined ? accounts : accounts.filter((account) => account.id === options.mailbox);
   if (options.mailbox !== undefined && selected.length === 0) throw new Error("Mailbox not found");
   const own = new Set(accounts.flatMap(({ email }) => email === undefined ? [] : [email.toLowerCase()]));
-  const rows: { mailbox: string; received: string; sender: string; subject: string; action: string; reason: string }[] = [];
-  const totals: { id: string; mailbox: string; kept: number; ignored: number }[] = [];
+  const rows: { mailbox: string; messageId: string; received: string; sender: string; subject: string; action: string; reason: string; mergedInto: string | null; groupCount: number }[] = [];
+  const totals: { id: string; mailbox: string; kept: number; ignored: number; merged: number }[] = [];
   let calls = 0;
   for (const account of selected) {
     const seen = new Set<string>();
@@ -32,20 +32,26 @@ export async function dryRun(gateway: Pick<AppGateway, "call" | "mailboxes">, fi
     }
     let kept = 0;
     let ignored = 0;
+    let merged = 0;
     for (let offset = 0; offset < messages.length; offset += 20) {
       const batch = messages.slice(offset, offset + 20).filter((message) => message !== undefined);
       const envelopes = batch.map((message, index) => ({ item: index + 1, mailbox: account.label, sender: message.sender, subject: message.subject, snippet: message.snippet }));
       const decisions = validateFilter({ items: await filter(envelopes, options.memory) }, envelopes);
       calls += 1;
       const byId = new Map(decisions.map((decision) => [decision.item, decision]));
+      const groups = groupKept(batch.map((message, index) => ({ ...message, item: index + 1 })), decisions);
+      const groupByItem = new Map(groups.flatMap((group) => group.members.map((member) => [member.item, group] as const)));
       batch.forEach((message, index) => {
         const decision = byId.get(index + 1);
         if (decision === undefined || decisions.length !== batch.length || byId.size !== batch.length) throw new Error("Invalid filter response");
         if (decision.action === "keep") kept += 1; else ignored += 1;
-        rows.push({ mailbox: account.label, received: new Date(message.timestamp).toISOString(), sender: message.sender, subject: message.subject, action: decision.action, reason: decision.reason });
+        const group = groupByItem.get(index + 1);
+        const mergedInto = group !== undefined && group.representative.item !== index + 1 ? group.representative.id : null;
+        if (mergedInto !== null) merged += 1;
+        rows.push({ mailbox: account.label, messageId: message.id, received: new Date(message.timestamp).toISOString(), sender: message.sender, subject: message.subject, action: decision.action, reason: decision.reason, mergedInto, groupCount: group?.representative.item === index + 1 ? group.members.length : 0 });
       });
     }
-    totals.push({ id: account.id, mailbox: account.label, kept, ignored });
+    totals.push({ id: account.id, mailbox: account.label, kept, ignored, merged });
   }
   return { rows, totals, filterCalls: calls, elapsedMilliseconds: Date.now() - start };
 }
