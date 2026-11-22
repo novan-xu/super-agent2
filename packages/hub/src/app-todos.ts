@@ -29,7 +29,7 @@ const CreatedTask = z.object({ id: Id, projectId: Id.nullish(), title: Text.null
 const Created = z.union([CreatedTask, z.object({ result: CreatedTask }).transform(({ result }) => result)]);
 const Deleted = z.object({ result: z.object({ deleted: Id }) });
 const Refusal = z.object({ error: z.string() });
-const Receipt = z.object({ id: Id, connection: Id, task: Id, project: Id, undone_at: z.number().nullable() });
+const Receipt = z.object({ id: Id, connection: Id, task: Id, project: Id.nullable(), undone_at: z.number().nullable() });
 const listProjects = "ticktick_to_do_list_calendar.list_projects";
 
 export interface AppWriteScope {
@@ -94,7 +94,7 @@ export function createAppTodos(database: HubDatabase, clock: Clock) {
   const { connection, ticketTimeZone: timeZone } = database;
   const insert = connection.prepare("INSERT INTO ticktick_receipts (id, topic, connection, task, project, created_at) VALUES (?, ?, ?, ?, ?, ?)");
   const byId = connection.prepare("SELECT id, connection, task, project, undone_at FROM ticktick_receipts WHERE id = ?");
-  const latest = connection.prepare("SELECT id, connection, task, project, undone_at FROM ticktick_receipts WHERE topic = ? ORDER BY created_at DESC, rowid DESC LIMIT 1");
+  const latest = connection.prepare("SELECT id, connection, task, project, undone_at FROM ticktick_receipts WHERE topic = ? ORDER BY rowid DESC LIMIT 1");
   const markUndone = connection.prepare("UPDATE ticktick_receipts SET undone_at = ? WHERE id = ?");
   const undoing = new Set<string>();
 
@@ -126,17 +126,17 @@ export function createAppTodos(database: HubDatabase, clock: Clock) {
       if (!created.success) {
         throw new AppGatewayError("write outcome unknown");
       }
-      const projectId = created.data.projectId ?? project?.id;
-      if (projectId === undefined) {
-        throw new AppInputError("TickTick created the task but returned no list ID. Undo is unavailable for this task.");
-      }
+      const projectId = created.data.projectId ?? project?.id ?? null;
       const id = randomUUID();
       try {
         insert.run(id, scope.conversation, connectorAccount, created.data.id, projectId, clock.now());
       } catch {
         throw new AppInputError("TickTick created the task but the hub could not save its undo receipt.");
       }
-      return { receipt: id, taskId: created.data.id, title: created.data.title ?? input.title, projectId, list: project?.name ?? null, due: input.due ?? null };
+      return {
+        receipt: id, taskId: created.data.id, title: created.data.title ?? input.title,
+        projectId, list: project?.name ?? null, due: input.due ?? null, undoAvailable: projectId !== null,
+      };
     },
 
     async undo(gateway: AppGateway, input: z.output<typeof UndoCreated>, scope: AppWriteScope) {
@@ -147,6 +147,9 @@ export function createAppTodos(database: HubDatabase, clock: Clock) {
       const receipt = found.data;
       if (receipt.undone_at !== null) {
         return { receipt: receipt.id, undone: true, alreadyUndone: true };
+      }
+      if (receipt.project === null) {
+        throw new AppInputError("TickTick returned no list ID for this receipt. Open TickTick to remove the task.");
       }
       const sameAccount = () => gateway.connectionOf(appWrites.tickTickDelete) === receipt.connection;
       if (!sameAccount()) {

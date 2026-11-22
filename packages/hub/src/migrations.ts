@@ -1158,11 +1158,11 @@ export const migrations: readonly Migration[] = [
         topic TEXT NOT NULL REFERENCES conversations(id),
         connection TEXT NOT NULL,
         task TEXT NOT NULL,
-        project TEXT NOT NULL,
+        project TEXT,
         created_at INTEGER NOT NULL,
         undone_at INTEGER
       ) STRICT;
-      CREATE INDEX ticktick_receipts_topic ON ticktick_receipts(topic, created_at DESC);
+      CREATE INDEX ticktick_receipts_topic ON ticktick_receipts(topic);
     `,
   },
 ];

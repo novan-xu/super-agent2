@@ -702,7 +702,9 @@ A Gmail draft update that replaces the body replaces its MIME parts, including a
 
 `add_todo` sends the task to a named open TickTick list or uses TickTick's configured creation list with inbox as its fallback.
 Dates are all-day tasks and local times use the same hub time zone as schedules.
-The hub saves a receipt with the connection, task and list IDs, and `undo_created` can delete only a task named by a receipt for the current connection.
+An explicitly requested timed reminder gets a TickTick notification at the due time.
+The hub saves a receipt with the connection and task IDs and the list ID when known.
+`undo_created` can delete only a task with a receipt that identifies its list on the current connection.
 An undo without a receipt ID selects the latest creation in that topic.
 The gateway never replays a delivered write when the app server exits or the answer times out.
 

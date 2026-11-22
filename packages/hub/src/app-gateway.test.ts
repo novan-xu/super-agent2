@@ -96,7 +96,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const projectId = task.projectId ?? "inbox";
     tasks[taskId] = projectId;
     writeFileSync("tasks", JSON.stringify(tasks));
-    return result({ structuredContent: { id: taskId, projectId, title: task.title } });
+    return result({ structuredContent: { id: taskId, ...(task.title === "No list ID" ? {} : { projectId }), title: task.title } });
   }
   if (params.tool === "ticktick_to_do_list_calendar.delete_task") {
     const { task_id, project_id } = params.arguments;
@@ -412,4 +412,22 @@ it("keeps TickTick receipts across a restart and limits undo to those receipts a
   expect(requests("mcpServer/tool/call").filter(({ params }) => params?.["tool"] === appWrites.tickTickDelete).map(({ params }) => params?.["arguments"])).toEqual([
     { project_id: "inbox", task_id: "task-2" },
   ]);
+});
+
+it("records a known task when TickTick omits its list ID without guessing a deletion target", async () => {
+  hub = await startTestHub({ config: testConfig(directory), appGateway: gateway });
+  await gateway.refresh();
+  const brain = attachBrain(hub);
+  const topic = hub.conversations.create().id;
+  const add = ownerTurn(hub, brain, topic, "Add a TickTick task.");
+  const created = await requestBrainTool(hub, "add_todo", { owner_requested: true, title: "No list ID" }, add);
+  const { receipt } = JSON.parse(created.text).untrustedAppData;
+  expect(JSON.parse(created.text)).toMatchObject({ untrustedAppData: { taskId: "task-1", projectId: null, undoAvailable: false } });
+  expect(hub.database.connection.prepare("SELECT id, task, project FROM ticktick_receipts").get()).toEqual({ id: receipt, task: "task-1", project: null });
+  brain.receive({ type: "turn.finished", ...add, outcome: "completed", reason: null });
+  const undo = ownerTurn(hub, brain, topic, "Undo the task.");
+  expect(await requestBrainTool(hub, "undo_created", { owner_requested: true }, undo)).toMatchObject({
+    isError: true, text: expect.stringContaining("no list ID"),
+  });
+  expect(requests("mcpServer/tool/call").map(({ params }) => params?.["tool"])).toEqual([appWrites.tickTickCreate]);
 });

@@ -78,6 +78,7 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
   Search for a near-duplicate with `todo_lookup` first, then use `add_todo` and say what you added.
   Give the task a due date or local time when requested, and set the reminder flag when the owner asks for a timed reminder.
   Use `undo_created` when the owner asks to undo a creation.
+  If the returned receipt is missing its list ID, say that you added the task and that undo is unavailable.
   Continue to use repository issues for project work.
 - If a write may have gone through, look up the result before attempting it again.
 
