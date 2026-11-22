@@ -674,3 +674,13 @@ dialog.dlg.is-leaving { animation: sink var(--motion-exit) var(--ease-in) forwar
 .accent-custom input::-webkit-color-swatch { border: 0; border-radius: 50%; }
 .accent-custom input::-moz-color-swatch { border: 0; border-radius: 50%; }
 .accent-preview { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); }
+
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent; }
+*:hover { scrollbar-color: color-mix(in srgb, var(--muted) 65%, transparent) transparent; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 38%, transparent); border-radius: 6px; }
+*:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 65%, transparent); }
+*::-webkit-scrollbar-button { display: none; }
+.od-rail, .od-rail:hover, .wb-tabs-scroll, .wb-tabs-scroll:hover { scrollbar-width: none; }
+.od-rail::-webkit-scrollbar, .wb-tabs-scroll::-webkit-scrollbar { display: none; }

@@ -8,9 +8,9 @@ describe("workbench panel width", () => {
     expect(parsePanelWidth("615.5")).toBe(615.5);
   });
 
-  it("keeps space for the rail, canvas and splitter", () => {
-    expect(panelMaximum(1200, 180)).toBe(752);
-    expect(panelMaximum(600, 140)).toBe(300);
+  it("keeps space for the canvas and splitter", () => {
+    expect(panelMaximum(1200)).toBe(932);
+    expect(panelMaximum(500)).toBe(300);
     expect(clampPanelWidth(100, 752)).toBe(300);
     expect(clampPanelWidth(900, 752)).toBe(752);
     expect(clampPanelWidth(420.6, 752)).toBe(421);

@@ -167,12 +167,12 @@ describe("repository discovery", () => {
     archived = false;
     clock.advance(60_000);
     await discovery.refresh();
-    expect(repositories.list()).toEqual([{ repository: organizationRepo, account: "nuofan-island", chosen: false, pinned: true }]);
+    expect(repositories.list()).toEqual([{ repository: organizationRepo, account: "nuofan-island", chosen: false, pinned: true, pinnedOrder: 1 }]);
     expect(createRepositoryAccounts(open(), clock).list()).toEqual(repositories.list());
     visible = false;
     clock.advance(60_000);
     await discovery.refresh();
-    expect(repositories.list()).toEqual([{ repository: organizationRepo, account: "nuofan-island", chosen: false, pinned: true }]);
+    expect(repositories.list()).toEqual([{ repository: organizationRepo, account: "nuofan-island", chosen: false, pinned: true, pinnedOrder: 1 }]);
   });
 });
 
@@ -205,4 +205,25 @@ it("migrates and persists repository aliases independently of pins and discovery
   expect(reloaded.list()[0]?.alias).toBe("Project");
   reloaded.setAlias("org/project", "   ");
   expect(createRepositoryAccounts(open(), clock).list()[0]?.alias).toBeUndefined();
+});
+
+it("keeps legacy pins before newly opened tabs and persists opening order", () => {
+  const old = open(migrations.filter((migration) => migration.version < 61));
+  addTicket(old, "org/legacy", 9);
+  old.connection.prepare("INSERT INTO repositories (repository, pinned) VALUES (?, 1)").run("org/legacy");
+  const database = open();
+  addTicket(database, "org/first", 10);
+  addTicket(database, "org/second", 11);
+  const repositories = createRepositoryAccounts(database, clock);
+  repositories.setPinned("org/second", true);
+  repositories.setPinned("org/first", true);
+  repositories.setPinned("org/second", true);
+  let rows = createRepositoryAccounts(open(), clock).list();
+  expect(rows.find((row) => row.repository === "org/legacy")?.pinnedOrder).toBeUndefined();
+  expect(rows.find((row) => row.repository === "org/second")?.pinnedOrder).toBe(1);
+  expect(rows.find((row) => row.repository === "org/first")?.pinnedOrder).toBe(2);
+  repositories.setPinned("org/second", false);
+  repositories.setPinned("org/second", true);
+  rows = createRepositoryAccounts(open(), clock).list();
+  expect(rows.find((row) => row.repository === "org/second")?.pinnedOrder).toBe(3);
 });

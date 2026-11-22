@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { chineseOf, type Conversation, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
+import { chineseOf, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
 import { canStartCard } from "../live/choice.js";
@@ -17,7 +17,6 @@ import type { CardActions } from "./WorkbenchView.js";
 
 export interface CanvasWorkbenchProps {
   readonly tickets: readonly Ticket[];
-  readonly topics: readonly Conversation[];
   readonly pinnedRepositories: readonly { readonly repository: string; readonly alias?: string | null }[];
   readonly waiting: WaitingState;
   readonly actions: CardActions;
@@ -27,6 +26,8 @@ export interface CanvasWorkbenchProps {
   readonly selectTicket: (ticket: number | null) => void;
   readonly ticketHref: (ticket: number) => string;
   readonly panel: ReactNode;
+  readonly pane: "canvas" | "panel";
+  readonly setPane: (pane: "canvas" | "panel") => void;
   readonly focus: string | null;
   readonly focused: () => void;
   readonly push: PushPhase;
@@ -40,11 +41,9 @@ function belongs(repository: string | null | undefined, value: string | null): b
 }
 
 export function CanvasWorkbench(props: CanvasWorkbenchProps) {
-  const { tickets, topics, waiting, repository, actions } = props;
+  const { tickets, waiting, repository, actions, pane, setPane } = props;
   const [popup, setPopup] = useState<number | null>(null);
-  const [pane, setPane] = useState<"canvas" | "panel">("canvas");
   const layout = useRef<HTMLDivElement>(null);
-  const railElement = useRef<HTMLElement>(null);
   const drag = useRef<{ pointer: number; position: number; size: number; portrait: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preferredWidth, setPreferredWidth] = useState(loadPanelWidth);
@@ -57,18 +56,16 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   const panelWidth = clampPanelWidth(preferredWidth, maximum);
   useLayoutEffect(() => {
     const element = layout.current;
-    const rail = railElement.current;
-    if (element === null || rail === null) return;
+    if (element === null) return;
     const query = window.matchMedia("(orientation: portrait) and (min-width: 768px)");
     const measure = () => {
       setPortrait(query.matches);
       setLayoutHeight(element.clientHeight);
-      if (!window.matchMedia("(max-width: 767px)").matches) setMaximum(panelMaximum(element.clientWidth, rail.getBoundingClientRect().width));
+      if (!window.matchMedia("(max-width: 767px)").matches) setMaximum(panelMaximum(element.clientWidth));
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(element);
-    observer?.observe(rail);
     window.addEventListener("resize", measure);
     query.addEventListener?.("change", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); query.removeEventListener?.("change", measure); };
@@ -92,7 +89,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     for (const card of waiting.cards) if (card.kind !== "hold") map.set(card.ticket.id, card.ticket);
     return [...map.values()];
   }, [tickets, waiting.cards]);
-  const repositories = useMemo(() => [...props.pinnedRepositories].sort((a, b) => (a.alias ?? a.repository).localeCompare(b.alias ?? b.repository) || a.repository.localeCompare(b.repository)), [props.pinnedRepositories]);
+  const repositories = props.pinnedRepositories;
   const canvas = useMemo(() => canvasOf(all, repository, new Set(stuck.keys()), new Map([...starts].map(([id, card]) => [id, card.before.map((before) => before.id)]))), [all, repository, stuck, starts]);
   useEffect(() => {
     if (props.focus === null || !waiting.known) return;
@@ -131,21 +128,9 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [popup, props.selected, props.selectTicket]);
-  const chooseRepository = (value: string | null | undefined) => { props.selectRepository(value); props.selectTicket(null); setPane("canvas"); };
   const select = (id: number) => { props.selectTicket(id); setPane("panel"); };
   const openStart = (card: StartData, element: HTMLElement) => { source.current = element; setPopup(card.ticket.id); };
-  const rail = (value: string | null | undefined, label: string) => {
-    const matching = all.filter((ticket) => belongs(value, ticketProject(ticket)));
-    const waitingHere = matching.some((ticket) => stuck.has(ticket.id) || starts.has(ticket.id)) || ((value === undefined || value === null) && holds.length > 0);
-    const running = matching.some((ticket) => ticket.state !== "pending") || topics.some((topic) => belongs(value, topic.repository) && topic.state === "working");
-    return <button key={value ?? (value === null ? "daily" : "all")} type="button" className="wb-repo" title={typeof value === "string" ? value : undefined} aria-pressed={repository === value} onClick={() => chooseRepository(value)}>
-      <span className={`dot dot--${waitingHere ? "warn" : running ? "ok" : "mute"}`} role="img" aria-label={text(waitingHere ? "workbench.mark.waits" : running ? "workbench.mark.runs" : "workbench.mark.idle")} /><span className="od-truncate">{label}</span><span className="count">{matching.length}</span>
-    </button>;
-  };
   return <div ref={layout} className={`wb-layout${portrait ? " wb-layout--portrait" : ""}${dragging ? " wb-layout--dragging" : ""}`} style={{ "--wb-panel-width": `${panelWidth}px`, "--wb-panel-height": `${panelHeight}px` } as CSSProperties}>
-    <aside ref={railElement} className="wb-repos" aria-label={text("conversation.repository")}>
-      {rail(undefined, text("workbench.all"))}{repositories.map((row) => rail(row.repository, row.alias ?? row.repository))}{rail(null, text("conversation.daily"))}
-    </aside>
     <div className="wb-mobile-tabs"><button type="button" aria-pressed={pane === "canvas"} onClick={() => setPane("canvas")}>{text("navigation.workbench")}</button><button type="button" aria-pressed={pane === "panel"} onClick={() => setPane("panel")}>{text("navigation.conversation")}</button></div>
     <main className={`wb-canvas ${pane === "panel" ? "wb-mobile-hidden" : ""}`} onClick={(event) => { if (!(event.target as HTMLElement).closest("button, a, input, textarea, select, .wcard")) props.selectTicket(null); }}>
       <div className="wb-toolbar">{startable.length === 0 ? null : <button type="button" className="btn btn-primary" disabled={startable.some((card) => useOf(waiting, card.key).step !== "idle")} onClick={() => actions.start(startable.map((card) => card.key))}><Icon name="check" />{text("chains.startAll")} {startable.length}</button>}<button type="button" className="btn" title={text("workbench.rearrangeTip")} disabled={props.rearranging} onClick={() => void props.rearrange().then((opened) => { if (opened) setPane("panel"); })}>{text("workbench.rearrange")}</button>

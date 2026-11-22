@@ -65,7 +65,7 @@ export type AccessTokenOutcome = z.infer<typeof AccessTokenOutcome>;
 export const MachineRevoked = z.object({ name: MachineName, accessToken: AccessTokenOutcome });
 export type MachineRevoked = z.infer<typeof MachineRevoked>;
 
-export const RepositoryAccount = z.object({ repository: RepositoryName, account: GitHubAccount, chosen: z.boolean(), pinned: z.boolean().default(false), alias: z.string().nullable().optional() });
+export const RepositoryAccount = z.object({ repository: RepositoryName, account: GitHubAccount, chosen: z.boolean(), pinned: z.boolean().default(false), pinnedOrder: z.number().int().positive().optional(), alias: z.string().nullable().optional() });
 export type RepositoryAccount = z.infer<typeof RepositoryAccount>;
 
 export const RepositoryAccountChange = z.object({ repository: RepositoryName, account: GitHubAccount });

@@ -4,8 +4,8 @@ export const minCanvasWidth = 260;
 export const splitterWidth = 8;
 const storageKey = "workbench.panelWidth";
 
-export function panelMaximum(layoutWidth: number, railWidth: number): number {
-  return Math.max(minPanelWidth, Math.floor(layoutWidth - railWidth - minCanvasWidth - splitterWidth));
+export function panelMaximum(layoutWidth: number): number {
+  return Math.max(minPanelWidth, Math.floor(layoutWidth - minCanvasWidth - splitterWidth));
 }
 
 export function clampPanelWidth(width: number, maximum: number): number {
