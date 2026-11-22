@@ -35,7 +35,7 @@ import {
   type WorkTask,
 } from "@super-agent2/protocol";
 import { z } from "zod";
-import { fetchArticle, isAgentWringWriting } from "./agent-wring.js";
+import { fetchArticle, isAgentWringWriting, uniqueArticleName } from "./agent-wring.js";
 import type { Tell } from "./chains.js";
 import type { Clock } from "./clock.js";
 import type { Delivery } from "./conversations.js";
@@ -784,11 +784,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     void (async () => {
       if (!current()) return;
       const delivered: DeliveredFile[] = [];
+      const names = new Set<string>();
       try {
         if (event.products === undefined) throw new Error("The worker did not hand back any Agent_wring article product IDs.");
         if (agentWring === undefined) throw new Error("No worker MCP server named Agent_wring is configured.");
         for (const [part, product] of event.products.entries()) {
-          delivered.push(await fetchArticle(agentWring, product, signal, (offset, bytes) => files.append(id, attempt, part, offset, bytes)));
+          const file = await fetchArticle(agentWring, product, signal, (offset, bytes) => files.append(id, attempt, part, offset, bytes));
+          delivered.push({ ...file, name: uniqueArticleName(file.name, names) });
         }
       } catch (error) {
         if (current()) loseDelivery(id, attempt, error instanceof Error ? error.message : String(error));
