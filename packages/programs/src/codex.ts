@@ -161,6 +161,14 @@ function openCodex(settings: ProgramSettings, options: OpenOptions, listener: Pr
           },
         }),
     ...settings.codexConfig,
+    ...(options.toolset === "brain" ? {
+      "tools.update_plan.enabled": false,
+      "features.multi_agent": false,
+      "features.multi_agent_v2": false,
+      "features.skill_search": false,
+      "features.skip_host_skill_discovery": true,
+      "features.sleep_tool": false,
+    } : {}),
     ...Object.fromEntries((options.extraMcp ?? []).map((server, index) => [`mcp_servers.${server.name}`, { url: server.url, bearer_token_env_var: extraMcpVariable(index) }])),
   };
 

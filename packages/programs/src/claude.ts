@@ -70,6 +70,7 @@ export function claudeArguments(settings: ProgramSettings, options: OpenOptions,
     "--mcp-config",
     claudeExtraConfig(options),
     "--strict-mcp-config",
+    ...(options.toolset === "brain" ? ["--tools", "Read,Glob,Grep,WebSearch,WebFetch,ToolSearch", "--disable-slash-commands"] : []),
     session.resume ? "--resume" : "--session-id",
     session.id,
   ];

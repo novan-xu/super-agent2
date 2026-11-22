@@ -123,8 +123,9 @@ function controlRows(control: DshControl | null): string[] {
   ];
 }
 
-export function dshPatch(url: string | null, control: DshControl | null = null, extra: readonly import("@super-agent2/protocol").ExtraMcpServer[] = []): string {
-  const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", ""];
+export function dshPatch(url: string | null, control: DshControl | null = null, extra: readonly import("@super-agent2/protocol").ExtraMcpServer[] = [], toolset: OpenOptions["toolset"] = "worker"): string {
+  const disabled = ["tool-bash", "tool-pwsh", "tool-jobs", "tool-working-directory", "tool-skill", "tool-subagent-control", "tool-subagent-list-agents", "tool-subagent", "tool-subagent-fork", "tool-workflow", "tool-todo", "tool-goal", "workspace-dependencies"];
+  const quiet = ["- id: session-log-deepseek", "  config:", "    enabled: false", "", ...(toolset === "brain" ? ["- id: tool-fs", "  config:", "    write: false", "    edit: false", ...disabled.flatMap((id) => [`- id: ${id}`, "  disabled: true"])] : [])];
   const rows = controlRows(control);
   for (const [index, server] of extra.entries()) {
     rows.push(
@@ -263,7 +264,7 @@ const SessionStatus = z.looseObject({ sessionId: z.string(), status: z.string() 
 function openDsh(settings: ProgramSettings, options: OpenOptions, listener: ProgramListener): ProgramHandle {
   const patch = join(tmpdir(), `super-agent2-dsh-${randomUUID()}.yml`);
   const control = openControl(dshControlPath());
-  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }, options.extraMcp));
+  writeFileSync(patch, dshPatch(options.tools?.url ?? null, { plugin: dshControlPlugin, path: control.path }, options.extraMcp, options.toolset));
   let session = options.session;
   let stored = options.session !== null;
   let current: Running | undefined;
