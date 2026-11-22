@@ -14,8 +14,8 @@ const page = {
 const Board = z.object(chunk);
 const History = z.object({
   topic: id.optional().describe("Topic ID, defaulting to the current topic"),
-  message: id.optional().describe("Read this specific message in full, one part at a time"),
-  summary: z.boolean().optional().describe("Read the topic summary, one part at a time"),
+  message: id.optional().describe("Read the full message and its quote"),
+  summary: z.boolean().optional().describe("Read the topic summary"),
   ...page,
   ...chunk,
 });
@@ -30,22 +30,22 @@ export function topicDefinitions() {
   return [
     {
       name: "read_topic_board",
-      description: "Read topic IDs, titles, project names, status lines, archive states and merge destinations. Continue using nextOffset.",
+      description: "Read the topic board, including archived and merged topics.",
       inputSchema: z.toJSONSchema(Board, { io: "input" }),
     },
     {
       name: "read_topic_history",
-      description: "Read a topic's recent message references. Continue using before, or pass a message ID to read it in parts. Set summary to read the topic summary in parts. Continue reading parts using nextOffset.",
+      description: "Read recent message references, a specific message, or a topic summary.",
       inputSchema: z.toJSONSchema(History, { io: "input" }),
     },
     {
       name: "search_topic_history",
-      description: "Search recorded messages and tool results by literal text across all topics, including archived topics. Continue using before.",
+      description: "Search literal text in messages and tool results, including archived topics.",
       inputSchema: z.toJSONSchema(Search, { io: "input" }),
     },
     {
       name: "read_seed_material",
-      description: "Read the complete shared memory or open ticket lines when omitted from the seed. Continue using nextOffset.",
+      description: "Read shared memory or open ticket lines omitted from the seed.",
       inputSchema: z.toJSONSchema(Material, { io: "input" }),
     },
   ];

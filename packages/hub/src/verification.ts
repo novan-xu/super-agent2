@@ -365,7 +365,10 @@ export function createVerification(options: VerificationOptions): VerificationSe
       ...woodpeckerSays(outcome.detail, waited, now),
       basis,
       "Nothing is decided from the time: the ticket stays verifying, nothing failed, no guided round is counted, and nothing was cancelled or restarted. The hub keeps checking by itself and merges by its rules when the pipeline is green.",
-      "Look at it yourself first, without interrupting anything: the pipeline's steps and logs, and whether the agents are online. A pipeline that is merely slow is left alone. Step in only if the look finds a real problem, such as an agent offline, a step that hangs, or a pipeline stuck in the queue: then act, and tell the owner in Chinese what you found and did. If nothing is wrong, wait, and say no more than one line.",
+      "Use run_command on hub to inspect steps, logs and agents without interrupting the pipeline. Use WOODPECKER_SERVER with Authorization: Bearer $WOODPECKER_TOKEN. The link identifies the repository and pipeline numbers.",
+      "Read /api/repos/<id>/pipelines/<number> for steps, /api/repos/<id>/logs/<number>/<step id> for base64 log lines, or /api/agents for agent status.",
+      "Leave a progressing pipeline alone. Look for offline agents, stalled steps or queues, or a missing webhook if the head has no pipeline. Use the smallest fix, such as restarting a stuck pipeline through Woodpecker (the hub follows the newest one), messaging a running worker who can push, or telling the owner if only they can fix it.",
+      "Never cancel a progressing pipeline or use merge_ticket to bypass a slow one. Report any diagnosis and action briefly in Chinese. If it is only slow, wait and say at most one line.",
       `If it still waits, the hub tells you again at ${durationWords(threshold * 2 ** due)} of waiting.`,
     ].join("\n");
     const notice =
@@ -566,7 +569,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       deployed
         ? deploying.length > 0
           ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${ticketReference(after)}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
-          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner said otherwise, open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}) and state its defaults; the owner starts it.`
+          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner deferred, grouped or declined deployment, read deployment.md and open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}). State its defaults. The owner starts it.`
         : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
       ...(deployed && waitingForDeployment.length > 0
         ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${ticketReference(after)}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]

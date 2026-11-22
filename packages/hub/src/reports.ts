@@ -127,7 +127,7 @@ export function repairReport(ended: Ticket, repair: Ticket, followers: readonly 
     `Ticket ${ticketReference(ended)} ran on ${ranWords(ended)}.`,
     ...(stateDefaults
       ? [
-          `Now call choose_defaults for ticket ${ticketReference(repair)}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform and a one-line reason as for any ticket. The hub uses the owner's worker order for the engine. Consider whether the failed run shows that the work needs a higher difficulty and explain the difficulty in the one-line reason on the card. Then tell the owner in Chinese, in a line or two, that a repair ticket waits for their 开始 and what you chose.`,
+          `Now call choose_defaults for ticket ${ticketReference(repair)}: kind ${repair.kind}${repair.issues.length === 0 ? "" : `, the difficulty of each of its issues (${numbers(remaining)})`}, its platform and a one-line reason. Consider a higher difficulty if the failed run warrants it. The worker gets the failure history when the owner starts the repair, with a fresh round count. Tell the owner briefly in Chinese what you chose and that the repair waits for their 开始.`,
         ]
       : []),
   ];

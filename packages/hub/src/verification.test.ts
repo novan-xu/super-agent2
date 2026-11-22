@@ -566,6 +566,7 @@ describe("after the merge", () => {
     expect(deployedReport?.notice).toBe(`工单 ${deployed.code.toUpperCase()} 已合并，这次改动需要部署`);
     expect(deployedReport?.prompt).toContain("so this change needs deploying");
     expect(deployedReport?.prompt).toContain("no task ticket is arranged to deploy it");
+    expect(deployedReport?.prompt).toContain("read deployment.md");
     expect(deployedReport?.prompt).toContain(`open_task_ticket (deploy true, after ["${ticketReference(deployed)}"]`);
     expect(deployedReport?.prompt).not.toContain("deploy_repository");
   });
@@ -789,6 +790,8 @@ describe("a pipeline that runs far beyond the usual", () => {
     expect(prompt).toContain("What is usual for novan-xu/super-agent-sandbox: 10 minutes, the median of its last 3 green pipelines");
     expect(prompt).toContain("3 times that, 30 minutes");
     expect(prompt).toContain("Nothing is decided from the time: the ticket stays verifying, nothing failed, no guided round is counted, and nothing was cancelled or restarted.");
+    expect(prompt).toContain("/api/repos/<id>/logs/<number>/<step id>");
+    expect(prompt).toContain("Never cancel a progressing pipeline or use merge_ticket to bypass a slow one.");
     expect(prompt).toContain("tells you again at 1 hour");
     await after(10);
     await after(10);
