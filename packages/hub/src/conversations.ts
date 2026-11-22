@@ -245,6 +245,7 @@ const EntryRow = z.object({
   hidden: z.number().int(),
   placement: OwnerEntry.shape.placement,
   routing_rule: RoutingProposal.shape.decided.shape.rule.nullish(),
+  repository_cap: z.number().int().nullish(),
 });
 type EntryRow = z.infer<typeof EntryRow>;
 
@@ -436,7 +437,6 @@ export function createConversationService(options: ConversationServiceOptions): 
   const router = createTopicRouter(options.database, { clock, ...options.routing });
   const schedules = scheduleAccess(options.database);
   const selectConversation = connection.prepare("SELECT * FROM conversations WHERE id = ?");
-  const availableForRouting = connection.prepare("SELECT 1 FROM conversations WHERE id = ? AND merged_into IS NULL");
   const assignTopicRepository = connection.prepare(`
     UPDATE conversations SET needs_repository = 0, repository = ?, updated_at = ?
     WHERE id = ? AND system = 0 AND code_system = 0 AND merged_into IS NULL
@@ -492,7 +492,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     WHEN ${placedByRouter} THEN 'router-opened'
     ELSE 'owner' END AS placement`;
   const entrySource = "conversation_entries AS e LEFT JOIN routing_decisions AS r ON r.entry = e.id AND e.kind = 'owner'";
-  const routingColumns = `${placement}, CASE WHEN ${originalPlacement} AND r.owner_placed = 0 THEN r.rule END AS routing_rule`;
+  const routingColumns = `${placement}, CASE WHEN ${originalPlacement} AND r.owner_placed = 0 THEN r.rule END AS routing_rule, r.repository_cap`;
   const selectEntry = connection.prepare(`SELECT e.*, ${routingColumns} FROM ${entrySource} WHERE e.id = ?`);
   const scheduledInput = connection.prepare(`SELECT id FROM schedule_runs WHERE state = 'pending'
     AND ((entry = ? AND continuation_entry IS NULL) OR continuation_entry = ?)`);
@@ -768,7 +768,9 @@ export function createConversationService(options: ConversationServiceOptions): 
   const routingNote = (row: EntryRow, match?: string): BrainInput["routing"] => {
     const rule = row.routing_rule;
     if (rule == null) return undefined;
-    if (row.placement === "router-joined") return { placement: "existing", rule };
+    if (row.placement === "router-joined") {
+      return { placement: "existing", rule, ...(row.repository_cap === 1 ? { repositoryCap: true } : {}) };
+    }
     const topic = match === undefined ? undefined : get(match);
     if (topic === undefined || topic.id === row.conversation_id) return { placement: "new", rule };
     const characters = [...topics.summary(topic.id).replace(/\s+/gu, " ").trim()];
@@ -816,7 +818,7 @@ export function createConversationService(options: ConversationServiceOptions): 
   const openTopic = (at: number, title: string, scope: TopicScope, repository: string | null, titleOrigin: TitleOrigin = "automatic") =>
     storeTopic(options.database, at, title, { repository, needsRepository: scope.kind === "code" && repository === null, titleOrigin });
 
-  const createMoveDestination = (id: string, at: number, title?: string): string => {
+  const createMoveDestination = (id: string, at: number, title?: string) => {
     const row = EntryRow.parse(selectEntry.get(id));
     const owner = OwnerEntry.parse(toEntry(row));
     const source = toConversation(selectConversation.get(row.conversation_id));
@@ -826,7 +828,11 @@ export function createConversationService(options: ConversationServiceOptions): 
       : original?.["scope"] === "code" ? { kind: "code" }
       : repository !== null ? { kind: "repository", repository }
       : source.needsRepository === true ? { kind: "code" } : { kind: "daily" };
-    return openTopic(at, title ?? titleOf(owner.text, owner.attachments), scope, router.repositoryFor(owner.text, scope), title === undefined ? "automatic" : "brain");
+    const targetRepository = router.repositoryFor(owner.text, scope) ?? (title !== undefined && scope.kind === "code" ? source.repository : null);
+    const capped = title === undefined ? undefined : router.cappedHandover(targetRepository, source.id, owner.text, at);
+    return capped === undefined
+      ? { target: openTopic(at, title ?? titleOf(owner.text, owner.attachments), scope, targetRepository, title === undefined ? "automatic" : "brain") }
+      : { target: capped, repositoryCap: true as const };
   };
 
   const corrections = createTopicCorrections({
@@ -1292,27 +1298,44 @@ export function createConversationService(options: ConversationServiceOptions): 
     return conversation === undefined ? undefined : publishOwner(writeOwner(conversation, message, attachments, { quotedMessage, ...(id === undefined ? {} : { id }) }));
   };
 
-  const routingCandidate = (topic: string | undefined, scope: TopicScope): Conversation | undefined => {
+  const routingCandidate = (topic: string | undefined, scope: TopicScope, allowArchived = false): Conversation | undefined => {
     const found = topic === undefined ? undefined : rawGet(topic);
-    return found?.topicState === "active" && !found.system && !found.mergePending && topicInScope(found, scope) && availableForRouting.get(found.id) !== undefined ? found : undefined;
+    return found !== undefined && !found.system && !found.mergePending && found.mergedInto === undefined && topicInScope(found, scope)
+      && (found.topicState === "active" || (allowArchived && router.recentlyArchived(found.id))) ? found : undefined;
+  };
+
+  const automaticDestination = (scope: TopicScope, routing: Routing) => {
+    const proposed = routingCandidate(routing.topic ?? undefined, scope, true);
+    const capped = router.cappedTopic(proposed?.repository ?? routing.repository, proposed?.id, routing.scores);
+    const destination = capped === undefined ? proposed : rawGet(capped);
+    const proposal: RoutingProposal = {
+      ...routing,
+      decided: { ...routing.decided, topic: destination?.id ?? null },
+      ...(destination?.topicState === "archived" ? { reopen: true } : {}),
+      ...(capped === undefined ? {} : { repositoryCap: true, possibleMatch: undefined }),
+    };
+    return { destination, proposal };
   };
 
   const placeOwner = (
     id: string, at: number, { message, attachments, scope }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
-    { repository, proposal, ownerChanged = false, pending = false }: {
-      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: boolean;
+    { repository, proposal, ownerChanged = false, pending }: {
+      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing;
     },
   ): StreamEntry => {
-    const match = conversation === undefined && !ownerChanged ? routingCandidate(proposal?.possibleMatch, scope) : undefined;
     connection.exec("BEGIN IMMEDIATE");
     try {
+      if (pending !== undefined) {
+        ({ destination: conversation, proposal } = automaticDestination(scope, pending));
+      }
+      const match = conversation === undefined && !ownerChanged ? routingCandidate(proposal?.possibleMatch, scope, true) : undefined;
       if (conversation === undefined) {
         const topic = openTopic(at, titleOf(message, attachments), scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
       writeOwner(conversation, message, attachments, { id, at, possibleMatch: match?.id });
-      if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: !pending });
-      if (pending) deletePending.run(id);
+      if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: pending === undefined });
+      if (pending !== undefined) deletePending.run(id);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");
@@ -1323,8 +1346,8 @@ export function createConversationService(options: ConversationServiceOptions): 
   };
 
   const finishRouting = (id: string, at: number, body: z.infer<typeof PendingBody>, routing: Routing): StreamEntry =>
-    placeOwner(id, at, body, routingCandidate(routing.topic ?? undefined, body.scope), {
-      repository: body.scope.kind === "repository" ? body.scope.repository : routing.repository, proposal: routing, pending: true,
+    placeOwner(id, at, body, undefined, {
+      repository: routing.repository, pending: routing,
     });
 
   corrections.finishOfflineMerges();
@@ -1345,7 +1368,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     const at = clock.now();
     const body = { message, attachments: [...attachments], scope };
     if (newTopic || proposal !== undefined) {
-      const destination = newTopic ? undefined : routingCandidate(topic, scope);
+      const destination = newTopic ? undefined : routingCandidate(topic, scope, proposal?.reopen === true && topic === proposal.decided.topic);
       if (!newTopic && destination === undefined) return undefined;
       return placeOwner(id, at, body, destination, {
         repository: newTopic ? router.repositoryFor(message, scope) : null,
@@ -1536,7 +1559,9 @@ export function createConversationService(options: ConversationServiceOptions): 
     },
     previewStream: async ({ text, attachmentNames, scope }, signal) => {
       const routing = await router.route({ text, attachments: attachmentNames.map((name) => ({ name })), scope, at: clock.now() }, { purpose: "preview", signal });
-      return { proposal: RoutingProposal.parse(routing), title: routing.topic === null || closing ? null : rawGet(routing.topic)?.title ?? null };
+      if (closing) return { proposal: RoutingProposal.parse(routing), title: null };
+      const { destination, proposal } = automaticDestination(scope, routing);
+      return { proposal: RoutingProposal.parse(proposal), title: destination?.title ?? null };
     },
     sendToStream: (topic, message, attachments, options) => streamSend(randomUUID(), topic, message, attachments, options),
     sendOwner,

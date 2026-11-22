@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { messages } from "@super-agent2/catalog";
 import { brainLinkPath, brainToolsPath, ConversationList, ConversationResponse, ConversationState, EntryResponse, type HubToBrain, largestMessageBytes, MachineReport, protocolVersion, ServerMessage, StreamEntry, StreamPage, StreamPreview, TurnState } from "@super-agent2/protocol";
+import { hour, minute } from "@super-agent2/routing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -613,7 +614,7 @@ describe("the topic stream", () => {
     expect(running.conversations.get(second.id)?.topicState).toBe("active");
   });
 
-  it("routes among active topics within scope and names a repository from active topics and open tickets", async () => {
+  it("routes among eligible topics within scope and names a repository from topics and open tickets", async () => {
     const running = await start();
     const daily = running.conversations.create().id;
     running.conversations.send(daily, "Daily context");
@@ -642,12 +643,113 @@ describe("the topic stream", () => {
       { scope: "daily", candidates: 1, rule: "c", topic: daily, placed_in: daily },
       { scope: "repository", candidates: 1, rule: "b", topic: project, placed_in: project },
       { scope: "code", candidates: 0, rule: "d", topic: null, placed_in: codeReply?.topic.id },
-      { scope: "code", candidates: 2, rule: "d", topic: null, placed_in: pending?.topic.id },
+      { scope: "code", candidates: 3, rule: "d", topic: null, placed_in: pending?.topic.id },
     ]);
     expect(running.conversations.stream(undefined, undefined, null).entries.map(({ topic }) => topic.id)).not.toContain(pending?.topic.id);
     expect(openTicket(running, pending?.topic.id).conversation).toBe(pending?.topic.id);
     expect(openTicket(running, daily, "owner/project").conversation).toBe(daily);
     expect(running.conversations.get(daily)?.repository).toBe("owner/project");
+  });
+
+  it.each(["automatic", "reviewed"] as const)("reopens a topic archived an hour earlier through an %s send", async (send) => {
+    const running = await start();
+    const service = running.conversations;
+    const { link } = connect(running);
+    const topic = service.create().id;
+    const text = "Prepare the release planning checklist";
+    const owner = service.send(topic, text)!;
+    const turn = { conversation: topic, turn: "before-archive" };
+    link.receive({ type: "turn.started", ...turn, inputs: [owner.id], provider: "gpt", model: "model" });
+    link.receive({ type: "turn.finished", ...turn, outcome: "completed", reason: null });
+    clock.advance(2 * hour);
+    service.archiveIdle();
+    expect(service.get(topic)?.topicState).toBe("archived");
+    clock.advance(hour);
+
+    const scope = { kind: "daily" } as const;
+    const preview = await service.previewStream({ text, attachmentNames: [], scope });
+    expect(preview.proposal).toMatchObject({ decided: { topic, rule: "c" }, reopen: true });
+    const sent = send === "automatic" ? await service.sendToStream(undefined, text, [], { scope })
+      : await service.sendToStream(topic, text, [], { scope, proposal: preview.proposal });
+    expect(sent?.topic.id).toBe(topic);
+    expect(service.get(topic)?.topicState).toBe("active");
+    expect(running.database.connection.prepare("SELECT archived_at FROM conversations WHERE id = ?").get(topic)).toEqual({ archived_at: null });
+  });
+
+  it("does not extend the archive window when an old topic is renamed or reopen an empty move source", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const old = service.create().id;
+    const text = "Prepare the release planning checklist";
+    service.send(old, text);
+    service.archive(old);
+    clock.advance(24 * hour + 1);
+    service.rename(old, "Recently renamed");
+    const source = service.create().id;
+    const destination = service.create().id;
+    const owner = service.send(source, text)!;
+    service.move(owner.id, destination, source);
+    const preview = await service.previewStream({ text, attachmentNames: [], scope: { kind: "daily" } });
+    expect(preview.proposal).toMatchObject({ candidates: 1, decided: { topic: destination } });
+  });
+
+  it("joins an active repository topic at the cap in preview and on an automatic send", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { messages } = connect(running);
+    const scope = { kind: "repository", repository: "OWNER/Project" } as const;
+    const create = (text: string) => service.sendToStream(undefined, text, [], { scope, newTopic: true });
+    const text = "Prepare the release planning checklist";
+    const archived = (await create(text))!.topic.id;
+    service.archive(archived);
+    const best = (await create("Release checklist for shipping"))!.topic.id;
+    clock.advance(minute);
+    await create("Database migration and backups");
+    const recent = (await create("Typography and layout"))!.topic.id;
+    await service.sendToStream(undefined, text, [], { scope: { kind: "repository", repository: "owner/unrelated" }, newTopic: true });
+
+    const preview = await service.previewStream({ text, scope, attachmentNames: [] });
+    expect(preview.proposal).toMatchObject({ repositoryCap: true, decided: { topic: best, best: archived } });
+    const routed = (await service.sendToStream(undefined, text, [], { scope }))!;
+    expect(routed).toMatchObject({ topic: { id: best }, entry: { placement: "router-joined" } });
+    expect(messages.at(-1)).toMatchObject({ type: "input", input: { routing: { placement: "existing", repositoryCap: true } } });
+    expect(service.get(archived)?.topicState).toBe("archived");
+    expect(running.database.connection.prepare("SELECT repository_cap, topic, placed_in FROM routing_decisions WHERE entry = ?").get(routed.entry.id))
+      .toEqual({ repository_cap: 1, topic: best, placed_in: best });
+    clock.advance(minute);
+    service.send(recent, "Latest activity");
+    const unrelated = await service.sendToStream(undefined, "Quizzical wry foxes", [], { scope });
+    expect(unrelated?.topic.id).toBe(recent);
+    const explicit = await service.sendToStream(undefined, "An explicit new topic", [], { scope, newTopic: true, proposal: preview.proposal });
+    expect(explicit).toMatchObject({ topic: { title: "An explicit new topic" }, entry: { placement: "owner" } });
+  });
+
+  it("uses the repository cap at placement time on overlapping automatic sends", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const scope = { kind: "repository", repository: "owner/project" } as const;
+    await Promise.all(["Prepare the release", "Investigate backups", "Design the layout", "Try a new build"].map((text) => service.sendToStream(undefined, text, [], { scope })));
+    expect(service.list().filter(({ repository, topicState }) => repository === scope.repository && topicState === "active")).toHaveLength(3);
+    expect(running.database.connection.prepare("SELECT count(*) AS count FROM routing_decisions WHERE repository_cap = 1 AND rule = 'd'").get()).toEqual({ count: 1 });
+  });
+
+  it("hands a titled split to the best other active topic in a full repository", async () => {
+    const running = await start();
+    const service = running.conversations;
+    const { link } = connect(running);
+    const scope = { kind: "repository", repository: "owner/project" } as const;
+    const routed = (await service.sendToStream(undefined, "Prepare the release planning checklist", [], { scope }))!;
+    const source = routed.topic.id;
+    const best = (await service.sendToStream(undefined, "Release planning checklist for shipping", [], { scope, newTopic: true }))!.topic.id;
+    clock.advance(minute);
+    await service.sendToStream(undefined, "Typography and layout", [], { scope, newTopic: true });
+    const turn = { conversation: source, turn: "handover-at-cap" };
+    link.receive({ type: "turn.started", ...turn, inputs: [routed.entry.id], provider: "gpt", model: "model" });
+    expect(service.handover(source, turn.turn, { title: "A new title" })).toEqual({ ok: true, value: routed.entry.id });
+    expect(service.entries(best)).toContainEqual(expect.objectContaining({ id: routed.entry.id }));
+    expect(service.list()).toHaveLength(3);
+    expect(running.database.connection.prepare("SELECT brain_moved_to, brain_repository_cap FROM routing_decisions WHERE entry = ?").get(routed.entry.id))
+      .toEqual({ brain_moved_to: best, brain_repository_cap: 1 });
   });
 
   it("previews the fallback route for empty and attachment drafts without changing the database", async () => {
@@ -1363,7 +1465,7 @@ describe("topic corrections and archive policy", () => {
 
     const routed = await service.sendToStream(undefined, "Something new", []);
     expect(routed?.topic.id).not.toBe(idle);
-    expect(db.prepare("SELECT candidates, rule FROM routing_decisions WHERE entry = ?").get(routed!.entry.id)).toEqual({ candidates: 2, rule: "d" });
+    expect(db.prepare("SELECT candidates, rule FROM routing_decisions WHERE entry = ?").get(routed!.entry.id)).toEqual({ candidates: 3, rule: "d" });
 
     expect((await topicRequest(running, idle, "/rename", { title: "  New title  " })).status).toBe(200);
     expect(service.get(idle)).toMatchObject({ title: "New title", topicState: "archived" });

@@ -186,6 +186,8 @@ export const RoutingProposal = z.object({
   shadow: RoutingDecision.nullable(),
   fallback: z.string().max(256).nullable(),
   possibleMatch: ConversationId.optional(),
+  reopen: z.literal(true).optional(),
+  repositoryCap: z.literal(true).optional(),
 });
 export type RoutingProposal = z.infer<typeof RoutingProposal>;
 
