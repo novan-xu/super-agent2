@@ -1213,6 +1213,14 @@ export const migrations: readonly Migration[] = [
       INSERT INTO mail_review_state (id) VALUES (1);
     `,
   },
+  {
+    version: 59,
+    sql: `
+      ALTER TABLE mail_review_state ADD COLUMN filter_failures INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE mail_review_state ADD COLUMN filter_retry_at INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE mail_review_state ADD COLUMN filter_notified INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

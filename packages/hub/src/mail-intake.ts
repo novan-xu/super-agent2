@@ -51,7 +51,7 @@ function email(value: string): string {
   return (/<([^<>]+)>/u.exec(value)?.[1] ?? value).trim().toLowerCase();
 }
 
-function incoming(raw: unknown, own: ReadonlySet<string>, from: number, until: number) {
+export function incoming(raw: unknown, own: ReadonlySet<string>, from: number, until: number) {
   const flags = EnvelopeFlags.safeParse(raw).data;
   if (flags?.isDraft || flags?.is_draft || [flags?.labels, flags?.labelIds, flags?.label_ids].some((labels) => labels?.some((label) => ignoredLabels.has(label)))) {
     return undefined;
@@ -64,7 +64,7 @@ function incoming(raw: unknown, own: ReadonlySet<string>, from: number, until: n
   return { ...message, timestamp: Number.isFinite(timestamp) ? timestamp : from };
 }
 
-async function* pages(gateway: MailGateway, mailbox: Mailbox, from: number, until: number): AsyncGenerator<unknown[]> {
+export async function* pages(gateway: Pick<MailGateway, "call">, mailbox: Mailbox, from: number, until: number): AsyncGenerator<unknown[]> {
   if (mailbox.provider === "gmail") {
     const seen = new Set<string>();
     let next: string | undefined;

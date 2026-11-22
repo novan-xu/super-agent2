@@ -47,6 +47,7 @@ Nothing of ours re-implements an agent or calls a model API directly.
 
 | Role | Providers |
 | --- | --- |
+| Mail pre-filter | Codex only, using `gpt-6-luna` at low effort; it never follows the brain provider order or falls back to another provider. |
 | Brain | Claude through Claude Code, GPT through Codex, and DeepSeek through `dsh`, in that starting order. The owner can reorder all three in 设置 → 模型. |
 | Worker, code | GPT through Codex, Claude through Claude Code, and DeepSeek through `dsh`, in that starting order. The owner can reorder all three in the worker section above the brain order in 设置 → 模型. |
 | Worker, task | Prose (translation, articles, emails) goes to Antigravity by default; any other task, a deployment included, to a code engine. Any writing that concerns code is code work and stays with the code workers. Antigravity never runs a code ticket. |
@@ -720,6 +721,16 @@ After three timeouts on the same minute, the hub checks the following minute bef
 When the following minute reads successfully, the hub moves past the bad minute and posts the mailbox and skipped time range in 邮件.
 A mailbox without progress for one hour gets one stalled notice during that incident.
 设置 → 连接 shows each mailbox's intake status.
+
+Before brain review, a Codex-only filter examines batches of up to 20 envelopes and the owner's confirmed memory in an ephemeral, read-only session with apps and tools disabled.
+It keeps only clear requests for action or decisions, real deadlines or risks, and messages covered by a memory keep rule; uncertain mail is ignored.
+Ignored envelopes are marked checked and their sender, subject and snippet are cleared.
+A failed or invalid filter answer leaves the batch queued with exponential backoff capped at one hour, and never sends it unfiltered to the brain.
+After three failures the hub posts one notice in 邮件 without a push, followed by one recovery notice when filtering succeeds.
+
+The historical dry run uses the same filter against connected mailboxes without a hub database, cursor changes, notices or brain turns.
+It reports each decision and per-mailbox totals for owner review before deployment.
+See `docs/deploy.md` for the checkout and container commands.
 
 The mail job uses dedicated hidden brain turns because service-triggered schedules show their input and post a completion notice for silent runs.
 New mail waits for a Claude or Codex brain that supports mail review.

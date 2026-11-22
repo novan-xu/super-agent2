@@ -1,3 +1,4 @@
+import { codexMailFilter, type MailFilter } from "./mail-filter.js";
 import { extraMcpFromEnvironment } from "./extra-mcp.js";
 import { createModelDiscovery } from "./model-discovery.js";
 import type { AddressInfo } from "node:net";
@@ -62,6 +63,7 @@ export interface HubOptions {
   readonly appGateway?: AppGateway;
   readonly mailPollTicker?: Ticker;
   readonly mailTriageTicker?: Ticker;
+  readonly mailFilter?: MailFilter;
   readonly keySource?: KeySource;
   readonly clock?: Clock;
   readonly environment?: Environment;
@@ -412,7 +414,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         : createPushService({ database, clock, settings: config.vapid, fetch: options.pushFetch ?? fetch, waiting });
     if (appGateway !== undefined && mailEnabled) {
       const report = options.report ?? ((line: string) => process.stderr.write(`${line}\n`));
-      mailTriage = createMailTriage({ database, clock, conversations, push, ticker: options.mailTriageTicker, report });
+      mailTriage = createMailTriage({ database, clock, conversations, push, filter: options.mailFilter ?? codexMailFilter(process.cwd(), environment), memory: () => memories.list().map(({ text }) => text).join("\n"), ticker: options.mailTriageTicker, report });
       mailIntake = createMailIntake({
         database, clock, gateway: appGateway, ownerEmail: config.ownerEmail, ticker: options.mailPollTicker, report,
         writeNotice: mailTriage.writeNotice, changed: () => { settingsChanged(); mailTriage?.pump(); },

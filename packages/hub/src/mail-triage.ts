@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Clock } from "./clock.js";
 import { type ConversationService, storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import { validateFilter, type MailFilter } from "./mail-filter.js";
 import { mailTransaction } from "./mail-state.js";
 import type { PushService } from "./push-service.js";
 import { intervalTicker, type Ticker } from "./verification.js";
@@ -63,6 +64,8 @@ function prompt(messages: z.infer<typeof Message>[]): string {
 }
 
 interface MailTriageOptions {
+  readonly filter: MailFilter;
+  readonly memory: () => string;
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly conversations: ConversationService;
@@ -96,6 +99,10 @@ export function createMailTriage(options: MailTriageOptions) {
   const clearDetails = db.prepare("UPDATE mail_messages SET sender = NULL, subject = NULL, action = NULL, urgent = 0 WHERE id = ?");
   const summaries = db.prepare(`SELECT m.*, c.label FROM mail_messages m JOIN mail_cursors c ON m.mailbox = c.mailbox
     WHERE m.action IS NOT NULL AND (m.urgent = 1 OR ?) ORDER BY m.received_at, m.id LIMIT ?`);
+  const filterState = db.prepare("SELECT filter_failures, filter_retry_at, filter_notified FROM mail_review_state WHERE id = 1");
+  const setFilterState = db.prepare("UPDATE mail_review_state SET filter_failures = ?, filter_retry_at = ?, filter_notified = ? WHERE id = 1");
+  let filtering = false;
+  let closed = false;
   let stop: (() => void) | undefined;
 
   const mailTopic = () => {
@@ -165,24 +172,53 @@ export function createMailTriage(options: MailTriageOptions) {
     options.push?.inbox(topicTitle, heading, delivery.topic);
   };
 
-  const dispatch = () => {
-    if (!conversations.mailReviewReady() || batchRow.get() !== undefined || state().retry_at > clock.now()) return;
+  const dispatch = async () => {
+    const filterStatus = z.object({ filter_failures: z.number(), filter_retry_at: z.number(), filter_notified: z.number() }).parse(filterState.get());
+    if (filtering || closed || !conversations.mailReviewReady() || batchRow.get() !== undefined || state().retry_at > clock.now() || filterStatus.filter_retry_at > clock.now()) return;
     const messages = pending.all(batchSize).map((row) => Message.parse(row));
     if (messages.length === 0) return;
-    const id = randomUUID();
-    mailTransaction(db, () => {
-      conversations.writeMailReview(id, mailTopic(), prompt(messages));
-      start.run(id);
-      for (const message of messages) assign.run(id, message.id);
-    });
-    conversations.deliverMailReview(id);
+    filtering = true;
+    try {
+      const envelopes = messages.map(({ id, label, sender, subject, snippet }) => ({ item: id, mailbox: label, sender, subject, snippet }));
+      const result = validateFilter({ items: await options.filter(envelopes, options.memory()) }, envelopes);
+      if (closed) return;
+      const kept = new Set(result.filter((decision) => decision.action === "keep").map((decision) => decision.item));
+      const selected = messages.filter(({ id }) => kept.has(id));
+      let publish: (() => void) | undefined;
+      let review: string | undefined;
+      mailTransaction(db, () => {
+        for (const message of messages) {
+          if (!kept.has(message.id)) { classify.run(null, 0, message.id); clearDetails.run(message.id); }
+        }
+        if (filterStatus.filter_notified) publish = writeNotice(text("mail.filterRecovered"));
+        setFilterState.run(0, 0, 0);
+        if (selected.length > 0 && conversations.mailReviewReady() && batchRow.get() === undefined) {
+          review = randomUUID();
+          conversations.writeMailReview(review, mailTopic(), prompt(selected));
+          start.run(review);
+          for (const message of selected) assign.run(review, message.id);
+        }
+      });
+      publish?.();
+      if (review !== undefined) conversations.deliverMailReview(review);
+    } catch {
+      if (closed) return;
+      options.report?.("Mail filter: processing failure");
+      const failures = filterStatus.filter_failures + 1;
+      const notified = filterStatus.filter_notified || Number(failures >= 3);
+      const publish = mailTransaction(db, () => {
+        setFilterState.run(failures, clock.now() + Math.min(60 * 60_000, 60_000 * 2 ** Math.min(failures - 1, 6)), notified);
+        return !filterStatus.filter_notified && notified ? writeNotice(text("mail.filterFailed")) : undefined;
+      });
+      publish?.();
+    } finally { filtering = false; }
   };
 
   const pump = () => {
     try {
       checkFinished();
       publishSummary();
-      dispatch();
+      void dispatch().catch(() => options.report?.("Mail triage: processing failure"));
     } catch {
       options.report?.("Mail triage: processing failure");
     }
@@ -195,7 +231,7 @@ export function createMailTriage(options: MailTriageOptions) {
       pump();
       stop = (options.ticker ?? intervalTicker(5_000))(pump);
     },
-    close: () => stop?.(),
+    close: () => { closed = true; stop?.(); },
     includes: (batch: string, mailbox: unknown, message: unknown) =>
       typeof mailbox === "string" && typeof message === "string" && messageOf.get(batch, mailbox, message) !== undefined,
     record: (batch: string, provider: Provider, raw: unknown): boolean => {

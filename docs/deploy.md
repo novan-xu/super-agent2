@@ -462,3 +462,13 @@ For article delivery, configure a worker-enabled server named `Agent_wring` (cas
 The hub replaces that suffix with `/products/<product_id>/article.html` and uses the same bearer token.
 The Agent_wring service must support HTML input in `save_article` and expose the authenticated article endpoint from novan-xu/Agent_wring#28.
 The existing 5 MiB HTML preview limit applies to each delivered page, including embedded images.
+
+## Historical mail filter dry run
+
+On a work machine, install the repository dependencies with `pnpm install`, build with `pnpm --filter "@super-agent2/hub..." build`, and sign in to Codex with the linked mail apps available.
+Run `pnpm --filter hub mail-filter-dry-run --days 30 --memory-file /path/to/memory.txt --out /path/to/results.json`.
+The memory file and output path are optional; without an output path the JSON is written to standard output.
+The totals include mailbox IDs, which can be passed as `--mailbox <id>` to restrict a later run.
+The results contain private mail metadata and should be stored accordingly.
+Inside the brain container, run `node /app/packages/hub/dist/mail-filter-dry-run.js --days 30 --out /path/to/results.json` from the brain shell using its Codex login.
+The command reads mail only and does not require a running hub or its database.

@@ -78,6 +78,7 @@ it("keeps background review private and delivers only actionable batches with ge
   hub = await startTestHub({
     config: { ...testConfig(folder), mailIntake: true, vapid: generateVapidKeys() },
     clock, appGateway: gateway,
+    mailFilter: async (messages) => messages.map(({ item }) => ({ item, action: "keep", reason: "Review" })),
     mailPollTicker: (tick) => { tickMail = tick; return () => undefined; },
     mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
   });
@@ -104,6 +105,7 @@ it("keeps background review private and delivers only actionable batches with ge
   expect(inputs()).toHaveLength(0);
   sources(true);
   tickTriage();
+  await settledTurn();
 
   const start = () => {
     const message = inputs().at(-1)!;
@@ -124,6 +126,7 @@ it("keeps background review private and delivers only actionable batches with ge
     tickMail();
     await settledTurn();
     tickTriage();
+    await settledTurn();
     const { scope, envelope } = start();
     expect(envelope.message_id).toBe(id);
     const decision = { id: envelope.id, action: "请确认交付日期。", deadline: "周五下午", reply: true, urgent };
@@ -151,6 +154,7 @@ it("keeps background review private and delivers only actionable batches with ge
   expect(inputs()).toHaveLength(1);
   clock.advance(60_000);
   tickTriage();
+  await settledTurn();
   const retry = start();
   expect(retry.entry).not.toBe(routine.entry);
   expect(retry.envelope).toEqual(routine.envelope);
@@ -184,4 +188,67 @@ it("keeps background review private and delivers only actionable batches with ge
   expect(JSON.stringify(notices())).toContain("Batched subject");
   expect(pushes.mock.calls).toEqual(Array.from({ length: 3 }, () => ["邮件", "1 封邮件需要处理", topic]));
   expect(current.settings.snapshot().appGateway?.mailboxes).toEqual([{ provider: "gmail", label: "Gmail", reading: "reading" }]);
+});
+
+it("filters before review, retries invalid answers and reports failure and recovery once", async () => {
+  collect("routine", "Routine");
+  collect("important", "Important");
+  let attempt = 0;
+  hub = await startTestHub({
+    config: { ...testConfig(folder), mailIntake: true }, clock, appGateway: fakeGateway(),
+    mailFilter: async (messages) => {
+      attempt += 1;
+      if (attempt === 1) return [];
+      if (attempt === 2) return [{ item: 99999, action: "keep", reason: "Unknown" }];
+      if (attempt === 3 || attempt === 4) throw new Error("private mail must not be logged");
+      return messages.map(({ item, subject }) => ({ item, action: subject === "Important" ? "keep" : "ignore", reason: "Test" }));
+    },
+    mailPollTicker: () => () => undefined,
+    mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
+  });
+  const sent: HubToBrain[] = [];
+  const brain = hub.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+  await settledTurn();
+  brain.receive({ type: "hello", protocol: protocolVersion, running: [], mailReview: true });
+  brain.receive({ type: "providers", order: ["deepseek", "gpt"], providers: [
+    { provider: "deepseek", model: "deepseek", effort: "high", available: true, until: null },
+    { provider: "gpt", model: "gpt", effort: "high", available: true, until: null },
+  ] });
+  for (const delay of [0, 60_000, 120_000, 240_000]) {
+    clock.advance(delay);
+    tickTriage();
+    await settledTurn();
+    expect(sent.filter((entry) => entry.type === "input")).toHaveLength(0);
+  }
+  const topic = hub.database.connection.prepare("SELECT topic FROM mail_review_state").get()!["topic"] as string;
+  expect(hub.conversations.entries(topic)).toHaveLength(1);
+  expect(hub.database.connection.prepare("SELECT COUNT(*) AS count FROM mail_messages WHERE checked = 0").get()).toEqual({ count: 2 });
+  clock.advance(480_000);
+  tickTriage();
+  await settledTurn();
+  const inputs = sent.filter((entry) => entry.type === "input");
+  expect(inputs).toHaveLength(1);
+  expect(inputs[0]!.input.text).toContain("Important");
+  expect(inputs[0]!.input.text).not.toContain("Routine");
+  expect(hub.conversations.entries(topic)).toHaveLength(2);
+  expect(hub.database.connection.prepare("SELECT sender, subject, snippet, checked FROM mail_messages WHERE message = 'routine'").get()).toEqual({ sender: null, subject: null, snippet: null, checked: 1 });
+});
+
+it("starts no brain turn when all mail is ignored", async () => {
+  collect("routine", "Routine");
+  hub = await startTestHub({
+    config: { ...testConfig(folder), mailIntake: true }, clock, appGateway: fakeGateway(),
+    mailFilter: async (messages) => messages.map(({ item }) => ({ item, action: "ignore", reason: "Routine" })),
+    mailPollTicker: () => () => undefined,
+    mailTriageTicker: (tick) => { tickTriage = tick; return () => undefined; },
+  });
+  const sent: HubToBrain[] = [];
+  const brain = hub.conversations.attach({ send: (message) => sent.push(message), close: () => undefined });
+  await settledTurn();
+  brain.receive({ type: "hello", protocol: protocolVersion, running: [], mailReview: true });
+  brain.receive({ type: "providers", order: ["gpt"], providers: [{ provider: "gpt", model: "gpt", effort: "high", available: true, until: null }] });
+  tickTriage();
+  await settledTurn();
+  expect(sent.filter((entry) => entry.type === "input")).toHaveLength(0);
+  expect(hub.database.connection.prepare("SELECT checked, sender, subject, snippet FROM mail_messages").get()).toEqual({ checked: 1, sender: null, subject: null, snippet: null });
 });
