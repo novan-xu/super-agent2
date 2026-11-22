@@ -105,6 +105,8 @@ const Output = z.looseObject({
   is_api_error_message: z.boolean().optional(),
   is_error: z.boolean().optional(),
   result: z.string().optional(),
+  usage: z.looseObject({ input_tokens: z.number().int().nonnegative().optional(), cache_read_input_tokens: z.number().int().nonnegative().optional(), cache_creation_input_tokens: z.number().int().nonnegative().optional(), output_tokens: z.number().int().nonnegative().optional() }).optional(),
+  total_cost_usd: z.number().nonnegative().optional(),
   modelUsage: z.record(z.string(), z.looseObject({ contextWindow: z.number().int().positive().optional() })).optional().catch(undefined),
   errors: z.array(z.string()).optional(),
   terminal_reason: z.string().optional(),
@@ -271,6 +273,9 @@ function openClaude(settings: ProgramSettings, options: OpenOptions, listener: P
       return;
     }
     if (output.type === "result") {
+      if (output.usage !== undefined || output.total_cost_usd !== undefined) {
+        listener({ type: "usage", input: output.usage?.input_tokens ?? null, cacheRead: output.usage?.cache_read_input_tokens ?? null, cacheWrite: output.usage?.cache_creation_input_tokens ?? null, output: output.usage?.output_tokens ?? null, reasoning: null, costUsd: output.total_cost_usd ?? null });
+      }
       if (interruptRequested) {
         finish({ type: "turn.finished", outcome: "interrupted" });
         return;

@@ -39,6 +39,17 @@ function track<T extends ProgramHandle>(handle: T): T {
   return handle;
 }
 
+describe("Claude usage", () => {
+  it("reports the usage and cost from a result", async () => {
+    const source = fakeClaudeSource.replace('subtype: "success", is_error: false, user_message_uuids: uuids, ...extra', 'subtype: "success", is_error: false, user_message_uuids: uuids, usage: { input_tokens: 12, cache_read_input_tokens: 30, cache_creation_input_tokens: 4, output_tokens: 7 }, total_cost_usd: 0.01, ...extra');
+    const adapter = claudeAdapter(settings(writeFake(directory, "claude-usage.mjs", source), "claude", "high"));
+    const log = new EventLog();
+    track(adapter.open(options(null), log.listener)).start("hello");
+    await log.ended();
+    expect(log.events).toContainEqual({ type: "usage", input: 12, cacheRead: 30, cacheWrite: 4, output: 7, reasoning: null, costUsd: 0.01 });
+  });
+});
+
 describe("extra MCP servers", () => {
   const server = { name: "Agent_wring", url: "http://mini:3000/mcp", token: "extra-example-secret" };
   it("configures dsh with an environment reference", () => {
