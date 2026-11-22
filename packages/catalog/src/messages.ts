@@ -582,6 +582,7 @@ export const messages = {
   "settings.section.repositories": "仓库",
   "settings.section.models": "模型",
   "settings.section.appearance": "外观",
+  "settings.section.history": "\u5386\u53f2",
   "settings.section.connections": "连接",
   "settings.loading": "正在读取设置",
   "machine.online": "在线",

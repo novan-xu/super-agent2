@@ -188,11 +188,10 @@ export function App() {
     if (inRepositories && page.status === "open") void hubApi.refreshRepositories();
   }, [inRepositories, page.status]);
 
+  const inHistory = route.view === "settings" && "section" in route && route.section === "history";
   useEffect(() => {
-    if (route.view === "history") {
-      void controller.openHistory();
-    }
-  }, [controller, route.view]);
+    if (inHistory) void controller.openHistory();
+  }, [controller, inHistory]);
 
   useEffect(() => {
     controller.open(conversationId, inStream, scope);
@@ -276,7 +275,8 @@ export function App() {
     if (destination.view === "ticket") setOrigin("schedules");
     navigate(destination);
   }, [navigate]);
-  const backFromTicket = useCallback(() => navigate({ view: origin }), [navigate, origin]);
+  const backRoute: PageRoute = origin === "history" ? { view: "settings", section: "history" } : { view: origin };
+  const backFromTicket = useCallback(() => navigate(backRoute), [navigate, origin]);
   const searchHistory = useCallback((query: string) => void controller.searchHistory(query), [controller]);
   const moreHistory = useCallback(() => void controller.moreHistory(), [controller]);
   const retryHistory = useCallback(() => void controller.loadHistory(), [controller]);
@@ -406,8 +406,15 @@ export function App() {
             backHref={pagePath({ view: "workbench" })} back={() => setWorkTicket(null)} ticketHref={ticketHref}
             openTicket={setWorkTicket} now={now} />}
         />
-      ) : route.view === "history" ? (
-        <HistoryView
+      ) : route.view === "memory" ? (
+        <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
+      ) : route.view === "schedules" ? (
+        <SchedulesView navigate={fromSchedules} />
+      ) : route.view === "ticket" ? (
+        <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath(backRoute)} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
+      ) : route.view === "settings" ? (
+        <SettingsView
+          history={<HistoryView
           history={page.history}
           ticketHref={ticketHref}
           openTicket={openFromHistory}
@@ -417,15 +424,7 @@ export function App() {
           scroll={historyScroll.current}
           scrolled={historyScrolled}
           now={now}
-        />
-      ) : route.view === "memory" ? (
-        <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
-      ) : route.view === "schedules" ? (
-        <SchedulesView navigate={fromSchedules} />
-      ) : route.view === "ticket" ? (
-        <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath({ view: origin })} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
-      ) : route.view === "settings" ? (
-        <SettingsView
+        />}
           section={"section" in route ? route.section : null}
           settings={page.settings}
           tickets={page.tickets.open}

@@ -30,7 +30,7 @@ describe("pageRoute", () => {
   });
 
   it("writes the path it reads", () => {
-    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/tickets/7", "/history", "/memory", "/settings", "/settings/machines", "/settings/repositories", "/settings/models", "/settings/appearance", "/settings/connections"]) {
+    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/tickets/7", "/history", "/memory", "/settings", "/settings/machines", "/settings/repositories", "/settings/models", "/settings/appearance", "/settings/connections", "/settings/history"]) {
       const route = pageRoute(path);
       expect(route).toBeDefined();
       if (route !== undefined) {

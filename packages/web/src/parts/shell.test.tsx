@@ -23,10 +23,10 @@ function render(overrides: Partial<ShellProps> = {}): string {
 }
 
 describe("Shell", () => {
-  it("offers all six destinations in the sidebar and in the tab bar, in the design's order", () => {
+  it("offers all five destinations in the sidebar and in the tab bar, in the design's order", () => {
     const html = render();
     const labels = [...html.matchAll(destinations)].map((match) => match[1]);
-    expect(labels).toEqual(["工作台", "对话", "历史", "记忆", "定时", "设置", "工作台", "对话", "历史", "记忆", "定时", "设置"]);
+    expect(labels).toEqual(["工作台", "对话", "记忆", "定时", "设置", "工作台", "对话", "记忆", "定时", "设置"]);
     expect(html).toContain('href="/schedules"');
     expect(html).toContain('href="/conversations/c1"');
     expect(html).toContain('href="/workbench"');
@@ -41,8 +41,8 @@ describe("Shell", () => {
     const marked = (overrides: Partial<ShellProps>) =>
       [...render({ route: { view: "ticket", ticket: 4 }, ...overrides }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
     expect(marked({})).toEqual(["工作台", "工作台"]);
-    expect(marked({ ticketFrom: "history" })).toEqual(["历史", "历史"]);
-    expect(render({ route: { view: "ticket", ticket: 4 }, ticketFrom: "history" })).toContain("<h1>历史</h1>");
+    expect(marked({ ticketFrom: "history" })).toEqual(["设置", "设置"]);
+    expect(render({ route: { view: "ticket", ticket: 4 }, ticketFrom: "history" })).toContain("<h1>设置</h1>");
   });
 
   it("shows whether the hub and the brain are reachable", () => {
@@ -73,16 +73,8 @@ describe("Shell", () => {
     expect(html.match(/count count--hot/g)).toHaveLength(2);
   });
 
-  it("keeps History free of badges in both navigation areas", () => {
-    const html = render({ waiting: 2, suggestions: 4 });
-    const historyLinks = [...html.matchAll(/<a class="(?:nav-btn|tab)" href="\/history" aria-label="([^"]+)"[^>]*>(.*?)<\/a>/g)];
-    expect(historyLinks).toHaveLength(2);
-    for (const link of historyLinks) {
-      expect(link[1]).toBe("历史");
-      expect(link[2]).not.toMatch(/count--hot|tab-badge/);
-    }
-    expect(html.match(/count count--hot/g)).toHaveLength(2);
-    expect(html.match(/tab-badge/g)).toHaveLength(2);
+  it("does not offer History in either navigation area", () => {
+    expect(render()).not.toContain('href="/history"');
   });
 
   it("shows no count when nothing waits", () => {

@@ -342,3 +342,15 @@ it("shows usage totals, daily provider figures, and top topics", async () => {
   expect(host.textContent).toContain("158");
   expect(host.textContent).toContain("42");
 });
+
+it("redirects the old History URL into Settings and loads the history", async () => {
+  const fetcher = vi.fn(async (path: string) => path.startsWith("/api/tickets?scope=ended")
+    ? Response.json({ tickets: [], next: null })
+    : Response.json({}, { status: 404 }));
+  vi.stubGlobal("fetch", fetcher);
+  await open("/history");
+  expect(window.location.pathname).toBe("/settings/history");
+  expect(host.querySelector('a[href="/settings/history"][aria-current="page"]')).not.toBeNull();
+  expect(host.querySelector(`input[aria-label="${text("history.search")}"]`)).not.toBeNull();
+  expect(fetcher).toHaveBeenCalledWith("/api/tickets?scope=ended", expect.anything());
+});

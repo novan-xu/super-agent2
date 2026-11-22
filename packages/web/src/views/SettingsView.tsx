@@ -20,7 +20,7 @@ import {
   type Ticket,
   withCell,
 } from "@super-agent2/protocol";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
 import {
@@ -62,6 +62,7 @@ export interface SettingsActions {
 }
 
 export interface SettingsViewProps {
+  readonly history?: ReactNode;
   readonly section: SettingsSection | null;
   readonly settings: SettingsSnapshot | null;
   readonly tickets: readonly Ticket[];
@@ -78,6 +79,7 @@ const sectionIcons: Readonly<Record<SettingsSection, IconName>> = {
   connections: "connect",
   appearance: "sun",
   usage: "hub",
+  history: "history",
 };
 
 function routeOf(section: SettingsSection | null): PageRoute {
@@ -871,13 +873,14 @@ function UsageSection({ budget }: { readonly budget: number | null | undefined }
   </>;
 }
 
-export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now }: SettingsViewProps) {
+export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now, history }: SettingsViewProps) {
   const active = section ?? firstSection;
   const link = (target: SettingsSection | null) => {
     const route = routeOf(target);
     return { href: pagePath(route), onClick: (event: React.MouseEvent) => followLink(event, () => navigate(route)) };
   };
   const body = () => {
+    if (active === "history") return history;
     if (active === "usage") return <UsageSection budget={settings === null ? undefined : settings.openaiBudget ?? null} />;
     if (active === "appearance") {
       return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
