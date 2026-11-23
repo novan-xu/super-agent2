@@ -3838,3 +3838,11 @@ Showing calls there would require a voice-duration data model and display.
 Every runner reconnect starts a fresh silence interval.
 The brain gets a silence notice only after observing a full quiet interval on a connected machine, since disconnects already have their own notices.
 Another option was to carry forward the time of the last event across ordinary disconnects and reset only after a hub restart.
+
+## 2026-11-23 — Browser layout verification (#318)
+
+- **Chosen:** Use the built web page, the page development hub and seeded records for the layout check and screenshot command.
+  Check the workbench canvas and conversation separately on the phone and together on the desktop.
+  Run a pinned Chrome Headless Shell build whose archive is verified before extraction on each CI platform.
+- **Why:** The two commands exercise the same routes, data loading and CSS the owner uses with repeatable inputs for both widths.
+- **Other options:** Serve mock responses to a fixture page or use the browser preinstalled on each worker.

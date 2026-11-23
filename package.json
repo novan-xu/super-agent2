@@ -12,7 +12,10 @@
     "build": "pnpm -r build",
     "comments": "node tools/zero-comment/dist/cli.js",
     "markup": "node tools/markup-text/dist/cli.js",
-    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm comments && pnpm markup && pnpm sentences",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm comments && pnpm markup && pnpm sentences && pnpm layout",
+    "browser:install": "node tools/page-dev/src/chromium.ts",
+    "layout": "node tools/page-dev/dist/browser.js check",
+    "screenshot": "node tools/page-dev/dist/browser.js screenshot",
     "sentences": "node tools/sentence-lines/dist/cli.js"
   },
   "devDependencies": {

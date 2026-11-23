@@ -353,7 +353,7 @@ select.field { padding-right: var(--space-8); appearance: none; background-image
 .rail-sec { display: grid; gap: var(--space-2); }
 .rail-head { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: 700; color: var(--fg-2); }
 .rail-head .od-fill { text-align: right; }
-.rail-item { display: grid; gap: 2px; width: 100%; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg); text-align: left; }
+.rail-item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; width: 100%; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg); text-align: left; }
 .rail-item:hover { background: var(--surface); }
 .rail-item > span { display: block; }
 .rail-item .ri-title { font-size: var(--text-md); font-weight: 600; }
@@ -408,10 +408,10 @@ select.field { padding-right: var(--space-8); appearance: none; background-image
 .lrow { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); width: 100%; padding: var(--space-4) var(--space-5); border: 0; border-top: 1px solid var(--border-soft); background: transparent; color: var(--fg); text-align: left; transition: background-color var(--motion-fast) var(--ease-standard); }
 .lrow:first-child { border-top: 0; }
 .lrow:hover { background: var(--surface-warm); }
-.lrow-main { display: grid; gap: 4px; }
+.lrow-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .lrow-main > span { display: block; }
 .lrow-title { font-weight: 600; font-size: var(--text-base); line-height: 1.45; }
-.lrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
+.lrow-main > .lrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
 .lrow-side { display: grid; justify-items: end; gap: 4px; color: var(--muted); font-size: var(--text-xs); }
 .lrow-side > span { display: block; }
 .list-note { margin-top: var(--space-3); color: var(--muted); font-size: var(--text-sm); }

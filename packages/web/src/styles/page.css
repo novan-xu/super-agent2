@@ -163,6 +163,7 @@ a.chip:hover { border-color: var(--accent); color: var(--fg); }
 a.lrow { text-decoration: none; }
 a.lrow:hover { text-decoration: none; }
 .lrow-meta .chip .od-icon { --od-icon-size: 13px; }
+.lrow-meta .chip--mono { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .lrow-note { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
 .lrow-note--match { color: var(--muted); }
 .list[aria-busy="true"] { opacity: 0.6; }

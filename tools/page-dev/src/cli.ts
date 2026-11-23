@@ -9,6 +9,7 @@ import { type AccessKeySet, brainToolsPath, type Provider, startingBrainOrder } 
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
+import { seedLayout } from "./layout-fixture.js";
 import { createScriptedRunners } from "./scripted.js";
 
 const { values } = parseArgs({
@@ -24,6 +25,8 @@ const { values } = parseArgs({
     announce: { type: "string" },
     source: { type: "string", default: "novan-xu/super-agent2" },
     cloudflare: { type: "string", default: "fake" },
+    "page-dir": { type: "string" },
+    "layout-fixture": { type: "boolean", default: false },
   },
 });
 
@@ -146,7 +149,7 @@ const hub = await startHub({
     host: "127.0.0.1",
     projectFolders: [],
     brainTokenFile: join(hubDir, "brain.token"),
-    pageDir: defaultPageDir,
+    pageDir: values["page-dir"] === undefined ? defaultPageDir : resolve(values["page-dir"]),
     ...(vapid === undefined ? {} : { vapid }),
     ...(values.announce === undefined ? {} : { version: values.announce, sourceRepository: values.source }),
   },
@@ -238,18 +241,6 @@ const running: Hub = hub;
 const deployments = new Map<string, string>();
 const scripted = createScriptedRunners(hub, forge === undefined ? undefined : forgeHandBack(forge, () => running, deployments));
 
-const harness = createHarness({
-  scripted,
-  hub,
-  publicUrl: `http://127.0.0.1:${port}`,
-  hubUrl,
-  assertion: ownerAssertion,
-  allowance,
-  ...(cloudflare === undefined ? {} : { cloudflare }),
-  brainToken: () => readFileSync(join(hubDir, "brain.token"), "utf8").trim(),
-  ...(forge === undefined ? {} : { deployments, forge }),
-});
-
 const proxy = createServer((incoming, outgoing) => {
   const path = new URL(incoming.url ?? "/", "http://page-dev").pathname;
   if (path.startsWith("/__harness/") && path !== "/__harness/offline" && path !== "/__harness/online") {
@@ -330,27 +321,47 @@ proxy.on("upgrade", (incoming: IncomingMessage, socket: Socket, head: Buffer) =>
 });
 
 await new Promise<void>((done) => proxy.listen(port, "127.0.0.1", done));
+const address = proxy.address();
+if (address === null || typeof address === "string") throw new Error("The page harness has no TCP address");
+const publicUrl = `http://127.0.0.1:${address.port}`;
+
+const harness = createHarness({
+  scripted,
+  hub,
+  publicUrl,
+  hubUrl,
+  assertion: ownerAssertion,
+  allowance,
+  ...(cloudflare === undefined ? {} : { cloudflare }),
+  brainToken: () => readFileSync(join(hubDir, "brain.token"), "utf8").trim(),
+  ...(forge === undefined ? {} : { deployments, forge }),
+});
+
+if (values["layout-fixture"]) {
+  const fixture = await seedLayout(hub, publicUrl, defaultPageDir);
+  process.send?.({ url: publicUrl, fixture });
+}
 
 process.stdout.write(
   [
-    `Page:     http://127.0.0.1:${port}/`,
+    `Page:     ${publicUrl}/`,
     `Hub:      ${hubUrl} (behind the proxy, which signs every request as ${ownerEmail})`,
     `Brain:    ${brainKind}`,
     `Data:     ${dataDir}`,
-    `Offline:  http://127.0.0.1:${port}/__harness/offline, back with /__harness/online`,
-    `Runners:  a request to /runner/ with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token for the runner application, as Cloudflare would (a token the fake Cloudflare deleted, or a wrong secret, gets no assertion); add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub http://127.0.0.1:${port} --access-client-id <any id>`,
-    `Hold:     http://127.0.0.1:${port}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
-    `Tickets:  http://127.0.0.1:${port}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
-    `Work:     http://127.0.0.1:${port}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort>[&after=<ticket>] files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND, and verifying tickets are checked against GitHub every ten seconds`,
-    `Tool:     http://127.0.0.1:${port}/__harness/tool?name=<tool>&args=<JSON> calls one of the brain's tools, for example merge_ticket`,
-    `Writing:  http://127.0.0.1:${port}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a task ticket of prose through the brain's tools and states its defaults, to be started from its card on the page`,
-    `Scenario: http://127.0.0.1:${port}/__harness/scenario opens and starts scripted tickets in two repositories and two task tickets of prose on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
-    `History:  http://127.0.0.1:${port}/__harness/history?count=70 adds ended tickets (merged, delivered and stopped, across two repositories, a hundred minutes apart, newest first) and one that was joined into another and so is not listed; the scenario above ends tickets live`,
-    `Loop:     http://127.0.0.1:${port}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round), worker (fails once) or repair (one merged pull request, then red every round until stuck; 放弃 on its card opens a repair ticket that merges green to the end), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
-    `Deploy:   http://127.0.0.1:${port}/__harness/deploy?repository=<owner/name> (with --forge fake) arranges a one-issue chain and, through the brain's tools, a task ticket that deploys it after the chain on the scripted machine studio, both with their defaults; one 开始 on the chain's card starts both, the chain merges green in the fake forge, and the scripted worker then deploys the final merge commit and reports it; POST a deployment file to /__harness/deployment?repository= to put it in every later scripted pull request instead`,
+    `Offline:  ${publicUrl}/__harness/offline, back with /__harness/online`,
+    `Runners:  a request to /runner/ with CF-Access-Client-Id and CF-Access-Client-Secret is signed as that service token for the runner application, as Cloudflare would (a token the fake Cloudflare deleted, or a wrong secret, gets no assertion); add a machine with HUB_DATA_DIR=${hubDir} node packages/hub/dist/machines-cli.js add <name> --hub ${publicUrl} --access-client-id <any id>`,
+    `Hold:     ${publicUrl}/__harness/hold?kind=repo (also branch, data, file, long, hidden, or ?command=...), run on the pretend target demo`,
+    `Tickets:  ${publicUrl}/__harness/ticket?id=<ticket>&to=<state> moves a ticket as a worker or a merge would (verifying, then merged)`,
+    `Work:     ${publicUrl}/__harness/work?repository=<owner/name>&issues=1,2&machine=<runner>&engine=codex&model=<model>&effort=<effort>[&after=<ticket>] files, arranges, chooses and starts a chain through the brain's tools and the owner's start; with --credentials environment the hub's GitHub tokens come from GITHUB_TOKEN_NOVAN_XU and GITHUB_TOKEN_NUOFAN_ISLAND, and verifying tickets are checked against GitHub every ten seconds`,
+    `Tool:     ${publicUrl}/__harness/tool?name=<tool>&args=<JSON> calls one of the brain's tools, for example merge_ticket`,
+    `Writing:  ${publicUrl}/__harness/writing?task=<English task>&text=<pasted material>&conversation=<id> opens a task ticket of prose through the brain's tools and states its defaults, to be started from its card on the page`,
+    `Scenario: ${publicUrl}/__harness/scenario opens and starts scripted tickets in two repositories and two task tickets of prose on the scripted machines studio and mini (needs --credentials placeholder or environment); /__harness/scripted?machine=mini&to=offline (or online) cuts or restores a scripted machine`,
+    `History:  ${publicUrl}/__harness/history?count=70 adds ended tickets (merged, delivered and stopped, across two repositories, a hundred minutes apart, newest first) and one that was joined into another and so is not listed; the scenario above ends tickets live`,
+    `Loop:     ${publicUrl}/__harness/loop?case=fixed (red pipeline once, then green), red (red every round), stuck (the worker fails every round), worker (fails once) or repair (one merged pull request, then red every round until stuck; 放弃 on its card opens a repair ticket that merges green to the end), on the scripted machine studio; with --forge fake the hub reads GitHub and Woodpecker from a fake forge in this process, so a scripted pull request is verified, fails or merges there; the demo brain answers failures with guide_ticket and the cap with describe_stuck`,
+    `Deploy:   ${publicUrl}/__harness/deploy?repository=<owner/name> (with --forge fake) arranges a one-issue chain and, through the brain's tools, a task ticket that deploys it after the chain on the scripted machine studio, both with their defaults; one 开始 on the chain's card starts both, the chain merges green in the fake forge, and the scripted worker then deploys the final merge commit and reports it; POST a deployment file to /__harness/deployment?repository= to put it in every later scripted pull request instead`,
     `Version:  ${values.announce === undefined ? "none announced (--announce <commit> makes the hub announce it to runners and hand them its release from --source, through GitHub with --credentials environment)" : `${values.announce} of ${values.source}, announced to runners`}`,
     `Machines: ${cloudflare === undefined ? "no Cloudflare credentials (--cloudflare none), so 添加机器 says so" : "添加机器 in 设置 makes Access service tokens in a fake Cloudflare in this process; /__harness/cloudflare?create=fail makes adding fail, ?remove=fail makes revoking keep the token, =ok puts either back"}; only /runner/ takes a service token, as the runner application's Service Auth policy would, and everything else is signed as the owner`,
-    `Allowance: http://127.0.0.1:${port}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
+    `Allowance: ${publicUrl}/__harness/allowance?codex=exhausted&claude=exhausted forces the subscriptions as read; read puts back the runners' real reading`,
     `Push:     ${vapid === undefined ? "off (--push none)" : `VAPID keys in ${join(dataDir, "vapid.json")}`}; a pretend device at /__harness/device/new, what it received at /__harness/pushes, expiry at /__harness/device/<id>/gone`,
     "",
   ].join("\n"),
@@ -375,3 +386,4 @@ const stop = () => {
 };
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
+process.on("disconnect", stop);
