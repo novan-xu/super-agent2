@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -57,6 +57,7 @@ import type { Ledger } from "./ledger.js";
 import { findExecutable } from "./programs.js";
 import { mergeEnvironment } from "./shell.js";
 import { replaceFile } from "./replace-file.js";
+import { screenshotTransferFolder, stageScreenshots } from "./screenshots.js";
 import { artifactsVariable, type StorageSelection, ticketArtifacts } from "./storage.js";
 import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, trackingRemote, withRepository, type WorkPaths, workPaths } from "./workplace.js";
 import { checkTaskHandback, clearOutput, readTaskQuestion, taskQuestionPath, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
@@ -477,6 +478,15 @@ export function createWorks(options: WorksOptions): Works {
       if (outcome.outcome === "failed") {
         return { ok: true, event: { kind: "failed", failure: "no-pull-request", reason: outcome.report.en, report: outcome.report } };
       }
+      let screenshots;
+      if (outcome.screenshots !== undefined) {
+        try {
+          const { head, images, newViews } = outcome.screenshots;
+          screenshots = { head, newViews, images: stageScreenshots(work.paths.folder, work.record.ticket, work.record.attempt, images) };
+        } catch (error) {
+          return { ok: false, problem: `The screenshot files could not be handed in: ${messageOf(error)} Correct the files and hand back again.` };
+        }
+      }
       return {
         ok: true,
         event: {
@@ -486,6 +496,7 @@ export function createWorks(options: WorksOptions): Works {
           closes: [...outcome.closes],
           report: outcome.report,
           ...(outcome.decisions.length === 0 ? {} : { decisions: [...outcome.decisions] }),
+          ...(screenshots === undefined ? {} : { screenshots }),
         },
       };
     } catch (error) {
@@ -995,13 +1006,19 @@ export function createWorks(options: WorksOptions): Works {
     const reply = (data: string | null, problem: string | null) =>
       options.send({ type: "work.file.part", ticket: asked.ticket, attempt: asked.attempt, name: asked.name, offset: asked.offset, data, problem });
     const work = works.get(asked.ticket);
-    if (work === undefined || work.record.attempt !== asked.attempt || work.record.kind !== "task") {
-      reply(null, `This machine has no matching task work for attempt ${asked.attempt}`);
+    if (work === undefined || work.record.attempt !== asked.attempt) {
+      reply(null, `This machine has no matching work for attempt ${asked.attempt}`);
       return;
     }
     const length = Math.min(asked.length, filePartBytes);
     try {
-      const handle = await open(join(outputFolder(work.paths), asked.name), "r");
+      const folder = work.record.kind === "task" ? outputFolder(work.paths) : screenshotTransferFolder(work.paths.folder, asked.ticket, asked.attempt);
+      const path = join(folder, asked.name);
+      if (work.record.kind === "code" && (!/^image-[0-9a-f-]{36}\.(png|jpg)$/.test(asked.name) || !lstatSync(folder).isDirectory() || !lstatSync(path).isFile())) {
+        reply(null, "The requested file is not a staged screenshot");
+        return;
+      }
+      const handle = await open(path, "r");
       try {
         const buffer = Buffer.alloc(length);
         let read = 0;

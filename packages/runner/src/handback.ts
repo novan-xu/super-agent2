@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { type Decision, type GeneratedText, Handback } from "@super-agent2/protocol";
+import { type Decision, type GeneratedText, Handback, type HandbackScreenshot, HeadCommit } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { ProcessRunner } from "./git.js";
 
@@ -8,6 +8,7 @@ export interface PullRequestState {
   readonly url: string;
   readonly state: string;
   readonly head: string;
+  readonly commit?: string;
   readonly closes: readonly number[];
 }
 
@@ -24,6 +25,7 @@ const PullRequestJson = z.looseObject({
   url: z.string(),
   state: z.string(),
   headRefName: z.string(),
+  headRefOid: HeadCommit.optional(),
   closingIssuesReferences: ClosingReferences,
 });
 
@@ -34,7 +36,7 @@ function closingNumbers(references: z.output<typeof ClosingReferences>, reposito
 
 export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequestReader {
   return async (repository, number, environment, cwd) => {
-    const result = await run(gh, ["pr", "view", String(number), "--repo", repository, "--json", "number,url,state,headRefName,closingIssuesReferences"], {
+    const result = await run(gh, ["pr", "view", String(number), "--repo", repository, "--json", "number,url,state,headRefName,headRefOid,closingIssuesReferences"], {
       cwd,
       env: environment,
     });
@@ -48,6 +50,7 @@ export function readPullRequestWith(run: ProcessRunner, gh: string): PullRequest
         url: parsed.url,
         state: parsed.state,
         head: parsed.headRefName,
+        ...(parsed.headRefOid === undefined ? {} : { commit: parsed.headRefOid }),
         closes: closingNumbers(parsed.closingIssuesReferences, repository),
       };
     } catch (error) {
@@ -93,7 +96,8 @@ export function readBranchPullWith(run: ProcessRunner, gh: string): BranchPullRe
 }
 
 export type HandbackOutcome =
-  | { readonly ok: true; readonly outcome: "finished"; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[] }
+  | { readonly ok: true; readonly outcome: "finished"; readonly pullRequest: number; readonly url: string; readonly closes: readonly number[]; readonly report: GeneratedText; readonly decisions: readonly Decision[];
+      readonly screenshots?: { readonly head: string; readonly images: readonly HandbackScreenshot[]; readonly newViews: string[] } }
   | { readonly ok: true; readonly outcome: "settled" }
   | { readonly ok: true; readonly outcome: "failed"; readonly report: GeneratedText }
   | { readonly ok: false; readonly problem: string };
@@ -192,5 +196,10 @@ async function checkPullHandback(check: HandbackCheck, open: readonly number[], 
       problem: `Pull request #${handback.pullRequest} closes none of the open issues of the chain (${listed(open)}). Edit its body so that it has a line "Closes #<number>" for each open issue it resolves (gh pr edit ${handback.pullRequest} --body-file <file>), then write the hand-back file again.`,
     };
   }
-  return { ok: true, outcome: "finished", pullRequest: state.number, url: state.url, closes: closing, report: handback.summary, decisions: handback.decisions };
+  const images = handback.screenshots ?? [];
+  if (images.length > 0 && state.commit === undefined) {
+    return { ok: false, problem: `GitHub did not supply the head commit of pull request #${state.number}. Check the pull request and hand in the screenshots again.` };
+  }
+  return { ok: true, outcome: "finished", pullRequest: state.number, url: state.url, closes: closing, report: handback.summary, decisions: handback.decisions,
+    ...(images.length === 0 || state.commit === undefined ? {} : { screenshots: { head: state.commit, images, newViews: handback.newViews ?? [] } }) };
 }

@@ -166,6 +166,16 @@ a.lrow:hover { text-decoration: none; }
 .lrow-meta .chip--mono { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .lrow-note { color: var(--fg-2); font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
 .lrow-note--match { color: var(--muted); }
+.ui-screenshots { display: grid; min-width: 0; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); }
+.ui-screenshots h3, .ui-screenshots h4 { margin: 0; overflow-wrap: anywhere; }
+.ui-screenshots h3 { font-size: var(--text-md); }
+.ui-screenshots h4 { font-size: var(--text-sm); }
+.ui-screenshot-group { display: grid; min-width: 0; gap: var(--space-2); }
+.ui-screenshot-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.ui-screenshot-pair figure { min-width: 0; margin: 0; }
+.ui-screenshot-pair figure:only-child { grid-column: 1 / -1; }
+.ui-screenshot-pair img { display: block; width: 100%; max-height: 18rem; object-fit: contain; background: var(--sunk); border-radius: var(--radius-sm); }
+.ui-screenshot-pair figcaption { color: var(--muted); font-size: var(--text-xs); text-align: center; }
 .list[aria-busy="true"] { opacity: 0.6; }
 .more { display: flex; justify-content: center; margin-top: var(--space-5); }
 .lrow-note--bad { color: var(--danger); }

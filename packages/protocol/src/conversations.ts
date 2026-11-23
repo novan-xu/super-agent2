@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ScreenshotReport } from "./ui-screenshots.js";
 import { Attachment, AttachmentId } from "./attachments.js";
 import { Questions, QuestionAnswers } from "./questions.js";
 import { GeneratedText } from "./generated.js";
@@ -93,7 +94,8 @@ export const OwnerEntry = z.object({
 export type OwnerEntry = z.infer<typeof OwnerEntry>;
 
 export const NoticeEntry = z.object({ ...entryBase, kind: z.literal("notice"), text: z.string(), turn: z.string().nullable(),
-  source: z.string().optional(), worker: z.literal(true).optional(), ticket: z.number().int().positive().optional(), destination: ConversationId.optional(), start: z.literal(true).optional() });
+  source: z.string().optional(), worker: z.literal(true).optional(), ticket: z.number().int().positive().optional(), destination: ConversationId.optional(), start: z.literal(true).optional(),
+  screenshots: z.array(ScreenshotReport).optional() });
 export type NoticeEntry = z.infer<typeof NoticeEntry>;
 
 export const DeliveryFile = z.object({ name: z.string().min(1), size: z.number().int().nonnegative() });

@@ -629,7 +629,15 @@ The level is computed from its changed files, not judged by an LLM.
 | Anything else | The Woodpecker pipeline on the pull request's head is green: tests, build, type check, zero-comment check. Then merge. |
 
 The worker's own test run is part of the work, not a verification stage.
-The brain can skip the rules when the owner wants that.
+The brain can skip the CI rules when the owner wants that.
+
+The hub reads the optional `.superagent2/ui.json` at the pull request's head and matches its `paths` globs against changed files, including the old name of a renamed file.
+A match requires screenshot files for the same head with an after image at both the phone and desktop widths and a paired before image wherever the view already existed.
+The worker identifies a new view in the hand-in.
+The runner sends the images over the task-file transfer channel and the hub keeps them with their pull request.
+The hub returns an incomplete UI hand-in to the same worker and pull request without counting a guided round.
+Once the screenshots are present, the usual CI rule applies.
+The topic's merge report and the ticket page show the screenshots by pull request, view and width, with each before image beside its after image.
 
 Nothing in verification is decided from time, and a pipeline that never reports leaves the ticket verifying.
 The hub does not leave it unnoticed: it records how long each repository's pipelines took when they ended green (Woodpecker's own creation and finish times, so waiting for an agent counts) and takes the median of the 15 most recent as the usual.
@@ -658,7 +666,7 @@ This is the complete list.
    A credential file is a file like any other, so deleting one outside project folders is held by the rule above and nothing else about it is.
 2. **Retry cap.**
    After three guided rounds on one ticket without passing, the hub stops the ticket and notifies the owner.
-   A merge conflict is not a failure and is not counted, and neither is a program's being unavailable.
+   Merge conflicts, returned UI hand-ins and unavailable programs do not count as failures or guided rounds.
    A merged pull request is progress: the count starts again for the next one.
    Only the owner answers the stop: resume with a fresh count, or give up, which opens a repair ticket that waits for the owner's start (see [Repair tickets](#repair-tickets)).
 3. **Verification rules** before an automatic merge.

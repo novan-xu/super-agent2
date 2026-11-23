@@ -1237,6 +1237,14 @@ export const migrations: readonly Migration[] = [
     version: 62,
     sql: `ALTER TABLE ticket_work_events ADD COLUMN received_at INTEGER;`,
   },
+  {
+    version: 63,
+    sql: `
+      ALTER TABLE ticket_pull_requests ADD COLUMN screenshots TEXT;
+      ALTER TABLE ticket_verifications ADD COLUMN ui_required INTEGER;
+      ALTER TABLE ticket_verifications ADD COLUMN ui_base TEXT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

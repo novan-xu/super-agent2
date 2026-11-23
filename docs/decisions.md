@@ -3846,3 +3846,15 @@ Another option was to carry forward the time of the last event across ordinary d
   Run a pinned Chrome Headless Shell build whose archive is verified before extraction on each CI platform.
 - **Why:** The two commands exercise the same routes, data loading and CSS the owner uses with repeatable inputs for both widths.
 - **Other options:** Serve mock responses to a fixture page or use the browser preinstalled on each worker.
+
+## 2026-11-23 — Screenshots for UI pull requests (#317)
+
+- **Chosen:** Match the changed paths against the declaration at the pull request's head, and require phone and desktop after images with before images for existing views.
+  Reuse the pinned picomatch package for globs, including hidden files and the old names of renamed files.
+  Show the verified pairs in the topic's merge report and on the ticket.
+- **Why:** The owner can compare the two states at either width, with a deterministic hand-in check before the regular CI rules decide the merge.
+- **Other options:** Require only after images or require screenshots for every pull request in a repository with a UI.
+
+- **Chosen:** Transfer up to 16 PNG or JPEG images of up to 2 MiB each through the existing task-file channel and bind the hand-in to the pull request head.
+- **Why:** The merge report stays manageable on a phone and can only show the hand-in for the head that was merged.
+- **Other options:** Keep the images in GitHub or let a later push reuse an earlier hand-in.

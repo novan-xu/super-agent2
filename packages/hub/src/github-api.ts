@@ -22,6 +22,7 @@ export interface PullRequestState {
   readonly headRef: string;
   readonly headRepository: string | null;
   readonly base: string;
+  readonly baseHead?: string;
   readonly mergeable: boolean | null;
   readonly url: string;
 }
@@ -92,7 +93,7 @@ const PullJson = z.looseObject({
   mergeable: z.boolean().nullable().optional(),
   html_url: z.string(),
   head: z.looseObject({ sha: z.string(), ref: z.string(), repo: z.looseObject({ full_name: z.string() }).nullable().optional() }),
-  base: z.looseObject({ ref: z.string() }),
+  base: z.looseObject({ ref: z.string(), sha: z.string().optional() }),
 });
 
 const FileJson = z.looseObject({ filename: z.string(), previous_filename: z.string().optional() });
@@ -285,6 +286,7 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
         headRef: pull.head.ref,
         headRepository: pull.head.repo?.full_name ?? null,
         base: pull.base.ref,
+        ...(pull.base.sha === undefined ? {} : { baseHead: pull.base.sha }),
         mergeable: pull.mergeable ?? null,
         url: pull.html_url,
       };

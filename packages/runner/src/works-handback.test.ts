@@ -1,9 +1,38 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { workPaths } from "./workplace.js";
-import { repository, home, programs, git, start, task, events, kinds, ended, handBack, finishTurn } from "./testing/works.js";
+import { repository, home, programs, git, start, task, events, kinds, ended, handBack, finishTurn, sent } from "./testing/works.js";
 
 describe("a worker on the runner", () => {
+  it("serves the handed-in screenshot bytes from the attempt after the source file changes", async () => {
+    const head = "a".repeat(40);
+    const url = `https://github.com/${repository}/pull/41`;
+    const works = start({ readPullRequest: async () => ({ number: 41, url, state: "OPEN", head: "sa2/ticket-6-abcd", commit: head, closes: [11, 12] }) });
+    works.receive({ type: "work.start", task: task(6) });
+    const handle = await programs.prompted(1);
+    const { folder } = workPaths(home, repository, 6);
+    mkdirSync(join(folder, "screenshots"));
+    const path = join(folder, "screenshots", "history-phone.png");
+    const source = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfX0AAAAASUVORK5CYII=", "base64");
+    writeFileSync(path, source);
+    handBack(6, 41, [11, 12], undefined, "", {
+      screenshots: [{ file: "history-phone.png", view: "history", width: "phone", phase: "after" }],
+      newViews: ["history"],
+    });
+    await finishTurn(works, handle);
+    const finished = await ended(6);
+    expect(finished).toMatchObject({ kind: "finished", screenshots: { head, newViews: ["history"], images: [
+      { view: "history", width: "phone", phase: "after", size: source.length, mediaType: "image/png" },
+    ] } });
+    if (finished.kind !== "finished" || finished.screenshots?.images[0] === undefined) throw new Error("Missing screenshot");
+    writeFileSync(path, "replaced");
+    const { name } = finished.screenshots.images[0];
+    works.receive({ type: "work.file", ticket: 6, attempt: 1, name, offset: 0, length: source.length });
+    await works.idle();
+    expect(sent.items).toContainEqual({ type: "work.file.part", ticket: 6, attempt: 1, name, offset: 0, data: source.toString("base64"), problem: null });
+  });
+
   it("asks the worker to fix a missing or wrong hand-back, and hands back once it is right", async () => {
     const works = start();
     works.receive({ type: "work.start", task: task(6) });

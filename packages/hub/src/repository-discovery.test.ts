@@ -209,9 +209,9 @@ it("migrates and persists repository aliases independently of pins and discovery
 
 it("keeps legacy pins before newly opened tabs and persists opening order", () => {
   const old = open(migrations.filter((migration) => migration.version < 61));
-  addTicket(old, "org/legacy", 9);
   old.connection.prepare("INSERT INTO repositories (repository, pinned) VALUES (?, 1)").run("org/legacy");
   const database = open();
+  addTicket(database, "org/legacy", 9);
   addTicket(database, "org/first", 10);
   addTicket(database, "org/second", 11);
   const repositories = createRepositoryAccounts(database, clock);

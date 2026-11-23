@@ -43,6 +43,7 @@ import {
   ticketProject,
   TicketPullRequest,
   TicketRun,
+  ScreenshotSet,
   type TicketState,
   TicketSwitch,
   type OwnerChoice,
@@ -160,6 +161,7 @@ export interface RoundToStart {
 export interface HandedInDetails {
   readonly url?: string | undefined;
   readonly closes?: readonly number[] | undefined;
+  readonly screenshots?: ScreenshotSet | undefined;
 }
 
 export interface MergedPullRequest {
@@ -167,6 +169,7 @@ export interface MergedPullRequest {
   readonly closes: readonly number[];
   readonly mergeCommit: string | null;
   readonly deployment: boolean | null;
+  readonly head?: string;
 }
 
 export interface DecisionPlace {
@@ -389,6 +392,7 @@ const PullRequestRow = z.object({
   deployment: z.number().int().nullable(),
   handed_at: z.number().int(),
   merged_at: z.number().int().nullable(),
+  screenshots: z.string().nullable(),
 });
 
 const DecisionRow = z.object({
@@ -445,6 +449,7 @@ function pullRequestOf(row: unknown): TicketPullRequest {
     deployment: value.deployment === null ? null : value.deployment === 1,
     handedAt: value.handed_at,
     mergedAt: value.merged_at,
+    ...(value.screenshots === null ? {} : { screenshots: ScreenshotSet.parse(parsedJson(value.screenshots)) }),
   });
 }
 
@@ -646,13 +651,14 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const deleteVerification = connection.prepare("DELETE FROM ticket_verifications WHERE ticket_id = ?");
   const selectPullRequests = connection.prepare("SELECT * FROM ticket_pull_requests WHERE ticket_id = ? ORDER BY seq");
   const insertPullRequest = connection.prepare(
-    "INSERT INTO ticket_pull_requests (ticket_id, seq, number, url, branch, state, closes, handed_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+    "INSERT INTO ticket_pull_requests (ticket_id, seq, number, url, branch, state, closes, handed_at, screenshots) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)",
   );
-  const updateHandedIn = connection.prepare("UPDATE ticket_pull_requests SET url = ?, closes = ?, handed_at = ? WHERE ticket_id = ? AND seq = ? AND state <> 'merged'");
+  const updateHandedIn = connection.prepare("UPDATE ticket_pull_requests SET url = ?, closes = ?, handed_at = ?, screenshots = ? WHERE ticket_id = ? AND seq = ? AND state <> 'merged'");
   const closeReplaced = connection.prepare("UPDATE ticket_pull_requests SET state = 'closed' WHERE ticket_id = ? AND state = 'open' AND number <> ?");
   const closePullRequest = connection.prepare("UPDATE ticket_pull_requests SET state = 'closed' WHERE ticket_id = ? AND number = ? AND state = 'open'");
   const updateMergedPullRequest = connection.prepare(
-    "UPDATE ticket_pull_requests SET state = 'merged', closes = ?, merge_commit = ?, deployment = ?, merged_at = COALESCE(merged_at, ?) WHERE ticket_id = ? AND number = ?",
+    `UPDATE ticket_pull_requests SET state = 'merged', closes = ?, merge_commit = ?, deployment = ?, merged_at = COALESCE(merged_at, ?),
+       screenshots = CASE WHEN ? IS NULL OR json_extract(screenshots, '$.head') = ? THEN screenshots ELSE NULL END WHERE ticket_id = ? AND number = ?`,
   );
   const selectDecisions = connection.prepare("SELECT * FROM ticket_decisions WHERE ticket_id = ? ORDER BY id");
   const insertDecision = connection.prepare(
@@ -1275,14 +1281,15 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         updatePullRequest.run(pullRequest, given.en, given.zh, id);
         const url = details.url ?? `https://github.com/${current.repository ?? ""}/pull/${pullRequest}`;
         const closes = JSON.stringify([...new Set(details.closes ?? [])]);
+        const screenshots = details.screenshots === undefined ? null : JSON.stringify(ScreenshotSet.parse(details.screenshots));
         const now = clock.now();
         closeReplaced.run(id, pullRequest);
         const rows = selectPullRequests.all(id).map((row) => PullRequestRow.parse(row));
         const row = rows.findLast((entry) => entry.number === pullRequest);
         if (row !== undefined) {
-          updateHandedIn.run(url, closes, now, id, row.seq);
+          updateHandedIn.run(url, closes, now, screenshots, id, row.seq);
         } else {
-          insertPullRequest.run(id, (rows.at(-1)?.seq ?? 0) + 1, pullRequest, url, current.branch ?? "", closes, now);
+          insertPullRequest.run(id, (rows.at(-1)?.seq ?? 0) + 1, pullRequest, url, current.branch ?? "", closes, now, screenshots);
         }
         touch(id);
       },
@@ -1293,6 +1300,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           merged.mergeCommit,
           merged.deployment === null ? null : merged.deployment ? 1 : 0,
           clock.now(),
+          merged.head ?? null,
+          merged.head ?? null,
           id,
           merged.number,
         );
