@@ -8,7 +8,7 @@ import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
 import type { Day, StreamItem } from "../live/stream.js";
 import { toolName, toolSummary } from "../live/tool.js";
-import { Icon, Logo } from "../parts/icons.js";
+import { Icon } from "../parts/icons.js";
 import { Markdown } from "../parts/Markdown.js";
 import { SentAttachments } from "../parts/Attachments.js";
 
@@ -35,8 +35,8 @@ const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, q
 }) {
   const [splitting, setSplitting] = useState(false);
   return (
-    <div className="msg msg--me">
-      <div className="msg-who">
+    <div className="msg msg--me chat-message">
+      <div className="chat-meta">
         {topic}
         <span className="topic-split-slot">
           {split === undefined ? null : <button className="topic-split" type="button" disabled={splitting} onClick={async () => {
@@ -48,7 +48,6 @@ const OwnerMessage = memo(function OwnerMessage({ entry, topic, action, match, q
           <span className="dot dot--mute" role="img" aria-label={text("message.waiting")} title={text("message.waiting")} />
         )}
         {entry.voiceTranscript === undefined ? null : <span className="voice-origin"><Icon name="phone" size={14} />{text("voice.call")}</span>}
-        <span className="num">{clockOf(entry.at)}</span>
         {action}
       </div>
       {quoted}
@@ -85,14 +84,9 @@ const BrainText = memo(function BrainText({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className={lead ? "msg msg--brain" : "msg msg--brain msg--more"}>
-      {lead || topic !== undefined || action !== undefined ? (
-        <div className="msg-who">
-          {lead ? <><Logo size={16} /><strong>{text("brain.name")}</strong><span className="num">{clockOf(entry.at)}</span></> : null}
-          {topic}
-          {action}
-        </div>
-      ) : null}
+    <div className={lead ? "msg msg--brain chat-message" : "msg msg--brain chat-message msg--more"}>
+      {topic}
+      <div className="chat-actions">{action}</div>
       <TextBody text={entry.text} live={live} />
     </div>
   );
@@ -157,9 +151,9 @@ function Delivery({ entry, topic, action }: { readonly entry: DeliveryEntry; rea
 
 function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonly topic?: ReactNode; readonly action?: ReactNode }) {
   if (entry.source !== undefined) {
-    return <div className="msg msg--brain">
-      <div className="msg-who"><strong>{entry.source}</strong><span className="num">{clockOf(entry.at)}</span>{topic}{action}</div>
-      <div className="msg-text msg-plain">{entry.text}</div>
+    return <div className="source-message">
+      <div className="source-line">{text("message.fromSource")} <Icon name="inbox" size={14} /> {entry.source} {clockOf(entry.at)} <Icon name="down" size={14} /></div>
+      <div className="msg msg--brain chat-message">{topic}<div className="chat-actions">{action}</div><div className="msg-text msg-plain">{entry.text}</div></div>
     </div>;
   }
   if (entry.worker === true) {
@@ -206,7 +200,7 @@ export function StreamEntry({ item, thisYear, topic, quote, match, quoted, move,
 }) {
   switch (item.kind) {
     case "day":
-      return <div className="day">{dayLabel(item.day, thisYear)}</div>;
+      return <div className="day">{dayLabel(item.day, thisYear)} {clockOf(item.at)}</div>;
     case "status":
       return <LiveStatus tool={item.tool} idle={text("brain.thinking")} topic={topic} />;
     case "ended":

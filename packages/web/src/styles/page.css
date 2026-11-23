@@ -530,3 +530,28 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
 .allowance-ring-wrap:last-child .allowance-ring-detail { top: auto; bottom: 0; }
 .allowance-ring-wrap:hover .allowance-ring-detail, .allowance-ring-wrap:focus .allowance-ring-detail { display: block; }
 @media (min-width: 768px) and (max-height: 700px) { .allowance-rings { gap: 0; } }
+
+.chat-message { position: relative; min-width: 0; }
+.chat-message .msg-text { box-sizing: border-box; width: fit-content; min-width: 0; max-width: 80%; padding: var(--space-3) var(--space-4); border-radius: 20px; overflow: hidden; }
+.chat-message.msg--me .msg-text { color: var(--accent-on); background: var(--accent); }
+.chat-message.msg--brain .msg-text { background: var(--surface); }
+.chat-message .msg-text img { max-width: 100%; height: auto; }
+.chat-message .msg-text pre, .chat-message .msg-text table { max-width: 100%; overflow-x: auto; }
+.chat-meta, .chat-actions { display: flex; align-items: center; gap: var(--space-1); color: var(--muted); font-size: var(--text-xs); }
+.chat-meta:empty, .chat-actions:empty { display: none; }
+.chat-actions { position: absolute; left: min(80%, 100%); bottom: 0; }
+.chat-message .topic-label { justify-self: start; }
+.chat-message.msg--me .topic-label { justify-self: end; }
+.chat-meta .topic-split-slot { width: auto; height: auto; }
+.chat-meta .topic-split { min-height: 28px; }
+.chat-meta .topic-split-slot:empty { display: none; }
+.source-line { display: flex; justify-content: center; align-items: center; gap: var(--space-1); color: var(--muted); font-size: var(--text-xs); }
+.source-message { display: grid; gap: var(--space-2); min-width: 0; }
+@media (hover: hover) {
+  .chat-actions, .chat-meta .message-quote { opacity: 0; }
+  .chat-message:hover .chat-actions, .chat-message:focus-within .chat-actions, .chat-message:hover .chat-meta .message-quote, .chat-message:focus-within .chat-meta .message-quote { opacity: 1; }
+}
+@media (max-width: 600px) {
+  .chat-message .msg-text { max-width: 85%; }
+  .chat-actions { left: 85%; }
+}
