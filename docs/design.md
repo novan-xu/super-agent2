@@ -610,6 +610,14 @@ Done, the merged tickets it contains are marked deployed and what waits for that
 Super Agent deploys itself the same way: its file names a machine of the owner's that can sign in to the NAS, whose worker runs `deploy/deploy.sh release` there.
 The hub and the brain restart underneath the ticket; the worker goes on, its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 
+## Worker silence
+
+The hub tells the brain privately in the ticket's topic when a running worker on a connected machine goes quiet for `HUB_WORKER_SILENCE_MINUTES`, which defaults to 20 minutes.
+The notice includes the last work event and the end of the worker's text, and repeats at each doubling of the threshold until another work event arrives.
+The hub measures from the later of the last event's receipt and the machine's latest connection, so time spent disconnected or restarting the hub does not produce an immediate notice.
+The same check covers code tickets, task tickets and light tasks, and skips workers waiting for an answer to a question.
+The notice leaves the ticket and the worker running, and the brain can use `read_ticket` to see when the hub last received an event.
+
 ## Verification rules
 
 Each pull request a worker hands in is verified on its own.

@@ -282,6 +282,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         attachments,
         defaults,
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
+        ...(config.workerSilenceMinutes === undefined ? {} : { silenceMinutes: config.workerSilenceMinutes }),
         schedule: options.workSchedule ?? scheduleWorkDrain,
         log: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
         tell: told.tell,

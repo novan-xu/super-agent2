@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
+import { type DeliverInput, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
@@ -187,13 +187,42 @@ describe("a ticket's worker for the page and the brain", () => {
 
   it("lets the brain message the worker and read its output with the ticket", async () => {
     const { running, ticket, runner, sent } = await start();
-    event(runner, ticket.id, 1, { kind: "text", block: "b", delta: "Looking at greet.ts" });
+    runner.receive({
+      type: "work.event", ticket: ticket.id, attempt: 1, seq: 1, at: clock.now() - 60_000,
+      event: { kind: "text", block: "b", delta: "Looking at greet.ts" },
+    });
+    const received = new Date(clock.now()).toISOString();
+    clock.advance(60_000);
     const told = await callBrainTool(running, "message_worker", { ticket: ticket.code, text: "Keep it to one line" });
     expect(told.isError).toBe(false);
     expect(sent.filter((message) => message.type === "work.message").map((message) => (message.type === "work.message" ? message.from : ""))).toEqual(["brain"]);
     const read = await callBrainTool(running, "read_ticket", { ticket: ticket.code });
     expect(read.text).toContain("Worker: attempt 1 on pc with claude claude-haiku-5-5 low is preparing");
+    expect(read.text).toContain(`Last worker activity: ${received}.`);
     expect(read.text).toContain("Looking at greet.ts");
+  });
+
+  it("sends a silent code worker's notice privately to the brain in its topic", async () => {
+    let tick: (() => void) | undefined;
+    const { running, ticket, runner } = await start({ workTicker: (callback) => {
+      tick = callback;
+      return () => undefined;
+    } });
+    const topic = running.tickets.topic(ticket.id);
+    const messages: DeliverInput[] = [];
+    const brain = running.conversations.attach({
+      send: (message) => { if (message.type === "input") messages.push(message); },
+      close: () => undefined,
+    });
+    brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+    event(runner, ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    const before = running.conversations.entries(topic);
+    clock.advance(20 * 60_000);
+    tick?.();
+    expect(messages.filter(({ input }) => input.text.includes("has been silent"))).toMatchObject([
+      { conversation: topic, input: { text: expect.stringContaining("Last worker event: phase.") } },
+    ]);
+    expect(running.conversations.entries(topic)).toEqual(before);
   });
 
   it("stops the ticket for the owner, which stops the worker and removes its worktree", async () => {

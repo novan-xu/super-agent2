@@ -110,7 +110,7 @@ export interface ConversationService {
   move(message: string, destination: TopicMove["destination"], source?: string): TopicEdit<string>;
   handover(source: string, turn: string, destination: HandoverDestination, message?: string, ownerRequested?: boolean): TopicEdit<string>;
   recordCommand(command: string, conversation: string): void;
-  tell(ticket: number | null, notice: string, prompt: string): string;
+  tell(ticket: number | null, notice: string, prompt: string, hidden?: boolean): string;
   writeHealthNotice(notice: string): { topics: string[]; entries: string[] };
   publishHealthNotice(result: { topics: string[]; entries: string[] }): void;
   inbox(topic: string | null, source: string, message: string): { topic: string; entry: string };
@@ -1263,12 +1263,13 @@ export function createConversationService(options: ConversationServiceOptions): 
     return entry.conversation;
   };
 
-  function tell(ticket: number | null, notice: string, prompt: string): string {
+  function tell(ticket: number | null, notice: string, prompt: string, hidden = false): string {
     const light = ticket !== null && tickets.get(ticket)?.light !== undefined;
+    const privateNotice = hidden || light;
     return postHubEntry({
-      conversation: noticeTarget(ticket), kind: "notice", turn: null, body: { text: light ? "" : notice },
+      conversation: noticeTarget(ticket), kind: "notice", turn: null, body: { text: privateNotice ? "" : notice },
       prompt: light ? `${prompt}\nHandle this light task internally. The conversation shows the final result or failure automatically. Do not send a progress reply, expose a ticket code or ask the owner to use a ticket card.` : prompt,
-      ...(light ? { hidden: true as const } : {}),
+      ...(privateNotice ? { hidden: true as const } : {}),
     });
   }
 
