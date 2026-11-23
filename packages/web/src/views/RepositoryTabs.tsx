@@ -85,7 +85,7 @@ export function RepositoryTabs({ repositories, tickets, topics, waiting, selecte
     const active = selected === value;
     return <div data-repository={typeof value === "string" ? value : undefined} key={value === undefined ? "all" : value === null ? "daily" : value} className={`wb-tab${active ? " is-active" : ""}${preview !== null && preview.name === value ? " is-dragging" : ""}`}
       style={preview !== null && preview.name === value ? { transform: `translateX(${preview.offset}px)` } : undefined}>
-      <button type="button" className="wb-tab-select" title={typeof value === "string" ? value : undefined} aria-pressed={active} onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } select(value); }}
+      <button type="button" className="wb-tab-select" title={typeof value === "string" ? value : label} aria-label={label} aria-pressed={active} onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } select(value); }}
         onKeyDown={(event) => {
           if (typeof value !== "string" || !event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
           event.preventDefault();
