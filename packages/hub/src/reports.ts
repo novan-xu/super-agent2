@@ -103,8 +103,8 @@ export function ticketLine(ticket: Ticket): string {
   const issues = ticket.issues.map((issue) => `#${issue.number}${merged.has(issue.number) ? " merged" : closedOutside.has(issue.number) ? " closed on GitHub" : ""}`).join(", ");
   const pulls = ticket.pullRequests.map((pull) => `#${pull.number} ${pull.state}`).join(", ");
   const task = ticket.form === "task" ? ` task${ticket.deploys ? " deploying" : ""}${ticket.commit === null ? (ticket.commitRef === null ? "" : ` at ${ticket.commitRef}`) : ` at ${ticket.commit.slice(0, 12)}`}` : "";
-  const repair = repairWords(ticket);
-  return `Ticket ${ticketReference(ticket)} [${ticket.state}] ${ticket.kind}${task} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}${repair === "" ? "" : ` [${repair}]`}: ${ticket.title.en}`;
+  const links = [repairWords(ticket), ticket.followUpOf === undefined ? "" : `follow-up of ticket ${ticket.followUpOf}`].filter(Boolean).join(", ");
+  return `Ticket ${ticketReference(ticket)} [${ticket.state}] ${ticket.kind}${task} in ${where}${issues === "" ? "" : ` (issues ${issues}${pulls === "" ? "" : `; pull requests ${pulls}`})`}${links === "" ? "" : ` [${links}]`}: ${ticket.title.en}`;
 }
 
 export function ranWords(ticket: Ticket): string {

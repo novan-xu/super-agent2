@@ -249,6 +249,20 @@ export function createWorks(options: WorksOptions): Works {
 
   const recordFile = (work: Work) => join(work.paths.folder, "work.json");
   const eventsFile = (paths: WorkPaths, attempt: number) => join(paths.folder, `events-${attempt}.jsonl`);
+  const workspaceFolder = join(options.home, "workspaces");
+  const workspaceFile = (ticket: number) => join(workspaceFolder, `t${ticket}.json`);
+  const knownWorkspace = (work: Work | undefined): WorkspaceLocation | null =>
+    work === undefined || work.record.workspace === null ? null : locationOf(work.paths);
+
+  const readWorkspace = (ticket: number): WorkspaceLocation | null => {
+    const active = knownWorkspace(works.get(ticket));
+    if (active !== null) return active;
+    try {
+      return WorkspaceLocation.parse(JSON.parse(readFileSync(workspaceFile(ticket), "utf8")));
+    } catch {
+      return null;
+    }
+  };
 
   const save = (work: Work) => {
     mkdirSync(work.paths.folder, { recursive: true });
@@ -677,8 +691,15 @@ export function createWorks(options: WorksOptions): Works {
                 openProgram(work, assignment, null);
                 startTurn(work, taskBrief({ ...assignment, note: taskLostSessionNote() }, placeOf(work, assignment)));
               } else if (task !== undefined) {
+                const followUp = task.followUp;
+                if (followUp !== undefined) emit(work, { kind: "follow-up", outcome: "takeover", lostSession: true });
                 openProgram(work, task, null);
-                startTurn(work, brief({ ...task, note: lostSessionNote() }, place(work)));
+                const note = [lostSessionNote(), followUp?.takeoverNote].filter(Boolean).join("\n\n");
+                const base = work.record.base;
+                const state = followUp === undefined || base === null ? "" : takeoverText(
+                  await folderState(gitFor(task, work.paths.shared), work.paths.worktree, base, trackingRemote(work.paths)), task.branch, base,
+                );
+                if (!work.stopping) startTurn(work, [brief({ ...task, note }, place(work)), state].filter(Boolean).join("\n\n"));
               }
             })().catch((error: unknown) => end(work, { kind: "failed", failure: "program", reason: messageOf(error) })),
           );
@@ -751,7 +772,26 @@ export function createWorks(options: WorksOptions): Works {
       }
       handbackNote = `[hub] ${outcome.problem}`;
     }
-    const currentTask = { ...task, closedOutside };
+    let baseNote = "";
+    const followUp = task.followUp;
+    if (followUp !== undefined) {
+      const baseRef = `${trackingRemote(work.paths)}/${prepared.base}`;
+      const args = followUp.fromCommit === null
+        ? ["log", "-1", "--oneline", baseRef, "--"]
+        : ["log", "--max-count=20", "--oneline", `${followUp.fromCommit}..${baseRef}`, "--"];
+      const history = await git.run(args, work.paths.worktree);
+      if (work.stopping) return;
+      const changes = history.code === 0 ? history.stdout.trim() || "(no newer commits)" : "(the earlier merge commit could not be compared)";
+      baseNote = [
+        `This follow-up runs on branch ${task.branch} in ${work.paths.worktree}, based on the current default branch ${prepared.base}.`,
+        followUp.fromCommit === null ? "Current default branch head:" : `Recent commits on the default branch since ${followUp.fromCommit}:`,
+        changes,
+      ].join("\n");
+    }
+    const currentTask = {
+      ...task, closedOutside,
+      ...(followUp === undefined ? {} : { followUp: { ...followUp, takeoverNote: [followUp.takeoverNote, baseNote].join("\n\n") } }),
+    };
     work.task = currentTask;
     await initializeHandbackProgress(work);
     if (work.stopping) {
@@ -771,17 +811,22 @@ export function createWorks(options: WorksOptions): Works {
     if (work.task !== currentTask || work.stopping) {
       return;
     }
+    if (followUp !== undefined) {
+      emit(work, { kind: "follow-up", outcome: followUp.resumeOriginal && session !== null ? "resumed" : "takeover" });
+    }
     const withWaiting = (prompt: string) => {
       const next = joined(waiting, [prompt, ...leftover, ...state, handbackNote].filter(Boolean).join("\n\n"));
       startTurn(work, next.text, next.images);
     };
     if (session === null) {
       emit(work, { kind: "phase", phase: "started", detail: `Started ${task.engine} with ${task.model} at ${task.effort}` });
-      withWaiting(brief(currentTask, where));
+      const note = followUp === undefined ? currentTask.note : [currentTask.followUp?.takeoverNote, currentTask.note].filter(Boolean).join("\n\n");
+      withWaiting(brief({ ...currentTask, note }, where));
       return;
     }
     emit(work, { kind: "phase", phase: "resumed", detail: `Resumed the ${task.engine} session ${session} with ${task.model} at ${task.effort}` });
-    withWaiting(task.note === null ? resumeText(currentTask, where) : continueText(currentTask, where, task.note));
+    const note = [task.note, baseNote].filter(Boolean).join("\n\n");
+    withWaiting(note === "" ? resumeText(currentTask, where) : continueText(currentTask, where, note));
   };
 
   const beginTask = async (work: Work, task: TaskAssignment) => {
@@ -888,8 +933,9 @@ export function createWorks(options: WorksOptions): Works {
     const folderOf = task.folder ?? task.ticket;
     const repository = "code" in given ? given.code.repository : (given.assignment.checkout?.repository ?? "");
     const fallback = "code" in given ? workPaths(options.home, repository, task.ticket, folderOf) : taskPaths(options.home, task.ticket, repository, folderOf);
-    const prior = existing ?? works.get(folderOf);
-    const workspace = prior === undefined || prior.record.workspace === null ? null : locationOf(prior.paths);
+    const workspaceOf = "code" in given ? given.code.followUp?.workspaceOf : undefined;
+    const workspace = knownWorkspace(existing) ?? (workspaceOf === undefined ? null : readWorkspace(workspaceOf))
+      ?? knownWorkspace(works.get(folderOf));
     const paths = useLocation(fallback, workspace);
     const storage = options.storage?.() ?? {};
     const sameAttempt = existing !== undefined && existing.record.attempt === task.attempt;
@@ -1161,6 +1207,13 @@ export function createWorks(options: WorksOptions): Works {
     if (remove) {
       const git = task === undefined ? createGit(run, mergeEnvironment(clean, {}), find("git") ?? "git") : gitFor(task, work.paths.shared);
       try {
+        if (work.record.kind === "code" && work.record.workspace != null) {
+          mkdirSync(workspaceFolder, { recursive: true });
+          const file = workspaceFile(ticket);
+          const content = JSON.stringify(work.record.workspace);
+          writeFileSync(`${file}.new`, content);
+          replaceFile(`${file}.new`, file, content);
+        }
         await removeWorktree(git, work.record.branch, work.paths);
       } catch (error) {
         log(`Could not remove the worktree at ${work.paths.worktree}: ${messageOf(error)}`);

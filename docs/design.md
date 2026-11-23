@@ -618,6 +618,15 @@ The hub measures from the later of the last event's receipt and the machine's la
 The same check covers code tickets, task tickets and light tasks, and skips workers waiting for an answer to a question.
 The notice leaves the ticket and the worker running, and the brain can use `read_ticket` to see when the hub last received an event.
 
+## Follow-ups after merge
+
+For an owner's adjustment to merged code, the brain uses `follow_up_ticket` to comment on an original issue, reopen it if needed, and file a pending ticket in the current topic.
+The owner starts the ticket on its card, which prefers the most recent worker's machine and engine when available.
+The runner recreates the original worktree path on that machine, prepares the new branch from the current default branch, and gives the resumed session the new comment and the default branch's recent commits.
+When the session is unavailable, a new worker receives the comment, the original issue, the earlier pull requests and the recorded work it needs to take over.
+Each follow-up uses the normal verification and merge rules, and the merge report says whether the session was resumed or a worker took over.
+Only one follow-up to the same original work can be open at a time because follow-ups reuse a worktree path.
+
 ## Verification rules
 
 Each pull request a worker hands in is verified on its own.

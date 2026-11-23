@@ -50,6 +50,7 @@ import { failureWords, type FailureLoop, type LoopOutcome } from "./failure-loop
 import type { ConversationService } from "./conversations.js";
 import type { AttachmentStore } from "./attachments.js";
 import type { FilingOutcome, IssueFiler } from "./filing.js";
+import type { createFollowUps } from "./follow-ups.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
 import { topicCall, topicDefinitions } from "./topic-tools.js";
@@ -202,6 +203,7 @@ const ChainArgument = z.object({
 const ArrangeArguments = z.object({ chains: z.array(ChainArgument).min(1) });
 
 const TicketArgument = z.object({ ticket: TicketReference });
+const FollowUpArguments = TicketArgument.extend({ issue: z.number().int().positive(), comment: z.string().trim().min(1).max(60_000) });
 
 const GuideArguments = z.object({ ticket: TicketReference, guidance: GeneratedText });
 
@@ -290,6 +292,7 @@ export interface ToolServerOptions {
 export interface TicketTools {
   readonly tickets: TicketService;
   readonly filer: IssueFiler;
+  readonly followUp?: ReturnType<typeof createFollowUps>;
   readonly tasks?: TaskTickets;
   readonly light?: LightTasks;
   readonly schedules?: Schedules;
@@ -750,6 +753,21 @@ function ticketDefinitions() {
         type: "object",
         properties: { ticket: ticketCodeSchema("The stopped ticket whose work should go on") },
         required: ["ticket"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "follow_up_ticket",
+      title: "Open a follow-up for merged code work",
+      description: "Record a requested adjustment on an original GitHub issue, reopen it, and prepare a pending ticket to resume the earlier worker session.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticket: ticketCodeSchema("The merged code ticket"),
+          issue: { type: "integer", minimum: 1, description: "The original GitHub issue number in the ticket" },
+          comment: { type: "string", description: "The requested adjustment in English Markdown, optionally quoting the owner" },
+        },
+        required: ["ticket", "issue", "comment"],
         additionalProperties: false,
       },
     },
@@ -1243,6 +1261,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const stuck = detail.ticket.stuck;
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...(detail.ticket.followUpOf === undefined ? [] : [`Follow-up of ticket ${detail.ticket.followUpOf} on original GitHub issue #${detail.ticket.issues[0]?.number}.`]),
           ...(lastActivity === null ? [] : [`Last worker activity: ${new Date(lastActivity).toISOString()}.`]),
           ...repairLines(detail.ticket, (id) => tools.tickets.get(id)),
           ...(waited === null ? [] : [waitedLine(waited)]),
@@ -1336,6 +1355,16 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return { text: `No repair ticket was opened: ${repaired.reason}`, isError: true };
         }
         return { text: [`Opened repair ticket ${ticketReference(repaired.ticket)}.`, ticketReport(repaired.ticket), ...repairReport(before, repaired.ticket, repaired.followers, true), ...chainProgress(before)].join("\n") };
+      }
+      case "follow_up_ticket": {
+        if (tools.followUp === undefined) return undefined;
+        const parsed = FollowUpArguments.safeParse(raw);
+        if (!parsed.success) return invalid(parsed.error);
+        const ticket = resolve(parsed.data.ticket);
+        const result = await tools.followUp(ticket, parsed.data.issue, parsed.data.comment, writeTurn());
+        return result.ok
+          ? { text: `Follow-up ticket ${ticketReference(result.ticket)} is ${result.ticket.state}. The adjustment is recorded at ${result.url}.` }
+          : { text: result.reason, isError: true };
       }
       case "record_decision": {
         const parsed = DecisionArguments.safeParse(raw);

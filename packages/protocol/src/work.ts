@@ -55,6 +55,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ran"), model: z.string().min(1), effort: z.string().min(1) }),
   z.object({ kind: z.literal("text"), block: z.string(), delta: z.string() }),
   z.object({ kind: z.literal("question"), id: z.uuid(), text: z.string().trim().min(1) }),
+  z.object({ kind: z.literal("follow-up"), outcome: z.enum(["resumed", "takeover"]), lostSession: z.literal(true).optional() }),
   z.object({ kind: z.literal("tool.started"), call: z.string(), name: z.string(), input: z.string() }),
   z.object({ kind: z.literal("tool.output"), call: z.string(), delta: z.string() }),
   z.object({ kind: z.literal("tool.finished"), call: z.string(), output: z.string().nullable(), ok: z.boolean() }),
@@ -146,6 +147,12 @@ export const WorkTask = z.object({
   note: z.string().nullable(),
   takeover: z.boolean().default(false),
   folder: Ticket.optional(),
+  followUp: z.object({
+    fromCommit: z.string().regex(/^[0-9a-f]{7,40}$/i).nullable(),
+    workspaceOf: Ticket.optional(),
+    resumeOriginal: z.boolean(),
+    takeoverNote: z.string(),
+  }).optional(),
   environment: z.record(z.string(), z.string()),
   extraMcp: z.array(ExtraMcpServer).optional(),
 });

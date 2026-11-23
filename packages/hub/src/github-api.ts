@@ -68,6 +68,9 @@ export interface GitHubApi {
   merge(repository: string, number: number, sha: string, method: MergeMethod): Promise<MergeAnswer>;
   issue(repository: string, number: number): Promise<IssueState | null>;
   closingComment(repository: string, number: number): Promise<string | null>;
+  findIssueComment(repository: string, number: number, body: string): Promise<string | null>;
+  postIssueComment(repository: string, number: number, body: string): Promise<string>;
+  reopenIssue(repository: string, number: number): Promise<void>;
   closeIssue(repository: string, number: number): Promise<void>;
   deleteBranch(repository: string, branch: string): Promise<void>;
   closingIssues(repository: string, number: number): Promise<number[]>;
@@ -130,6 +133,7 @@ const IssueJson = z.looseObject({
   closed_at: z.string().nullable().optional(),
   comments: z.number().int().nonnegative().default(0),
 });
+const IssueCommentJson = z.object({ body: z.string(), html_url: z.url() });
 
 const TimelineEvent = z.looseObject({
   event: z.string(),
@@ -413,6 +417,27 @@ export function createGitHubApi(options: GitHubApiOptions): GitHubApi {
           return adjacentClosingComment(events);
         }
       }
+    },
+    findIssueComment: async (repository, number, body) => {
+      for (let page = 1; ; page += 1) {
+        const path = `${repo(repository)}/issues/${number}/comments?per_page=${pageSize}&page=${page}`;
+        const response = await send("GET", path);
+        const comments = await readResponse(path, response, z.array(IssueCommentJson));
+        const existing = comments.find((comment) => comment.body === body);
+        if (existing !== undefined) return existing.html_url;
+        if (!response.headers.get("link")?.includes('rel="next"')) return null;
+      }
+    },
+    postIssueComment: async (repository, number, body) => {
+      const path = `${repo(repository)}/issues/${number}/comments`;
+      const response = await send("POST", path, { body });
+      if (!response.ok) throw await failure("POST", path, response);
+      return IssueCommentJson.parse(await response.json()).html_url;
+    },
+    reopenIssue: async (repository, number) => {
+      const path = `${repo(repository)}/issues/${number}`;
+      const response = await send("PATCH", path, { state: "open" });
+      if (!response.ok) throw await failure("PATCH", path, response);
     },
     closeIssue: async (repository, number) => {
       const path = `${repo(repository)}/issues/${number}`;
