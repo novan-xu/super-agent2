@@ -32,6 +32,7 @@ import { createRunners, type Runners } from "./runners.js";
 import { type Environment, fixedTargets, localTarget, type Target } from "./targets.js";
 import { createToolServer } from "./tools.js";
 import { commandIssueHost, createIssueFiler, type IssueHost } from "./filing.js";
+import { createFollowUps, createFollowUpRecords } from "./follow-ups.js";
 import { createTicketService, type TicketService, type TicketWork } from "./tickets.js";
 import { createStartDefaults, type StartDefaults, type SubscriptionAdjustment } from "./defaults.js";
 import { createWorkService, type WorkService } from "./work.js";
@@ -451,6 +452,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           light: lightTasks,
           schedules,
           filer: createIssueFiler({ host: options.issueHost ?? commandIssueHost({ commands }), tickets, database, clock, accountOf }),
+          followUp: createFollowUps({ records: createFollowUpRecords(database), tickets, credentials, accountOf, fetch: options.forgeFetch ?? fetch, base: options.gitHubBase }),
           chains: chains.arranger,
           defaults,
           ...(openaiCost === undefined ? {} : { openaiCost }),

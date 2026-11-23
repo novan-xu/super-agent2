@@ -4,6 +4,7 @@ import {
   type Balance,
   EngineTable,
   engineOrder,
+  isComplete,
   type EngineContext,
   type MachineChoice,
   type MachineReading,
@@ -19,6 +20,7 @@ import {
   type ProviderOut,
   type ProviderUnavailable,
   providersOut,
+  routeProvider,
   resolveStart,
   type StartChoice,
   startingEngineTable,
@@ -29,6 +31,7 @@ import {
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
+import { createFollowUpRecords } from "./follow-ups.js";
 
 export type DefaultsListener = () => void;
 
@@ -75,6 +78,7 @@ export function readingsOf(statuses: readonly MachineStatus[]): MachineReading[]
 export function createStartDefaults(options: StartDefaultsOptions): StartDefaults {
   const { connection } = options.database;
   const { clock } = options;
+  const followUps = createFollowUpRecords(options.database);
   const listeners = new Set<DefaultsListener>();
   const selectSetting = connection.prepare("SELECT value FROM hub_settings WHERE key = ?");
   const upsertSetting = connection.prepare(
@@ -205,20 +209,48 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
     },
     machines,
     machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.requiredMachine),
-    resolve: (ticket, owner = ticket.ownerChoice) =>
-      resolveStart(
-        {
-          kind: ticket.kind,
-          difficulty: ticket.difficulty,
-          platform: ticket.platform,
-          requiredMachine: ticket.requiredMachine,
-          stated: ticket.difficultyReason !== null && ticket.platform !== null && ticket.difficulty !== null,
-          owner,
-        },
-        table(),
-        machines(),
-        contextOf(),
-      ),
+    resolve: (ticket, owner = ticket.ownerChoice) => {
+      const input = {
+        kind: ticket.kind,
+        difficulty: ticket.difficulty,
+        platform: ticket.platform,
+        requiredMachine: ticket.requiredMachine,
+        stated: ticket.difficultyReason !== null && ticket.platform !== null && ticket.difficulty !== null,
+        owner,
+      };
+      const choices = table();
+      const online = machines();
+      const context = contextOf();
+      const ordinary = resolveStart(input, choices, online, context);
+      const link = followUps.get(ticket.id);
+      const source = link === undefined ? undefined : followUps.source(link.previous) ?? followUps.source(link.original);
+      if (source === undefined || source.engine === "antigravity") return ordinary;
+      const engine = owner.engine ?? source.engine;
+      const sameEngine = engine === source.engine;
+      if (owner.engine !== null || !context.out.has(engine)) {
+        const pinned = { ...owner, machine: owner.machine ?? source.machine, engine };
+        const preferred = resolveStart({
+          ...input, owner: { ...pinned, model: owner.model ?? (sameEngine ? source.model : null), effort: owner.effort ?? (sameEngine ? source.effort : null) },
+        }, choices, online, context);
+        if (isComplete(preferred)) return { ...preferred, by: ordinary.by };
+        const updatedModel = resolveStart({ ...input, owner: pinned }, choices, online, context);
+        if (isComplete(updatedModel)) return { ...updatedModel, by: ordinary.by };
+      }
+      if (isComplete(ordinary) || owner.engine !== null || owner.model !== null || owner.effort !== null) return ordinary;
+      const fallback = routeProvider({
+        difficulty: ticket.difficulty,
+        platform: ticket.platform,
+        requiredMachine: owner.machine ?? ticket.requiredMachine,
+        machine: owner.machine ?? source.machine,
+        canMove: owner.machine === null,
+        order: order(false),
+        table: choices,
+        machines: online,
+        out: out(),
+        antigravityOut: antigravityOut(),
+      });
+      return fallback.kind === "run" ? { ...fallback, by: ordinary.by, missing: [] } : ordinary;
+    },
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

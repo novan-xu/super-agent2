@@ -18,6 +18,7 @@ export interface FakePull {
 export interface FakeRepository {
   readonly pulls: Map<number, FakePull>;
   readonly issues: Map<number, "open" | "closed">;
+  readonly issueComments: Map<number, { body: string; html_url: string }[]>;
   readonly issueClosures: Map<number, { readonly reason: string; readonly at: string; readonly timeline: readonly object[] }>;
   readonly trees: Map<string, string[]>;
   readonly texts: Map<string, string>;
@@ -111,7 +112,7 @@ export function fakeForge(): FakeForge {
     if (found !== undefined) {
       return found;
     }
-    const created: FakeRepository = { pulls: new Map(), issues: new Map(), issueClosures: new Map(), trees: new Map(), texts: new Map(), mainline: [], branches: new Set(), squash: true };
+    const created: FakeRepository = { pulls: new Map(), issues: new Map(), issueComments: new Map(), issueClosures: new Map(), trees: new Map(), texts: new Map(), mainline: [], branches: new Set(), squash: true };
     github.set(name, created);
     return created;
   };
@@ -293,7 +294,7 @@ export function fakeForge(): FakeForge {
       const sha = repository.trees.has(ref) ? ref : ref === "main" || ref === "HEAD" ? repository.mainline.at(-1) : undefined;
       return sha === undefined ? json(422, { message: `No commit found for SHA: ${ref}` }) : json(200, { sha });
     }
-    const issueMatch = /^issues\/(\d+)(\/timeline)?$/.exec(rest);
+    const issueMatch = /^issues\/(\d+)(\/timeline|\/comments)?$/.exec(rest);
     if (issueMatch !== null) {
       const number = Number(issueMatch[1]);
       const state = repository.issues.get(number);
@@ -302,9 +303,22 @@ export function fakeForge(): FakeForge {
         return json(404, { message: "Not Found" });
       }
       if (method === "PATCH") {
+        if (JSON.parse(String(init?.body ?? "{}")).state === "open") {
+          repository.issues.set(number, "open");
+          return json(200, { number, state: "open" });
+        }
         const raced = state === "open" && forge.closedMeanwhile.delete(number);
         repository.issues.set(number, "closed");
         return raced ? json(422, { message: "Validation Failed" }) : json(200, { number, state: "closed" });
+      }
+      if (issueMatch[2] === "/comments") {
+        const comments = repository.issueComments.get(number) ?? [];
+        if (method === "GET") return json(200, comments);
+        const { body } = JSON.parse(String(init?.body)) as { body: string };
+        const comment = { body, html_url: `https://github.com/${name}/issues/${number}#issuecomment-${comments.length + 1}` };
+        comments.push(comment);
+        repository.issueComments.set(number, comments);
+        return json(201, comment);
       }
       if (issueMatch[2] === "/timeline") {
         return json(200, closure?.timeline ?? []);

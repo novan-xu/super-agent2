@@ -22,6 +22,7 @@ import type { Clock } from "./clock.js";
 import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
+import { createFollowUpRecords } from "./follow-ups.js";
 import { createGitHubApi, type Fetch, type GitHubApi, type MergeMethod, type MergeMethods, type PullRequestState } from "./github-api.js";
 import type { FailureReport } from "./failure-loop.js";
 import { createPipelineTimes, durationChinese, durationWords, defaultFirstAllowanceMinutes, noticesDue, overrunFactor, thresholdOf, usualMinimum } from "./pipeline-times.js";
@@ -222,6 +223,7 @@ function methodOf(methods: MergeMethods): MergeMethod {
 }
 
 export function createVerification(options: VerificationOptions): VerificationService {
+  const followUps = createFollowUpRecords(options.database);
   const { tickets, clock } = options;
   const { connection } = options.database;
   const doFetch = options.fetch ?? fetch;
@@ -563,9 +565,15 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
     const deploying = tickets.waitingFor(id).filter((after) => after.form === "task" && after.deploys && after.waits.some((entry) => entry.ticket === id && !entry.waived) && (after.state === "waiting" || after.state === "working"));
     const merged = mergedPullsOf(ticket);
+    const followUp = [ticket, ...tickets.lineage(id).reverse()].map((piece) => followUps.get(piece.id)).find((link) => link !== undefined);
+    const original = followUp === undefined ? undefined : tickets.reference(followUp.original);
+    const followed = followUps.outcome(id) ?? (followUp !== undefined && followUp.ticket_id !== id ? "takeover" : undefined);
     const pieces = merged.map((pull) => `#${pull.number} (closed ${pull.closes.length === 0 ? "no issue of the chain" : pull.closes.map((number) => `#${number}`).join(", ")}${pull.mergeCommit === null ? "" : `, commit ${pull.mergeCommit}`})`);
     const lines = [
       `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) is merged: every issue of its chain is settled.`,
+      ...(original === undefined ? [] : [
+        `This was a follow-up of ticket ${original} on issue #${followUp?.issue}. ${followed === "resumed" ? "The worker resumed the original session." : followed === "takeover" ? "A takeover worker completed the adjustment." : "No worker session outcome was reported."}`,
+      ]),
       `Pull requests merged in ${ticket.repository ?? ""}, in order: ${pieces.length === 0 ? `#${ticket.pullRequest ?? 0}` : pieces.join("; ")}.`,
       `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}${rule === null ? "" : `, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}`}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,

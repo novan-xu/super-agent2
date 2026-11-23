@@ -55,6 +55,7 @@ import { z } from "zod";
 import type { Clock } from "./clock.js";
 import { storeTopic } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import { createFollowUpRecords } from "./follow-ups.js";
 import { codeAfter, ticketCodesExhausted, ticketDate, ticketDateFormatter, ticketReferences } from "./ticket-codes.js";
 import { createTicketVersions, TicketWriteRefused, type TicketTurn } from "./ticket-versions.js";
 import { createTopicResolver } from "./topic-corrections.js";
@@ -727,6 +728,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectRounds = connection.prepare("SELECT * FROM ticket_rounds WHERE ticket_id = ? ORDER BY seq");
   const selectSwitches = connection.prepare("SELECT * FROM ticket_switches WHERE ticket_id = ? ORDER BY seq");
   const selectRepairOf = connection.prepare("SELECT * FROM ticket_repairs WHERE ticket_id = ?");
+  const followUps = createFollowUpRecords(options.database);
   const selectRepairedBy = connection.prepare("SELECT ticket_id FROM ticket_repairs WHERE repairs = ?");
   const insertRepair = connection.prepare(
     "INSERT INTO ticket_repairs (ticket_id, repairs, opened_by, words, opened_at, round, failure, detail, where_en, where_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -824,6 +826,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       repairedBy,
       repairsReference: repairs === null ? undefined : references.get(repairs),
       repairedByReference: repairedBy === null ? undefined : references.get(repairedBy),
+      followUpOf: references.get(followUps.get(value.id)?.original ?? 0),
       conversation: value.conversation_id,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
@@ -1086,6 +1089,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       open,
       setIssues: (id, issues) => {
         const ticket = existing(id);
+        const followUp = followUps.get(id);
+        if (followUp !== undefined && (issues.length !== 1 || issues[0]?.number !== followUp.issue)) {
+          throw new TicketError(`Follow-up ticket ${ticketReference(ticket)} must keep issue #${followUp.issue} on its own.`);
+        }
         checkIssues(ticket.repository, issues);
         deleteIssues.run(id);
         insertIssues(id, issues);
@@ -1137,6 +1144,11 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         }
         if (!hasRemainingWork(old)) {
           throw new TicketError(`Every issue of ticket ${ticketReference(old)} is closed, so nothing remains to repair`);
+        }
+        const followUp = [id, ...earlierIds(id).reverse()].map(followUps.get).find((link) => link !== undefined);
+        const activeFollowUp = followUp === undefined ? undefined : followUps.active(followUp.original);
+        if (activeFollowUp !== undefined) {
+          throw new TicketError(`Wait for open follow-up ticket ${references.get(activeFollowUp) ?? "(unavailable)"} before repairing this follow-up.`);
         }
         const merged = new Set(mergedIssueNumbers(old));
         if (old.light !== undefined) throw new TicketError("Start a new light task in the conversation to try again.");
@@ -1230,6 +1242,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       },
       join: (id, into, reason) => {
         existing(into);
+        if (followUps.get(id) !== undefined) throw new TicketError("A follow-up ticket cannot be joined into another chain.");
         if (into === id) {
           throw new TicketError(`Ticket ${references.get(id) ?? "(unavailable)"} cannot join itself`);
         }

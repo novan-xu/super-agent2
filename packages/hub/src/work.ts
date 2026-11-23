@@ -39,13 +39,14 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import { fetchArticle, isAgentWringWriting, uniqueArticleName } from "./agent-wring.js";
-import type { Tell } from "./chains.js";
+import { chosenRun, type Tell } from "./chains.js";
 import type { Clock } from "./clock.js";
 import type { Delivery } from "./conversations.js";
 import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import type { StartDefaults } from "./defaults.js";
 import { accountFor } from "./filing.js";
+import { createFollowUpRecords } from "./follow-ups.js";
 import { createTicketFiles, type TicketFiles } from "./files.js";
 import type { LightTaskQuestions } from "./light-task-questions.js";
 import type { FailureReport } from "./failure-loop.js";
@@ -208,6 +209,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const tell: Tell = options.tell ?? (() => undefined);
   const log = options.log ?? (() => undefined);
   const silence = createWorkerSilence(options.database, clock, tickets, tell, log, options.silenceMinutes);
+  const followUps = createFollowUpRecords(options.database);
   const suffix = options.branchSuffix ?? (() => randomBytes(2).toString("hex"));
   const listeners = new Set<WorkListener>();
   const files = options.files ?? createTicketFiles(options.database);
@@ -250,6 +252,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const updateStarted = connection.prepare("UPDATE ticket_attempts SET state = 'preparing', started_at = COALESCE(started_at, ?), unreachable_since = NULL WHERE ticket_id = ? AND attempt = ?");
   const updateEnded = connection.prepare("UPDATE ticket_attempts SET state = ?, ended_at = ?, failure = ?, reason = ? WHERE ticket_id = ? AND attempt = ?");
   const updateSession = connection.prepare("UPDATE ticket_attempts SET session = ? WHERE ticket_id = ? AND attempt = ?");
+  const clearResumeSession = connection.prepare("UPDATE ticket_attempts SET session = NULL, resume_session = NULL WHERE ticket_id = ? AND attempt = ?");
   const updateSeq = connection.prepare("UPDATE ticket_attempts SET last_seq = ? WHERE ticket_id = ? AND attempt = ?");
   const updateHandover = connection.prepare("UPDATE ticket_attempts SET handover = 0 WHERE ticket_id = ? AND handover = 1");
   const markUnreachable = connection.prepare(
@@ -371,7 +374,36 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   const folderField = (ticket: Ticket): { readonly folder?: number } => {
     const root = ticket.repairs === null ? undefined : tickets.lineage(ticket.id)[0];
-    return root === undefined ? {} : { folder: root.id };
+    const folder = followUps.get(root?.id ?? ticket.id)?.folder ?? root?.id;
+    return folder === undefined ? {} : { folder };
+  };
+
+  const followUpContext = (ticket: Ticket) => {
+    const link = followUps.get(ticket.id);
+    if (link === undefined) return undefined;
+    const source = followUps.source(link.previous) ?? followUps.source(link.original);
+    const original = tickets.get(link.original);
+    const previous = tickets.get(source?.ticket_id ?? link.previous);
+    const fromCommit = previous?.pullRequests.findLast((pull) => pull.state === "merged")?.mergeCommit ?? null;
+    const previousIds = [link.original, ...followUps.history(link.original).filter((part) => part.ticket_id < ticket.id).map((part) => part.ticket_id).reverse(), link.previous];
+    const lineage = new Map(previousIds.flatMap((id) => [...tickets.lineage(id), tickets.get(id)].flatMap((piece) => piece === undefined ? [] : [[piece.id, piece] as const])));
+    const pulls = [...lineage.values()].flatMap((piece) => piece.pullRequests.filter((pull) => pull.state === "merged"));
+    const note = [
+      `This is a new follow-up ticket for merged ticket ${original === undefined ? "(unavailable)" : ticketReference(original)}. The owner asked for an adjustment to original GitHub issue #${link.issue}.`,
+      `The request is recorded at ${link.url}:`,
+      link.comment,
+      `Prior merged pull requests: ${pulls.map((pull) => `#${pull.number} (${pull.url}${pull.mergeCommit === null ? "" : `, merged at ${pull.mergeCommit}`})`).join(", ") || "(none recorded)"}.`,
+      `Use the current ticket's branch and hand-back file. Hand in a new pull request containing Closes #${link.issue}.`,
+    ].join("\n");
+    const takeoverNote = [
+      "You are taking over a follow-up because the original worker session is unavailable on this attempt.",
+      note,
+      ...(source === undefined ? [] : [
+        "The end of the earlier worker's output follows as a record of its work:",
+        outputOf(source.ticket_id, source.attempt, 6_000) || "(no output)",
+      ]),
+    ].join("\n\n");
+    return { source, fromCommit, note, takeoverNote };
   };
 
   const taskOf = (ticket: Ticket, attempt: Attempt): WorkTask | string => {
@@ -386,6 +418,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (token === undefined) {
       return `There is no GitHub token for ${ticket.repository}`;
     }
+    const followUp = followUpContext(ticket);
+    const session = attempt.session ?? attempt.resume_session;
     return {
       ticket: ticket.id,
       ticketReference: ticketReference(ticket),
@@ -400,10 +434,18 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       engine: attempt.engine,
       model: attempt.model,
       effort: attempt.effort,
-      session: attempt.session ?? attempt.resume_session,
+      session,
       note: attempt.note,
       takeover: attempt.takeover === 1,
       ...folderField(ticket),
+      ...(followUp === undefined ? {} : {
+        followUp: {
+          fromCommit: followUp.fromCommit,
+          ...(followUp.source?.machine === attempt.machine ? { workspaceOf: followUp.source.ticket_id } : {}),
+          resumeOriginal: session !== null && followUp.source?.session === session && followUp.source.machine === attempt.machine && followUp.source.engine === attempt.engine,
+          takeoverNote: followUp.takeoverNote,
+        },
+      }),
       environment: { GH_TOKEN: token, GITHUB_TOKEN: token },
       ...(options.extraMcp?.length ? { extraMcp: [...options.extraMcp] } : {}),
     };
@@ -518,6 +560,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       const report = runners.report(attempt.machine);
       if (report === undefined) {
+        if (options.defaults !== undefined && ticket.ownerChoice.machine === null && followUps.get(ticket.id) !== undefined) {
+          const run = chosenRun(options.defaults.resolve(ticket));
+          if (run !== undefined && run.machine !== attempt.machine && runners.report(run.machine) !== undefined) {
+            tickets.change((writes) => writes.choose(ticket.id, run));
+            nextAttempt(tickets.get(ticket.id) ?? ticket, null, attempt, undefined, { takeover: true });
+          }
+        }
         continue;
       }
       const defaults = options.defaults;
@@ -615,6 +664,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   interface Passing {
     readonly takeover: boolean;
     readonly record?: (attempt: number) => void;
+    readonly resumeSession?: string;
   }
 
   const nextAttempt = (
@@ -637,8 +687,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const machine = ticket.machine;
     const sameMachine = previous?.machine === machine;
-    const resume = previous !== undefined && sameMachine && previous.engine === engine.data && (engine.data !== "antigravity" || previous.model === ticket.model)
-      ? previous.session ?? previous.resume_session : null;
+    const resume = passing.resumeSession ?? (previous !== undefined && sameMachine && previous.engine === engine.data && (engine.data !== "antigravity" || previous.model === ticket.model)
+      ? previous.session ?? previous.resume_session : null);
     const moving = previous !== undefined && !sameMachine;
     const handover = moving && (isActive(previous.state) || (previous.state === "unavailable" && CountRow.parse(countStartedOn.get(ticket.id, previous.machine)).count > 0));
     const number = (previous?.attempt ?? 0) + 1;
@@ -691,6 +741,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   };
 
   const firstAttempt = (ticket: Ticket) => {
+    const followUp = followUpContext(ticket);
+    if (followUp !== undefined) {
+      const source = followUp.source;
+      const resume = source !== undefined && source.machine === ticket.machine && source.engine === ticket.engine ? source.session : null;
+      nextAttempt(ticket, resume === null ? null : followUp.note, undefined, undefined, resume === null ? { takeover: true } : { takeover: false, resumeSession: resume });
+      return;
+    }
     const repair = repairStart(ticket);
     nextAttempt(ticket, repair?.note ?? null, undefined, undefined, repair === undefined ? undefined : { takeover: true, record: repair.record });
   };
@@ -988,6 +1045,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       }
       const live = attempt.state === "preparing" || attempt.state === "running";
       switch (event.kind) {
+        case "follow-up":
+          if (current && live && event.lostSession === true && followUps.get(attempt.ticket_id) !== undefined) {
+            clearResumeSession.run(attempt.ticket_id, attempt.attempt);
+          }
+          return;
         case "question": {
           const ticket = current && live ? writes.get(attempt.ticket_id) : undefined;
           if (ticket?.light !== undefined && ticket.state === "working") publish = options.lightQuestion?.(ticket, attempt.attempt, event);
