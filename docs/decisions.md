@@ -3826,3 +3826,9 @@ Showing calls there would require a voice-duration data model and display.
 - **Chosen:** The product is named Super Agent; `super-agent2` remains the repository name and existing technical identifiers retain their names.
 - **Why:** The owner chose one consistent product name without disrupting installed systems.
 - **Other options:** Keep the old product spelling or rename technical identifiers as well.
+
+## 2026-11-23 — Tailnet work requests (#313)
+
+- **Chosen:** Publish the existing work-request listener on the NAS Tailscale address at port 18767, while retaining the Docker network endpoint and source authentication.
+- **Why:** Services on other tailnet machines can request work without exposing the listener on the LAN or public tunnel.
+- **Other options:** Publish on all host interfaces or route work requests through the public hub listener.

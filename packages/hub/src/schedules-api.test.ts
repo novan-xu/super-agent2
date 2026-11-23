@@ -386,6 +386,17 @@ describe("scheduled work", () => {
 });
 
 describe("service-triggered schedules", () => {
+  it("accepts the internal and tailnet Host headers while preserving authentication", async () => {
+    registerSource();
+    for (const host of ["hub:8081", "novanstorage.tail62dd17.ts.net:18767", "100.72.209.101:18767"]) {
+      const url = `http://127.0.0.1:${hub.workRequestAddress!.port}/work-requests/loom`;
+      expect((await fetch(url, { method: "POST", headers: { host } })).status).toBe(401);
+      expect((await fetch(url, { method: "POST", headers: {
+        host, authorization: `Bearer ${loomToken}`, "content-type": "application/json", "idempotency-key": "host-check",
+      }, body: JSON.stringify(loomRequest) })).status).toBe(409);
+    }
+  });
+
   it("runs a confirmed plan with labelled service data and starts its work after the turn", async () => {
     registerSource();
     const topic = hub.conversations.create().id;

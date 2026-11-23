@@ -238,8 +238,10 @@ All of this comes from Cloudflare's documentation and is exercised only against 
 ## Internal work requests
 
 The Compose hub listens for work requests on `http://hub:8081` on the `superagent2_default` Docker network.
-Join the calling service to that network and keep the tunnel origin on port `8080`.
-Compose publishes only port `8080` to the NAS host and mounts its own `secrets/work-sources` directory read-only at `/run/superagent2/work-sources` in the hub.
+Services on the tailnet can also use `http://novanstorage.tail62dd17.ts.net:18767` or `http://100.72.209.101:18767`.
+Compose binds that port only to the NAS Tailscale address, and the tunnel origin remains on port `8080`.
+If the NAS Tailscale address changes, update the port binding in `deploy/compose.yaml`.
+Compose mounts its own `secrets/work-sources` directory read-only at `/run/superagent2/work-sources` in the hub.
 Outside Compose, set `HUB_WORK_REQUEST_PORT` and `HUB_WORK_SOURCES_DIR` together to enable the listener on the hub's `HUB_HOST`.
 Without a digest file for a source, requests for that source fail authentication.
 

@@ -43,6 +43,7 @@ services:
       - novanstorage.tail62dd17.ts.net:100.72.209.101
     ports:
       - 127.0.0.1:${SUPERAGENT2_HUB_PORT:?run this file through deploy.sh}:8080
+      - 100.72.209.101:18767:8081
     volumes:
       - hub-data:/var/lib/superagent2/hub
       - brain-link:/var/lib/superagent2/link
