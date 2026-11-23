@@ -13,10 +13,10 @@ export interface LayoutFixture {
 const repositories = [
   "demo/garden-notes",
   "demo/plant-log",
-  "demo/a-repository-with-a-long-name-for-layout-testing",
   "demo/seed-exchange",
   "demo/weather-station",
   "demo/community-notices",
+  "demo/a-repository-with-a-long-name-for-layout-testing",
 ] as const;
 const paragraph = "这份笔记记录了花园的工作安排、每周的维护计划以及需要在下一次会议上讨论的事项。";
 const previewName = `garden-notes-${"weekly-maintenance-and-work-schedule-".repeat(3)}preview.html`;
