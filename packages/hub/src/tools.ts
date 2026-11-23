@@ -1236,12 +1236,14 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           tools.tickets.versions.seen(scope, detail.ticket.id);
         }
         const output = tools.work?.output(detail.ticket.id) ?? "";
+        const lastActivity = tools.work?.lastActivity(detail.ticket.id) ?? null;
         const task = detail.ticket.form === "task" ? tools.tickets.task(detail.ticket.id) : undefined;
         const logs = tools.verification?.logs(detail.ticket.id) ?? [];
         const waited = tools.verification?.waitedFor(detail.ticket.id) ?? null;
         const stuck = detail.ticket.stuck;
         const report = [
           ticketReport(detail.ticket, detail.moves),
+          ...(lastActivity === null ? [] : [`Last worker activity: ${new Date(lastActivity).toISOString()}.`]),
           ...repairLines(detail.ticket, (id) => tools.tickets.get(id)),
           ...(waited === null ? [] : [waitedLine(waited)]),
           ...roundLines(detail.rounds),

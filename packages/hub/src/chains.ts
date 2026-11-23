@@ -119,7 +119,7 @@ export interface ChainStarter {
   reassign(given: OwnerChange): Promise<StartOutcome>;
 }
 
-export type Tell = (ticket: number, notice: string, prompt: string) => void;
+export type Tell = (ticket: number, notice: string, prompt: string, hidden?: boolean) => void;
 
 export interface Chains {
   readonly arranger: ChainArranger;

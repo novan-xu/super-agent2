@@ -108,6 +108,115 @@ function current(id: number): Ticket {
   return ticket;
 }
 
+describe("silent workers", () => {
+  const minute = 60_000;
+  let tick: () => void;
+
+  function startMonitor(): void {
+    work.close();
+    work = createWorkService({
+      database, clock, tickets, runners, credentials: testCredentials, branchSuffix: () => "beef",
+      tell: (ticket, notice, prompt) => told.push({ ticket, notice, prompt }),
+      ticker: (run) => {
+        tick = run;
+        return () => undefined;
+      },
+    });
+    work.resume();
+  }
+
+  function advance(minutes: number): void {
+    clock.advance(minutes * minute);
+    tick();
+  }
+
+  beforeEach(() => {
+    startMonitor();
+    runners.connect("pc", 2);
+  });
+
+  it("tells the brain at the threshold and each doubling, and starts over after any new event", () => {
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
+    emit("pc", ticket.id, 1, 2, { kind: "text", block: "b", delta: `${"old ".repeat(700)}Reading the issue.` });
+    emit("pc", ticket.id, 1, 3, { kind: "tool.started", call: "build", name: "shell", input: `pnpm build ${"a".repeat(500)}` });
+    emit("pc", ticket.id, 1, 4, { kind: "tool.output", call: "build", delta: "Building" });
+    const before = current(ticket.id);
+    advance(19);
+    expect(told).toEqual([]);
+    advance(1);
+    tick();
+    expect(told).toHaveLength(1);
+    expect(told[0]?.ticket).toBe(ticket.id);
+    expect(told[0]?.prompt).toContain(`[hub] The worker of ticket ${ticketReference(ticket)} (Add a greeting) on pc with codex gpt-6-luna has been silent for 20 minutes.`);
+    expect(told[0]?.prompt).toContain('Last worker event: tool.output (shell, input "pnpm build');
+    expect(told[0]?.prompt).toContain("characters omitted");
+    expect(told[0]?.prompt).toContain('Reading the issue."');
+    expect(told[0]?.prompt).not.toContain("old ".repeat(700));
+    advance(19);
+    expect(told).toHaveLength(1);
+    advance(1);
+    expect(told).toHaveLength(2);
+    expect(told.at(-1)?.prompt).toContain("40 minutes");
+    advance(40);
+    expect(told).toHaveLength(3);
+    expect(told.at(-1)?.prompt).toContain("1 hour 20 minutes");
+    expect(current(ticket.id)).toEqual(before);
+    expect(tickets.rounds(ticket.id)).toEqual([]);
+    expect(runners.of("work.stop")).toEqual([]);
+
+    emit("pc", ticket.id, 1, 5, { kind: "session", session: "thread-a" });
+    advance(19);
+    emit("pc", ticket.id, 1, 5, { kind: "session", session: "thread-a" });
+    expect(told).toHaveLength(3);
+    advance(1);
+    expect(told).toHaveLength(4);
+    expect(told.at(-1)?.prompt).toContain("20 minutes");
+    expect(told.at(-1)?.prompt).toContain("Last worker event: session.");
+  });
+
+  it("checks task tickets and skips preparing and finished workers", () => {
+    const preparing = working();
+    const running = writing();
+    work.begin(preparing);
+    work.begin(running);
+    emit("pc", running.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
+    advance(20);
+    expect(told.map(({ ticket }) => ticket)).toEqual([running.id]);
+    expect(runners.of("work.stop")).toEqual([]);
+    emit("pc", running.id, 1, 2, { ...deliveredEvent, files: [] });
+    advance(80);
+    expect(current(running.id).work?.state).toBe("finished");
+    expect(told.filter(({ prompt }) => prompt.includes("has been silent")).map(({ ticket }) => ticket)).toEqual([running.id]);
+  });
+
+  it("measures from the machine reconnect after a hub restart", () => {
+    const ticket = working();
+    work.begin(ticket);
+    emit("pc", ticket.id, 1, 1, { kind: "phase", phase: "started", detail: "Started" });
+    const activity = clock.now();
+    advance(20);
+    expect(told).toHaveLength(1);
+
+    runners.drop("pc");
+    advance(40);
+    expect(told).toHaveLength(1);
+    database.connection.prepare("UPDATE ticket_work_events SET received_at = NULL WHERE ticket_id = ?").run(ticket.id);
+    startMonitor();
+    expect(work.lastActivity(ticket.id)).toBe(activity);
+    advance(20);
+    expect(told).toHaveLength(1);
+    runners.connect("pc", 2, [{ ticket: ticket.id, attempt: 1, last: 1, live: true, ended: false }]);
+    advance(19);
+    expect(told).toHaveLength(1);
+    advance(1);
+    expect(told).toHaveLength(2);
+    expect(told.at(-1)?.prompt).toContain("20 minutes");
+    expect(work.lastActivity(ticket.id)).toBe(activity);
+  });
+});
+
 describe("work for a started ticket", () => {
   it("sends configured extra MCP servers with a code assignment", () => {
     work.close();
@@ -385,12 +494,12 @@ function writing(engine: "antigravity" | "codex" = "antigravity", machine = "pc"
   return current(opened.id);
 }
 
-const deliveredEvent: WorkEvent = {
+const deliveredEvent = {
   kind: "delivered",
   text: "Hello, world.\n",
   files: [{ name: "notes.pdf", size: 4, mediaType: "application/pdf" }],
   report: { en: "Translated the notice", zh: "翻译了通知" },
-};
+} satisfies WorkEvent;
 
 describe("work for a task ticket", () => {
   it("starts the worker with the task and material, with no repository, branch or token", () => {

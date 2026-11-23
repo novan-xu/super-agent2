@@ -107,6 +107,7 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
   One start authorizes the chain and work arranged after it.
 - The hub verifies, merges and hands remaining issues back to the worker.
   If a worker repeatedly hits a merge conflict, check `read_ticket` and use `message_worker` while it runs.
+- On a silent-worker notice, use `read_ticket`, then wait if the work may still be progressing, use `message_worker` to check or unblock it, or stop the ticket and explain why to the owner.
 
 ## Changing tickets
 

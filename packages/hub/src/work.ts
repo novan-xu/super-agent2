@@ -51,6 +51,7 @@ import type { Runners, WorkMessageToRunner } from "./runners.js";
 import type { AttachmentStore } from "./attachments.js";
 import { mergedCommitFor, short } from "./task-tickets.js";
 import { createWorkerMessages } from "./worker-messages.js";
+import { createWorkerSilence } from "./worker-silence.js";
 import { switchOf, type TicketService, type TicketWork, type TicketWrites } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
 import { intervalTicker, type Ticker } from "./verification.js";
@@ -76,6 +77,7 @@ export interface WorkServiceOptions {
   readonly attachments?: AttachmentStore;
   readonly defaults?: StartDefaults;
   readonly ticker?: Ticker;
+  readonly silenceMinutes?: number;
   readonly schedule?: (drain: () => void) => void;
   readonly log?: (line: string) => void;
 }
@@ -94,6 +96,12 @@ export type WorkOutcome = { readonly ok: true; readonly ticket: Ticket } | { rea
 export type MessageOutcome = { readonly ok: true; readonly id: string; readonly delivered: boolean } | { readonly ok: false; readonly reason: string };
 
 type DeliveredEvent = Extract<WorkEvent, { readonly kind: "delivered" }>;
+
+interface ArrivedEvent {
+  readonly machine: string;
+  readonly message: RunnerWorkEvent;
+  readonly receivedAt: number;
+}
 
 interface Fetching {
   readonly attempt: number;
@@ -121,6 +129,7 @@ export interface WorkService extends TicketWork {
   answerLightQuestion(ticket: number, turn: TicketTurn): MessageOutcome;
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
+  lastActivity(ticket: number): number | null;
   subscribe(listener: WorkListener): () => void;
   resume(): void;
   close(): void;
@@ -188,6 +197,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const { tickets, clock, runners } = options;
   const { connection } = options.database;
   const tell: Tell = options.tell ?? (() => undefined);
+  const log = options.log ?? (() => undefined);
+  const silence = createWorkerSilence(options.database, clock, tickets, tell, log, options.silenceMinutes);
   const suffix = options.branchSuffix ?? (() => randomBytes(2).toString("hex"));
   const listeners = new Set<WorkListener>();
   const files = options.files ?? createTicketFiles(options.database);
@@ -237,7 +248,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   );
   const markAllUnreachable = connection.prepare("UPDATE ticket_attempts SET unreachable_since = ? WHERE state IN ('preparing', 'running') AND unreachable_since IS NULL");
   const clearUnreachable = connection.prepare("UPDATE ticket_attempts SET unreachable_since = NULL WHERE machine = ? AND unreachable_since IS NOT NULL");
-  const insertEvent = connection.prepare("INSERT OR IGNORE INTO ticket_work_events (ticket_id, attempt, seq, at, event) VALUES (?, ?, ?, ?, ?)");
+  const insertEvent = connection.prepare("INSERT OR IGNORE INTO ticket_work_events (ticket_id, attempt, seq, at, event, received_at) VALUES (?, ?, ?, ?, ?, ?)");
   const selectEvents = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND id > ? ORDER BY id LIMIT ?");
   const selectRecent = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? ORDER BY id DESC LIMIT ?");
   const selectHandedBack = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND attempt = ? AND json_extract(event, '$.kind') = 'delivered' ORDER BY seq DESC LIMIT 1");
@@ -874,7 +885,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
   };
 
-  const stage = (machine: string, message: RunnerWorkEvent, writes: TicketWrites): (() => void) | undefined => {
+  const stage = ({ machine, message, receivedAt }: ArrivedEvent, writes: TicketWrites): (() => void) | undefined => {
     const attempt = attemptOf(message.ticket, message.attempt);
     if (attempt === undefined || attempt.machine !== machine) {
       return undefined;
@@ -900,7 +911,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     let publish: (() => void) | undefined;
     let id = 0;
     ((): void => {
-      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event)).lastInsertRowid);
+      id = Number(insertEvent.run(attempt.ticket_id, attempt.attempt, message.seq, message.at, JSON.stringify(event), receivedAt).lastInsertRowid);
       updateSeq.run(message.seq, attempt.ticket_id, attempt.attempt);
       if (event.kind === "message") {
         messages.delivered(attempt.ticket_id, event.id);
@@ -1076,7 +1087,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     event.kind === "unavailable" ||
     (event.kind === "phase" && event.phase === "checking");
 
-  const arrived: { readonly machine: string; readonly message: RunnerWorkEvent }[] = [];
+  const arrived: ArrivedEvent[] = [];
   const schedule = options.schedule ?? ((drain: () => void) => drain());
   let scheduled = false;
 
@@ -1089,8 +1100,6 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     return arrived.splice(0, end === -1 ? arrived.length : end);
   };
 
-  const log = options.log ?? (() => undefined);
-
   const problemOf = (error: unknown): string => {
     const name = error instanceof Error ? error.name : typeof error;
     const line = (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
@@ -1100,7 +1109,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const eventOf = (machine: string, message: RunnerWorkEvent): string =>
     `machine ${machine}, ticket ${message.ticket}, attempt ${message.attempt}, seq ${message.seq}, kind ${message.event.kind}`;
 
-  const rangesOf = (batch: readonly { readonly message: RunnerWorkEvent }[]): string => {
+  const rangesOf = (batch: readonly ArrivedEvent[]): string => {
     const ranges = new Map<string, { readonly ticket: number; readonly attempt: number; low: number; high: number }>();
     for (const { message } of batch) {
       const key = `${message.ticket}:${message.attempt}`;
@@ -1115,14 +1124,15 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     return [...ranges.values()].map((range) => `ticket ${range.ticket} attempt ${range.attempt} seq ${range.low}-${range.high}`).join("; ");
   };
 
-  const write = (batch: readonly { readonly machine: string; readonly message: RunnerWorkEvent }[]) => {
+  const write = (batch: readonly ArrivedEvent[]) => {
     const effects: { readonly machine: string; readonly message: RunnerWorkEvent; readonly effect: () => void }[] = [];
     try {
       tickets.change((writes) => {
-        for (const { machine, message } of batch) {
+        for (const arrival of batch) {
+          const { machine, message } = arrival;
           connection.exec("SAVEPOINT work_event");
           try {
-            const effect = stage(machine, message, writes);
+            const effect = stage(arrival, writes);
             connection.exec("RELEASE work_event");
             if (effect !== undefined) {
               effects.push({ machine, message, effect });
@@ -1165,7 +1175,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   };
 
   const receive = (machine: string, message: RunnerWorkEvent) => {
-    arrived.push({ machine, message });
+    arrived.push({ machine, message, receivedAt: clock.now() });
     if (!scheduled && !draining) {
       scheduled = true;
       schedule(drain);
@@ -1174,6 +1184,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
 
   const hello = (machine: string, held: readonly WorkHeld[]) => {
     clearUnreachable.run(machine);
+    silence.connected(machine);
     const seen = new Set<string>();
     const lost: { ticket: Ticket; attempt: Attempt }[] = [];
     for (const work of held) {
@@ -1670,6 +1681,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (closed) {
         return;
       }
+      silence.disconnected(machine);
       const rows = selectActiveOn.all(machine).map((row) => Attempt.parse(row));
       markUnreachable.run(clock.now(), machine);
       for (const pending of fetching.values()) {
@@ -1806,6 +1818,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const latest = latestOf(ticket);
       return latest === undefined ? "" : outputOf(ticket, latest.attempt, limit);
     },
+    lastActivity: silence.lastActivity,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {
@@ -1822,8 +1835,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         const event = row === undefined ? undefined : storedOf(row)?.event;
         if (event?.kind === "delivered" && event.outcome !== "failed") fetchArticles(ticket.id, attempt.attempt, event);
       }
-      if (stopTicker === undefined && options.defaults !== undefined) {
-        stopTicker = ticker(() => dispatch());
+      if (stopTicker === undefined) {
+        stopTicker = ticker(() => {
+          drain();
+          silence.check();
+          if (options.defaults !== undefined) dispatch();
+        });
       }
       dispatch();
     },

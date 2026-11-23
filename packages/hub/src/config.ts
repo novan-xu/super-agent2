@@ -22,6 +22,11 @@ function unlessEmpty<Schema extends z.ZodType>(schema: Schema) {
   return z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 }
 
+function positiveMinutes() {
+  return unlessEmpty(z.string().regex(/^\d+$/, { error: "must be a whole number of minutes" })
+    .transform(Number).pipe(z.number().int().min(1, { error: "must be at least 1" })));
+}
+
 const Environment = z.object({
   ACCESS_TEAM: z
     .string(present("must be text"))
@@ -61,13 +66,8 @@ const Environment = z.object({
   HUB_ATTACHMENTS_DIR: z.string().min(1, { error: "must not be empty" }).optional(),
   SUPERAGENT2_REVISION: unlessEmpty(z.string().regex(/^[0-9a-f]{40}$/, { error: "must be a full commit id, 40 lower-case hexadecimal characters" })),
   HUB_SOURCE_REPOSITORY: unlessEmpty(RepositoryName),
-  HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: unlessEmpty(
-    z
-      .string()
-      .regex(/^\d+$/, { error: "must be a whole number of minutes" })
-      .transform(Number)
-      .pipe(z.number().int().min(1, { error: "must be at least 1" })),
-  ),
+  HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES: positiveMinutes(),
+  HUB_WORKER_SILENCE_MINUTES: positiveMinutes(),
   HUB_TOPIC_TIDY_TIME: unlessEmpty(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, { error: "must be HH:MM" })),
   HUB_TOPIC_TIDY_ENABLED: unlessEmpty(z.enum(["true", "false"])),
   HUB_TOPIC_ARCHIVE_MS: unlessEmpty(z.string().regex(/^[1-9]\d*$/, { error: "must be a positive number of milliseconds" }).transform(Number).pipe(z.number().int().positive())),
@@ -101,6 +101,7 @@ export interface Config {
   readonly version?: string;
   readonly sourceRepository?: string;
   readonly firstPipelineAllowanceMinutes?: number;
+  readonly workerSilenceMinutes?: number;
   readonly deepseekLowBalance?: number;
   readonly topicArchiveMilliseconds?: number;
   readonly topicTidyTime?: string;
@@ -190,6 +191,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       ...(value.HUB_ROUTING_MODELS === undefined ? {} : { routingModels: value.HUB_ROUTING_MODELS }),
       ...(value.HUB_ROUTING_PRIMARY === undefined ? {} : { routingPrimary: value.HUB_ROUTING_PRIMARY }),
       ...(value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES === undefined ? {} : { firstPipelineAllowanceMinutes: value.HUB_FIRST_PIPELINE_ALLOWANCE_MINUTES }),
+      ...(value.HUB_WORKER_SILENCE_MINUTES === undefined ? {} : { workerSilenceMinutes: value.HUB_WORKER_SILENCE_MINUTES }),
     },
   };
 }
