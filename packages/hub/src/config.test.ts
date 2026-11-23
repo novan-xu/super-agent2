@@ -85,6 +85,12 @@ describe("loadConfig", () => {
     expect(problemsFor({ ...valid, HUB_DEEPSEEK_LOW_BALANCE: "-1" })[0]).toMatch(/^HUB_DEEPSEEK_LOW_BALANCE/);
   });
 
+  it("reads the worker silence threshold in positive whole minutes", () => {
+    expect(loadConfig({ ...valid, HUB_WORKER_SILENCE_MINUTES: "7" })).toMatchObject({ ok: true, config: { workerSilenceMinutes: 7 } });
+    expect(problemsFor({ ...valid, HUB_WORKER_SILENCE_MINUTES: "0" })[0]).toMatch(/^HUB_WORKER_SILENCE_MINUTES must be at least 1/);
+    expect(problemsFor({ ...valid, HUB_WORKER_SILENCE_MINUTES: "1.5" })[0]).toMatch(/^HUB_WORKER_SILENCE_MINUTES must be a whole number of minutes/);
+  });
+
   it("reads the routing model's folder and which routing configuration is primary", () => {
     const result = loadConfig({ ...valid, HUB_ROUTING_MODELS: "/opt/superagent2/models", HUB_ROUTING_PRIMARY: "bigram" });
     expect(result).toMatchObject({ ok: true, config: { routingModels: "/opt/superagent2/models", routingPrimary: "bigram" } });

@@ -50,6 +50,7 @@ let dataDir: string;
 let clock: TestClock;
 let key: SigningKey;
 let hub: Hub;
+let tickWork: () => void;
 let articleServer: Server;
 let wringUrl: string;
 let replyArticle: RequestListener;
@@ -57,7 +58,11 @@ let articleRequests: { path: string | undefined; authorization: string | undefin
 
 async function startHub() {
   hub = await startTestHub({
-    config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock,
+    config: { ...testConfig(dataDir), workerSilenceMinutes: 3 }, keySource: staticKeySource(keySet(key)), clock,
+    workTicker: (tick) => {
+      tickWork = tick;
+      return () => undefined;
+    },
     environment: {
       HUB_EXTRA_MCP_SERVERS: JSON.stringify([{ name: "agent_wring", url: wringUrl, secret: "WRING_TOKEN", brain: true, workers: true }]),
       WRING_TOKEN: "example-token",
@@ -92,9 +97,9 @@ afterEach(async () => {
 });
 
 function connectBrain() {
-  const inputs: BrainInput[] = [];
+  const inputs: (BrainInput & { conversation: string })[] = [];
   const link = hub.conversations.attach({
-    send: (message) => { if (message.type === "input") inputs.push(message.input); }, close: () => undefined,
+    send: (message) => { if (message.type === "input") inputs.push({ ...message.input, conversation: message.conversation }); }, close: () => undefined,
   });
   link.receive({ type: "hello", protocol: protocolVersion, running: [] });
   return { link, inputs };
@@ -532,8 +537,13 @@ describe("light tasks", () => {
     const ticket = await agreed(link, topic);
     const internal = { ticket: ticketReference(ticket) };
     const question = "邮件收件人是谁？";
+    run.show(ticket.id, 1, { kind: "phase", phase: "started", detail: "Started" });
     run.show(ticket.id, 1, { kind: "question", id: randomUUID(), text: question });
     expect(entries(topic).at(-1)).toMatchObject({ kind: "notice", text: question });
+    const silenceInputs = () => inputs.filter(({ text }) => text.includes("has been silent"));
+    clock.advance(6 * 60_000);
+    tickWork();
+    expect(silenceInputs()).toEqual([]);
     const empty = turn(link, topic);
     expect((await empty.call("answer_light_task", internal)).isError).toBe(true);
     empty.finish();
@@ -544,6 +554,11 @@ describe("light tasks", () => {
     expect((await answer.call("answer_light_task", internal)).isError).toBe(true);
     answer.finish();
     expect(run.sent.filter((message) => message.type === "work.message")).toMatchObject([{ from: "owner", text: "给 Maya" }]);
+    run.show(ticket.id, 1, { kind: "phase", phase: "turn", detail: "Writing the email" });
+    clock.advance(3 * 60_000);
+    tickWork();
+    expect(silenceInputs()).toMatchObject([{ conversation: topic, text: expect.stringContaining("has been silent for 3 minutes") }]);
+    expect(entries(topic).filter((entry) => entry.kind === "notice").map((entry) => entry.text)).toEqual([question]);
   });
 
   it("guides three rounds privately and publishes a single final failure line", async () => {

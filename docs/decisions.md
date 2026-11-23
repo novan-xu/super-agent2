@@ -3832,3 +3832,9 @@ Showing calls there would require a voice-duration data model and display.
 - **Chosen:** Publish the existing work-request listener on the NAS Tailscale address at port 18767, while retaining the Docker network endpoint and source authentication.
 - **Why:** Services on other tailnet machines can request work without exposing the listener on the LAN or public tunnel.
 - **Other options:** Publish on all host interfaces or route work requests through the public hub listener.
+
+## 2026-11-23 — Worker silence after reconnects (#315)
+
+Every runner reconnect starts a fresh silence interval.
+The brain gets a silence notice only after observing a full quiet interval on a connected machine, since disconnects already have their own notices.
+Another option was to carry forward the time of the last event across ordinary disconnects and reset only after a hub restart.
