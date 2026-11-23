@@ -11,6 +11,7 @@ import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
 import { Decisions } from "./Decisions.js";
+import { UiScreenshots } from "./UiScreenshots.js";
 import { clockOf, DeliveryBody, LiveStatus, TextBody } from "./Entries.js";
 import { engineName, momentOf, PhaseStatus, problemLines, problemTone, pullRequestTones, RepairChip } from "./TicketParts.js";
 
@@ -794,6 +795,8 @@ export function TicketView({ detail, known, actions, origin, backHref, back, tic
       <div className="detail">
         <div className="detail-main">
           <Decisions ticket={ticket} review={actions.review} />
+          <UiScreenshots reports={ticket.pullRequests.flatMap((pull) => pull.screenshots === undefined || pull.state === "closed" ? [] :
+            [{ ticket: ticket.id, pullRequest: pull.number, images: pull.screenshots.images }])} />
           <ol className="timeline" ref={list} aria-label={text("ticket.timeline")}>
             {entries.map((entry) => {
               switch (entry.kind) {

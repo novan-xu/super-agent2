@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Attachment, attachmentLine, type TaskAssignment, type WorkSender, type WorkTask } from "@super-agent2/protocol";
 import { assignmentText, type TaskPlace } from "./task.js";
 import type { FolderState } from "./workplace.js";
 import type { ArtifactFolder } from "./storage.js";
+import { screenshotFolder } from "./screenshots.js";
 
 export const workerGuidanceFile = fileURLToPath(new URL("../guidance/WORKER.md", import.meta.url));
 
@@ -45,6 +47,20 @@ function issueLines(task: WorkTask): string[] {
 
 const failedHandback = 'If you cannot hand in a pull request for any open issue, write the same file with "outcome": "failed" and a bilingual "report" explaining why.';
 
+function screenshotLines(place: BriefPlace): string[] {
+  return [
+    "",
+    "If this pull request changes paths declared in .superagent2/ui.json at its head, capture the affected views in a light theme at 390 × 844 (phone) and 1440 × 900 (desktop).",
+    "Use a headless browser and the repository's screenshot script when available.",
+    `Take the before images from ${place.base} and the after images from the pushed pull request head.`,
+    `Put the PNG or JPEG files of at most 2 MiB each in ${screenshotFolder(dirname(place.handback))}.`,
+    'Add a "screenshots" array to handback.json with one entry per file, such as {"file":"history-phone-after.png","view":"history","width":"phone","phase":"after"}.',
+    'Provide after screenshots at both widths and a matching before screenshot for each existing view and width.',
+    'If a view is new, put its name in the "newViews" array instead of supplying before images for it.',
+    "The hub returns a hand-in that is missing required screenshots so you can correct it on the same pull request.",
+  ];
+}
+
 export function taskText(task: WorkTask, place: BriefPlace): string {
   return [
     "# Your task",
@@ -61,6 +77,7 @@ export function taskText(task: WorkTask, place: BriefPlace): string {
     "",
     `Hand in each pull request by writing the JSON file at: ${place.handback}`,
     failedHandback,
+    ...screenshotLines(place),
   ].join("\n");
 }
 
@@ -82,13 +99,14 @@ export function resumeText(task: WorkTask, place: BriefPlace): string {
     task.note === null ? "" : `\n${task.note}`,
     "",
     ...issueLines(task),
+    ...screenshotLines(place),
   ]
     .join("\n")
     .trim();
 }
 
 export function continueText(task: WorkTask, place: BriefPlace, note: string): string {
-  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, failedHandback, ...artifactLines(place.artifacts)].join("\n");
+  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", ...issueLines(task), "", `Hand in the pull request by writing the JSON file at ${place.handback}, as before.`, failedHandback, ...artifactLines(place.artifacts), ...screenshotLines(place)].join("\n");
 }
 
 export interface LeftoverPlace {

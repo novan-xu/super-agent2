@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DeliverInput, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
+import { type DeliverInput, type HubToRunner, type MachineReport, protocolVersion, ServerMessage, type Ticket, TicketDetail, TicketResponse, uiConfigFile, type WorkEvent, WorkEventList } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callBrainTool } from "./testing/brain-tools.js";
 import WebSocket from "ws";
@@ -9,6 +9,7 @@ import { type Hub, type HubOptions, scheduleWorkDrain } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { testCredentials } from "./testing/commands.js";
+import { fakeForge, fakeGitHubBase, fakeWoodpeckerServer } from "./testing/forge.js";
 import { startTestHub } from "./testing/http.js";
 
 const sandbox = "novan-xu/super-agent-sandbox";
@@ -98,11 +99,68 @@ function post(running: Hub, path: string, body: unknown, headers: Record<string,
   return owner(running, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: base(running), ...headers } });
 }
 
-function event(runner: RunnerLink, ticket: number, seq: number, body: WorkEvent): void {
-  runner.receive({ type: "work.event", ticket, attempt: 1, seq, at: clock.now(), event: body });
+function event(runner: RunnerLink, ticket: number, seq: number, body: WorkEvent, attempt = 1): void {
+  runner.receive({ type: "work.event", ticket, attempt, seq, at: clock.now(), event: body });
 }
 
 describe("a ticket's worker for the page and the brain", () => {
+  it("returns a UI hand-in, then merges after the same pull request supplies images and green CI", async () => {
+    const forge = fakeForge();
+    const { running, ticket, runner, sent } = await start({
+      forgeFetch: forge.fetch, gitHubBase: fakeGitHubBase,
+      credentials: () => ({ ok: true, credentials: { GH_TOKEN: "github", WOODPECKER_TOKEN: "woodpecker", WOODPECKER_SERVER: fakeWoodpeckerServer } }),
+    });
+    const first = sent.find((message) => message.type === "work.start");
+    if (first === undefined) throw new Error("Missing first attempt");
+    const head = "a".repeat(40);
+    forge.repository(sandbox).issues.set(3, "open");
+    forge.pull(sandbox, 77, head, ["packages/web/src/App.tsx"], first.task.branch, [3]);
+    forge.tree(sandbox, head, [".woodpecker/check.yaml"]);
+    forge.file(sandbox, head, uiConfigFile, JSON.stringify({ paths: ["packages/web/**"] }));
+    forge.woodpecker.set(sandbox, { id: 6, active: true, configFile: "", pipelines: [] });
+    const report = { en: "Adjusted the interface", zh: "调整了界面" };
+    const finished = { kind: "finished", pullRequest: 77, url: `https://github.com/${sandbox}/pull/77`, report } as const;
+    event(runner, ticket.id, 1, finished);
+    await running.verification.idle();
+    const second = sent.find((message) => message.type === "work.start" && message.task.attempt === 2);
+    expect(second).toMatchObject({ task: { branch: first.task.branch, note: expect.stringContaining("after screenshots at phone (390 px) and desktop (1440 px)") } });
+    expect(running.tickets.get(ticket.id)).toMatchObject({ state: "working", round: 0, verification: { conflictReturns: 0 } });
+    expect(forge.merges).toEqual([]);
+
+    const data = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfX0AAAAASUVORK5CYII=", "base64");
+    const images = (["phone", "desktop"] as const).flatMap((width) => (["before", "after"] as const).map((phase) =>
+      ({ view: "history", width, phase, name: `history-${width}-${phase}.png`, mediaType: "image/png" as const, size: data.length })));
+    event(runner, ticket.id, 1, { ...finished, screenshots: { head, images, newViews: [] } }, 2);
+    expect(running.tickets.get(ticket.id)?.state).toBe("working");
+    for (const image of images) {
+      const request = sent.filter((message) => message.type === "work.file").at(-1);
+      expect(request).toMatchObject({ ticket: ticket.id, attempt: 2, name: image.name, offset: 0, length: data.length });
+      runner.receive({ type: "work.file.part", ticket: ticket.id, attempt: 2, name: image.name, offset: 0, data: data.toString("base64"), problem: null });
+    }
+    await running.verification.idle();
+    expect(running.tickets.get(ticket.id)).toMatchObject({ state: "verifying", verification: { waiting: "pipeline" }, round: 0 });
+    expect(forge.merges).toEqual([]);
+
+    forge.woodpecker.get(sandbox)?.pipelines.push({
+      number: 10, commit: head, ref: "refs/pull/77/merge", event: "pull_request", status: "success",
+      workflows: [{ name: "check", state: "success", steps: [{ id: 11, name: "check", state: "success", exitCode: 0 }] }], config: ["check"],
+    });
+    await running.verification.poll();
+    await running.verification.idle();
+    expect(forge.merges).toEqual([{ repository: sandbox, number: 77, sha: head, method: "squash" }]);
+    const result = TicketDetail.parse(await (await owner(running, `/api/tickets/${ticket.id}`)).json()).ticket;
+    expect(result?.state).toBe("merged");
+    const stored = result?.pullRequests[0]?.screenshots?.images;
+    expect(stored?.map(({ view, width, phase }) => ({ view, width, phase }))).toEqual(images.map(({ view, width, phase }) => ({ view, width, phase })));
+    const topic = running.tickets.topic(ticket.id);
+    expect(running.conversations.entries(topic)).toContainEqual(expect.objectContaining({
+      kind: "notice", screenshots: [{ ticket: ticket.id, pullRequest: 77, images: stored }],
+    }));
+    const file = await owner(running, `/api/tickets/${ticket.id}/files/${stored?.[0]?.name}`);
+    expect(file.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(data);
+  });
+
   it("sends the runner its task, and serves the worker's output over HTTP and the page's socket", async () => {
     const { running, ticket, runner, sent } = await start();
     expect(sent.filter((message) => message.type === "work.start")).toHaveLength(1);

@@ -27,6 +27,7 @@ export * from "./verification.js";
 export * from "./version.js";
 export * from "./waiting.js";
 export * from "./work.js";
+export * from "./ui-screenshots.js";
 export * from "./questions.js";
 
 export * from "./voice.js";

@@ -1252,6 +1252,14 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX ticket_follow_ups_original ON ticket_follow_ups (original, ticket_id);
     `,
   },
+  {
+    version: 64,
+    sql: `
+      ALTER TABLE ticket_pull_requests ADD COLUMN screenshots TEXT;
+      ALTER TABLE ticket_verifications ADD COLUMN ui_required INTEGER;
+      ALTER TABLE ticket_verifications ADD COLUMN ui_base TEXT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

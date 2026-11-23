@@ -5,6 +5,7 @@ import { GitHubAccount } from "./commands.js";
 import { Decision } from "./decisions.js";
 import { GeneratedText } from "./generated.js";
 import { TicketReference } from "./ticket-reference.js";
+import { HandbackScreenshot, screenshotLimit, ScreenshotSet, ScreenshotView } from "./ui-screenshots.js";
 
 export const workEngines = ["codex", "claude", "dsh", "antigravity"] as const;
 export const WorkEngine = z.enum(workEngines);
@@ -74,6 +75,7 @@ export const WorkEvent = z.discriminatedUnion("kind", [
     closes: z.array(z.number().int().positive()).optional(),
     report: GeneratedText,
     decisions: z.array(Decision).optional(),
+    screenshots: ScreenshotSet.optional(),
   }),
   z.object({
     kind: z.literal("delivered"),
@@ -350,6 +352,8 @@ export const Handback = z.discriminatedUnion("outcome", [
     pullRequest: z.number().int().positive(),
     summary: GeneratedText,
     decisions: z.array(Decision).default([]),
+    screenshots: z.array(HandbackScreenshot).max(screenshotLimit).optional(),
+    newViews: z.array(ScreenshotView).max(screenshotLimit).optional(),
   }),
   z.object({ outcome: z.literal("failed"), report: GeneratedText }),
 ]);

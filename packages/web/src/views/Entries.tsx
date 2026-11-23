@@ -1,4 +1,5 @@
 import { QuestionCard } from "./QuestionCard.js";
+import { UiScreenshots } from "./UiScreenshots.js";
 import { FileViewer } from "../parts/FileViewer.js";
 import { text } from "@super-agent2/catalog";
 import { cardAddress, pagePath, ticketAddress, type ConversationEntry, type DeliveryEntry, type NoticeEntry, type OwnerEntry, type TextEntry, type Turn } from "@super-agent2/protocol";
@@ -167,7 +168,7 @@ function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonl
       <div className="msg-text msg-plain">{entry.text}</div>
     </div>;
   }
-  return (
+  return (<>
     <div className={`sysline sysline--note${entry.ticket !== undefined && entry.start !== true ? " sysline--progress" : ""}`}>
       <Icon name="swap" />
       {entry.destination === undefined ? <span>{entry.text}</span> : <a href={pagePath({ view: "conversations", conversation: entry.destination, scope: { kind: "daily" } })}>{entry.text}</a>}
@@ -177,7 +178,8 @@ function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonl
       {topic}
       {action}
     </div>
-  );
+    {entry.screenshots === undefined ? null : <UiScreenshots reports={entry.screenshots} />}
+  </>);
 }
 
 function Ended({ turn, topic }: { readonly turn: Turn; readonly topic?: ReactNode }) {

@@ -1,6 +1,7 @@
 import { ticketReference } from "@super-agent2/protocol";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { text } from "@super-agent2/catalog";
 import {
   activeWorkStates,
@@ -20,6 +21,8 @@ import {
   mergedCommit,
   type ProgramId,
   routeProvider,
+  screenshotImage,
+  type ScreenshotSet,
   outFor,
   type TicketSwitchKind,
   type RunnerWorkEvent,
@@ -97,6 +100,12 @@ export type WorkOutcome = { readonly ok: true; readonly ticket: Ticket } | { rea
 export type MessageOutcome = { readonly ok: true; readonly id: string; readonly delivered: boolean } | { readonly ok: false; readonly reason: string };
 
 type DeliveredEvent = Extract<WorkEvent, { readonly kind: "delivered" }>;
+type FinishedEvent = Extract<WorkEvent, { readonly kind: "finished" }>;
+type FileHandback = DeliveredEvent | FinishedEvent;
+
+function handbackFiles(event: FileHandback): readonly DeliveredFile[] {
+  return event.kind === "delivered" ? event.files : event.screenshots?.images ?? [];
+}
 
 interface ArrivedEvent {
   readonly machine: string;
@@ -107,7 +116,7 @@ interface ArrivedEvent {
 interface Fetching {
   readonly attempt: number;
   readonly machine: string;
-  readonly event: DeliveredEvent;
+  readonly event: FileHandback;
   asked: { readonly part: number; readonly offset: number } | undefined;
 }
 
@@ -837,6 +846,57 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     dispatch();
   };
 
+  const acceptPull = (writes: TicketWrites, ticket: Ticket, number: number, event: FinishedEvent, screenshots?: ScreenshotSet) => {
+    writes.setPullRequest(ticket.id, event.pullRequest, event.report, { url: event.url, closes: event.closes ?? [], screenshots });
+    writes.recordDecisions(ticket.id, "worker", event.decisions ?? [], { attempt: number, pullRequest: event.pullRequest });
+    if (ticket.state === "working") writes.move(ticket.id, "verifying");
+  };
+
+  const completePull = (id: number, number: number, event: FinishedEvent, screenshots?: ScreenshotSet) => {
+    fetching.delete(id);
+    tickets.change((writes) => {
+      const attempt = latestOf(id);
+      const ticket = writes.get(id);
+      if (attempt?.attempt !== number || !isActive(attempt.state) || ticket?.form !== "code" || ticket.state !== "working") return;
+      if (screenshots !== undefined) files.keep(id, number, screenshots.images);
+      end(id, number, "finished", null, null);
+      acceptPull(writes, ticket, number, event, screenshots);
+    });
+    dispatch();
+  };
+
+  const loseFiles = (id: number, number: number, event: FileHandback, reason: string) => {
+    if (event.kind === "delivered") {
+      loseDelivery(id, number, reason);
+      return;
+    }
+    const reference = tickets.reference(id) ?? "(unavailable)";
+    log(`Screenshot transfer failed for ticket ${reference}, attempt ${number}: ${reason}`);
+    try {
+      files.drop(id, number);
+    } catch (error) {
+      log(`Could not remove staged screenshots for ticket ${reference}: ${problemOf(error)}`);
+    }
+    completePull(id, number, event);
+  };
+
+  const completeFiles = (id: number, pending: Fetching) => {
+    const { attempt, event } = pending;
+    if (event.kind === "delivered") {
+      complete(id, attempt, event);
+      return;
+    }
+    const screenshots = event.screenshots;
+    if (screenshots === undefined) return;
+    const images = screenshots.images.map((file, part) => {
+      const bytes = readFileSync(files.stagedPath(id, attempt, part));
+      if (bytes.length !== file.size || !screenshotImage(bytes, file.mediaType)) throw new Error(`Invalid screenshot for ${file.view} (${file.width}, ${file.phase})`);
+      const extension = file.mediaType === "image/png" ? "png" : "jpg";
+      return { ...file, name: `pr-${event.pullRequest}-a${attempt}-${part}.${extension}` };
+    });
+    completePull(id, attempt, event, { ...screenshots, images });
+  };
+
   const fetchArticles = (id: number, attempt: number, event: DeliveredEvent) => {
     if (closed || articleFetches.has(id)) return;
     const controller = new AbortController();
@@ -874,11 +934,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     const ticket = tickets.get(id);
-    if (latestOf(id)?.attempt !== pending.attempt || ticket === undefined || ticket.form !== "task" || ticket.state !== "working") {
+    const form = pending.event.kind === "delivered" ? "task" : "code";
+    if (latestOf(id)?.attempt !== pending.attempt || ticket?.form !== form || ticket.state !== "working") {
       forget(id);
       return;
     }
-    for (const [part, file] of pending.event.files.entries()) {
+    for (const [part, file] of handbackFiles(pending.event).entries()) {
       let have = files.staged(id, pending.attempt, part);
       if (have > file.size || (have === 0 && file.size === 0)) {
         have = files.append(id, pending.attempt, part, 0, Buffer.alloc(0));
@@ -890,17 +951,21 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         return;
       }
     }
-    complete(id, pending.attempt, pending.event);
+    completeFiles(id, pending);
   };
 
-  const fetchFrom = (id: number, attempt: number, machine: string, event: DeliveredEvent) => {
+  const fetchFrom = (id: number, attempt: number, machine: string, event: FileHandback) => {
     const known = fetching.get(id);
     if (known === undefined || known.attempt !== attempt || known.machine !== machine) {
       fetching.set(id, { attempt, machine, event, asked: undefined });
     } else {
       known.asked = undefined;
     }
-    fetchNext(id);
+    try {
+      fetchNext(id);
+    } catch (error) {
+      loseFiles(id, attempt, event, problemOf(error));
+    }
   };
 
   const receivePart = (machine: string, message: FilePart) => {
@@ -909,7 +974,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       return;
     }
     const asked = pending.asked;
-    const file = pending.event.files[asked.part];
+    const file = handbackFiles(pending.event)[asked.part];
     if (file === undefined || file.name !== message.name || asked.offset !== message.offset) {
       return;
     }
@@ -918,11 +983,16 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     const expected = Math.min(filePartBytes, file.size - asked.offset);
     if (data === undefined || data.length === 0 || data.length > expected) {
       const why = message.problem ?? (data === undefined || data.length === 0 ? "the file ended before its size" : "it sent more than was asked for");
-      loseDelivery(message.ticket, pending.attempt, `The runner on ${machine} could not send the delivered file ${file.name} from byte ${asked.offset}: ${why}`);
+      const kind = pending.event.kind === "delivered" ? "the delivered file" : "the screenshot";
+      loseFiles(message.ticket, pending.attempt, pending.event, `The runner on ${machine} could not send ${kind} ${file.name} from byte ${asked.offset}: ${why}`);
       return;
     }
-    files.append(message.ticket, pending.attempt, asked.part, asked.offset, data);
-    fetchNext(message.ticket);
+    try {
+      files.append(message.ticket, pending.attempt, asked.part, asked.offset, data);
+      fetchNext(message.ticket);
+    } catch (error) {
+      loseFiles(message.ticket, pending.attempt, pending.event, problemOf(error));
+    }
   };
 
   const serveAttachment = async (machine: string, asked: FetchAttachment) => {
@@ -1001,16 +1071,16 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           }
           return;
         case "finished": {
+          const ticket = writes.get(attempt.ticket_id);
+          if (live && current && ticket?.form === "code" && ticket.state === "working" && handbackFiles(event).length > 0) {
+            fetchFiles = "runner";
+            return;
+          }
           if (live) {
             end(attempt.ticket_id, attempt.attempt, "finished", null, null);
           }
-          const ticket = writes.get(attempt.ticket_id);
           if (current && ticket !== undefined && ticket.form === "code") {
-            writes.setPullRequest(ticket.id, event.pullRequest, event.report, { url: event.url, closes: event.closes ?? [] });
-            writes.recordDecisions(ticket.id, "worker", event.decisions ?? [], { attempt: attempt.attempt, pullRequest: event.pullRequest });
-            if (ticket.state === "working") {
-              writes.move(ticket.id, "verifying");
-            }
+            acceptPull(writes, ticket, attempt.attempt, event);
           }
           writes.touched(attempt.ticket_id);
           return;
@@ -1127,6 +1197,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         if (fetchFiles === "article") fetchArticles(attempt.ticket_id, attempt.attempt, event);
         if (fetchFiles === "runner") fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
       }
+      if (event.kind === "finished" && fetchFiles === "runner") fetchFrom(attempt.ticket_id, attempt.attempt, machine, event);
       if (told !== undefined) {
         const ticket = tickets.get(attempt.ticket_id);
         const now = attemptOf(attempt.ticket_id, attempt.attempt);
@@ -1288,6 +1359,11 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (ticket === undefined) {
         continue;
       }
+      const last = selectRecent.all(row.ticket_id, row.attempt, 1).map(storedOf)[0]?.event;
+      if (last?.kind === "finished" && handbackFiles(last).length > 0) {
+        loseFiles(row.ticket_id, row.attempt, last, `The runner on ${machine} came back without the screenshot files`);
+        continue;
+      }
       if (row.state === "preparing" && row.last_seq === 0) {
         const message = startOf(ticket, row);
         if (typeof message !== "string") {
@@ -1307,7 +1383,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const row = Attempt.parse(value);
       if (tickets.get(row.ticket_id)?.light === "agent_wring") continue;
       const last = selectRecent.all(row.ticket_id, row.attempt, 1).map(storedOf)[0]?.event;
-      if (last?.kind === "delivered" && last.outcome !== "failed" && last.files.length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
+      if ((last?.kind === "finished" || (last?.kind === "delivered" && last.outcome !== "failed")) &&
+        handbackFiles(last).length > 0 && latestOf(row.ticket_id)?.attempt === row.attempt) {
         fetchFrom(row.ticket_id, row.attempt, machine, last);
       }
     }

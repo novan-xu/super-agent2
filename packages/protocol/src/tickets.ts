@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ScreenshotSet } from "./ui-screenshots.js";
 import { ConversationId } from "./conversations.js";
 import { RepositoryName } from "./repositories.js";
 import { TicketDecision, TicketReviewCount } from "./decisions.js";
@@ -148,6 +149,7 @@ export const TicketPullRequest = z.object({
   deployment: z.boolean().nullable(),
   handedAt: z.number().int(),
   mergedAt: z.number().int().nullable(),
+  screenshots: ScreenshotSet.optional(),
 });
 export type TicketPullRequest = z.infer<typeof TicketPullRequest>;
 

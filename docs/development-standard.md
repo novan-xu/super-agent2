@@ -24,7 +24,18 @@
 - Run it before opening a pull request.
 - It exits with a non-zero code when anything fails, and names the file and line where it can.
 
-## Browser layout and screenshots
+## UI changes
+
+Declare the repository-relative UI path patterns in `.superagent2/ui.json` under `paths`.
+Provide a headless screenshot command for named views at 390 × 844 and 1440 × 900, and run the browser layout check at both sizes in the check command.
+Check that the page has no horizontal overflow and that key elements stay in the viewport.
+For a matching pull request, hand in light-theme PNG or JPEG screenshots in the ticket's screenshot folder with a view name, a width of `phone` or `desktop`, and a phase of `before` or `after`.
+Use the default branch for the before captures and the pushed pull request head for the after captures.
+Include an after image at each width and pair each after image with its before image if that view already existed.
+List new views in `newViews` in the hand-in.
+Hand in at most 16 images of up to 2 MiB each.
+
+### Super Agent browser commands
 
 Run `pnpm install --frozen-lockfile` and `pnpm browser:install` to set up the browser checks locally.
 The same install command runs on the macOS and Windows Woodpecker workers.

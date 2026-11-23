@@ -1,4 +1,4 @@
-import { ticketReference } from "@super-agent2/protocol";
+import { type ScreenshotSet, ticketReference, uiConfigFile } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { TestClock } from "./testing/access.js";
 import { type FakeForge, fakeForge, fakeGitHubBase, type FakePipeline, fakeWoodpeckerServer } from "./testing/forge.js";
 import { createTicketService, type TicketService } from "./tickets.js";
 import { createVerification, judge, type VerificationService, workflowName } from "./verification.js";
+import { screenshotProblem, touchesUi } from "./ui-verification.js";
 
 const repository = "novan-xu/super-agent-sandbox";
 const twoWorkflows = [".woodpecker/check-macos.yaml", ".woodpecker/check-windows.yaml"];
@@ -219,6 +220,33 @@ async function poll(): Promise<void> {
 function mergeCalls(): string[] {
   return forge.calledWith(/^PUT .*\/merge$/);
 }
+
+describe("UI screenshot requirements", () => {
+  it("applies the head declaration to hidden paths and the old name of a renamed file", () => {
+    expect(touchesUi([{ path: "packages/web/.config", previous: null }], ["packages/web/**"])).toBe(true);
+    expect(touchesUi([{ path: "archive/page.tsx", previous: "packages/web/src/page.tsx" }], ["packages/web/**"])).toBe(true);
+    expect(touchesUi([{ path: "packages/runner/main.ts", previous: null }], ["packages/web/**"])).toBe(false);
+  });
+
+  it("lets an unrelated change follow the usual rules in a repository that declares UI paths", async () => {
+    const ticket = verifying([4], 12, "one", ["docs/notes.md"]);
+    forge.file(repository, "one", uiConfigFile, '{"paths":["packages/web/**"]}');
+    await settle();
+    expect(current(ticket.id)).toMatchObject({ state: "merged", verification: { rule: "documentation" } });
+    expect(sentBack).toEqual([]);
+  });
+
+  it("checks both widths, requires a before image for an existing view, and ties them to the current head", () => {
+    const head = "a".repeat(40);
+    const images: ScreenshotSet["images"] = (["phone", "desktop"] as const).map((width) => ({
+      view: "settings", width, phase: "after", name: `settings-${width}.png`, size: 50, mediaType: "image/png",
+    }));
+    expect(screenshotProblem(head, { head, images: images.slice(0, 1), newViews: ["settings"] })).toContain("missing after screenshot at desktop");
+    expect(screenshotProblem(head, { head, images, newViews: [] })).toContain("before screenshot for settings (phone)");
+    expect(screenshotProblem(head, { head, images, newViews: ["settings"] })).toBeUndefined();
+    expect(screenshotProblem("b".repeat(40), { head, images, newViews: ["settings"] })).toContain("current head bbbbbbb");
+  });
+});
 
 describe("which files are text and documentation", () => {
   it("names workflows the way Woodpecker does", () => {

@@ -6,6 +6,8 @@ export const VerificationRow = z.object({
   entry: z.number().int(),
   head: z.string().nullable(),
   level: z.string().nullable(),
+  ui_required: z.number().int().nullable().default(null),
+  ui_base: z.string().nullable().default(null),
   rule: z.string().nullable(),
   state: z.string(),
   waiting: z.string().nullable(),

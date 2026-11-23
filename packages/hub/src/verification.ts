@@ -9,6 +9,7 @@ import {
   type GeneratedText,
   mergedIssueNumbers,
   openIssueNumbers,
+  uiConfigFile,
   type Ticket,
   VerificationRule,
   type VerificationWait,
@@ -28,6 +29,7 @@ import { createPipelineTimes, durationChinese, durationWords, defaultFirstAllowa
 import { clip, decisionReport, tail } from "./reports.js";
 import type { TicketService } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
+import { invalidUiConfig, screenshotProblem, touchesUi, uiPaths } from "./ui-verification.js";
 import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type PipelineWorkflow, type WoodpeckerApi } from "./woodpecker.js";
 
@@ -176,6 +178,8 @@ const columns = [
   "entry",
   "head",
   "level",
+  "ui_required",
+  "ui_base",
   "rule",
   "state",
   "waiting",
@@ -586,7 +590,11 @@ export function createVerification(options: VerificationOptions): VerificationSe
       ...decisionReport(ticket),
     ];
     save(id, { reported_at: clock.now() });
-    tell(ticket.id, text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: ticket.code }), lines.join("\n"));
+    const notice = text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: ticket.code });
+    const screenshots = [...tickets.lineage(id), ticket].flatMap((piece) => piece.pullRequests.flatMap((pull) =>
+      pull.state === "merged" && pull.screenshots !== undefined ? [{ ticket: piece.id, pullRequest: pull.number, images: pull.screenshots.images }] : []));
+    if (screenshots.length === 0) tell(id, notice, lines.join("\n"));
+    else tell(id, notice, lines.join("\n"), false, screenshots);
   };
 
   const isSettling = (ticket: Ticket): boolean =>
@@ -710,7 +718,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       if (writes.get(ticket.id)?.state !== "verifying") {
         return;
       }
-      writes.pullRequestMerged(ticket.id, { number: pull.number, closes: closing, mergeCommit: commit, deployment: deployment === null ? null : deployment === 1 });
+      writes.pullRequestMerged(ticket.id, { number: pull.number, closes: closing, mergeCommit: commit, deployment: deployment === null ? null : deployment === 1, head: pull.head });
       writes.setClosedOutside(ticket.id, closures);
       const now = writes.get(ticket.id);
       remaining = now === undefined ? [] : openIssueNumbers(now);
@@ -774,9 +782,10 @@ export function createVerification(options: VerificationOptions): VerificationSe
     );
   };
 
-  const merge = async (ticket: Ticket, gitHub: GitHubApi, head: string, rule: VerificationRule): Promise<void> => {
+  const merge = async (ticket: Ticket, gitHub: GitHubApi, pull: PullRequestState, rule: VerificationRule): Promise<void> => {
     const repository = ticket.repository ?? "";
     const number = ticket.pullRequest ?? 0;
+    const { head } = pull;
     const fresh = await gitHub.pullRequest(repository, number);
     if (closed) {
       return;
@@ -791,6 +800,11 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
     if (fresh.head !== head) {
       save(ticket.id, { state: "checking", waiting: null, reason: `The head moved from ${short(head)} to ${short(fresh.head)} while it was checked` });
+      void check(ticket.id);
+      return;
+    }
+    if (fresh.base !== pull.base || fresh.baseHead !== pull.baseHead) {
+      save(ticket.id, { state: "checking", waiting: null, reason: "The pull request base changed while it was checked" });
       void check(ticket.id);
       return;
     }
@@ -839,6 +853,14 @@ export function createVerification(options: VerificationOptions): VerificationSe
       text("notice.verificationFailed", { ticket: ticket.code }),
       `[hub] GitHub refused to merge pull request #${number} of ${described(ticket)} at ${head}: ${answer.message}. The ticket stays verifying and the merge is tried again on the next check. Tell the owner in Chinese if it keeps failing.`,
     );
+  };
+
+  const returnScreenshots = (ticket: Ticket, problem: string) => {
+    const prefix = `Pull request #${ticket.pullRequest ?? 0} was returned for UI verification.`;
+    const outcome = options.sendBack?.(ticket.id,
+      `${prefix} ${problem} Hand in the same pull request again with the corrected screenshots or UI declaration.`,
+      { en: `${prefix} ${problem}`, zh: text("verification.screenshotsReturned") });
+    wait(ticket.id, "screenshots", outcome?.ok === true ? `${prefix} ${problem}` : `${problem} The hand-in could not be returned: ${outcome?.reason ?? "the hub has no worker service"}.`);
   };
 
   const examine = async (id: number): Promise<void> => {
@@ -910,6 +932,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
         entry,
         head: pull.head,
         level: sameHead ? (known?.level ?? null) : null,
+        ui_required: null,
+        ui_base: null,
         rule: null,
         state: "checking",
         waiting: null,
@@ -931,16 +955,34 @@ export function createVerification(options: VerificationOptions): VerificationSe
     if (!skipping && ((row.state === "failed" && row.rule !== "workflows") || row.state === "conflict")) {
       return;
     }
+    let level = row.level;
+    let uiRequired = row.ui_required === 1;
+    const base = JSON.stringify([number, pull.base, pull.baseHead]);
+    if (row.ui_base !== base || row.ui_required === null || (!skipping && level === null)) {
+      const content = await gitHub.fileText(pull.headRepository ?? repository, uiConfigFile, pull.head);
+      const paths = content === null ? [] : uiPaths(content);
+      if (closed || tickets.get(id)?.state !== "verifying") return;
+      if (paths === undefined) {
+        returnScreenshots(ticket, invalidUiConfig);
+        return;
+      }
+      const files = paths.length > 0 || !skipping ? await gitHub.files(repository, number) : [];
+      if (closed || tickets.get(id)?.state !== "verifying") return;
+      if (!skipping) level = changeLevel(files);
+      uiRequired = touchesUi(files, paths);
+      save(id, { level, ui_required: uiRequired ? 1 : 0, ui_base: base });
+    }
+    if (uiRequired) {
+      const problem = screenshotProblem(pull.head, ticket.pullRequests.find((entry) => entry.number === number)?.screenshots);
+      if (problem !== undefined) {
+        returnScreenshots(ticket, problem);
+        return;
+      }
+    }
     let rule: VerificationRule;
     if (skipping) {
       rule = "skipped";
     } else {
-      let level = row.level;
-      if (level === null) {
-        const files = await gitHub.files(repository, number);
-        level = changeLevel(files.map((file) => ({ path: file.path, previous: file.previous })));
-        save(id, { level });
-      }
       if (level === "documentation") {
         rule = "documentation";
       } else {
@@ -1005,7 +1047,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
         }
       }
     }
-    await merge(ticket, gitHub, pull.head, rule);
+    await merge(ticket, gitHub, pull, rule);
   };
 
   const guarded = async (id: number): Promise<void> => {

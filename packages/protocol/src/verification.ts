@@ -8,7 +8,7 @@ export const verificationStates = ["checking", "waiting", "failed", "conflict", 
 export const VerificationState = z.enum(verificationStates);
 export type VerificationState = z.infer<typeof VerificationState>;
 
-export const verificationWaits = ["github", "woodpecker", "pipeline", "workflows", "halted", "mergeable", "closed", "finishing"] as const;
+export const verificationWaits = ["github", "woodpecker", "pipeline", "workflows", "halted", "mergeable", "closed", "finishing", "screenshots"] as const;
 export const VerificationWait = z.enum(verificationWaits);
 export type VerificationWait = z.infer<typeof VerificationWait>;
 
