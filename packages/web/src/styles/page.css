@@ -335,15 +335,15 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
   .allowance-mobile { display: block; margin-bottom: var(--space-5); }
 }
 
-.wb-layout { display: grid; grid-template-columns: var(--wb-panel-width, 380px) 8px minmax(260px, 1fr); height: 100%; min-height: 0; }
-.top--workbench { background: var(--tabstrip); border-bottom: 0; padding: 0; align-items: end; }
+.wb-layout { display: grid; grid-template-columns: var(--wb-panel-width, 380px) 8px minmax(0, 1fr); height: 100%; min-width: 0; min-height: 0; }
+.top--workbench { background: var(--side-bg); border-bottom: 0; padding: 0; align-items: end; min-width: 0; }
 .wb-layout > .wb-panel { grid-column: 1; grid-row: 1; }
 .wb-layout > .wb-splitter { grid-column: 2; grid-row: 1; }
 .wb-layout > .wb-canvas { grid-column: 3; grid-row: 1; }
 .wb-tabs { display: flex; align-items: end; min-width: 0; flex: 1; }
-.wb-tabs-scroll { display: flex; align-items: end; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.wb-tabs-scroll { display: flex; align-items: end; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .wb-tabs-scroll::-webkit-scrollbar { display: none; }
-.wb-tab { display: flex; position: relative; align-items: center; flex: 0 0 160px; min-width: 0; height: 42px; border-radius: 10px 10px 0 0; }
+.wb-tab { display: flex; position: relative; align-items: center; flex: 0 1 160px; min-width: 52px; container-type: inline-size; height: 42px; border-radius: 10px 10px 0 0; }
 .wb-tab:not(.is-active)::after { content: ""; position: absolute; right: 0; top: 12px; bottom: 12px; width: 1px; background: var(--border); }
 .wb-tab.is-active { background: var(--bg); z-index: 1; }
 .wb-tab.is-active::before, .wb-tab.is-active::after { content: ""; position: absolute; bottom: 0; width: 10px; height: 10px; pointer-events: none; }
@@ -358,6 +358,10 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-tab-close, .wb-add { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--fg); cursor: pointer; }
 .wb-tab-close { margin-right: 5px; visibility: hidden; }
 .wb-tab:hover .wb-tab-close, .wb-tab:focus-within .wb-tab-close, .wb-tab.is-active .wb-tab-close { visibility: visible; }
+@container (max-width: 72px) {
+  .wb-tab:not(.is-active) .od-truncate, .wb-tab:not(.is-active) .count, .wb-tab:not(.is-active) .wb-tab-close { display: none; }
+  .wb-tab.is-active .count { display: none; }
+}
 .wb-tab-close:hover, .wb-add:hover { background: var(--surface-warm); }
 .wb-add-wrap { position: relative; flex: none; padding: 0 4px 8px; }
 .wb-repo-menu { position: absolute; z-index: 30; top: 100%; right: 0; display: grid; gap: 8px; width: 260px; max-width: 80vw; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--elev-raised); }
@@ -499,7 +503,6 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
   .top--workbench { flex-wrap: wrap; padding-bottom: 0; }
   .top--workbench .top-title { flex: 1 0 100%; padding-top: 6px; }
   .wb-tabs { flex: 1 1 100%; }
-  .wb-tab { flex-basis: 140px; }
 }
 
 .allowance-rings { display: grid; gap: 4px; }
