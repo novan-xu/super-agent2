@@ -3832,3 +3832,11 @@ Showing calls there would require a voice-duration data model and display.
 - **Chosen:** Publish the existing work-request listener on the NAS Tailscale address at port 18767, while retaining the Docker network endpoint and source authentication.
 - **Why:** Services on other tailnet machines can request work without exposing the listener on the LAN or public tunnel.
 - **Other options:** Publish on all host interfaces or route work requests through the public hub listener.
+
+## 2026-11-23 — Browser layout verification (#318)
+
+- **Chosen:** Use the built web page, the page development hub and seeded records for the layout check and screenshot command.
+  Check the workbench canvas and conversation separately on the phone and together on the desktop.
+  Run a pinned Chrome Headless Shell build whose archive is verified before extraction on each CI platform.
+- **Why:** The two commands exercise the same routes, data loading and CSS the owner uses with repeatable inputs for both widths.
+- **Other options:** Serve mock responses to a fixture page or use the browser preinstalled on each worker.

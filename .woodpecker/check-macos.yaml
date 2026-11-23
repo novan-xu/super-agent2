@@ -32,4 +32,5 @@ steps:
       - node --version
       - pnpm --version
       - pnpm install --frozen-lockfile
+      - pnpm browser:install
       - pnpm check

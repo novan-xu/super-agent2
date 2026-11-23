@@ -24,6 +24,22 @@
 - Run it before opening a pull request.
 - It exits with a non-zero code when anything fails, and names the file and line where it can.
 
+## Browser layout and screenshots
+
+Run `pnpm install --frozen-lockfile` and `pnpm browser:install` to set up the browser checks locally.
+The same install command runs on the macOS and Windows Woodpecker workers.
+The lockfile verifies the Playwright packages, and the browser installer verifies the pinned Chrome Headless Shell archive with SHA-256 before extraction.
+When updating Playwright, update the browser download version and checksums in `tools/page-dev/src/chromium.ts` to match the release.
+Run `pnpm check` for all checks or run `pnpm layout` after `pnpm build` to rerun the browser checks alone.
+The check opens the built page in the page development harness with sample data and checks horizontal overflow and key element bounds at 390 × 844 and 1440 × 900 in the light theme.
+Long code blocks, tables and repository tabs may scroll inside their own bounded containers.
+
+After `pnpm build`, use `pnpm screenshot --view transfer --width phone --out <dir>` to capture the transfer view with its HTML preview open.
+The view names are `code`, `daily`, `workbench-canvas`, `workbench-conversation`, `ticket`, `transfer`, `settings`, `models`, `memory` and `history`.
+Omit `--width` to capture both widths, or use `--width desktop` for the desktop width alone.
+The command writes PNGs named `<view>-<width>.png` to `--out`, then falls back to `SUPERAGENT2_ARTIFACTS_DIR` if set, or the current directory.
+Use `--page-dir <built page dir>` with `pnpm layout` or `pnpm screenshot` to use a compatible build from another revision with the same sample data and viewport.
+
 ## Verification and merge
 
 - Whether a pull request merges is decided by its files and its CI results, not by an LLM reading it.
