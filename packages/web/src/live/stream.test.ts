@@ -50,6 +50,15 @@ describe("streamItems", () => {
     ]);
   });
 
+  it("separates days and gaps over ten minutes while ignoring hidden entries", () => {
+    const start = at(17, 9);
+    const entries = [owner(1, start), tool(2, start + 9 * 60_000), text(3, start + 10 * 60_000), text(4, start + 21 * 60_000), owner(5, at(18, 9))];
+    for (const items of [streamItems(state(entries, [turn()]), now), combinedStreamItems(entries, [turn()], now)]) {
+      expect(items.filter((item) => item.kind === "day").map((item) => item.at)).toEqual([start, start + 21 * 60_000, at(18, 9)]);
+      expect(items.find((item) => item.key === "x4")).toMatchObject({ lead: true });
+    }
+  });
+
   it("names an older day by its date", () => {
     const [first] = streamItems(state([owner(1, at(3, 9))], []), now);
     expect(first).toMatchObject({ kind: "day", day: { year: 2026, month: 11, day: 3, relative: null } });
@@ -93,7 +102,7 @@ describe("streamItems", () => {
     const turns = [turn({ state: "interrupted" })];
     const topic = state(entries, turns);
     for (const items of [streamItems(topic, now), combinedStreamItems(entries, turns, now)]) {
-      expect(items.map((item) => item.key)).toEqual(["day-x2", "x2", "x4", "q5", "ended-t1", "o7"]);
+      expect(items.map((item) => item.key)).toEqual(["day-x2", "x2", "x4", "q5", "ended-t1", "day-o7", "o7"]);
       expect(items.find((item) => item.key === "x4")).toMatchObject({ lead: false });
     }
   });

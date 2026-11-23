@@ -250,6 +250,7 @@ export const messages = {
   "tool.state.running": "运行中",
   "tool.state.done": "已完成",
   "tool.state.failed": "失败",
+  "message.fromSource": "\u6d88\u606f\u6765\u81ea",
   "day.today": "今天",
   "day.yesterday": "昨天",
   "day.date": "{month}月{day}日",

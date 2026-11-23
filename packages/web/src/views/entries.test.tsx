@@ -28,7 +28,8 @@ const delivery: ConversationEntry = {
 it("labels an inbox message with its source and treats its text as plain text", () => {
   const entry: ConversationEntry = { id: "inbox", conversation: id, seq: 1, at, kind: "notice", turn: null, source: "shortcut", text: "<b>Hello</b>" };
   const html = renderToString(<StreamEntry item={{ kind: "entry", key: entry.id, entry, lead: false, live: false }} thisYear={2026} />);
-  expect(html).toContain("<strong>shortcut</strong>");
+  expect(html).toContain("source-line");
+  expect(html).toContain("shortcut");
   expect(html).toContain("&lt;b&gt;Hello&lt;/b&gt;");
   expect(html).not.toContain("<b>Hello</b>");
 });

@@ -9,7 +9,7 @@ export interface Day {
 }
 
 export type StreamItem =
-  | { readonly kind: "day"; readonly key: string; readonly day: Day }
+  | { readonly kind: "day"; readonly key: string; readonly day: Day; readonly at: number }
   | { readonly kind: "entry"; readonly key: string; readonly entry: Exclude<ConversationEntry, ToolEntry>; readonly lead: boolean; readonly live: boolean; readonly topic?: string }
   | { readonly kind: "ended"; readonly key: string; readonly turn: Turn }
   | { readonly kind: "status"; readonly key: string; readonly tool: ToolEntry | null; readonly topic?: string };
@@ -79,14 +79,16 @@ function itemsOf(state: Pick<ConversationState, "entries" | "turns">, now: numbe
     }
   }
   let previousDay: ReturnType<typeof dayOf> | undefined;
+  let previousAt: number | undefined;
   let previous: ConversationEntry | undefined;
   const pushDay = (at: number, anchor: string) => {
     const day = dayOf(at);
-    if (previousDay === undefined || !sameDay(previousDay, day)) {
-      items.push({ kind: "day", key: `day-${anchor}`, day: describeDay(at, now) });
-      previousDay = day;
+    if (previousDay === undefined || !sameDay(previousDay, day) || (previousAt !== undefined && at - previousAt > 10 * 60_000)) {
+      items.push({ kind: "day", key: `day-${anchor}`, day: describeDay(at, now), at });
       previous = undefined;
     }
+    previousDay = day;
+    previousAt = at;
   };
   const pushLoose = (before: number) => {
     while (loose.length > 0 && (loose[0]?.startedAt ?? 0) < before) {

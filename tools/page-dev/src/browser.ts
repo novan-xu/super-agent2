@@ -29,7 +29,7 @@ const composer = {
   "message field": ".composer textarea",
   "send button": ".composer button[type=submit]",
 };
-const conversation = { ...composer, "conversation tabs": ".conv-tabs", "conversation links": ".conv-tabs a", "wide image": ".att-image img", "code block": ".msg-text pre", "table": ".msg-text table" };
+const conversation = { ...composer, "conversation tabs": ".conv-tabs", "conversation links": ".conv-tabs a", "owner bubbles": ".chat-message.msg--me .msg-text", "brain bubbles": ".chat-message.msg--brain .msg-text", "wide image": ".att-image img", "code block": ".msg-text pre", "table": ".msg-text table" };
 const workbench = { "repository tabs": ".wb-tabs", "repository tab strip": ".wb-tabs-scroll", "open repository": ".wb-add" };
 const canvas = { "workbench canvas": ".wb-canvas", "workbench toolbar": ".wb-toolbar", "workbench actions": ".wb-toolbar button", "ticket cards": ".wb-card" };
 const settingsMenu = { "settings menu": ".set-nav", "settings links": ".set-nav .nav-btn" };
@@ -124,7 +124,7 @@ const views = {
 } as const satisfies Record<string, View>;
 
 type ViewName = keyof typeof views;
-type Mode = { readonly kind: "check" } | { readonly kind: "screenshot"; readonly out: string };
+type Mode = { readonly kind: "check" } | { readonly kind: "screenshot"; readonly out: string; readonly theme: "light" | "dark" };
 
 function checkLayout(page: Page, width: Width, targets: LayoutTargets): Promise<string[]> {
   return page.evaluate(layoutProblems, { width: viewports[width].width, targets });
@@ -133,7 +133,7 @@ function checkLayout(page: Page, width: Width, targets: LayoutTargets): Promise<
 async function visit(browser: Browser, url: string, fixture: LayoutFixture, name: ViewName, width: Width, mode: Mode): Promise<void> {
   const phone = width === "phone";
   const page = await browser.newPage({
-    viewport: viewports[width], colorScheme: "light", reducedMotion: "reduce", locale: "zh-CN", timezoneId: "UTC",
+    viewport: viewports[width], colorScheme: mode.kind === "screenshot" ? mode.theme : "light", reducedMotion: "reduce", locale: "zh-CN", timezoneId: "UTC",
     isMobile: phone, hasTouch: phone, deviceScaleFactor: 1, serviceWorkers: "block",
   });
   page.setDefaultTimeout(0);
@@ -220,23 +220,23 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, "page-dir": { type: "string" }, help: { type: "boolean" } },
+  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, theme: { type: "string" }, "page-dir": { type: "string" }, help: { type: "boolean" } },
 });
 const names = Object.keys(views) as ViewName[];
 const widths = Object.keys(viewports) as Width[];
 const usage = [
   "pnpm layout [--page-dir <built page dir>]",
-  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--page-dir <built page dir>]`,
+  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--theme light|dark] [--page-dir <built page dir>]`,
 ].join("\n");
 const [command] = positionals;
 if (values.help) {
   process.stdout.write(`${usage}\n`);
 } else if (command === "check" && positionals.length === 1 && Object.keys(values).every((option) => option === "page-dir")) {
   await run(names, widths, { kind: "check" }, values["page-dir"]);
-} else if (command === "screenshot" && positionals.length === 1 && names.includes(values.view as ViewName) && (values.width === undefined || widths.includes(values.width as Width))) {
+} else if (command === "screenshot" && positionals.length === 1 && names.includes(values.view as ViewName) && (values.width === undefined || widths.includes(values.width as Width)) && (values.theme === undefined || values.theme === "light" || values.theme === "dark")) {
   const out = resolve(values.out || process.env.SUPERAGENT2_ARTIFACTS_DIR || ".");
   await mkdir(out, { recursive: true });
-  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out }, values["page-dir"]);
+  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out, theme: values.theme === "dark" ? "dark" : "light" }, values["page-dir"]);
 } else {
   process.stderr.write(`${usage}\n`);
   process.exitCode = 1;
