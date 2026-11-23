@@ -169,6 +169,7 @@ describe("the brain's ticket tools", () => {
       "record_decision",
       "stop_ticket",
       "open_repair_ticket",
+      "follow_up_ticket",
       "propose_schedule",
       "create_schedule",
       "list_schedules",

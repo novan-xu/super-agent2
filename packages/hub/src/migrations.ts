@@ -1237,6 +1237,21 @@ export const migrations: readonly Migration[] = [
     version: 62,
     sql: `ALTER TABLE ticket_work_events ADD COLUMN received_at INTEGER;`,
   },
+  {
+    version: 63,
+    sql: `
+      CREATE TABLE ticket_follow_ups (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id),
+        original INTEGER NOT NULL REFERENCES tickets(id),
+        previous INTEGER NOT NULL REFERENCES tickets(id),
+        folder INTEGER NOT NULL REFERENCES tickets(id),
+        issue INTEGER NOT NULL,
+        comment TEXT NOT NULL,
+        url TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX ticket_follow_ups_original ON ticket_follow_ups (original, ticket_id);
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

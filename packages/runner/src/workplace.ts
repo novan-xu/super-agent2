@@ -360,7 +360,8 @@ export async function prepareWorktree(git: Git, remote: RemoteUrl, repository: s
 export async function removeWorktree(git: Git, branch: string, paths: WorkPaths): Promise<void> {
   await withClone(paths.clone, async () => {
     if (existsSync(join(paths.clone, ".git"))) {
-      await discardWorktree(git, paths);
+      const current = branch === "" || !existsSync(paths.worktree) ? undefined : await currentBranch(git, paths.worktree);
+      if (current === undefined || current === branch || current === "HEAD") await discardWorktree(git, paths);
       if (!paths.shared) await git.run(["worktree", "prune"], paths.clone);
       await deleteBranch(git, paths, branch);
     } else if (!paths.shared) {

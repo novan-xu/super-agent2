@@ -3839,6 +3839,16 @@ Every runner reconnect starts a fresh silence interval.
 The brain gets a silence notice only after observing a full quiet interval on a connected machine, since disconnects already have their own notices.
 Another option was to carry forward the time of the last event across ordinary disconnects and reset only after a hub restart.
 
+## 2026-11-23 — Follow-ups of merged code work (#316)
+
+Only one active follow-up can reuse an original ticket's worktree at a time.
+This lets repeated adjustments use the latest merged session and keeps two workers from editing the same checkout.
+Another option was to queue multiple follow-ups and serialize them at start.
+
+Follow-ups use the same eligible engines as other code tickets.
+The runner's Antigravity resume path is covered by its fake program, while the hub continues to reserve Antigravity for writing.
+Another option was to expand the set of engines that can start code tickets.
+
 ## 2026-11-23 — Browser layout verification (#318)
 
 - **Chosen:** Use the built web page, the page development hub and seeded records for the layout check and screenshot command.

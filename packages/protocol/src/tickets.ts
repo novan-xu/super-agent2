@@ -253,6 +253,7 @@ export const Ticket = z.object({
   repairedBy: TicketId.nullable().default(null),
   repairsReference: TicketReference.optional(),
   repairedByReference: TicketReference.optional(),
+  followUpOf: TicketReference.optional(),
   conversation: ConversationId.nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),

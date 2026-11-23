@@ -120,6 +120,8 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
   If another topic holds it, wait for that turn to end before rereading.
   Tell the owner if the change is still pending.
 - If the owner later asks to continue stopped work, use `open_repair_ticket`.
+- For the owner's adjustment to merged code work, use `follow_up_ticket` on the original issue and let the owner start the follow-up card.
+  Use `message_worker` while the original worker is running, and file a new issue for a new need.
 
 ## Decisions
 

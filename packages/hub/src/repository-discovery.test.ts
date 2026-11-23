@@ -39,10 +39,12 @@ function addTicket(database: HubDatabase, repository: string, number: number) {
   });
 }
 
-function addHistoricalTicket(database: HubDatabase, repository: string) {
+function addHistoricalTicket(database: HubDatabase, repository: string, coded = false) {
+  const codeColumns = coded ? ", code, code_date" : "";
+  const codeValues = coded ? ", 'aa', '2026-11-17'" : "";
   database.connection.prepare(`
-    INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, state, created_at, updated_at)
-    VALUES (?, 'feature', 'Example work', '示例工单', 'Example work', '示例工单', 'pending', ?, ?)
+    INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, state, created_at, updated_at${codeColumns})
+    VALUES (?, 'feature', 'Example work', '示例工单', 'Example work', '示例工单', 'pending', ?, ?${codeValues})
   `).run(repository, clock.now(), clock.now());
 }
 
@@ -209,7 +211,7 @@ it("migrates and persists repository aliases independently of pins and discovery
 
 it("keeps legacy pins before newly opened tabs and persists opening order", () => {
   const old = open(migrations.filter((migration) => migration.version < 61));
-  addTicket(old, "org/legacy", 9);
+  addHistoricalTicket(old, "org/legacy", true);
   old.connection.prepare("INSERT INTO repositories (repository, pinned) VALUES (?, 1)").run("org/legacy");
   const database = open();
   addTicket(database, "org/first", 10);

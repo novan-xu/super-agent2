@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { type HubToRunner, type MachineReport, protocolVersion, type Ticket, type WorkEvent } from "@super-agent2/protocol";
+import { type HubToRunner, type MachineReport, protocolVersion, startingEngineTable, type Ticket, WaitingList, type WorkEvent } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
 import type { RunnerLink } from "./runners.js";
+import { chainChoicePath, chainStartPath } from "./server.js";
 import { assertion, keySet, personClaims, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { type FakeForge, fakeForge, fakeGitHubBase, fakeWoodpeckerServer } from "./testing/forge.js";
 import { startTestHub } from "./testing/http.js";
@@ -52,13 +53,13 @@ interface Started {
   readonly conversation: string;
 }
 
-async function start(): Promise<Started> {
+async function start(programs: MachineReport["programs"] = [], forgeFetch = forge.fetch): Promise<Started> {
   const running = await startTestHub({
     config: testConfig(dataDir),
     keySource: staticKeySource(keySet(key)),
     clock,
     credentials,
-    forgeFetch: forge.fetch,
+    forgeFetch,
     gitHubBase: fakeGitHubBase,
   });
   hub = running;
@@ -69,7 +70,7 @@ async function start(): Promise<Started> {
   }
   const sent: HubToRunner[] = [];
   const runner = running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined });
-  runner.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
+  runner.receive({ type: "hello", protocol: protocolVersion, machine: { ...report, programs }, works: [] });
   forge.woodpecker.set(repository, { id: 6, active: true, configFile: "", pipelines: [] });
   return { running, runner, sent, conversation: running.conversations.create().id };
 }
@@ -193,6 +194,149 @@ async function settled(running: Hub): Promise<void> {
   await running.verification.idle();
   await running.chains.idle();
 }
+
+describe("follow-ups of merged code tickets", () => {
+  const programs: MachineReport["programs"] = (["claude", "codex"] as const).map((id) => ({
+    id, installed: true, path: id, version: "1", source: "program", problem: null,
+    models: [
+      startingEngineTable[id].standard,
+      ...(id === "claude" ? [{ model: "claude-haiku-5-5", effort: "low" }] : []),
+    ].map(({ model, effort }) => ({ id: model, efforts: [effort] })),
+  }));
+
+  async function ownerCall(running: Hub, path: string, body?: unknown): Promise<Response> {
+    return fetch(`${base(running)}${path}`, {
+      headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }), "content-type": "application/json", origin: base(running) },
+      ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+    });
+  }
+
+  async function startFollowUp(running: Hub, id: number, engine: "claude" | "codex", machine = "pc"): Promise<void> {
+    const cards = WaitingList.parse(await (await ownerCall(running, "/api/waiting")).json()).cards;
+    const card = cards.find((item) => item.kind === "start" && item.ticket.id === id);
+    if (card?.kind !== "start") throw new Error("No follow-up card");
+    expect(card.choice).toMatchObject({ machine, engine, missing: [] });
+    expect((await ownerCall(running, chainStartPath, { chains: [{ ticket: id, fingerprint: card.fingerprint }] })).status).toBe(202);
+    await settled(running);
+  }
+
+  async function merge(running: Hub, runner: RunnerLink, ticket: Ticket, pull: number, closes: readonly number[]): Promise<Ticket> {
+    const branch = current(running, ticket.id).branch ?? "";
+    const head = pull.toString(16).padStart(40, "0");
+    forge.pull(repository, pull, head, ["README.md"], branch, closes);
+    handIn(runner, ticket.id, 1, pull, closes);
+    await settled(running);
+    const merged = current(running, ticket.id);
+    expect(merged.state).toBe("merged");
+    return merged;
+  }
+
+  it("records and reopens original issues, starts only by the owner, and uses the newest session for repeated adjustments", async () => {
+    const { running, runner, sent, conversation } = await start(programs);
+    const original = begin(running, conversation);
+    const topic = running.conversations.create().id;
+    const request = { ticket: ticketReference(original), issue: 7, comment: "Reduce the heading size." };
+    expect(await callBrainTool(running, "follow_up_ticket", request, topic)).toMatchObject({ isError: true, text: expect.stringContaining("require a merged code ticket") });
+    event(runner, original.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    event(runner, original.id, 1, { kind: "session", session: "original-claude" });
+    const merged = await merge(running, runner, original, 70, chainIssues);
+    expect(await callBrainTool(running, "follow_up_ticket", { ...request, issue: 99 }, topic)).toMatchObject({ isError: true, text: expect.stringContaining("was not in ticket") });
+
+    const opened = await callBrainTool(running, "follow_up_ticket", request, topic);
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain("/issues/7#issuecomment-1");
+    const [first] = running.tickets.list({ open: true });
+    if (first === undefined) throw new Error("No follow-up");
+    expect(first).toMatchObject({ state: "pending", followUpOf: ticketReference(original), conversation: topic, issues: [{ number: 7 }] });
+    const repo = forge.repository(repository);
+    expect(repo.issues.get(7)).toBe("open");
+    expect(repo.issueComments.get(7)).toEqual([{ body: expect.stringContaining("Follow-up from Super Agent"), html_url: expect.stringContaining("#issuecomment-1") }]);
+    expect(starts(sent, first.id)).toEqual([]);
+    expect(await callBrainTool(running, "follow_up_ticket", request, topic)).toEqual(opened);
+    expect(await callBrainTool(running, "follow_up_ticket", { ...request, issue: 8 }, topic)).toMatchObject({ isError: true, text: expect.stringContaining("open follow-up") });
+    await startFollowUp(running, first.id, "claude");
+    expect(starts(sent, first.id)[0]?.task).toMatchObject({
+      session: "original-claude", folder: original.id, note: expect.stringContaining(request.comment),
+      followUp: { workspaceOf: original.id, fromCommit: merged.pullRequests[0]?.mergeCommit, resumeOriginal: true },
+    });
+    expect(current(running, first.id).branch).not.toBe(merged.branch);
+    event(runner, first.id, 1, { kind: "follow-up", outcome: "resumed" });
+    await merge(running, runner, first, 71, [7]);
+    expect(repo.issues.get(7)).toBe("closed");
+    expect(notices(running, topic).at(-1)?.prompt).toContain("The worker resumed the original session.");
+
+    expect((await callBrainTool(running, "follow_up_ticket", { ...request, issue: 8, comment: "Adjust the spacing." }, topic)).isError).toBe(false);
+    const [second] = running.tickets.list({ open: true });
+    if (second === undefined) throw new Error("No second follow-up");
+    expect((await ownerCall(running, chainChoicePath, { ticket: second.id, engine: "codex" })).status).toBe(202);
+    await startFollowUp(running, second.id, "codex");
+    expect(starts(sent, second.id)[0]?.task).toMatchObject({
+      session: null, folder: original.id, takeover: true,
+      followUp: { resumeOriginal: false, workspaceOf: first.id, takeoverNote: expect.stringContaining("Adjust the spacing.") },
+    });
+    expect(starts(sent, second.id)[0]?.task.followUp?.takeoverNote).toContain("#70");
+    event(runner, second.id, 1, { kind: "follow-up", outcome: "takeover" });
+    event(runner, second.id, 1, { kind: "session", session: "new-codex" });
+    await merge(running, runner, second, 72, [8]);
+    expect(notices(running, topic).at(-1)?.prompt).toContain("A takeover worker completed the adjustment.");
+    expect((await callBrainTool(running, "follow_up_ticket", { ...request, issue: 9 }, topic)).isError).toBe(false);
+    const [third] = running.tickets.list({ open: true });
+    if (third === undefined) throw new Error("No third follow-up");
+    await startFollowUp(running, third.id, "codex");
+    expect(starts(sent, third.id)[0]?.task).toMatchObject({
+      session: "new-codex", folder: original.id, followUp: { workspaceOf: second.id, resumeOriginal: true },
+    });
+  });
+
+  it("reuses the comment if the response was lost before the issue could be reopened", async () => {
+    let lost = true;
+    const forgeFetch: typeof fetch = async (input, init) => {
+      const response = await forge.fetch(input, init);
+      if (lost && init?.method === "POST" && String(input).endsWith("/issues/7/comments")) {
+        lost = false;
+        throw new Error("Lost the comment response");
+      }
+      return response;
+    };
+    const { running, runner, conversation } = await start(programs, forgeFetch);
+    const original = begin(running, conversation);
+    await merge(running, runner, original, 70, chainIssues);
+    const request = { ticket: ticketReference(original), issue: 7, comment: "Keep this request once." };
+    expect((await callBrainTool(running, "follow_up_ticket", request, conversation)).isError).toBe(true);
+    expect(running.tickets.list({ open: true })).toEqual([]);
+    expect(forge.repository(repository).issues.get(7)).toBe("closed");
+    expect((await callBrainTool(running, "follow_up_ticket", request, conversation)).isError).toBe(false);
+    expect(forge.repository(repository).issues.get(7)).toBe("open");
+    expect(forge.repository(repository).issueComments.get(7)).toHaveLength(1);
+  });
+
+  it("starts a takeover on a machine that can work when the original machine is offline", async () => {
+    const { running, runner, conversation } = await start(programs);
+    const original = begin(running, conversation);
+    event(runner, original.id, 1, { kind: "session", session: "original-claude" });
+    await merge(running, runner, original, 70, chainIssues);
+    runner.closed();
+    running.machines.add({ name: "spare", accessClientId: "spare.access" });
+    const machine = running.machines.get("spare");
+    if (machine === undefined) throw new Error("Spare machine missing");
+    const sent: HubToRunner[] = [];
+    const spare = running.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined });
+    spare.receive({ type: "hello", protocol: protocolVersion, machine: { ...report, hostname: "spare", programs: programs.filter(({ id }) => id === "codex") }, works: [] });
+    const request = { ticket: ticketReference(original), issue: 7, comment: "Adjust the heading." };
+    expect((await callBrainTool(running, "follow_up_ticket", request, conversation)).isError).toBe(false);
+    const [followUp] = running.tickets.list({ open: true });
+    if (followUp === undefined) throw new Error("No follow-up");
+    await startFollowUp(running, followUp.id, "codex", "spare");
+    expect(starts(sent, followUp.id)[0]?.task).toMatchObject({ session: null, takeover: true, followUp: { resumeOriginal: false } });
+    expect(starts(sent, followUp.id)[0]?.task.followUp?.workspaceOf).toBeUndefined();
+
+    expect((await callBrainTool(running, "stop_ticket", { ticket: ticketReference(followUp), reason: original.summary }, conversation)).isError).toBe(false);
+    expect((await callBrainTool(running, "follow_up_ticket", { ...request, issue: 8 }, conversation)).isError).toBe(false);
+    expect(await callBrainTool(running, "open_repair_ticket", { ticket: ticketReference(followUp) }, conversation)).toMatchObject({
+      isError: true, text: expect.stringContaining("Wait for open follow-up ticket"),
+    });
+  });
+});
 
 describe("a chain handed in as several pull requests", () => {
   it("merges each pull request as it is handed in, continues the same worker after each merge, and is merged when every issue is closed", async () => {
