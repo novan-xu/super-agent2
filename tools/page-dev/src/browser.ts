@@ -42,6 +42,27 @@ async function loadImages(images: Locator): Promise<void> {
   })));
 }
 
+async function checkPhoneRepositoryTabs(page: Page): Promise<void> {
+  const buttons = page.locator(".wb-tab-select");
+  if (await buttons.count() < 7) throw new Error("Repository tab fixture needs at least five pinned repositories");
+  for (const index of [6, 1, 0]) {
+    await buttons.nth(index).evaluate((button: HTMLButtonElement) => button.click());
+    await page.waitForFunction((selected) => document.querySelectorAll('.wb-tab-select')[selected]?.getAttribute('aria-pressed') === 'true', index);
+    const problem = await page.evaluate(() => {
+      const strip = document.querySelector<HTMLElement>(".wb-tabs-scroll")!;
+      const active = strip.querySelector<HTMLElement>(".wb-tab.is-active")!;
+      const label = active.querySelector<HTMLElement>(".od-truncate")!;
+      const bounds = strip.getBoundingClientRect();
+      const tab = active.getBoundingClientRect();
+      if (tab.left < bounds.left - 1 || tab.right > bounds.right + 1) return "Active repository tab is outside the strip";
+      if (label.clientWidth < 80 || getComputedStyle(label).display === "none") return "Active repository label is too narrow";
+      if ([...strip.querySelectorAll(".wb-tab")].some((item) => item.querySelector(".dot") === null)) return "Repository tab is missing its state dot";
+      return "";
+    });
+    if (problem !== "") throw new Error(problem);
+  }
+}
+
 const views = {
   code: {
     route: { view: "conversations", conversation: null, scope: { kind: "code" } },
@@ -151,6 +172,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
     await page.locator(ready).first().waitFor();
     await loadImages(page.locator(".att-image img"));
     await page.evaluate(async () => { await document.fonts.ready; });
+    if (mode.kind === "check" && name === "workbench-canvas" && phone) await checkPhoneRepositoryTabs(page);
     const targets = { [phone ? "bottom navigation" : "sidebar"]: phone ? ".tabbar" : ".side", ...view.targets, ...view[width] };
     const issues = mode.kind === "check" ? await checkLayout(page, width, targets) : [];
     if (view.after !== undefined && issues.length === 0) {
