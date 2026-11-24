@@ -32,6 +32,10 @@ describe("Shell", () => {
     expect(html).toContain('href="/workbench"');
   });
 
+  it("makes the logo the sidebar toggle", () => {
+    expect(render()).toMatch(/<button class="side-toggle brand-toggle"[^>]*aria-expanded="true"[^>]*><svg class="logo" width="48" height="48"/);
+  });
+
   it("marks the current destination", () => {
     const current = [...render({ route: { view: "memory" } }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
     expect(current).toEqual(["记忆", "记忆"]);
