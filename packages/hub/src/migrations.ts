@@ -5,7 +5,7 @@ import { codeAt, ticketCodesExhausted, ticketDate, ticketDateFormatter } from ".
 export interface Migration {
   readonly version: number;
   readonly sql: string;
-  readonly backfill?: (connection: DatabaseSync, timeZone: string) => void;
+  readonly backfill?: (connection: DatabaseSync, timeZone: string, now: number) => void;
 }
 
 export const migrations: readonly Migration[] = [
@@ -1283,6 +1283,16 @@ export const migrations: readonly Migration[] = [
         PRIMARY KEY(upload, position)
       ) STRICT;
     `,
+  },
+  {
+    version: 66,
+    sql: `
+      ALTER TABLE repositories ADD COLUMN pinned_at INTEGER;
+      ALTER TABLE repositories ADD COLUMN retained INTEGER NOT NULL DEFAULT 0;
+    `,
+    backfill: (connection, _timeZone, now) => {
+      connection.prepare("UPDATE repositories SET pinned_at = ? WHERE pinned = 1").run(now);
+    },
   },
 ];
 

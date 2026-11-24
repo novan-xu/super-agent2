@@ -264,7 +264,7 @@ export function createTopicRouter(database: HubDatabase, options: RoutingOptions
   const knownRepositories = connection.prepare(`
     SELECT coalesce(repository, project) AS repository FROM tickets
     WHERE (repository IS NOT NULL OR project IS NOT NULL) AND joined_into IS NULL AND state IN (${openTicketStates.map(() => "?").join(", ")})
-    UNION SELECT repository FROM repositories WHERE github_archived = 0 AND (pinned = 1 OR listed = 1)
+    UNION SELECT repository FROM repositories WHERE github_archived = 0 AND (pinned = 1 OR listed = 1 OR retained = 1)
   `);
   const insertDecision = connection.prepare(`
     INSERT INTO routing_decisions (

@@ -62,7 +62,7 @@ export function applyMigrations(connection: DatabaseSync, migrations: readonly M
     connection.exec("BEGIN IMMEDIATE");
     try {
       connection.exec(migration.sql);
-      migration.backfill?.(connection, timeZone);
+      migration.backfill?.(connection, timeZone, clock.now());
       record.run(migration.version, clock.now());
       connection.exec("COMMIT");
     } catch (error) {

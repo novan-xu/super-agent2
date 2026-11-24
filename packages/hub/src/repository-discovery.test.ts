@@ -229,3 +229,46 @@ it("keeps legacy pins before newly opened tabs and persists opening order", () =
   rows = createRepositoryAccounts(open(), clock).list();
   expect(rows.find((row) => row.repository === "org/second")?.pinnedOrder).toBe(3);
 });
+
+
+describe("inactive repository pins", () => {
+  it("keeps open tickets and recent moves, messages and pins, then retains inactive repositories", () => {
+    const database = open();
+    const repositories = createRepositoryAccounts(database, clock);
+    const names = ["org/open", "org/move", "org/message", "org/pin", "org/idle"];
+    repositories.replaceDiscovered(["novan-xu"], names.map((repository) => ({ repository, account: "novan-xu" as const, archived: false })));
+    for (const name of names) repositories.setPinned(name, true);
+    repositories.setAlias("org/idle", "Idle");
+    addTicket(database, "org/open", 1);
+    clock.advance(2 * 60 * 60_000);
+    const now = clock.now();
+    database.connection.prepare(`INSERT INTO tickets (repository, kind, title_en, title_zh, summary_en, summary_zh, state, created_at, updated_at, code, code_date) VALUES ('org/move', 'feature', 'a', 'a', 'a', 'a', 'merged', ?, ?, 'zz', '2026-11-17')`).run(now, now);
+    const id = Number(database.connection.prepare("SELECT id FROM tickets WHERE repository = 'org/move'").get()!.id);
+    database.connection.prepare("INSERT INTO ticket_moves (ticket_id, seq, to_state, at) VALUES (?, 1, 'merged', ?)").run(id, now);
+    database.connection.prepare("INSERT INTO conversations (id, title, state, created_at, updated_at, repository) VALUES ('topic', 'topic', 'idle', ?, ?, 'org/message')").run(now, now);
+    database.connection.prepare("INSERT INTO conversation_entries (id, conversation_id, seq, kind, body, created_at) VALUES ('entry', 'topic', 1, 'owner', '{}', ?)").run(now);
+    repositories.setPinned("org/pin", true);
+    clock.advance(23 * 60 * 60_000);
+    expect(repositories.sweepInactive()).toBe(1);
+    expect(repositories.list().find((row) => row.repository === "org/idle")).toMatchObject({ pinned: false, alias: "Idle" });
+    expect(repositories.list().filter((row) => row.pinned).map((row) => row.repository)).toEqual(["org/message", "org/move", "org/open", "org/pin"]);
+    repositories.replaceDiscovered(["novan-xu"], []);
+    expect(repositories.list().find((row) => row.repository === "org/idle")).toMatchObject({ pinned: false, alias: "Idle" });
+    expect(repositories.setPinned("org/idle", true)).toBe(true);
+    clock.advance(2 * 60 * 60_000);
+    expect(repositories.sweepInactive()).toBe(3);
+    expect(repositories.list().find((row) => row.repository === "org/open")?.pinned).toBe(true);
+  });
+
+  it("grants existing pins a full day from migration", () => {
+    const old = open(migrations.slice(0, 65));
+    old.connection.prepare("INSERT INTO repositories (repository, pinned, listed) VALUES ('org/old', 1, 1)").run();
+    old.close();
+    opened.pop();
+    const repositories = createRepositoryAccounts(open(), clock);
+    clock.advance(23 * 60 * 60_000);
+    expect(repositories.sweepInactive()).toBe(0);
+    clock.advance(60 * 60_000);
+    expect(repositories.sweepInactive()).toBe(1);
+  });
+});

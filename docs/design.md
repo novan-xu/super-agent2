@@ -1067,3 +1067,6 @@ The per-session permissions allow calls to the configured MCP servers, and the a
 The allowance panel includes OpenAI API month-to-date costs within GPT when the hub has an `OPENAI_ADMIN_KEY`.
 The hub polls organization costs every 15 minutes using the ticket time zone for the month boundary and retains the last successful reading when a request fails.
 An optional USD monthly budget can be set or cleared in usage settings; it is informational and does not restrict API calls.
+
+Pinned workbench repositories are automatically unpinned after 24 hours without an open ticket, a ticket state change or merge, a topic message, or an owner pin.
+Existing pins receive 24 hours from the migration, and automatically unpinned repositories remain available in the catalog and topic routing.

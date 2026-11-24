@@ -10,6 +10,7 @@ export interface RepositoryAccounts {
   list(): RepositoryAccount[];
   set(repository: string, account: GitHubAccount): boolean;
   setPinned(repository: string, pinned: boolean): boolean;
+  sweepInactive(): number;
   setOrder(repositories: readonly string[]): boolean;
   setAlias(repository: string, alias: string | null): boolean;
   replaceDiscovered(accounts: readonly GitHubAccount[], found: readonly DiscoveredRepository[]): void;
@@ -30,6 +31,7 @@ const CatalogRow = z.object({
   pinned_order: z.number().nullable(),
   alias: z.string().nullable(),
   listed: z.number(),
+  retained: z.number(),
   github_archived: z.number(),
 });
 
@@ -51,10 +53,11 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
   );
   const remove = connection.prepare("DELETE FROM repository_accounts WHERE repository = ?");
   const setPin = connection.prepare(
-    `INSERT INTO repositories (repository, pinned, pinned_order)
-     VALUES (?, ?, CASE WHEN ? = 1 THEN (SELECT coalesce(max(pinned_order), 0) + 1 FROM repositories) ELSE NULL END)
+    `INSERT INTO repositories (repository, pinned, pinned_order, pinned_at)
+     VALUES (?, ?, CASE WHEN ? = 1 THEN (SELECT coalesce(max(pinned_order), 0) + 1 FROM repositories) ELSE NULL END, ?)
      ON CONFLICT (repository) DO UPDATE SET pinned = excluded.pinned,
-       pinned_order = CASE WHEN excluded.pinned = 0 THEN NULL WHEN repositories.pinned = 1 THEN repositories.pinned_order ELSE excluded.pinned_order END`,
+       pinned_order = CASE WHEN excluded.pinned = 0 THEN NULL WHEN repositories.pinned = 1 THEN repositories.pinned_order ELSE excluded.pinned_order END,
+       pinned_at = excluded.pinned_at`,
   );
   const setAlias = connection.prepare("INSERT INTO repositories (repository, alias) VALUES (?, ?) ON CONFLICT (repository) DO UPDATE SET alias = excluded.alias");
   const clearListed = connection.prepare("UPDATE repositories SET listed = 0 WHERE account = ? AND listed = 1");
@@ -103,7 +106,7 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
     }));
     for (const [key, stored] of catalog) {
       if (stored.github_archived === 1) names.delete(key);
-      else if (stored.listed === 1) names.set(key, stored.repository);
+      else if (stored.listed === 1 || stored.retained === 1 || stored.pinned === 1) names.set(key, stored.repository);
     }
     return sortedNames(names).map((repository) => {
       const key = repository.toLowerCase();
@@ -137,8 +140,31 @@ export function createRepositoryAccounts(database: HubDatabase, clock: Clock, so
       const key = repository.toLowerCase();
       const known = list().find((row) => row.repository.toLowerCase() === key);
       if (known === undefined) return false;
-      setPin.run(known.repository, Number(pinned), Number(pinned));
+      setPin.run(known.repository, Number(pinned), Number(pinned), pinned ? clock.now() : null);
       return true;
+    },
+    sweepInactive: () => {
+      const cutoff = clock.now() - 24 * 60 * 60_000;
+      const inactive = connection.prepare(`
+        SELECT r.repository FROM repositories r
+        WHERE r.pinned = 1 AND r.pinned_at <= ?
+          AND NOT EXISTS (SELECT 1 FROM tickets t WHERE (t.repository = r.repository COLLATE NOCASE OR t.project = r.repository COLLATE NOCASE)
+            AND (t.state IN ('pending', 'waiting', 'working', 'verifying')
+              OR EXISTS (SELECT 1 FROM ticket_moves m WHERE m.ticket_id = t.id AND m.at > ?)
+              OR EXISTS (SELECT 1 FROM ticket_pull_requests p WHERE p.ticket_id = t.id AND p.merged_at > ?)))
+          AND NOT EXISTS (SELECT 1 FROM conversations c JOIN conversation_entries e ON e.conversation_id = c.id
+            WHERE c.repository = r.repository COLLATE NOCASE AND e.kind IN ('owner', 'text', 'notice') AND e.created_at > ?)
+      `).all(cutoff, cutoff, cutoff, cutoff).map((row) => NameRow.parse(row).repository);
+      const retain = connection.prepare("UPDATE repositories SET retained = 1 WHERE repository = ?");
+      connection.exec("BEGIN IMMEDIATE");
+      try {
+        for (const repository of inactive) {
+          retain.run(repository);
+          setPin.run(repository, 0, 0, null);
+        }
+        connection.exec("COMMIT");
+      } catch (error) { connection.exec("ROLLBACK"); throw error; }
+      return inactive.length;
     },
     setOrder: (order) => {
       connection.exec("BEGIN IMMEDIATE");
