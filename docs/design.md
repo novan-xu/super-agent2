@@ -922,6 +922,7 @@ An inbox file send opens 传输 and includes the file names within the push payl
 
 The look and layout follow the prototype in [ui/prototype/](ui/prototype/), copied from the first Super-agent with its comments removed.
 It specifies look and layout, not behaviour.
+The finish is the owner-approved skeuomorphic material in `packages/web/src/styles/material.css`, specified in [ui/skeuomorphic-spec.md](ui/skeuomorphic-spec.md) with the geometry it must reproduce in [ui/skeuomorphic-measurements.txt](ui/skeuomorphic-measurements.txt).
 
 Kept from it:
 

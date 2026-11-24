@@ -830,7 +830,7 @@ function OpenAIBudget({ budget }: { readonly budget: number | null }) {
       setError(false); setSaved(true);
     } catch { setError(true); setSaved(false); }
   };
-  return <section className="section"><form onSubmit={(event) => void save(event)}><label>{text("usage.openaiBudget")} <input type="number" min="0.01" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} /></label> <button type="submit">{text("usage.budgetSave")}</button>{error ? <span role="alert">{text("usage.budgetError")}</span> : saved ? <span role="status">{text("usage.budgetSaved")}</span> : null}</form></section>;
+  return <section className="section"><form className="usage-budget" onSubmit={(event) => void save(event)}><label>{text("usage.openaiBudget")} <input className="field" type="number" min="0.01" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} /></label> <button className="btn btn-sm" type="submit">{text("usage.budgetSave")}</button>{error ? <span role="alert">{text("usage.budgetError")}</span> : saved ? <span role="status">{text("usage.budgetSaved")}</span> : null}</form></section>;
 }
 
 function UsageSection({ budget }: { readonly budget: number | null | undefined }) {

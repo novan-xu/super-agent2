@@ -345,7 +345,7 @@ export function App() {
       toast={toast}
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
-      allowance={<AllowanceSidebar report={page.allowance} now={now} refresh={() => void controller.refreshAllowance()} />}
+      allowance={<AllowanceSidebar report={page.allowance} now={now} />}
       collapsedAllowance={<AllowanceRings report={page.allowance} now={now} />}
       headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} order={(repositories) => controller.setRepositoryOrder(repositories)} /> : undefined}
       actions={

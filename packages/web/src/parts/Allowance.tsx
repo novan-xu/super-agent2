@@ -26,8 +26,8 @@ function Provider({ provider }: { readonly provider: ProviderView }) {
 function Panel({ report, now, refresh }: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
   return <div className="allowance-panel"><div className="allowance-heading"><strong>{text("allowance.title")}</strong><button className="icon-btn" type="button" aria-label={text("allowance.refresh")} title={text("allowance.refresh")} onClick={refresh}><Icon name="history" /></button></div>{providersOf(report, now).map((provider) => <Provider key={provider.id} provider={provider} />)}</div>;
 }
-export function AllowanceSidebar(props: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
-  return <div className="allowance-sidebar"><Panel {...props} /></div>;
+export function AllowanceSidebar({ report, now }: { readonly report: AllowanceReport | null; readonly now: number }) {
+  return <div className="allowance-sidebar"><div className="allowance-panel">{providersOf(report, now).map((provider) => <Provider key={provider.id} provider={provider} />)}</div></div>;
 }
 export function AllowanceRings({ report, now }: { readonly report: AllowanceReport | null; readonly now: number }) {
   return <div className="allowance-rings">{providersOf(report, now).map((provider) => {

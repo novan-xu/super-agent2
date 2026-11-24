@@ -13,6 +13,8 @@ describe("allowance components", () => {
     expect(compact).toContain("<dialog");
     expect(compact).toContain("刷新额度");
     const sidebar = renderToStaticMarkup(<AllowanceSidebar {...props} />);
+    expect(sidebar).not.toContain("allowance-heading");
+    expect(sidebar).not.toContain("刷新额度");
     expect(sidebar).toContain("本周");
     expect(sidebar).toContain("5 小时");
     expect(sidebar).not.toContain("7 天");
@@ -61,8 +63,8 @@ describe("allowance components", () => {
 
 it("shows API costs under GPT, with budget thresholds and without a budget", () => {
   const base = { subscriptions: [], unavailable: [] };
-  const render = (cost: { state: "available" | "unknown"; amount: number | null; currency: string | null; readAt: number | null; budget: number | null }) => renderToStaticMarkup(<AllowanceSidebar report={{ ...base, openaiCost: cost }} now={0} refresh={() => undefined} />);
-  expect(renderToStaticMarkup(<AllowanceSidebar report={base} now={0} refresh={() => undefined} />)).not.toContain("API 本月");
+  const render = (cost: { state: "available" | "unknown"; amount: number | null; currency: string | null; readAt: number | null; budget: number | null }) => renderToStaticMarkup(<AllowanceSidebar report={{ ...base, openaiCost: cost }} now={0} />);
+  expect(renderToStaticMarkup(<AllowanceSidebar report={base} now={0} />)).not.toContain("API 本月");
   expect(render({ state: "available", amount: 12.34, currency: "USD", readAt: 1, budget: null })).toContain("API 本月 $12.34");
   expect(render({ state: "available", amount: 75, currency: "USD", readAt: 1, budget: 100 })).toContain("allowance-text--warn");
   const bad = render({ state: "available", amount: 90, currency: "USD", readAt: 1, budget: 100 });

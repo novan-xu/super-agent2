@@ -1,0 +1,569 @@
+Super Agent material: measurements
+==================================
+
+The production port (ticket AT-2026-11-24, issue #335) comes first. The
+prototype records of tickets AS-2026-11-24, AR-2026-11-24 and AN-2026-11-24
+follow unchanged below it; they measured the offline prototype page
+(super-agent-redesign.html), which is not in the repository.
+
+
+AT-2026-11-24 (production port)
+===============================
+
+Method
+------
+- Engine: Chrome Headless Shell 159 (the repository's pinned browser),
+  macOS, the page development harness with its layout fixture data, built
+  pages served from a directory; computed layout boxes
+  (getBoundingClientRect).
+- "reference" = main at 1dbe495 with the prototype's markup (the logo as the
+  collapse toggle) and the prototype's material.css appended unchanged, that
+  is the approved prototype applied to the real page; "port" = this change.
+- Sidebar state through localStorage sidebar.collapsed, theme through the
+  browser's colour scheme.
+
+1. Port against reference, pixels
+---------------------------------
+168 screenshots of each build: 15 routes (工作台, 对话 代码 and 日常, 传输,
+记忆, 定时, 设置 and its seven sections, the ticket page) at 1280 x 800 in
+both themes and sidebar states; 工作台, 定时 and 对话 at 1024 x 700,
+1780 x 880, 800 x 600 and 1440 x 900 in both themes and states; every route
+at 390 x 844 and 320 x 700 with mobile emulation in both themes.
+  identical (no pixel > 2 levels)      142
+  topic label tone                      12  the tone follows the topic's
+                                            random id, which differs
+                                            between the two harnesses
+  hub connection state, stream scroll    3  timing of the sample data
+  antialiasing                          11  at most 24 pixels on a glyph
+                                            or curve edge; the reference
+                                            differs from itself the same
+                                            way (24 pixels on the logo's
+                                            edge, rendered twice)
+
+2. Sidebar, expanded vs collapsed
+---------------------------------
+13 routes at 1280 x 800, and 工作台 and 定时 also at 1280 x 680,
+1024 x 700, 1780 x 880 and 800 x 600, light and dark: 42 cases, each in both
+states. Largest value over all cases:
+  |dx|, |dy|, |dh| of logo, nav buttons, icons, rings, well, lamps   0, 0, 0
+  |dw| of logo, icons, lamps                                         0
+  |centre x - strip centre|, collapsed                               0
+  |left margin - right margin|, collapsed                            0
+  |icon centre - button centre|, x and y                             0
+  |lamp centre - well centre|                                        0
+  ring start - first allowance row start                             0
+  logo top - folder tab top, both states                             0
+Workbench, 1280 x 800, both themes (x, y, w, h; collapsed / expanded):
+  logo            12, 18, 48, 48 / 12, 18, 48, 48
+  button 工作台   12, 90, 48, 40 / 12, 90, 211, 40
+   icon 工作台    27, 101, 18, 18 / 27, 101, 18, 18
+  button 设置     12, 744, 48, 40 / 12, 744, 211, 40
+   icon 设置      27, 755, 18, 18 / 27, 755, 18, 18
+  rings 1-4       16, 286 / 330 / 374 / 418, 40, 40 (first row at y 286)
+  lamp well       12, 656.41, 48, 75.59 / 12, 656.41, 211, 75.59
+  lamps           32, 675.8 and 32, 704.59, 8, 8 in both states
+  sidebar 0-73 collapsed, edge line x 72, strip centre 36, sheet from x 73,
+  sheet top 56, folder tab top 18.
+
+3. Tabs
+-------
+1280 expanded and collapsed, 1024 collapsed, and 500, 390 and 320 wide with
+mobile emulation, light and dark, the 1st, 2nd, 3rd and 5th tab selected:
+  gap between consecutive tab boxes          0 (minimum and maximum)
+  tab boxes the same for every selection     yes (desktop)
+  1280 expanded   236/121, 357/121, 478/121, 599/121, ...
+  1280 collapsed  73/141.38, 214.38/141.38, 355.75/141.38, ...
+  1024 collapsed  73/109.38, 182.38/109.38, 291.75/109.38, ...
+  phone           0/192, 192/52, 244/52, 296/52, ... (tab 1 selected)
+  folder tab top  18 desktop, 6 phone
+  first tab left - sheet left                0
+The sheet's top-left corner and the inverse fillet follow the selection in
+48 of 48 switches (390 and 1280 wide) with motion allowed; with reduced
+motion every property has a 1 ms transition, which headless Chromium only
+advances when it draws a frame.
+
+4. Chat edges
+-------------
+对话 and the workbench panel at 1280, 1024, 390 and 320 with classic
+scrollbars (11 px) and at 390 and 320 with overlay scrollbars (0 px), light
+and dark: brain bubble left - composer left, owner bubble right - composer
+right and image frame right - composer right are 0 in all 24 cases. The
+brain topic label starts on the composer's left edge (0); the owner topic
+label ends 76 px left of it, before the message's action buttons.
+
+5. Horizontal overflow
+----------------------
+Every route at 320 x 700 and 390 x 844, light and dark (60 cases):
+document and body scroll width - window width = 0. The repository's layout
+check (pnpm layout) passes for all ten named views at 390 x 844 and
+1440 x 900.
+
+
+Prototype records
+=================
+
+Ticket AS-2026-11-24 (polish round 5) comes first; the records of tickets
+AR-2026-11-24 (round 4) and AN-2026-11-24 (round 3) follow unchanged below it.
+Where a later round changed something, its numbers replace the earlier ones:
+AS moved the nav icons, rings and lamps (and the labels that follow them) onto
+the collapsed strip's centre; AR changed the tab gap, the sidebar's y positions
+and the collapsed sidebar. All numbers are CSS px unless marked "device px".
+
+
+AS-2026-11-24
+=============
+
+Method
+------
+- Engine: Chromium 141.0.7390.37 (Playwright chromium-1194), macOS, headless,
+  the computed layout boxes (getBoundingClientRect) of the elements; pixel
+  checks on 2x and 4x screenshots.
+- Page: super-agent-redesign.html in this folder, with its inline demo data;
+  the clock fixed at 2026-11-24 10:00 +08:00.
+- "before" = this folder as ticket AR-2026-11-24 left it; "after" = this round.
+- Sidebar state through localStorage sidebar.collapsed, theme through
+  superagent2.theme.
+- Cases: 14 routes at 1280 x 800 (#/workbench, conversations, memory,
+  schedules, transfer, history, settings/machines, models, repositories,
+  usage, connections, appearance, history, tickets/1; the app opens transfer
+  under 对话, history as 设置/历史 and the ticket in 工作台) and 工作台 and 定时
+  at 1280 x 680, 1024 x 700, 1780 x 880 and 800 x 600; light and dark:
+  44 cases, each in both sidebar states.
+- The collapsed strip is the ground between the window's left edge (x 0) and
+  the sheet's edge line, which is drawn in the sidebar's last pixel column
+  (x 72; sidebar box 0-73, sheet from 73). Its centre is x 36. Measured on the
+  pixels too: the edge line is device columns 144-145 at 2x in both themes.
+  "L" and "R" below are an element's margins to x 0 and to x 72.
+
+1. Centre column, collapsed and expanded
+----------------------------------------
+Workbench, 1280 x 800, dark (light is identical; so is every other case, see
+3). c-36 = element centre x minus the strip centre; dx, dy, dh = collapsed
+minus expanded:
+
+  element         collapsed x, y, w, h    L   R   c-36  expanded x, y, w, h     dx dy dh
+  logo            12, 18, 48, 48          12  12  0     12, 18, 48, 48          0  0  0
+  button 工作台   12, 90, 48, 40          12  12  0     12, 90, 211, 40         0  0  0
+   icon 工作台    27, 101, 18, 18         27  27  0     27, 101, 18, 18         0  0  0
+  button 对话     12, 134, 48, 40         12  12  0     12, 134, 211, 40        0  0  0
+   icon 对话      27, 145, 18, 18         27  27  0     27, 145, 18, 18         0  0  0
+  button 记忆     12, 178, 48, 40         12  12  0     12, 178, 211, 40        0  0  0
+   icon 记忆      27, 189, 18, 18         27  27  0     27, 189, 18, 18         0  0  0
+  button 定时     12, 222, 48, 40         12  12  0     12, 222, 211, 40        0  0  0
+   icon 定时      27, 233, 18, 18         27  27  0     27, 233, 18, 18         0  0  0
+  button 设置     12, 744, 48, 40         12  12  0     12, 744, 211, 40        0  0  0
+   icon 设置      27, 755, 18, 18         27  27  0     27, 755, 18, 18         0  0  0
+  ring 1 (G)      16, 286, 40, 40         16  16  0     (rows instead)          -  -  -
+  ring 2 (C)      16, 330, 40, 40         16  16  0     (rows instead)          -  -  -
+  ring 3 (G)      16, 374, 40, 40         16  16  0     (rows instead)          -  -  -
+  ring 4 (D)      16, 418, 40, 40         16  16  0     (rows instead)          -  -  -
+  lamp well       12, 656.41, 48, 75.59   12  12  0     12, 656.41, 211, 75.59  0  0  0
+   lamp hub       32, 675.8, 8, 8         32  32  0     32, 675.8, 8, 8         0  0  0
+   lamp 大脑      32, 704.59, 8, 8        32  32  0     32, 704.59, 8, 8        0  0  0
+
+The cut buttons and the cut well are the expanded ones with their right part
+cut away (width 211 -> 48), as in AR. Radii unchanged: button 8, well 12.
+
+2. Icons in their buttons, lamps in their well (collapsed)
+---------------------------------------------------------
+  icon centre - button centre      x 0, y 0 for 工作台, 对话, 记忆, 定时, 设置
+  lamp centre - well centre        x 0 for hub and 大脑
+  (each is 0 in all 44 cases)
+How: nav buttons have 15 px inline start padding, (48 - 18) / 2, in both
+states (AR: 12); the rings sit 4 px into the 48 px column, 48 / 2 - 20
+(AR: 1); the lamp well has 19 px inline start padding inside its 1 px edge,
+48 / 2 - 4 - 1, in both states, and the collapsed lamps' overlay uses the same
+inset (AR: 12). The sidebar width (73), its 12 px margins and the 48 px column
+are AR's.
+
+3. Every case
+-------------
+Largest value over the 44 cases (14 pages and 5 window sizes x light, dark),
+for the logo, the five nav buttons and icons (settings included), the four
+rings, the lamp well and both lamps:
+  |centre x - strip centre|, collapsed            0
+  |left margin - right margin|, collapsed         0
+  |icon centre - button centre|, x and y          0
+  |lamp centre - well centre|                     0
+  |dx|, |dy|, |dh|, expanded vs collapsed         0, 0, 0
+  |dw| of logo, icons, lamps                      0
+  ring start - first allowance row start          0
+  strip centre                                    36 in every case
+Light and dark geometry are identical. No horizontal overflow in any case.
+
+4. Before and after (centre x - strip centre, collapsed)
+--------------------------------------------------------
+  element         AR (before)   AS (after)
+  logo            0             0
+  button 工作台   0             0
+   icon 工作台    -3            0
+  button 对话     0             0
+   icon 对话      -3            0
+  button 记忆     0             0
+   icon 记忆      -3            0
+  button 定时     0             0
+   icon 定时      -3            0
+  button 设置     0             0
+   icon 设置      -3            0
+  ring 1          -3            0
+  ring 2          -3            0
+  ring 3          -3            0
+  ring 4          -3            0
+  lamp well       0             0
+   lamp hub       -7            0
+   lamp 大脑      -7            0
+
+Moved with them, by the same amount, in both states: the nav labels
+(expanded x 54 -> 57), the lamp labels (hub and 大脑 x 41 -> 48, the 8 px gap
+kept), the collapsed badges (x 34 -> 37, still 8 px over the icon's top right
+corner, 3 px below the button's top; the "11" badge now ends at 60.67, 0.67 px
+past the column and 11.33 px from the edge line), and a ring's hover card
+(x 63 -> 66, production's 10 px from its ring kept; 220 wide, unclipped).
+Not moved: every y and height; the expanded badges (180.88 and 188.94); the
+expanded well's values (right edge 210, right-aligned, none truncated); the
+allowance rows; the logo; the brand name; the sidebar width; the gap between
+the last ring and the lamp well (10.41 at 800 x 600, 90.41 at 1280 x 680,
+198.41 at 1280 x 800, as before).
+
+5. Pixel checks (定时 page, 1280 x 800, both themes)
+------------------------------------------------
+Painted centres in the collapsed strip, measured on the pixels, not on boxes:
+  icon strokes (2x), 工作台 对话 记忆 定时 设置     36.00 each (before 33.00)
+    (工作台 and 记忆 read where their badges do not cover them)
+  lamp colour centroid (4x), hub and 大脑          36.00 each (before 29.00)
+  lamp well face (4x)                             36.00
+  rings 2-4, dark: track and groove (2x)          36.00 (before 33.00-33.50)
+  (ring 1 carries its 62% arc and glow on one side, so its paint is not
+  symmetric; its box is centred.)
+Crop check, collapsed strip against the same box in the expanded sidebar, 2x,
+largest channel difference: the four nav icons (the badge boxes left out),
+the current button's left part (up to its corner), the lamp well's left part,
+both lamps with 4 px of glow, and the ground x 0-12: 0-2 levels, no pixel
+over 2. The settings icon: 3 levels on 2 device px in dark (antialiasing),
+0 in light. The logo: one device pixel of its glyph's edge differs, as it did
+in AR (the same pixel before and after).
+
+6. Nothing else changes
+-----------------------
+Before against after, full pages, every route above at 1280 x 800 in both
+states and at 390 x 844 (no sidebar), light and dark: 84 screenshots.
+  outside the sidebar      0 pixels differ (> 2 levels) on 82 pages; one
+                           pixel on two workbench pages, the antialiased
+                           corner of a chip, which changes from render to
+                           render of the unchanged AR file too (3 renders:
+                           #342e28, #2e2b27, #2e2b27)
+  inside the sidebar       expanded: x 21-99, y 103-772 (icons, nav and
+                           lamp labels, lamps); collapsed: x 13-61,
+                           y 93-772 (icons, badges, rings, lamps)
+  phone (390 x 844)        0 pixels differ on all 28 pages
+The stylesheet diff is the collapse block of section 2 (three custom
+properties on .side, the nav buttons' and the well's inline start padding,
+the badge, ring and lamp insets) and the file's header comment; the HTML
+differs from AR only in its embedded copy of material.css.
+
+Behaviour kept: the lamps' tooltips and keyboard focus (the hit test at each
+collapsed lamp's centre returns production's compact lamp, "hub 在线" and
+"大脑 GPT-6 Sol"; Tab reaches them, centre 36; focus styles identical to AR);
+the rings' hover cards (open beside the strip, unclipped); the 767 px
+breakpoint (no sidebar); no animation.
+
+
+AR-2026-11-24
+=============
+
+Method
+------
+- Engine: Chromium 141 (Playwright chromium-1194), macOS, headless, the
+  computed layout boxes (getBoundingClientRect) of the elements.
+- Page: super-agent-redesign.html in this folder, with its inline demo data;
+  the clock fixed at 2026-11-24 10:00 +08:00 so that screenshots compare.
+- "before" = this folder as ticket AN-2026-11-24 left it; "after" = this round.
+- Sidebar state set the way the app stores it (localStorage
+  sidebar.collapsed), theme through superagent2.theme.
+- Sidebar: 7 pages (工作台, 对话, 记忆, 定时, 设置/外观, 设置/模型, 传输) at
+  1280 x 800, and the workbench also at 1280 x 680, 1024 x 700 and
+  1780 x 880; light and dark; each in both states: 20 x 2 cases.
+- Tabs: 1280 x 800 expanded and collapsed, 1024 x 700 collapsed, 500, 390 and
+  320 px wide; the 1st, 2nd, 3rd and 5th tab active; light and dark.
+
+1. Sidebar: expanded vs collapsed
+---------------------------------
+Workbench, 1280 x 800 (x, y, width, height; delta = collapsed - expanded):
+
+  element                expanded                     collapsed                   dx  dy  dh  dw
+  sidebar                0, 0, 236, 800               0, 0, 73, 800                0   0   0  -163
+  logo                   12, 18, 48, 48               12, 18, 48, 48               0   0   0   0
+  icon 工作台             24, 101, 18, 18              24, 101, 18, 18              0   0   0   0
+  icon 对话               24, 145, 18, 18              24, 145, 18, 18              0   0   0   0
+  icon 记忆               24, 189, 18, 18              24, 189, 18, 18              0   0   0   0
+  icon 定时               24, 233, 18, 18              24, 233, 18, 18              0   0   0   0
+  current button         12, 90, 211, 40, r 8         12, 90, 48, 40, r 8          0   0   0  -163
+  allowance start        12, 286 (first row)          12, 286 (first ring)         0   0   -   -
+  ring column            -                            ring 13, 286, 40, 40: centre 33 = icon centre 33
+  lamp well              12, 656.41, 211, 75.59, r 12 12, 656.41, 48, 75.59, r 12  0   0   0  -163
+  lamp hub               25, 675.80, 8, 8             25, 675.80, 8, 8             0   0   0   0
+  lamp 大脑               25, 704.59, 8, 8             25, 704.59, 8, 8             0   0   0   0
+  icon 设置               24, 755, 18, 18              24, 755, 18, 18              0   0   0   0
+  badge 11               180.88, 100, 30.13, 20       34, 93, 23.67, 16            moved onto the icon's corner
+  badge 1                188.94, 188, 22.06, 20       34, 181, 18, 16              moved onto the icon's corner
+  sheet left edge        236                          73
+
+Largest |dx|, |dy| and |dh| over all 40 cases (20 page/size/theme cases x
+both states), for logo, the four nav icons, the current button, the lamp well,
+both lamps and the settings icon: 0, 0, 0. Radii identical (button 8 px, well
+12 px). Allowance start y: delta 0 in every case. Ring centre - nav icon
+centre: 0 in every case. Light and dark geometry are identical.
+Margins of the collapsed strip: left 12 (window edge to the logo, buttons and
+well), right 12 (their right edge at 60 to the sheet's edge line at x 72).
+Before (AN), the same workbench case: logo dx -4.5; nav icons dx -1.5, dy -8;
+current button dx -4.5, dy -8; lamps dx -5.5 / +10.5, dy +42.2 / +13.4 (side by
+side); allowance start dy -16 (rings at 266, rows at 282); lamp well gone.
+Window height: the foot is anchored to the bottom, so its y follows the window
+(well at 536.41 at 680, 556.41 at 700, 736.41 at 880), the same in both states.
+At 1280 x 600 the last ring ends 10 px above the lamp well; they meet below
+about 590 px of window height (see the spec).
+
+Pixel check (sidebar-crop-check-*.png): the collapsed strip (x 0-72) against
+the left 72 px of the expanded sidebar, device px at 2x. Identical: logo, nav
+icons, the left part of the current button, the left part of the lamp well,
+the lamps, the settings icon and the ground. Different, as intended: labels,
+badges, allowance rows vs rings, the current button's and the well's own right
+edge, and the sheet's own soft shadow on the strip's last columns (the sheet
+now begins there): dark 1-9 levels over x 60-72, light 1-4 levels over x 68-71.
+
+Behaviour kept: the lamps' tooltips (hub 在线, 大脑 GPT-6 Sol) and keyboard
+focus (the hit test at each lamp returns production's compact lamp, with its
+title); the rings' hover cards open beside the strip unclipped (x 63, 220 wide);
+at 767 px the sidebar is hidden as before; no animation (production has none).
+
+2. Logo top vs tab strip top
+----------------------------
+Tab strip top edge = the top of the folder (inactive) tabs, the blue line in
+the owner's crop: tab box top 14 + --mat-folder-drop 4 = 18.
+                      before (AN)    after (AR)
+  logo top            14             18
+  tab strip top       18             18
+  difference          -4             0     (expanded and collapsed, all cases)
+  active tab top      14             14    (stands 4 px proud, unchanged)
+Logo y on every page (工作台, 对话, 记忆, 定时, 设置, 传输), both states, both
+themes: 18. Sheet top on every page: 56. Owner's crop (logo-vs-tab-top.png,
+2x): logo top device row 14, tab face edge rows 22-23, i.e. 4 px apart.
+
+3. Tabs
+-------
+Gap between consecutive tab boxes, and between the faces of two inactive
+neighbours, for every selection measured:
+                                  before (AN)   after (AR)
+  1280 expanded / collapsed       6 / 6         0 / 0
+  1024 collapsed                  6             0
+  500 / 390 / 320                 6             0
+No overlap: no box starts before its left neighbour ends (all gaps >= 0).
+Inactive face tops: 18 (desktop), 6 (phone), the same for every tab.
+Tab boxes (x / width), identical with tab 1, 2, 3 or 5 active:
+  1280 expanded   236/121, 357/121, 478/121, 599/121, 720/121, ...
+  1280 collapsed  73/141.38, 214.38/141.38, 355.75/141.38, ...
+  1024 collapsed  73/109.38, 182.38/109.38, 291.75/109.38, ...
+Phone: boxes 0/192, 192/52, 244/52, 296/52, ... (tab 1 active). Production
+widens the active tab to 192 px below 768 px so it can show its label, so
+later tabs move by 140 px when the selection moves past them; unchanged
+production behaviour (also in AN). The boxes themselves are contiguous.
+Hairlines: each inactive face draws its top and left edge, the last also its
+right edge: one 1 px line between neighbours (light ink 10%, dark white 6%).
+The active tab's 6 px feet lie over its neighbours' bottom corners.
+
+4. Bevel
+--------
+Token values before and after: design-spec.md, "Softened bevel (AR)".
+Close-ups, before on the left and after on the right: buttons-dark.png, buttons-light.png
+(a set of production controls rendered with the real sheet: primary, secondary,
+small primary, small, latched, segmented control, switch off and on, logo
+button; the sidebar's logo and current button; the phone workbench and tab bar).
+Profile through the 40 px secondary button (编排), dark, one column, 3x
+device px converted to CSS px, ground #161514:
+                                   before (AN)              after (AR)
+  highlight under the top edge     ~3 px (#5a -> #49)       ~1 px (#4d -> #3c)
+  face, top to bottom              #48 -> #39 (15 levels)   #3c -> #35 (7 levels)
+  bottom edge                      #1c                      #23
+  shadow below, >= 2 levels dark   ~5.7 px, darkest #0d     ~2.3 px, darkest #0f
+  shadow below, any trace          > 8.7 px                 ~4 px
+
+5. Nothing else changes
+-----------------------
+The AR stylesheet with the AN bevel tokens put back, against AN, full pages
+(10 routes: the seven above plus 设置/机器, 设置/用量, 设置/连接) at 1280 x 800
+and 390 x 844, light and dark: outside the sidebar and the tab strip, at most
+8 levels of difference, and at most 11 pixels per page differ by more than 2
+levels (antialiasing); the sidebar differs by the 4 px shift, the tab strip by
+the gap. No horizontal overflow in any case measured.
+
+
+AN-2026-11-24 (round 3, kept for reference)
+===========================================
+
+The file did not exist in this folder before this round; it is new. All numbers
+are CSS px unless marked "device px".
+
+Method
+------
+- Engine: Chromium 141 (Playwright chromium-1194), macOS, headless.
+- Page: super-agent-redesign.html in this folder, routes #/workbench,
+  #/conversations, #/settings/<section>, with the inline demo data.
+- "before" = the AK-2026-11-24 material.css (the version the owner reviewed),
+  injected into the same page; "after" = this round's material.css.
+- Widths 1280, 1024, 390, 320 (and 1780 x 880 with a 980 px workbench panel,
+  the owner's window in chat-alignment-workbench-light.png). Light and dark.
+- Scrollbars:
+  - classic = macOS "Show scroll bars: Always" (this machine's setting, and the
+    owner's). Production sets `scrollbar-width: thin`, so a classic scrollbar
+    takes 11 px of layout width.
+  - overlay = Chromium overlay scrollbars (--enable-features=OverlayScrollbar):
+    0 px of layout width, and scrollbar-gutter reserves nothing.
+- Device pixel ratio 2 for crops (3 for the ring crops), 1 for layout numbers.
+
+
+1. Collapsed-sidebar rings, dark
+--------------------------------
+Arc filter (computed):
+  before  drop-shadow(rgb(74 222 128 / .6) 0 0 1px)          (under the groove overlay)
+  after   drop-shadow(rgb(74 222 128) 0 0 1px)
+          drop-shadow(rgb(74 222 128 / .54) 0 0 3px)          (above the groove overlay)
+  The meter fill in the expanded sidebar: box-shadow 0 0 2px <color>,
+  0 0 6px <color 54%>. Filter blur is a standard deviation and box-shadow blur
+  is twice one, so 1 px / 3 px filter = 2 px / 6 px box-shadow: same glow.
+Groove: unchanged (the same SVG overlay, ::after); the SVG now sits above it
+  (position: relative; z-index: 1) and has overflow: visible, so the glow is
+  not cut at the 40 px box. Before the fix the glow ended in a hard vertical
+  edge at the box (device px 150 -> 152: #27362a -> #23211e); after it fades
+  out over ~5 px (#263027, #252c23, #252822, #242520).
+Centre: unchanged (no fill, letter on the surface).
+
+2. Light mode lamps, rings, meters
+----------------------------------
+                       before (AK)                                after
+  status lamp (.dot)   color 88% + white, radial specular,       background #c2410c (warn), image none,
+                       0.5 px inset dark edge                    box-shadow none
+  meter fill           color 88% + white, top white gradient,    rgb(21 128 61) (--success), image none,
+                       0.5 px inset dark edge                    box-shadow none
+  meter track          --mat-track + inner shadow + 0.5 px rim   rgb(220 217 212) (--border), box-shadow none
+  ring arc             filter none, groove overlay on top         filter none, no overlay
+  ring track           transparent (groove drawn instead)        stroke rgb(220 217 212) (--border)
+  ring groove          shaded SVG overlay                        removed (content: none)
+  ring letter          0.5 px white text-shadow                  none
+  live lamp            1 -> 0.5 opacity breathe, 2.4 s           unchanged (no light involved)
+Dark computed values for the same elements are identical before and after.
+Buttons, fields, cards and the sheet keep their light-mode bevel.
+
+3. First tab meets the sheet
+----------------------------
+Cause: .wb-tabs-scroll is a horizontal scroll container and clips at its
+padding edge, which was the first tab's left edge. AK drew the first tab's left
+contour one pixel outside the tab (on the sheet edge's column), so that column
+was clipped: the tab had no left edge while the sheet below had one, and its
+top-left contour broke off at the curve.
+Pixel column of the sheet's left edge (x = sheet left - 1), light, collapsed,
+first tab active, device px:
+  y inside the tab   before #ecebe8 (ground: no line)     after #dad6cf (edge)
+  y inside the sheet before #d6d1c9 (edge)                after #d6d1c9 (edge)
+  Dark: tab part #363431, sheet part #2a2927 -> #292825 (the sheet's own
+  leftward shadow darkens the ground under its edge; the line is continuous
+  and dims over ~8 px).
+Fix: the scroll container starts one pixel further left (margin -1 px,
+padding +1 px), so the tabs do not move and that column is painted.
+Phone (390, 320): the header is 44 px tall but its rows (1 px screen-reader
+title + 42 px tabs) were stretched, so the tabs ended at y 43 and the sheet
+started at y 44; the sheet's top edge showed under the active tab.
+  before  tab 1..43, sheet 44   ->   after  tab 2..44, sheet 44 (align-content: flex-end)
+Checked: light/dark x collapsed/expanded x first tab active/inactive, and phone.
+
+4. Tabs side by side
+--------------------
+Gap 6 px (column-gap on .wb-tabs-scroll), active tab feet 6 px (fill the bottom
+of the gap on either side). No overlap.
+Tab boxes (x, width), 1280, expanded sidebar; identical with tab 1, 2 or 3 active:
+  before 236/121, 357/121, 478/121, ... (contiguous, faces laid 6 px over the left neighbour)
+  after  236/115.8, 357.8/115.8, 479.5/115.8, 601.3/115.8, 723/115.8, 844.8/115.8, 966.5/115.8, 1088.3/115.8
+Collapsed sidebar: 64/137.3, 207.3/137.3, ... identical for every selection.
+Inactive face fills (sheet = --bg, ground = --side-bg):
+  light  ground #ecebe8, face #e5e3de (ground + 5 % ink), hover ground + 8.5 % ink, edge ink 10 %
+  dark   ground #24221f, face #2e2c29 (ground + 4.5 % white), hover + 8 % white, edge white 6 %,
+         a 3.5 % sheen at the top (dark keeps its lighting)
+Faces: 4 px lower than the active tab, 8 px top radius, flat bottom 1 px above
+the sheet so the sheet edge shows as the baseline.
+Cost: tabs are ~5 px narrower when the strip is full (8 tabs at 1280: 121 ->
+115.8). At 1024 the repository tabs already showed no label before this round
+(label width 0), so no label is lost that was visible.
+Phone: production widens the active tab to at least 192 px below 768 px, so
+later tabs move when the selection changes there; unchanged from production.
+
+5. Settings drift
+-----------------
+Cause 1 (sideways): .page is max-width 1040 px, centred. With classic
+scrollbars, sections taller than the window (models, connections, history at
+800 px; usage too at phone height) get an 11 px scrollbar, the centring box
+shrinks, and the page moves.
+Cause 2 (vertical): .set-nav sticks at top 24 px but sits 32 px below the
+sheet top unscrolled; after scrolling a long section it is 8 px higher, and it
+drops back when a short section opens.
+.page x / width and .set-nav x across the seven sections, classic scrollbars:
+               before                                  after
+  1780 px      nav 520 or 514.5 (5.5 px shift)         nav 514.5 always
+  1280 px      page 238/1040 or 236/1033, nav 270/268  page 236/1033, nav 268 always
+  1024 px      page 236/788 or 236/777                 page 236/777 always
+  390 px       page 0/390 or 0/379                     page 0/379 always
+  320 px       page 0/320 or 0/309                     page 0/309 always
+  overlay      stable (0 px scrollbar)                 stable, unchanged
+Nav y, 1280 x 700, classic: models at top 88 -> scrolled 80 -> open appearance 88
+  (before); 88 -> 88 -> 88 (after).
+Fix: scrollbar-gutter: stable on .body > .main (pages that scroll, not the
+workbench or conversation layouts); .set-nav sticks at 32 px (>= 768 px).
+
+6. Chat alignment
+-----------------
+Edge differences against the composer (brain bubble left - composer left;
+owner bubble, image frame and question card right - composer right):
+                                   classic before        classic after      overlay before/after
+  workbench 1280 / 1024            0 / -11 / -11 / -11   0 / 0 / 0 / 0      0 / 0 / 0 / 0
+  workbench 1780, panel 980        -5.5 / -5.5 (both)    0 / 0 / 0 / 0      0 / 0 / 0 / 0
+  对话 1280 / 1024 / 390 / 320      0 / -11 / -11 / -11   0 / 0 / 0 / 0      0 / 0 / 0 / 0
+  workbench panel 390 / 320        0 / -11 / -11 / -11   0 / 0 / 0 / 0      0 / 0 / 0 / 0
+  (both themes identical)
+The <img> inside an image attachment is 1 px inside its frame (the frame has a
+1 px --border-soft border); the frame is the edge that is aligned.
+Composer box, classic: 对话 1280 268-948 -> 268-937; workbench 1780 346-1106 ->
+340.5-1100.5. Overlay: unchanged.
+Fix: .stream and .composer-wrap both reserve the scrollbar gutter
+(scrollbar-gutter: stable; the wrap needs overflow: hidden for it to apply), so
+both columns are centred in the same box. The wrap has 2 px of top padding so
+the composer's focus line is not clipped (checked in light and dark).
+Topic label: in the owner's screenshot the brain bubble and its topic label
+started 5.5 px left of the composer, so the blue guide on the composer edge ran
+through the first character. The label itself was not cut by any container.
+After: every topic label starts on the composer's left edge; none is clipped
+(label left >= stream content edge in all 36 after-cases above).
+
+7. Sidebar allowance heading
+----------------------------
+.allowance-sidebar .allowance-heading hidden. Nav ends at y 258;
+before: heading 282 (28 px), GPT 326. After: GPT 282, 24 px below the nav (the
+sidebar's group gap). The phone allowance dialog keeps its heading.
+
+8. Sheet top-left corner
+------------------------
+border-top-left-radius of the workbench sheet:
+  before  0 px always
+  after   0 px when the first tab is active, 16 px when it is not
+First tab inactive: a 17 x 17 px piece of the first tab's face fills the square
+cut by the sheet's rounded corner (left -1, top = strip bottom - 1), up to the
+sheet's own curved edge (radius 17 from the corner centre); its 1 px left edge
+continues the tab's left side for 13 px, and the last 4 px are the sheet edge's
+own arc, so the two edges never overlap. It follows the tab's hover colour.
+Phone: the same piece at x -1..16 under the 52 px first tab (#e5e3de, light).
+
+Other checks
+------------
+- Horizontal overflow: none in 128 page states (workbench, 对话, 传输, 历史, 记忆,
+  定时, 设置, 设置/外观 x 320/390/1024/1280 x light/dark x classic/overlay).
+- Dark-mode full-page pixel diff, before vs after, outside the tab strip and
+  sidebar: only the demo timestamps differ (they follow the clock).
+- Tab hover and keyboard focus checked on the first inactive tab (face and the
+  corner piece change together; 2 px focus line inside the face).
