@@ -25,7 +25,11 @@ it("persists the sidebar toggle and keeps all navigation labelled", async () => 
   expect(host.querySelector(".side-toggle")?.getAttribute("aria-label")).toBe(text("navigation.expandSidebar"));
   expect([...host.querySelectorAll(".side .nav-btn")].every((link) => link.hasAttribute("title") && link.hasAttribute("aria-label"))).toBe(true);
   expect(host.querySelector(".side .count--hot")?.textContent).toBe("3");
-  expect(host.querySelectorAll(".side-status-compact [role=img]")).toHaveLength(2);
+  const lamps = [...host.querySelectorAll<HTMLElement>(".hub-card .dot")];
+  expect(lamps.map((lamp) => [lamp.getAttribute("role"), lamp.tabIndex, lamp.getAttribute("aria-label"), lamp.title])).toEqual([
+    ["img", 0, `${text("hub.name")} ${text("hub.online")}`, `${text("hub.name")} ${text("hub.online")}`],
+    ["img", 0, `${text("brain.name")} test-model`, `${text("brain.name")} test-model`],
+  ]);
   await act(async () => root.unmount());
   root = createRoot(host);
   await act(async () => root.render(<Shell {...props} />));
@@ -33,6 +37,7 @@ it("persists the sidebar toggle and keeps all navigation labelled", async () => 
   await act(async () => host.querySelector<HTMLButtonElement>(".side-toggle")!.click());
   expect(host.querySelector(".app--collapsed")).toBeNull();
   expect(localStorage.getItem("sidebar.collapsed")).toBe("false");
+  expect(host.querySelectorAll(".hub-card .dot[role=img], .hub-card .dot[tabindex]")).toHaveLength(0);
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();

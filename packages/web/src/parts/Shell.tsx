@@ -106,33 +106,30 @@ export function Shell(props: ShellProps) {
     </li>
   );
   const online = props.status === "open";
+  const lamp = (label: string) => (collapsed ? { tabIndex: 0, role: "img", "aria-label": label, title: label } : {});
   return (
     <>
       <div className={collapsed ? "app app--collapsed" : "app"}>
         <nav className="side" aria-label={text("navigation.main")}>
           <div className="side-head"><div className="brand">
-            <Logo />
+            <button className="side-toggle brand-toggle" type="button" aria-label={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} title={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} aria-expanded={!collapsed} onClick={toggleSidebar}><Logo size={48} /></button>
             <span>{text("app.name")}</span>
-          </div><button className="side-toggle icon-btn" type="button" aria-label={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} title={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} aria-expanded={!collapsed} onClick={toggleSidebar}><Icon name="chev" /></button></div>
+          </div></div>
           <ul className="nav">{main.map(navItem)}</ul>
           <div className="side-allowance-full">{props.allowance}</div>
           <div className="side-allowance-rings">{props.collapsedAllowance}</div>
           <div className="side-foot">
             <div className="hub-card">
               <div className="hub-line">
-                <span className={`dot ${online ? "dot--ok" : "dot--warn"}`} />
+                <span className={`dot ${online ? "dot--ok" : "dot--warn"}`} {...lamp(`${text("hub.name")} ${online ? text("hub.online") : text("hub.reconnecting")}`)} />
                 <span>{text("hub.name")}</span>
                 <span className="od-fill">{online ? text("hub.online") : text("hub.reconnecting")}</span>
               </div>
               <div className="hub-line">
-                <span className={`dot ${online && props.linked ? "dot--ok" : "dot--bad"}`} />
+                <span className={`dot ${online && props.linked ? "dot--ok" : "dot--bad"}`} {...lamp(`${text("brain.name")} ${online && props.linked ? (props.model ?? text("hub.online")) : text("brain.offline")}`)} />
                 <span>{text("brain.name")}</span>
                 <span className="od-fill mono od-truncate">{props.linked ? (props.model ?? "") : text("brain.offline")}</span>
               </div>
-            </div>
-            <div className="side-status-compact">
-              <span tabIndex={0} role="img" aria-label={`${text("hub.name")} ${online ? text("hub.online") : text("hub.reconnecting")}`} title={`${text("hub.name")} ${online ? text("hub.online") : text("hub.reconnecting")}`} className={`dot ${online ? "dot--ok" : "dot--warn"}`} />
-              <span tabIndex={0} role="img" aria-label={`${text("brain.name")} ${online && props.linked ? (props.model ?? text("hub.online")) : text("brain.offline")}`} title={`${text("brain.name")} ${online && props.linked ? (props.model ?? text("hub.online")) : text("brain.offline")}`} className={`dot ${online && props.linked ? "dot--ok" : "dot--bad"}`} />
             </div>
             <ul className="nav">{foot.map(navItem)}</ul>
           </div>

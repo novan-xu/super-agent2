@@ -3895,3 +3895,13 @@ Another option was to expand the set of engines that can start code tickets.
   Replace the wildcard with the exact callback once it is known.
 - **Why:** This permits registering the two intended connectors without allowing unrelated redirect destinations.
 - **Other options:** Allow arbitrary redirects or pre-register every connector with its own client credentials.
+
+## 2026-11-24 — Skeuomorphic material (#335)
+
+- **Chosen:** Keep the approved material as its own stylesheet, `material.css`, loaded after `prototype.css` and `page.css` with its rules scoped under `:root`, and move the geometry it needs into those two sheets.
+- **Why:** The owner approved the prototype's exact cascade, so keeping its selectors reproduces the measured result in every state, including hover, press, focus and disabled, while the base sheets keep one source for layout.
+- **Other options:** Merge every paint rule into the base sheets, which changes rule precedence in states screenshots do not cover, or keep the prototype overlay verbatim with its selector workarounds.
+
+- **Chosen:** Make the logo the sidebar's collapse toggle, as in the prototype, and draw the collapsed lamps in the lamp well itself, focusable only while collapsed and with a focus outline.
+- **Why:** The collapsed sidebar is then a pure crop of the expanded one, and keyboard users see where they are.
+- **Other options:** Keep the separate chevron button and the compact lamp row, which moves the logo and the lamps when the sidebar collapses.
