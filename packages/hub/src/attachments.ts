@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, statSync, truncateSync } from "node:fs";
+import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, rmSync, statSync, truncateSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type Readable, Transform } from "node:stream";
@@ -84,9 +84,17 @@ export function createAttachmentStore(database: HubDatabase, clock: Clock, root:
     create: (given) => {
       const id = randomBytes(16).toString("hex");
       const mediaType = given.mediaType.trim() === "" ? unknownMediaType : given.mediaType.trim().toLowerCase();
-      insert.run(id, given.name, given.size, mediaType, clock.now());
       const attachment: Attachment = { id, name: given.name, size: given.size, mediaType };
-      touch(path(attachment));
+      const directory = join(root, id);
+      mkdirSync(root, { recursive: true });
+      mkdirSync(directory);
+      try {
+        closeSync(openSync(path(attachment), "wx"));
+        insert.run(id, given.name, given.size, mediaType, clock.now());
+      } catch (error) {
+        rmSync(directory, { recursive: true, force: true });
+        throw error;
+      }
       return { attachment, received: 0 };
     },
     get,

@@ -1260,6 +1260,30 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_verifications ADD COLUMN ui_base TEXT;
     `,
   },
+  {
+    version: 65,
+    sql: `
+      CREATE TABLE inbox_transfers (
+        id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL REFERENCES inbox_sources(id),
+        key TEXT NOT NULL,
+        body_hash TEXT NOT NULL,
+        note TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        touched_at INTEGER NOT NULL,
+        result TEXT,
+        UNIQUE(source, key)
+      ) STRICT;
+      CREATE INDEX inbox_transfer_rate ON inbox_transfers (source, started_at);
+      CREATE INDEX inbox_transfer_pending ON inbox_transfers (touched_at) WHERE result IS NULL;
+      CREATE TABLE inbox_transfer_files (
+        upload INTEGER NOT NULL REFERENCES inbox_transfers(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        file TEXT NOT NULL UNIQUE REFERENCES transfer_files(id),
+        PRIMARY KEY(upload, position)
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

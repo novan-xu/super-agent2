@@ -4,6 +4,7 @@ import type { AccessServiceTokens } from "./cloudflare.js";
 import type { Clock } from "./clock.js";
 import type { ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
+import { createInboxTransfers } from "./inbox-transfers.js";
 import type { PushService } from "./push-service.js";
 
 const Source = z.object({ id: z.string(), name: z.string(), client_id: z.string(), token_id: z.string(), topic: z.string().nullable() });
@@ -15,7 +16,14 @@ export type InboxMessage = z.infer<typeof InboxMessage>;
 export function createInbox(options: { database: HubDatabase; clock: Clock; conversations: ConversationService; tokens?: AccessServiceTokens | undefined; push?: PushService | undefined }) {
   const db = options.database.connection;
   const rates = new Map<string, number[]>();
+  const activeSource = db.prepare("SELECT * FROM inbox_sources WHERE client_id = ? AND revoked_at IS NULL");
+  const sourceFor = (clientId: string) => {
+    const raw = activeSource.get(clientId);
+    return raw === undefined ? undefined : Source.parse(raw);
+  };
   return {
+    sourceFor,
+    transfer: createInboxTransfers(options.database, options.clock),
     list: () => db.prepare("SELECT id, name FROM inbox_sources WHERE revoked_at IS NULL ORDER BY name").all(),
     create: async (name: string) => {
       if (options.tokens === undefined) return { error: "unavailable" as const };
@@ -45,9 +53,8 @@ export function createInbox(options: { database: HubDatabase; clock: Clock; conv
       }
     },
     receive: (clientId: string, body: InboxMessage, key: string | undefined) => {
-      const raw = db.prepare("SELECT * FROM inbox_sources WHERE client_id = ? AND revoked_at IS NULL").get(clientId);
-      if (raw === undefined) return { error: "forbidden" as const };
-      const source = Source.parse(raw);
+      const source = sourceFor(clientId);
+      if (source === undefined) return { error: "forbidden" as const };
       const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
       if (key !== undefined) {
         const previous = db.prepare("SELECT body_hash, entry FROM inbox_idempotency WHERE source = ? AND key = ?").get(source.id, key);

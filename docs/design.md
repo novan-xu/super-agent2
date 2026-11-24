@@ -38,6 +38,7 @@ The front door is Cloudflare Access on the existing host name, with three applic
 The host's own application admits only the owner, signed in with Google.
 A second application for the path `runner` admits only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the owner's pages and the owner's sign-in never reaches the runners' paths.
 A third application for the path `inbox` admits only service tokens tagged for inbox sources, and the hub checks the source identity and its separate audience on that path.
+The same application protects `/inbox/message` for text notices and `/inbox/mcp` for file sends from desktop agents.
 The hub verifies each application's own assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes, which the brain reaches on the NAS's internal network with its own token.
 A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes its service token and runner token at once and shows, once, a one-line install command that carries them to the machine.
 The new system took over the existing host name at its first deployment, and the first Super-agent was stopped then.
@@ -807,15 +808,23 @@ A message may be attachments alone.
 
 ## Device transfer
 
-The transfer tab is a private store independent of topics and the brain.
+The transfer tab is a private store independent of topics.
 Entries retain their exact text and files until deleted.
 Files are uploaded in parts to the hub's private data volume, outside the brain's mounts.
-The device upload interface allows 100 MiB per file and 30 files per entry.
+Device and desktop-agent uploads allow 100 MiB per file and 30 files per entry.
+Desktop agents use the stateless Streamable HTTP MCP endpoint at `/inbox/mcp`, with the inbox Access assertion and an active inbox source for every request.
+Each successful send creates one entry labelled with its source name and stores an optional note of up to 2,000 characters.
+`send_files` accepts up to 1 MiB of file data inline, while `begin_upload`, `upload_part` and `finish_upload` accept parts of up to 8 MiB before base64 encoding.
+The hub records each send by source and idempotency key and limits each source to 60 new sends per minute and two pending multipart uploads.
+Incomplete multipart uploads from inbox sources expire after 24 hours without progress and are cleaned up when a send starts.
+Completing an inbox transfer sends a push that names the source and files and opens the transfer tab, without writing a topic message, entering routing or starting a brain turn.
 File results from light tasks use the same transfer store and the runner's existing part-by-part delivery limits.
 The transfer file and the conversation download share the stored bytes.
 Deleting the transfer entry removes the transfer downloads and leaves the conversation download available.
-Incomplete uploads remain on disk; there is no automatic expiry.
+Incomplete device uploads remain on disk until they are finished.
 Entries are paged and changes refresh open pages over the owner WebSocket.
+When the owner mentions a specific transferred file in the current message, the brain can use `transfer_lookup` to find file metadata and `transfer_read` to copy the requested file into its shared attachment area.
+Both tools require an active owner turn and `owner_requested: true`, and a lookup can include device uploads as well as inbox and light-task results.
 
 ## Limits
 
@@ -903,6 +912,7 @@ There is no Lark channel.
 The notification for a held operation names where it runs and the command, cut visibly when it is too long for a push message, and never its environment.
 The brain's memory suggestions wait in 记忆, not in 等你, and send no notification.
 An inbox message sends a push with the source and the beginning of its text, opening that source's 日常 topic.
+An inbox file send opens 传输 and includes the file names within the push payload budget.
 
 ## Interface
 
@@ -926,7 +936,7 @@ Changed by this design:
 - 对话 keeps a switch at the top, 代码 | 日常 | 传输.
   代码 shows all repository topics or the topics in one selected repository.
   日常 shows daily topics, including System.
-  传输 is a private store for device transfers and light-task file results.
+  传输 is a private store for device transfers, desktop-agent file sends and light-task file results.
   Each inbox source has a 日常 topic created on first use and restored when a message arrives after archival.
   Its messages are labelled with the source, available in topic history, and never start a brain turn or enter routing.
   Each brain answer and each owner message has a small topic label that opens the topic view.

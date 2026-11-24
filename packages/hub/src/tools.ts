@@ -65,23 +65,12 @@ import { hubTargetName } from "./targets.js";
 import type { SkipOutcome, VerificationService } from "./verification.js";
 import type { WorkService } from "./work.js";
 import type { Runners } from "./runners.js";
+import { CallParams, errorBody, handleMcp, type JsonRpcId, resultBody, streamableMcpVersions, type ToolReply } from "./mcp.js";
+import { transferToolDefinitions, type TransferTools } from "./transfer-tools.js";
 
-export const supportedMcpVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
+export const supportedMcpVersions = [...streamableMcpVersions, "2024-11-05"] as const;
 
 export const toolServerName = "hub";
-
-const JsonRpcId = z.union([z.string(), z.number()]);
-
-const JsonRpcMessage = z.object({
-  jsonrpc: z.literal("2.0"),
-  id: JsonRpcId.optional(),
-  method: z.string().optional(),
-  params: z.unknown().optional(),
-});
-
-const InitializeParams = z.looseObject({ protocolVersion: z.string().optional() });
-
-const CallParams = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional() });
 
 const RunArguments = z.object({
   target: z.string().min(1).optional(),
@@ -260,13 +249,6 @@ const materialSchema = {
   description: "The material to work from",
 };
 
-type JsonRpcId = z.infer<typeof JsonRpcId>;
-
-export type ToolReply =
-  | { readonly status: 200; readonly body: Readonly<Record<string, unknown>> }
-  | { readonly status: 202 }
-  | { readonly status: 400; readonly body: Readonly<Record<string, unknown>> };
-
 export interface ToolCall {
   readonly body: string;
   readonly conversation: string | undefined;
@@ -284,6 +266,7 @@ export interface ToolServerOptions {
   readonly tickets?: TicketTools;
   readonly memories?: MemoryService;
   readonly attachments?: AttachmentStore;
+  readonly transferTools?: TransferTools;
   readonly appGateway?: AppGateway;
   readonly appTodos?: AppTodos;
   readonly mailTriage?: MailTriage;
@@ -833,14 +816,6 @@ interface ToolResult {
   readonly isError?: boolean;
 }
 
-function errorBody(id: JsonRpcId | null, code: number, message: string): Readonly<Record<string, unknown>> {
-  return { jsonrpc: "2.0", id, error: { code, message } };
-}
-
-function resultBody(id: JsonRpcId, result: unknown): Readonly<Record<string, unknown>> {
-  return { jsonrpc: "2.0", id, result };
-}
-
 function settled(command: CommandRecord): boolean {
   return command.state === "held" || finishedStates.includes(command.state);
 }
@@ -862,6 +837,9 @@ function heldText(command: CommandRecord): string {
 
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
+  const ownerTurn = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) =>
+    conversation !== undefined && turn !== undefined && !aborted.aborted
+    && conversations.activeTurnProvider(conversation, turn) !== undefined && conversations.ownerAppTurn(conversation, turn);
   const reviewOf = (conversation: string | undefined, turn: string | undefined) =>
     conversation === undefined || turn === undefined ? undefined : conversations.mailReviewOf(conversation, turn);
   const gatewayFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal): AppGateway | undefined => {
@@ -904,7 +882,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     }) };
   };
 
-  const definitions = (gateway: AppGateway | undefined, appWrites: boolean) => {
+  const definitions = (gateway: AppGateway | undefined, appWrites: boolean, ownerTransfer: boolean) => {
     return [
       {
         name: "run_command",
@@ -998,6 +976,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       { name: "ask_owner", title: "Ask the owner", description: "Show all questions of a choice together. The owner's answer arrives later in this topic.", inputSchema: z.toJSONSchema(z.object({ questions: Questions }), { io: "input" }) },
       ...topicDefinitions(),
       ...(gateway === undefined ? [] : appDefinitions(gateway, appWrites)),
+      ...(ownerTransfer ? transferToolDefinitions : []),
     ];
   };
 
@@ -1557,6 +1536,11 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return { status: 200, body: resultBody(id, { content: [{ type: "text", text: appToolError(error) }], isError: true }) };
       }
     }
+    if ((name === "transfer_lookup" || name === "transfer_read") && options.transferTools !== undefined) {
+      const result = ownerTurn(conversation, turn, aborted) ? options.transferTools.call(name, args)
+        : { text: "Transfer tools require the owner's request in an active turn.", isError: true };
+      return { status: 200, body: resultBody(id, { content: [{ type: "text", text: result.text }], isError: result.isError }) };
+    }
     let result: ToolResult;
     switch (parsed.data.name) {
       case "run_command":
@@ -1664,50 +1648,19 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
   };
 
   return {
-    handle: async ({ body, conversation, turn, aborted }) => {
-      let message: z.infer<typeof JsonRpcMessage>;
-      try {
-        const parsed = JsonRpcMessage.safeParse(JSON.parse(body));
-        if (!parsed.success) {
-          return { status: 400, body: errorBody(null, -32600, "Invalid request") };
+    handle: async ({ body, conversation, turn, aborted }) => handleMcp(body, {
+      name: toolServerName,
+      versions: supportedMcpVersions,
+      list: () => {
+        const gateway = gatewayFor(conversation, turn, aborted);
+        if (reviewOf(conversation, turn) !== undefined) {
+          return gateway === undefined || options.mailTriage === undefined ? []
+            : [...appDefinitions(gateway).filter(({ name }) => name === "mail_read"), mailTriageDefinition];
         }
-        message = parsed.data;
-      } catch {
-        return { status: 400, body: errorBody(null, -32700, "Parse error") };
-      }
-      const { id, method } = message;
-      if (id === undefined || method === undefined) {
-        return { status: 202 };
-      }
-      switch (method) {
-        case "initialize": {
-          const requested = InitializeParams.safeParse(message.params).data?.protocolVersion;
-          const version = supportedMcpVersions.find((known) => known === requested) ?? supportedMcpVersions[0];
-          return {
-            status: 200,
-            body: resultBody(id, {
-              protocolVersion: version,
-              capabilities: { tools: { listChanged: false } },
-              serverInfo: { name: toolServerName, version: "0.0.0" },
-            }),
-          };
-        }
-        case "ping":
-          return { status: 200, body: resultBody(id, {}) };
-        case "tools/list": {
-          const gateway = gatewayFor(conversation, turn, aborted);
-          if (reviewOf(conversation, turn) !== undefined) {
-            const tools = gateway === undefined || options.mailTriage === undefined ? []
-              : [...appDefinitions(gateway).filter(({ name }) => name === "mail_read"), mailTriageDefinition];
-            return { status: 200, body: resultBody(id, { tools }) };
-          }
-          return { status: 200, body: resultBody(id, { tools: definitions(gateway, appWritesFor(conversation, turn, aborted) !== undefined) }) };
-        }
-        case "tools/call":
-          return call(id, message.params, conversation, turn, aborted);
-        default:
-          return { status: 200, body: errorBody(id, -32601, `Method not found: ${method}`) };
-      }
-    },
+        return definitions(gateway, appWritesFor(conversation, turn, aborted) !== undefined,
+          options.transferTools !== undefined && ownerTurn(conversation, turn, aborted));
+      },
+      call: (id, params) => call(id, params, conversation, turn, aborted),
+    }),
   };
 }
