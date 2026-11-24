@@ -208,6 +208,7 @@ export interface HubServerOptions {
   readonly verify: AccessVerifier;
   readonly verifyRunner?: AccessVerifier;
   readonly verifyInbox?: AccessVerifier;
+  readonly verifyMcp?: AccessVerifier;
   readonly inbox?: Inbox;
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
@@ -404,9 +405,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
     for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
   };
 
-  const authenticate = async (request: IncomingMessage): Promise<Identity | undefined> => {
+  const authenticate = async (request: IncomingMessage, verify = options.verify): Promise<Identity | undefined> => {
     try {
-      const result = await options.verify(headerValue(request));
+      const result = await verify(headerValue(request));
       if (!result.ok || !options.admit(result.identity)) {
         return undefined;
       }
@@ -510,6 +511,18 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable", ...(options.version === undefined ? {} : { version: options.version }) }, method === "HEAD");
       return;
     }
+    if (path === "/mcp") {
+      const { inbox, verifyMcp } = options;
+      if (inbox === undefined || verifyMcp === undefined) {
+        request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+      }
+      if (await authenticate(request, verifyMcp) === undefined) {
+        request.resume(); sendJson(response, 403, { error: "forbidden" }); return;
+      }
+      await serveInboxMcp({ request, response, inbox, source: () => inbox.oauthSource,
+        allowedOrigin: request.headers.origin === undefined || isSameOrigin(request), changed: transferChanged, push: options.push });
+      return;
+    }
     if (path === "/inbox" || path.startsWith("/inbox/")) {
       if (options.verifyInbox === undefined || options.inbox === undefined) {
         request.resume(); sendJson(response, 404, { error: "not_found" }); return;
@@ -519,7 +532,9 @@ export function createHubServer(options: HubServerOptions): HubServer {
         request.resume(); sendJson(response, 403, { error: "forbidden" }); return;
       }
       if (path === "/inbox/mcp") {
-        await serveInboxMcp({ request, response, inbox: options.inbox, clientId: verified.identity.clientId,
+        const { inbox } = options;
+        const { clientId } = verified.identity;
+        await serveInboxMcp({ request, response, inbox, source: () => inbox.sourceFor(clientId),
           allowedOrigin: request.headers.origin === undefined || isSameOrigin(request), changed: transferChanged, push: options.push });
         return;
       }
@@ -591,7 +606,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (path === "/api/inbox/sources" || /^\/api\/inbox\/sources\/[0-9a-f-]+\/revoke$/.test(path)) {
       const inbox = options.inbox;
-      if (inbox === undefined) { request.resume(); sendJson(response, 503, { error: "unavailable" }); return; }
+      if (inbox === undefined || options.verifyInbox === undefined) { request.resume(); sendJson(response, 503, { error: "unavailable" }); return; }
       if (method === "GET" && path === "/api/inbox/sources") { sendJson(response, 200, { sources: inbox.list() }); return; }
       if (method !== "POST") { request.resume(); sendJson(response, 405, { error: "method_not_allowed" }); return; }
       if (!ownerAction(request, response)) return;

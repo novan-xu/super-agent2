@@ -152,6 +152,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
   const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
   const verifyInbox = config.accessInboxAudience === undefined ? undefined : createAccessVerifier({ team: config.accessTeam, audience: config.accessInboxAudience, keys, clock });
+  const verifyMcp = config.accessMcpAudience === undefined ? undefined : createAccessVerifier({ team: config.accessTeam, audience: config.accessMcpAudience, keys, clock });
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
@@ -435,7 +436,9 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       commands,
       verify,
       verifyRunner,
-      ...(verifyInbox === undefined ? {} : { verifyInbox, inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
+      ...(verifyInbox === undefined ? {} : { verifyInbox }),
+      ...(verifyMcp === undefined ? {} : { verifyMcp }),
+      ...(verifyInbox === undefined && verifyMcp === undefined ? {} : { inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
       admit: ownerOnly(config.ownerEmail),
       conversations,
       waiting,

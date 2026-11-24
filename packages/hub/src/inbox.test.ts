@@ -14,6 +14,7 @@ import { startTestHub } from "./testing/http.js";
 
 const inboxAudience = "c".repeat(64);
 const runnerAudience = "b".repeat(64);
+const mcpAudience = "d".repeat(64);
 let directory: string;
 let clock: TestClock;
 let key: SigningKey;
@@ -25,10 +26,11 @@ let ownerAssertion: string;
 let inboxAssertion: string;
 let tokens: number;
 
-function launch() {
+function launch({ oauth = true, inbox = true } = {}) {
   const vapid = generateVapidKeys();
   return startTestHub({
-    config: { ...testConfig(directory), accessInboxAudience: inboxAudience, accessRunnerAudience: runnerAudience, vapid },
+    config: { ...testConfig(directory), accessRunnerAudience: runnerAudience, vapid,
+      ...(inbox ? { accessInboxAudience: inboxAudience } : {}), ...(oauth ? { accessMcpAudience: mcpAudience } : {}) },
     keySource: staticKeySource(keySet(key)), clock, targets: [fakeTarget("hub")], credentials: testCredentials,
     gate: () => ({ kind: "allow" }), report: () => undefined,
     inboxServiceTokens: { create: async () => { tokens += 1; return { id: `token-${tokens}`, clientId: tokens === 1 ? "source.access" : `source-${tokens}.access`, clientSecret: "secret", expiresAt: null }; }, remove: async (id) => { if (failRemoval) throw new Error("offline"); removed.push(id); } },
@@ -64,15 +66,15 @@ function serviceAssertion(client: string) {
   return assertion({ key, clock, claims: { iss: issuer, aud: [inboxAudience], common_name: client, sub: "", type: "app" } });
 }
 
-function mcp(token: string | null, body: unknown, headers: Record<string, string> = {}) {
-  return fetch(`${base()}/inbox/mcp`, { method: "POST", headers: {
+function mcp(token: string | null, body: unknown, headers: Record<string, string> = {}, path = "/inbox/mcp") {
+  return fetch(`${base()}${path}`, { method: "POST", headers: {
     "content-type": "application/json", accept: "application/json, text/event-stream",
     ...(token === null ? {} : { "cf-access-jwt-assertion": token }), ...headers,
   }, body: JSON.stringify(body) });
 }
 
-async function call(name: string, args: unknown, token = inboxAssertion) {
-  const response = await mcp(token, { jsonrpc: "2.0", id: "call", method: "tools/call", params: { name, arguments: args } }, { "mcp-protocol-version": "2025-11-25" });
+async function call(name: string, args: unknown, token = inboxAssertion, path = "/inbox/mcp") {
+  const response = await mcp(token, { jsonrpc: "2.0", id: "call", method: "tools/call", params: { name, arguments: args } }, { "mcp-protocol-version": "2025-11-25" }, path);
   expect(response.status).toBe(200);
   const { id, result } = await response.json() as { id: string; result: { isError?: boolean; content: { text: string }[] } };
   expect(id).toBe("call");
@@ -341,5 +343,101 @@ describe("inbox MCP transfers", () => {
     expect(readFileSync(path, "utf8")).toBe("hello");
     brain.receive({ type: "turn.finished", ...scope, outcome: "completed", reason: null });
     expect(await requestBrainTool(hub, "transfer_read", read, scope)).toHaveProperty("isError", true);
+  });
+});
+
+describe("OAuth MCP transfers", () => {
+  const listTools = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+  const oauthAssertion = (claims = personClaims()) => assertion({ key, clock, claims: { ...claims, aud: [mcpAudience] } });
+
+  it("accepts only owner assertions for the MCP application", async () => {
+    const source = await create();
+    const token = await oauthAssertion();
+    const nonOwner = await oauthAssertion(personClaims("other@example.net"));
+    const mcpService = await oauthAssertion({ iss: issuer, common_name: source.clientId, sub: "", type: "app" });
+    const runner = await assertion({ key, clock, claims: { ...personClaims(), aud: [runnerAudience] } });
+    for (const refused of [null, ownerAssertion, inboxAssertion, runner, nonOwner, mcpService]) {
+      expect((await mcp(refused, listTools, {}, "/mcp")).status).toBe(403);
+    }
+    expect((await mcp(null, listTools, { authorization: `Bearer ${token}`, cookie: `CF_Authorization=${token}` }, "/mcp")).status).toBe(403);
+    expect((await mcp(token, listTools, { origin: "https://elsewhere.example" }, "/mcp")).status).toBe(403);
+    const listed = await mcp(token, listTools, {}, "/mcp");
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual(await (await mcp(inboxAssertion, listTools)).json());
+    expect((await mcp(token, listTools)).status).toBe(403);
+    expect((await post(token)).status).toBe(403);
+    expect((await fetch(`${base()}/api/transfer`, { headers: { "cf-access-jwt-assertion": token } })).status).toBe(403);
+    expect(await (await owner("/api/inbox/sources")).json()).toEqual({ sources: [{ id: source.id, name: "shortcut" }] });
+  });
+
+  it("can be disabled and can be enabled independently of the service-token inbox", async () => {
+    await hub.close();
+    hub = await launch({ oauth: false });
+    const token = await oauthAssertion();
+    await create();
+    expect((await mcp(token, listTools, {}, "/mcp")).status).toBe(404);
+    expect((await mcp(inboxAssertion, listTools)).status).toBe(200);
+    await hub.close();
+    hub = await launch({ inbox: false });
+    expect((await mcp(token, listTools, {}, "/mcp")).status).toBe(200);
+    expect((await mcp(inboxAssertion, listTools)).status).toBe(404);
+    expect((await owner("/api/inbox/sources")).status).toBe(503);
+  });
+
+  it("publishes and pushes inline and multipart transfers once with the OAuth source", async () => {
+    const token = await oauthAssertion();
+    const send = (name: string, args: unknown) => call(name, args, token, "/mcp");
+    const device = createPushDevice();
+    expect(hub.push?.subscribe({ endpoint: "https://push.example.net/oauth", keys: { p256dh: device.p256dh, auth: device.auth }, applicationServerKey: hub.push.publicKey }, "https://hub.example.com")).toBe("saved");
+    const bytes = Buffer.from([0, 200, 255]);
+    const inline = { idempotency_key: "inline", note: "Report ready", files: [{ name: "inline.bin", content_base64: bytes.toString("base64") }] };
+    const sent = await send("send_files", inline);
+    expect(sent).toHaveProperty("data.entry_id");
+    expect(await send("send_files", inline)).toEqual(sent);
+    const upload = { idempotency_key: "multipart" };
+    expect(await send("begin_upload", { ...upload, files: [{ name: "multipart.bin", size: bytes.length }] })).toHaveProperty("data.completed", false);
+    expect(await send("upload_part", { ...upload, file_index: 0, offset: 0, content_base64: bytes.toString("base64") })).toEqual({ data: { received: bytes.length } });
+    const finished = await send("finish_upload", upload);
+    expect(finished).toHaveProperty("data.entry_id");
+    expect(await send("finish_upload", upload)).toEqual(finished);
+    const { items } = await transfers();
+    expect(items).toHaveLength(2);
+    for (const [name, note] of [["inline.bin", inline.note], ["multipart.bin", ""]]) {
+      const entry = items.find(({ files }) => files[0]?.name === name)!;
+      expect(entry).toMatchObject({ title: "OAuth MCP", text: note, files: [{ name, size: bytes.length }] });
+      const file = await owner(`/api/transfer/files/${entry.files[0]!.id}`);
+      expect(file.status).toBe(200);
+      expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
+    }
+    await hub.push?.idle();
+    expect(pushes.map((push) => JSON.parse(receivePush(device, push)))).toEqual([
+      expect.objectContaining({ title: "OAuth MCP", body: "inline.bin", url: "/transfer" }),
+      expect.objectContaining({ title: "OAuth MCP", body: "multipart.bin", url: "/transfer" }),
+    ]);
+    for (const table of ["conversation_entries", "turns"]) {
+      expect(hub.database.connection.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    }
+  });
+
+  it("shares transfer limits across OAuth assertions with a separate budget and keys from service tokens", async () => {
+    await create();
+    const token = await oauthAssertion();
+    const send = (name: string, args: unknown) => call(name, args, token, "/mcp");
+    const upload = { idempotency_key: "pending", files: [{ name: "file", size: 1 }] };
+    expect(await send("begin_upload", { ...upload, files: Array(31).fill(upload.files[0]) })).toHaveProperty("error", expect.stringContaining("at most 30 files"));
+    expect(await send("begin_upload", { ...upload, files: [{ name: "file", size: 100 * 1024 * 1024 + 1 }] })).toHaveProperty("error", expect.stringContaining("at most 100 MiB"));
+    expect(await send("begin_upload", upload)).toHaveProperty("data.completed", false);
+    expect(await send("begin_upload", { ...upload, idempotency_key: "second" })).toHaveProperty("data.completed", false);
+    expect(await send("begin_upload", { ...upload, idempotency_key: "third" })).toHaveProperty("error", expect.stringContaining("two pending uploads"));
+    expect(await call("begin_upload", upload)).toHaveProperty("data.completed", false);
+    const args = (i: number) => ({ idempotency_key: String(i), files: [{ name: "empty.txt", content_base64: "" }] });
+    const first = await send("send_files", args(0));
+    for (let i = 1; i < 58; i++) expect(await send("send_files", args(i))).toHaveProperty("data.entry_id");
+    const anotherToken = await oauthAssertion({ ...personClaims(), identity_nonce: "another" });
+    expect(await call("send_files", args(58), anotherToken, "/mcp")).toHaveProperty("error", expect.stringContaining("60 sends per minute"));
+    expect(await call("send_files", args(0), anotherToken, "/mcp")).toEqual(first);
+    const service = await call("send_files", args(0));
+    expect(service).toHaveProperty("data.entry_id");
+    expect(service).not.toEqual(first);
   });
 });

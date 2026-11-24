@@ -39,6 +39,7 @@ const Environment = z.object({
     .regex(/^[0-9a-f]{64}$/, present("must be the application's audience tag, 64 lower-case hexadecimal characters")),
   ACCESS_RUNNER_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the runner application's audience tag, 64 lower-case hexadecimal characters" })),
   ACCESS_INBOX_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the inbox application's audience tag, 64 lower-case hexadecimal characters" })),
+  ACCESS_MCP_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the OAuth MCP application's audience tag, 64 lower-case hexadecimal characters" })),
   OWNER_EMAIL: z.email(present("must be an email address")),
   HUB_DATA_DIR: z.string(present("must be text")).min(1, { error: "must not be empty" }),
   HUB_PORT: z
@@ -84,6 +85,7 @@ export interface Config {
   readonly accessAudience: string;
   readonly accessRunnerAudience?: string;
   readonly accessInboxAudience?: string;
+  readonly accessMcpAudience?: string;
   readonly ownerEmail: string;
   readonly dataDir: string;
   readonly port: number;
@@ -150,6 +152,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
   if (value.ACCESS_INBOX_AUD !== undefined && (value.ACCESS_INBOX_AUD === value.ACCESS_AUD || value.ACCESS_INBOX_AUD === value.ACCESS_RUNNER_AUD)) {
     return { ok: false, problems: ["ACCESS_INBOX_AUD must be the audience tag of a separate inbox application"] };
   }
+  if (value.ACCESS_MCP_AUD !== undefined && [value.ACCESS_AUD, value.ACCESS_RUNNER_AUD, value.ACCESS_INBOX_AUD].includes(value.ACCESS_MCP_AUD)) {
+    return { ok: false, problems: ["ACCESS_MCP_AUD must be the audience tag of a separate OAuth MCP application"] };
+  }
   const { HUB_WORK_REQUEST_PORT: workPort, HUB_WORK_SOURCES_DIR: workDirectory } = value;
   if ((workPort === undefined) !== (workDirectory === undefined)) {
     return { ok: false, problems: ["HUB_WORK_REQUEST_PORT and HUB_WORK_SOURCES_DIR must be set together"] };
@@ -168,6 +173,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
       accessAudience: value.ACCESS_AUD,
       ...(value.ACCESS_RUNNER_AUD === undefined ? {} : { accessRunnerAudience: value.ACCESS_RUNNER_AUD }),
       ...(value.ACCESS_INBOX_AUD === undefined ? {} : { accessInboxAudience: value.ACCESS_INBOX_AUD }),
+      ...(value.ACCESS_MCP_AUD === undefined ? {} : { accessMcpAudience: value.ACCESS_MCP_AUD }),
       ownerEmail: value.OWNER_EMAIL.toLowerCase(),
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,

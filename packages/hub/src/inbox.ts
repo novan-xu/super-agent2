@@ -16,15 +16,17 @@ export type InboxMessage = z.infer<typeof InboxMessage>;
 export function createInbox(options: { database: HubDatabase; clock: Clock; conversations: ConversationService; tokens?: AccessServiceTokens | undefined; push?: PushService | undefined }) {
   const db = options.database.connection;
   const rates = new Map<string, number[]>();
-  const activeSource = db.prepare("SELECT * FROM inbox_sources WHERE client_id = ? AND revoked_at IS NULL");
+  const activeSource = db.prepare("SELECT * FROM inbox_sources WHERE client_id = ? AND kind = 'service' AND revoked_at IS NULL");
+  const oauthSource = Source.pick({ id: true, name: true }).parse(db.prepare("SELECT id, name FROM inbox_sources WHERE kind = 'oauth'").get());
   const sourceFor = (clientId: string) => {
     const raw = activeSource.get(clientId);
     return raw === undefined ? undefined : Source.parse(raw);
   };
   return {
     sourceFor,
+    oauthSource,
     transfer: createInboxTransfers(options.database, options.clock),
-    list: () => db.prepare("SELECT id, name FROM inbox_sources WHERE revoked_at IS NULL ORDER BY name").all(),
+    list: () => db.prepare("SELECT id, name FROM inbox_sources WHERE kind = 'service' AND revoked_at IS NULL ORDER BY name").all(),
     create: async (name: string) => {
       if (options.tokens === undefined) return { error: "unavailable" as const };
       if (db.prepare("SELECT id FROM inbox_sources WHERE name = ? AND revoked_at IS NULL").get(name) !== undefined) return { error: "conflict" as const };
@@ -39,7 +41,7 @@ export function createInbox(options: { database: HubDatabase; clock: Clock; conv
       return { id, name, clientId: token.clientId, clientSecret: token.clientSecret };
     },
     revoke: async (id: string) => {
-      const raw = db.prepare("SELECT * FROM inbox_sources WHERE id = ? AND revoked_at IS NULL").get(id);
+      const raw = db.prepare("SELECT * FROM inbox_sources WHERE id = ? AND kind = 'service' AND revoked_at IS NULL").get(id);
       if (raw === undefined) return undefined;
       const source = Source.parse(raw);
       db.prepare("UPDATE inbox_sources SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(options.clock.now(), id);

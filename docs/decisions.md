@@ -3879,3 +3879,19 @@ Another option was to expand the set of engines that can start code tickets.
   Keep completed receipts so retries keep returning the original entry ID after a restart or deletion.
 - **Why:** Storage for incomplete uploads stays bounded per source, while retries can resume uploads and cannot duplicate a published transfer or push.
 - **Other options:** Keep unfinished uploads indefinitely or limit every part call, which would spread a single large transfer across multiple rate windows.
+
+## 2026-11-23 — Managed OAuth for MCP file sends (#333)
+
+- **Chosen:** Protect `/mcp` with a fourth Access application, enable Managed OAuth there and admit only the owner.
+  The hub requires that application's own audience and keeps the route disabled until that audience is configured.
+- **Why:** OAuth clients can discover and authenticate to the file-send tools with their server URL, and the service-token inbox retains its existing policy.
+- **Other options:** Combine OAuth and service-token policies in the inbox application or operate an OAuth server in the hub.
+
+- **Chosen:** Label all OAuth sends `OAuth MCP` and give them a shared idempotency namespace, rate budget and pending-upload limit.
+- **Why:** Cloudflare documents the forwarded Access assertion as equivalent to a browser assertion and does not document a reliable client identity for the origin.
+- **Other options:** Configure a dedicated Access application and audience for each client to give each an independent label and quota.
+
+- **Chosen:** Restrict dynamic registrations to the Claude web callback and the documented ChatGPT callbacks, with a narrow ChatGPT path wildcard for initial setup if the exact generated callback is unavailable.
+  Replace the wildcard with the exact callback once it is known.
+- **Why:** This permits registering the two intended connectors without allowing unrelated redirect destinations.
+- **Other options:** Allow arbitrary redirects or pre-register every connector with its own client credentials.

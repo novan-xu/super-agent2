@@ -34,11 +34,14 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 | Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (with a checkout when requested) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
-The front door is Cloudflare Access on the existing host name, with three applications and no Bypass rule anywhere.
+The front door is Cloudflare Access on the existing host name, with four applications and no Bypass rule anywhere.
 The host's own application admits only the owner, signed in with Google.
 A second application for the path `runner` admits only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the owner's pages and the owner's sign-in never reaches the runners' paths.
 A third application for the path `inbox` admits only service tokens tagged for inbox sources, and the hub checks the source identity and its separate audience on that path.
 The same application protects `/inbox/message` for text notices and `/inbox/mcp` for file sends from desktop agents.
+A fourth application for `/mcp` uses Cloudflare Managed OAuth and admits only the owner's email.
+The hub requires that application's own signed Access assertion and the owner identity on `/mcp`, and the endpoint is disabled when its audience is unset.
+Cloudflare handles OAuth discovery, client registration, authorization and token issuance.
 The hub verifies each application's own assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes, which the brain reaches on the NAS's internal network with its own token.
 A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes its service token and runner token at once and shows, once, a one-line install command that carries them to the machine.
 The new system took over the existing host name at its first deployment, and the first Super-agent was stopped then.
@@ -811,13 +814,14 @@ A message may be attachments alone.
 The transfer tab is a private store independent of topics.
 Entries retain their exact text and files until deleted.
 Files are uploaded in parts to the hub's private data volume, outside the brain's mounts.
-Device and desktop-agent uploads allow 100 MiB per file and 30 files per entry.
+Device and MCP uploads allow 100 MiB per file and 30 files per entry.
 Desktop agents use the stateless Streamable HTTP MCP endpoint at `/inbox/mcp`, with the inbox Access assertion and an active inbox source for every request.
+OAuth clients such as ChatGPT and Claude web use `/mcp` for the same tools and share the `OAuth MCP` source label, idempotency keys and limits.
 Each successful send creates one entry labelled with its source name and stores an optional note of up to 2,000 characters.
 `send_files` accepts up to 1 MiB of file data inline, while `begin_upload`, `upload_part` and `finish_upload` accept parts of up to 8 MiB before base64 encoding.
 The hub records each send by source and idempotency key and limits each source to 60 new sends per minute and two pending multipart uploads.
-Incomplete multipart uploads from inbox sources expire after 24 hours without progress and are cleaned up when a send starts.
-Completing an inbox transfer sends a push that names the source and files and opens the transfer tab, without writing a topic message, entering routing or starting a brain turn.
+Incomplete MCP uploads expire after 24 hours without progress and are cleaned up when a send starts.
+Completing an MCP transfer sends a push that names the source and files and opens the transfer tab, without writing a topic message, entering routing or starting a brain turn.
 File results from light tasks use the same transfer store and the runner's existing part-by-part delivery limits.
 The transfer file and the conversation download share the stored bytes.
 Deleting the transfer entry removes the transfer downloads and leaves the conversation download available.
@@ -995,6 +999,7 @@ Values are copied on the NAS from the old secrets folder into the new deployment
 | `ACCESS_TEAM`, `ACCESS_AUD`, `OWNER_EMAIL` | NAS, `secrets/hub.env` | Checking the front door's sign-in |
 | `ACCESS_RUNNER_AUD` | NAS, `secrets/hub.env` | Checking the runner application's assertion on `/runner/` |
 | `ACCESS_INBOX_AUD` | NAS, `secrets/hub.env` | Checking the inbox application's assertion on `/inbox/` |
+| `ACCESS_MCP_AUD` | NAS, `secrets/hub.env` | Enabling `/mcp` and checking the OAuth MCP application's assertion on that path |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_API_TOKEN` | NAS, `secrets/hub.env` | Creating and deleting runners' Access service tokens (Access: Service Tokens, Edit, nothing else) |
 | Cloudflare API token, `TUNNEL_TOKEN` | NAS, `secrets/cloudflare.env`, `secrets/tunnel.env` | The host name and its tunnel |
 | `WOODPECKER_SERVER`, `WOODPECKER_TOKEN` | NAS, hub environment | Reading CI results and logs |
