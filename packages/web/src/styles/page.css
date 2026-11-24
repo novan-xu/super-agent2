@@ -514,6 +514,7 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
   .top--workbench { flex-wrap: wrap; padding-bottom: 0; }
   .top--workbench .top-title { flex: 1 0 100%; padding-top: 6px; }
   .wb-tabs { flex: 1 1 100%; }
+  .wb-tab.is-active { min-width: 192px; }
 }
 
 .allowance-rings { display: grid; gap: 4px; }

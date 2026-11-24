@@ -42,7 +42,17 @@ export function RepositoryTabs({ repositories, tickets, topics, waiting, selecte
   const pinned = repositories.filter((row) => row.pinned).sort((a, b) =>
     (a.pinnedOrder ?? 0) - (b.pinnedOrder ?? 0) || (a.alias ?? a.repository).localeCompare(b.alias ?? b.repository) || a.repository.localeCompare(b.repository));
   const names = pinned.map((row) => row.repository);
+  const pinnedKey = JSON.stringify(names);
   const displayed = preview === null ? pinned : preview.names.map((name) => pinned.find((row) => row.repository === name)).filter((row): row is RepositoryAccount => row !== undefined);
+  useLayoutEffect(() => {
+    const container = strip.current;
+    const active = container?.querySelector<HTMLElement>(".wb-tab.is-active");
+    if (container === null || container === undefined || active === null || active === undefined || !window.matchMedia("(max-width: 767px)").matches) return;
+    const bounds = container.getBoundingClientRect();
+    const tabBounds = active.getBoundingClientRect();
+    if (tabBounds.left < bounds.left) container.scrollLeft += tabBounds.left - bounds.left;
+    else if (tabBounds.right > bounds.right) container.scrollLeft += tabBounds.right - bounds.right;
+  }, [selected, pinnedKey]);
   const move = (items: readonly string[], from: number, to: number) => {
     const next = [...items];
     const [item] = next.splice(from, 1);

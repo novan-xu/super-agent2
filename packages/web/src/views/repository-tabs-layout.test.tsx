@@ -36,10 +36,12 @@ it.skipIf(chrome === undefined)("shrinks tabs within the header and scrolls only
       expect(result.page).toBe(result.viewport);
       expect(result.header).toBeLessThanOrEqual(result.viewport);
       expect(result.add).toBeLessThanOrEqual(result.viewport);
-      expect(Math.max(...result.widths) - Math.min(...result.widths)).toBeLessThan(1);
       expect(result.activeClose).toBe("visible");
       expect(result.background).toBe(result.sidebar);
     }
+    expect(narrow.widths[2]).toBeGreaterThanOrEqual(160);
+    expect(Math.max(...narrow.widths.filter((_, index) => index !== 2)) - Math.min(...narrow.widths)).toBeLessThan(1);
+    expect(Math.max(...wide.widths) - Math.min(...wide.widths)).toBeLessThan(1);
     expect(narrow.widths[0]).toBeLessThan(wide.widths[0]!);
     expect(narrow.inactiveLabel).toBe("none");
     expect(narrow.stripScroll).toBeGreaterThan(narrow.stripClient);
