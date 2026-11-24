@@ -163,7 +163,8 @@ That is the workbench's arrangement, where the tab strip is the header, applied 
 ## Workbench tab strip
 
 - The strip starts at the sheet's left edge.
-- `.wb-tabs-scroll` is a horizontal scroll container, which clips at its padding edge, so it starts one pixel further left (margin −1 px, padding +1 px): the first tab's left side can then be painted on the sheet edge's own pixel column, and no tab moves.
+- `.wb-tabs-scroll` is a horizontal scroll container, which clips at its padding edge, so from 768 px it starts one pixel further left (margin −1 px, padding +1 px): the first tab's left side can then be painted on the sheet edge's own pixel column, and no tab moves.
+- On phones the sheet's edge column is outside the window, so the strip starts at the window's edge and stays inside it.
 - Its end padding is `--radius-lg` + 10 px, before the `+` button.
 - Tabs stand edge to edge, with no gap and no overlap, and two neighbours share one hairline.
 - The tab boxes are the same for every selection, so tab positions do not change when the selection changes on desktop.

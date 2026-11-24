@@ -1,5 +1,106 @@
-Super Agent material overlay: measurements
-==========================================
+Super Agent material: measurements
+==================================
+
+The production port (ticket AT-2026-11-24, issue #335) comes first. The
+prototype records of tickets AS-2026-11-24, AR-2026-11-24 and AN-2026-11-24
+follow unchanged below it; they measured the offline prototype page
+(super-agent-redesign.html), which is not in the repository.
+
+
+AT-2026-11-24 (production port)
+===============================
+
+Method
+------
+- Engine: Chrome Headless Shell 159 (the repository's pinned browser),
+  macOS, the page development harness with its layout fixture data, built
+  pages served from a directory; computed layout boxes
+  (getBoundingClientRect).
+- "reference" = main at 1dbe495 with the prototype's markup (the logo as the
+  collapse toggle) and the prototype's material.css appended unchanged, that
+  is the approved prototype applied to the real page; "port" = this change.
+- Sidebar state through localStorage sidebar.collapsed, theme through the
+  browser's colour scheme.
+
+1. Port against reference, pixels
+---------------------------------
+168 screenshots of each build: 15 routes (工作台, 对话 代码 and 日常, 传输,
+记忆, 定时, 设置 and its seven sections, the ticket page) at 1280 x 800 in
+both themes and sidebar states; 工作台, 定时 and 对话 at 1024 x 700,
+1780 x 880, 800 x 600 and 1440 x 900 in both themes and states; every route
+at 390 x 844 and 320 x 700 with mobile emulation in both themes.
+  identical (no pixel > 2 levels)      142
+  topic label tone                      12  the tone follows the topic's
+                                            random id, which differs
+                                            between the two harnesses
+  hub connection state, stream scroll    3  timing of the sample data
+  antialiasing                          11  at most 24 pixels on a glyph
+                                            or curve edge; the reference
+                                            differs from itself the same
+                                            way (24 pixels on the logo's
+                                            edge, rendered twice)
+
+2. Sidebar, expanded vs collapsed
+---------------------------------
+13 routes at 1280 x 800, and 工作台 and 定时 also at 1280 x 680,
+1024 x 700, 1780 x 880 and 800 x 600, light and dark: 42 cases, each in both
+states. Largest value over all cases:
+  |dx|, |dy|, |dh| of logo, nav buttons, icons, rings, well, lamps   0, 0, 0
+  |dw| of logo, icons, lamps                                         0
+  |centre x - strip centre|, collapsed                               0
+  |left margin - right margin|, collapsed                            0
+  |icon centre - button centre|, x and y                             0
+  |lamp centre - well centre|                                        0
+  ring start - first allowance row start                             0
+  logo top - folder tab top, both states                             0
+Workbench, 1280 x 800, both themes (x, y, w, h; collapsed / expanded):
+  logo            12, 18, 48, 48 / 12, 18, 48, 48
+  button 工作台   12, 90, 48, 40 / 12, 90, 211, 40
+   icon 工作台    27, 101, 18, 18 / 27, 101, 18, 18
+  button 设置     12, 744, 48, 40 / 12, 744, 211, 40
+   icon 设置      27, 755, 18, 18 / 27, 755, 18, 18
+  rings 1-4       16, 286 / 330 / 374 / 418, 40, 40 (first row at y 286)
+  lamp well       12, 656.41, 48, 75.59 / 12, 656.41, 211, 75.59
+  lamps           32, 675.8 and 32, 704.59, 8, 8 in both states
+  sidebar 0-73 collapsed, edge line x 72, strip centre 36, sheet from x 73,
+  sheet top 56, folder tab top 18.
+
+3. Tabs
+-------
+1280 expanded and collapsed, 1024 collapsed, and 500, 390 and 320 wide with
+mobile emulation, light and dark, the 1st, 2nd, 3rd and 5th tab selected:
+  gap between consecutive tab boxes          0 (minimum and maximum)
+  tab boxes the same for every selection     yes (desktop)
+  1280 expanded   236/121, 357/121, 478/121, 599/121, ...
+  1280 collapsed  73/141.38, 214.38/141.38, 355.75/141.38, ...
+  1024 collapsed  73/109.38, 182.38/109.38, 291.75/109.38, ...
+  phone           0/192, 192/52, 244/52, 296/52, ... (tab 1 selected)
+  folder tab top  18 desktop, 6 phone
+  first tab left - sheet left                0
+The sheet's top-left corner and the inverse fillet follow the selection in
+48 of 48 switches (390 and 1280 wide) with motion allowed; with reduced
+motion every property has a 1 ms transition, which headless Chromium only
+advances when it draws a frame.
+
+4. Chat edges
+-------------
+对话 and the workbench panel at 1280, 1024, 390 and 320 with classic
+scrollbars (11 px) and at 390 and 320 with overlay scrollbars (0 px), light
+and dark: brain bubble left - composer left, owner bubble right - composer
+right and image frame right - composer right are 0 in all 24 cases. The
+brain topic label starts on the composer's left edge (0); the owner topic
+label ends 76 px left of it, before the message's action buttons.
+
+5. Horizontal overflow
+----------------------
+Every route at 320 x 700 and 390 x 844, light and dark (60 cases):
+document and body scroll width - window width = 0. The repository's layout
+check (pnpm layout) passes for all ten named views at 390 x 844 and
+1440 x 900.
+
+
+Prototype records
+=================
 
 Ticket AS-2026-11-24 (polish round 5) comes first; the records of tickets
 AR-2026-11-24 (round 4) and AN-2026-11-24 (round 3) follow unchanged below it.

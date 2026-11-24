@@ -358,10 +358,10 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-layout > .wb-splitter { grid-column: 2; grid-row: 1; }
 .wb-layout > .wb-canvas { grid-column: 3; grid-row: 1; }
 .wb-tabs { display: flex; align-items: end; min-width: 0; flex: 1; }
-.wb-tabs-scroll { display: flex; align-items: end; flex: 1 1 auto; min-width: 0; margin-inline-start: -1px; padding-inline: 1px calc(var(--radius-lg) + 10px); scroll-padding-inline: 1px calc(var(--radius-lg) + 10px); overflow-x: auto; scrollbar-width: none; }
+.wb-tabs-scroll { display: flex; align-items: end; flex: 1 1 auto; min-width: 0; padding-inline-end: calc(var(--radius-lg) + 10px); scroll-padding-inline-end: calc(var(--radius-lg) + 10px); overflow-x: auto; scrollbar-width: none; }
 .wb-tabs-scroll::-webkit-scrollbar { display: none; }
 @media (min-width: 768px) {
-  .wb-tabs-scroll { padding-block-start: var(--space-2); }
+  .wb-tabs-scroll { margin-inline-start: -1px; padding-block-start: var(--space-2); padding-inline-start: 1px; scroll-padding-inline-start: 1px; }
 }
 .wb-tab { display: flex; position: relative; align-items: center; flex: 0 1 160px; min-width: 52px; container-type: inline-size; height: 42px; border-radius: 10px 10px 0 0; }
 .wb-tab.is-active { background: var(--bg); z-index: 2; }
