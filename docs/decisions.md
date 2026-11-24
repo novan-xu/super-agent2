@@ -3868,3 +3868,14 @@ Another option was to expand the set of engines that can start code tickets.
 - **Chosen:** Transfer up to 16 PNG or JPEG images of up to 2 MiB each through the existing task-file channel and bind the hand-in to the pull request head.
 - **Why:** The merge report stays manageable on a phone and can only show the hand-in for the head that was merged.
 - **Other options:** Keep the images in GitHub or let a later push reuse an earlier hand-in.
+
+## 2026-11-23 — Inbox file transfers (#325)
+
+- **Chosen:** Send up to 1 MiB inline and use resumable 8 MiB base64 parts for larger sends, under the existing inbox Access application and over stateless Streamable HTTP.
+- **Why:** The desktop agent can complete the transfer through MCP and keep every request well below the hub and edge body limits, even for files at 100 MiB.
+- **Other options:** Use a single base64 request, expose separate binary upload URLs, or build a local bridge.
+
+- **Chosen:** Allow 60 new sends per source per minute and two pending multipart uploads per source, with cleanup on a new send after 24 hours without upload progress or after revocation.
+  Keep completed receipts so retries keep returning the original entry ID after a restart or deletion.
+- **Why:** Storage for incomplete uploads stays bounded per source, while retries can resume uploads and cannot duplicate a published transfer or push.
+- **Other options:** Keep unfinished uploads indefinitely or limit every part call, which would spread a single large transfer across multiple rate windows.

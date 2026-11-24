@@ -235,6 +235,23 @@ A machine added after the set-up shows as online in 设置 once its install line
 Not checked against the real Cloudflare: the hub's two API calls (in particular that `duration: "forever"` and `tags` are accepted and what the answer then says about expiry), that a path application's assertion carries that application's own audience tag, that the Service Token Tag selector is offered on this account, and what Cloudflare answers to a refused request (a redirect to the sign-in or a 403).
 All of this comes from Cloudflare's documentation and is exercised only against a fake in the tests and in `tools/page-dev`; if adding a machine fails, 设置 shows Cloudflare's own reason.
 
+### Desktop agent file sends
+
+In 设置 › 连接, create an inbox source for each agent and save its service token when it is shown.
+Configure a Streamable HTTP MCP server at `https://<host>/inbox/mcp` with `CF-Access-Client-Id` and `CF-Access-Client-Secret` set to that source's credentials.
+The endpoint supports MCP protocol versions `2025-03-26`, `2025-06-18` and `2025-11-25`.
+For a stdio-only client, use [mcp-remote](https://github.com/punkpeye/mcp-remote#custom-headers) with the same URL and put the two headers in a private local file using `Header-Name: value` on separate lines.
+
+```sh
+npx mcp-remote https://<host>/inbox/mcp --transport http-only --header-file /path/to/inbox-headers.txt
+```
+
+Call `send_files` with an idempotency key, each file name and its standard padded base64 content, and optionally a short note.
+For more than 1 MiB of combined data, use `begin_upload` with the names and byte sizes, then send base64 data using `upload_part` with the same key, zero-based file index, and increasing byte offsets, and call `finish_upload` once all files are complete.
+Retry with the same key, and call `begin_upload` again with the same file manifest to recover the received offsets.
+During deployment, verify that the existing `inbox` Access path applies to `/inbox/mcp` and that an unauthenticated request is refused.
+List the MCP tools with the service token, send a small file, and verify its source label, download and push link to 传输.
+
 ## Internal work requests
 
 The Compose hub listens for work requests on `http://hub:8081` on the `superagent2_default` Docker network.

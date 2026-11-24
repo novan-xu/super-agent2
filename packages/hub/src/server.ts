@@ -123,6 +123,7 @@ import type { MachineAdmin } from "./machine-admin.js";
 import type { RepositoryAccounts } from "./repositories.js";
 import type { Settings } from "./settings.js";
 import { InboxMessage, InboxName, type Inbox } from "./inbox.js";
+import { serveInboxMcp } from "./inbox-mcp.js";
 import { isJson, parseJson, readBody } from "./http-json.js";
 
 export const healthPath = "/health";
@@ -516,6 +517,11 @@ export function createHubServer(options: HubServerOptions): HubServer {
       const verified = await options.verifyInbox(headerValue(request)).catch(() => undefined);
       if (verified === undefined || !verified.ok || verified.identity.kind !== "service") {
         request.resume(); sendJson(response, 403, { error: "forbidden" }); return;
+      }
+      if (path === "/inbox/mcp") {
+        await serveInboxMcp({ request, response, inbox: options.inbox, clientId: verified.identity.clientId,
+          allowedOrigin: request.headers.origin === undefined || isSameOrigin(request), changed: transferChanged, push: options.push });
+        return;
       }
       if (path !== "/inbox/message" || method !== "POST") {
         request.resume(); sendJson(response, 404, { error: "not_found" }); return;

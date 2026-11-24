@@ -57,6 +57,7 @@ import { bgeSmallZh, modelScorer } from "@super-agent2/routing";
 import type { ModelLoader } from "./topic-routing.js";
 import { createSettings, type Settings } from "./settings.js";
 import { createInbox } from "./inbox.js";
+import { createTransferTools } from "./transfer-tools.js";
 import { createHealthNotices } from "./health-notices.js";
 import { createTopicTidy } from "./topic-tidy.js";
 import { createWorkRequestServer } from "./work-requests.js";
@@ -444,6 +445,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         conversations,
         memories,
         attachments,
+        transferTools: createTransferTools(database, attachments),
         ...(appGateway === undefined ? {} : { appGateway, appTodos: createAppTodos(database, clock) }),
         ...(mailTriage === undefined ? {} : { mailTriage }),
         tickets: {
