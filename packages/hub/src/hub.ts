@@ -544,6 +544,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     warn();
     const accessCheck = setInterval(warn, accessCheckMilliseconds);
     accessCheck.unref();
+    const sweepRepositories = () => {
+      if (repositories.sweepInactive() > 0) settingsChanged();
+    };
+    sweepRepositories();
+    const repositorySweep = setInterval(sweepRepositories, 15 * 60_000);
+    repositorySweep.unref();
     void repositoryDiscovery.refresh();
     const repositoryRefresh = setInterval(() => void repositoryDiscovery.refresh(), repositoryRefreshMilliseconds);
     repositoryRefresh.unref();
@@ -586,6 +592,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         health?.close();
         clearInterval(accessCheck);
         clearInterval(repositoryRefresh);
+        clearInterval(repositorySweep);
         schedules.close();
         repositoryDiscovery.close();
         settings.close();
