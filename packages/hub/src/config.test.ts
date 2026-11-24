@@ -60,6 +60,16 @@ describe("loadConfig", () => {
     expect(problemsFor({ ...valid, ACCESS_INBOX_AUD: "inbox" })[0]).toMatch(/^ACCESS_INBOX_AUD/);
   });
 
+  it("enables OAuth MCP only with a distinct application audience", () => {
+    const env = { ...valid, ACCESS_RUNNER_AUD: "b".repeat(64), ACCESS_INBOX_AUD: "c".repeat(64) };
+    const mcp = "d".repeat(64);
+    expect(loadConfig({ ...env, ACCESS_MCP_AUD: mcp })).toMatchObject({ ok: true, config: { accessMcpAudience: mcp } });
+    expect(loadConfig({ ...env, ACCESS_MCP_AUD: "" })).toEqual(loadConfig(env));
+    for (const audience of [env.ACCESS_AUD, env.ACCESS_RUNNER_AUD, env.ACCESS_INBOX_AUD, "mcp"]) {
+      expect(problemsFor({ ...env, ACCESS_MCP_AUD: audience })[0]).toMatch(/^ACCESS_MCP_AUD /);
+    }
+  });
+
   it("serves the page built next to the hub unless told otherwise", () => {
     expect(defaultPageDir.replaceAll("\\", "/")).toMatch(/\/packages\/web\/dist\/?$/);
     const result = loadConfig({ ...valid, HUB_PAGE_DIR: "/srv/page" });

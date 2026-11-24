@@ -173,7 +173,7 @@ Then:
 
 ## Cloudflare Access
 
-The host name has three Access applications.
+The host name has four Access applications when OAuth MCP is enabled.
 Nothing in them changes when a machine is added or revoked.
 
 | Application | Covers | Policy | Audience tag in `secrets/hub.env` |
@@ -181,10 +181,12 @@ Nothing in them changes when a machine is added or revoked.
 | The host's own (exists) | The host name, empty path | Allow: the owner's email, through Google | `ACCESS_AUD` |
 | `Super-agent2 runners` (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
 | `Super-agent2 inbox` | The host name, path `inbox` | Service Auth: service token tag `superagent2` = `inbox` | `ACCESS_INBOX_AUD` |
+| `Super-agent2 OAuth MCP` | The host name, path `mcp` | Allow: the owner's email, through Google with Managed OAuth | `ACCESS_MCP_AUD` |
 
 Cloudflare gives the more specific path precedence, and a path covers the paths below it, so `/runner/link`, `/runner/release` and `/runner/install` are decided by the runner application alone: a service token never reaches the owner's pages or API at Cloudflare, and the owner's sign-in never reaches the runner paths.
-The hub checks the same thing again: it takes an assertion for `ACCESS_RUNNER_AUD` only on `/runner/` and only as a service token, and one for `ACCESS_AUD` only elsewhere; and on `/runner/` it also needs the machine's own runner token, bound to that service token.
+The hub requires a runner assertion and the machine's own runner token on `/runner/`, and verifies the host audience on the owner's web pages and API.
 The inbox application similarly admits only its tagged service tokens to `/inbox/`, and the hub verifies the separate `ACCESS_INBOX_AUD` and the source identity there.
+The OAuth MCP application admits the owner on `/mcp`, and the hub verifies the owner identity and `ACCESS_MCP_AUD` there.
 
 Steps, once, in the Cloudflare dashboard (Zero Trust):
 
@@ -251,6 +253,42 @@ For more than 1 MiB of combined data, use `begin_upload` with the names and byte
 Retry with the same key, and call `begin_upload` again with the same file manifest to recover the received offsets.
 During deployment, verify that the existing `inbox` Access path applies to `/inbox/mcp` and that an unauthenticated request is refused.
 List the MCP tools with the service token, send a small file, and verify its source label, download and push link to 传输.
+
+### OAuth MCP file sends
+
+#### Set up Cloudflare Access
+
+1. In Zero Trust › Access controls › Applications, choose **Add an application** › **Self-hosted**, name it `Super-agent2 OAuth MCP`, and add the hub's public hostname with path `mcp`.
+2. Add one **Allow** policy with an **Emails** Include rule for the exact `OWNER_EMAIL` value and select Google as the identity provider.
+   Save the application with only that policy and keep OPTIONS preflight bypass disabled.
+3. Edit the application and turn on **Managed OAuth** under **Advanced settings**.
+   Enable dynamic client registration and leave **Allow localhost clients** and **Allow loopback clients** off.
+   If the dashboard lacks the registration toggle, follow Cloudflare's API instructions using `oauth_configuration.dynamic_client_registration.enabled: true` with an administrator's **Access: Apps and Policies Write** permission.
+   The hub continues to use its existing service-token permission.
+   See the [Cloudflare Managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#managed-oauth-settings).
+4. Set **Allowed redirect URIs** to the exact callbacks for the connectors you intend to use.
+   For ChatGPT, copy the exact redirect URI from the MCP server's management page when available.
+   For initial setup before that URI is known, allow `https://chatgpt.com/connector_platform_oauth_redirect` and `https://chatgpt.com/connector/oauth/*`, then replace those entries with the exact URI once ChatGPT shows it ([OpenAI OAuth redirect URLs](https://developers.openai.com/plugins/build/auth#redirect-url)).
+   For Claude web, allow `https://claude.ai/api/mcp/auth_callback` ([Claude connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
+5. Save the OAuth settings, copy the Application Audience (AUD) Tag from the application's settings into `/share/Container/superagent2/secrets/hub.env` as `ACCESS_MCP_AUD=<tag>`, and recreate the hub with `bash /share/Container/superagent2/deploy.sh up`.
+   Use an audience distinct from the host, runner and inbox audiences.
+   Leave `ACCESS_MCP_AUD` unset to disable `/mcp` at the hub.
+
+#### Connect ChatGPT and Claude
+
+1. In ChatGPT, open **Plugins** › **+** › **Add custom MCP server** and enter `Super Agent` and `https://super.mortalone.com/mcp` as the server name and URL.
+   Choose **OAuth** with dynamic client registration if prompted, create the plugin, install it, and follow the Cloudflare prompt to sign in with the owner's Google account ([OpenAI custom MCP server instructions](https://developers.openai.com/api/docs/guides/custom-mcp-server)).
+2. In Claude, open **Customize** › **Connectors** › **Add** and choose a custom web connector.
+   Enter `https://super.mortalone.com/mcp`, choose **Sign in now** and **Register automatically**, and complete the Cloudflare sign-in as the owner ([Claude connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
+
+#### Verify after deploying
+
+From a client without credentials, `curl -si -H 'Accept: application/json, text/event-stream' https://super.mortalone.com/mcp` should return Cloudflare's HTTP 401 OAuth challenge.
+Follow the `WWW-Authenticate` discovery URL and check that the metadata identifies the protected resource and leads to the authorization server's registration endpoint.
+Cloudflare serves the OAuth discovery endpoints and forwards a signed Access assertion to the hub for authenticated calls ([Cloudflare authorization flow](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#authorization-flow)).
+In both ChatGPT and Claude, confirm that the connector can list `send_files`, `begin_upload`, `upload_part` and `finish_upload` after sign-in.
+Send a small file with a unique idempotency key, retry with the same key, and verify one `OAuth MCP` entry in 传输, a byte-identical download, a push that opens 传输 and no topic message or brain turn.
+Verify that a non-owner cannot sign in to the connector and that an existing service-token client can still send a file through `/inbox/mcp`.
 
 ## Internal work requests
 

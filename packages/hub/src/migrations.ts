@@ -1294,6 +1294,13 @@ export const migrations: readonly Migration[] = [
       connection.prepare("UPDATE repositories SET pinned_at = ? WHERE pinned = 1").run(now);
     },
   },
+  {
+    version: 67,
+    sql: `
+      ALTER TABLE inbox_sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'service' CHECK (kind IN ('service', 'oauth'));
+      INSERT INTO inbox_sources (id, name, client_id, token_id, kind) VALUES ('oauth', 'OAuth MCP', '', '', 'oauth');
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

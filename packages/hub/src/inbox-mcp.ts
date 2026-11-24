@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { isJson, readBody } from "./http-json.js";
 import type { Inbox } from "./inbox.js";
-import { inboxMcpBodyBytes, inboxTransferDefinitions, InboxTransferError } from "./inbox-transfers.js";
+import { inboxMcpBodyBytes, inboxTransferDefinitions, InboxTransferError, type InboxTransferSource } from "./inbox-transfers.js";
 import { CallParams, errorBody, handleMcp, resultBody, streamableMcpVersions } from "./mcp.js";
 import type { PushService } from "./push-service.js";
 
@@ -10,12 +10,12 @@ export async function serveInboxMcp(options: {
   request: IncomingMessage;
   response: ServerResponse;
   inbox: Inbox;
-  clientId: string;
+  source: () => InboxTransferSource | undefined;
   allowedOrigin: boolean;
   changed: () => void;
   push?: PushService | undefined;
 }): Promise<void> {
-  const { request, response, inbox, clientId } = options;
+  const { request, response, inbox } = options;
   const reply = (status: number, body?: Readonly<Record<string, unknown>>) => {
     response.setHeader("cache-control", "no-store");
     response.setHeader("x-content-type-options", "nosniff");
@@ -23,7 +23,7 @@ export async function serveInboxMcp(options: {
     response.writeHead(status);
     response.end(body === undefined ? undefined : JSON.stringify(body));
   };
-  if (!options.allowedOrigin || inbox.sourceFor(clientId) === undefined) {
+  if (!options.allowedOrigin || options.source() === undefined) {
     request.resume();
     reply(403, errorBody(null, -32000, "Forbidden"));
     return;
@@ -51,7 +51,7 @@ export async function serveInboxMcp(options: {
     reply(413, errorBody(null, -32000, "Request is too large. Send parts of up to 8 MiB before base64 encoding."));
     return;
   }
-  const source = inbox.sourceFor(clientId);
+  const source = options.source();
   if (source === undefined) {
     reply(403, errorBody(null, -32000, "Forbidden"));
     return;
