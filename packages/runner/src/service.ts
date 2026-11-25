@@ -15,6 +15,7 @@ export interface RunnerServiceOptions {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly log: (line: string) => void;
   readonly prober?: Prober;
+  readonly platform?: NodeJS.Platform;
   readonly connect?: Connect;
   readonly retryDelay?: (attempt: number) => number;
   readonly reprobeMilliseconds?: number;
@@ -58,6 +59,7 @@ function describe(event: LinkEvent): string {
 
 export async function startRunnerService(options: RunnerServiceOptions): Promise<RunnerService | undefined> {
   const { files, log } = options;
+  const platform = options.platform ?? process.platform;
   const settings = readSettingsFile(files.settings);
   if (settings === undefined) {
     log(`There are no settings in ${files.settings}; run the setup first.`);
@@ -119,7 +121,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
     refreshPrograms: (id) => requestPrograms(id),
-    report: () => ({ ...machineReport(config.slots, programs, process.platform, allowances, updatingPrograms ? config.slots : works.busy()), updatingPrograms, storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
+    report: () => ({ ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : works.busy()), updatingPrograms, storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
@@ -206,6 +208,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   timer.unref();
   let reading: Promise<void> | undefined;
   const readAllowance = (): Promise<void> => {
+    if (platform === "win32") return Promise.resolve();
     if (reading !== undefined) return reading;
     reading = (async () => {
       try {
@@ -234,7 +237,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
         await probe();
         if (reading !== undefined) await reading;
         await readAllowance();
-        for (const id of ids) link.send({ type: "report", machine: { ...machineReport(config.slots, programs, process.platform, allowances, works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }, refreshId: id });
+        for (const id of ids) link.send({ type: "report", machine: { ...machineReport(config.slots, programs, platform, allowances, works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }, refreshId: id });
       } catch (error) {
         log(`Could not recheck the programs: ${String(error)}`);
       } finally {
@@ -247,10 +250,10 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   requestPrograms = (id) => { pendingPrograms.push(id); flushPrograms(); };
   requestAllowance = () => { void probed.then(readAllowance).catch(() => undefined); };
   const allowanceRead = probed.then(readAllowance).catch((error: unknown) => log(`Could not read the allowance: ${error instanceof Error ? error.message : String(error)}`));
-  const allowanceTimer = setInterval(() => {
+  const allowanceTimer = platform === "win32" ? undefined : setInterval(() => {
     void readAllowance().catch(() => undefined);
   }, options.allowanceMilliseconds ?? 10 * 60 * 1000);
-  allowanceTimer.unref();
+  allowanceTimer?.unref();
   return {
     link,
     works,

@@ -143,13 +143,16 @@ describe("a runner's link", () => {
     expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true, report })]);
   });
 
-  it("requests an allowance reading only from connected runners", async () => {
+  it("requests allowance readings only from connected non-Windows runners", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     running.machines.add({ name: "mac", accessClientId: clientId });
-    const runner = new FakeRunner().connect(running, "pc");
+    const pc = new FakeRunner().connect(running, "pc");
+    expect(running.runners.refreshAllowance()).toBe(0);
+    const mac = new FakeRunner().connect(running, "mac", { ...report, platform: "darwin" });
     expect(running.runners.refreshAllowance()).toBe(1);
-    expect(runner.sent.at(-1)).toEqual({ type: "allowance.refresh" });
+    expect(mac.sent.at(-1)).toEqual({ type: "allowance.refresh" });
+    expect(pc.sent.some((message) => message.type === "allowance.refresh")).toBe(false);
   });
 
   it("waits for the matching refresh report, rather than an unrelated report, and times out older runners", async () => {
