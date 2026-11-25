@@ -304,7 +304,11 @@ export function writeOutput(ticket: number, files: Readonly<Record<string, strin
   for (const [name, content] of Object.entries(files)) {
     writeFileSync(join(outputFolder(paths), name), content);
   }
-  writeFileSync(paths.handback, typeof handback === "string" ? handback : JSON.stringify(handback));
+  const content = typeof handback === "string" ? handback : JSON.stringify(handback);
+  writeFileSync(paths.handback, content);
+  const antigravityHandback = join(paths.scratch ?? paths.worktree, `.superagent2-t${ticket}`, "handback.json");
+  mkdirSync(join(paths.scratch ?? paths.worktree, `.superagent2-t${ticket}`), { recursive: true });
+  writeFileSync(antigravityHandback, content);
 }
 
 export const summary = { en: "Translated the notice", zh: "翻译了通知" };

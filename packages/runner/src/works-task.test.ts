@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tokenVariable } from "./identity.js";
 import { workPaths } from "./workplace.js";
-import { outputFolder, taskPaths } from "./task.js";
+import { antigravityTaskPaths, outputFolder, taskPaths, taskQuestionPath } from "./task.js";
 import { artifactsVariable } from "./storage.js";
 import { repository, scratch, home, programs, sent, ghCalls, opened, inheritedCredentials, carried, git, start, task, events, kinds, ended, finishTurn, writingTask, writeOutput, summary } from "./testing/works.js";
 
@@ -33,6 +33,25 @@ describe("a task worker on the runner", () => {
     expect(programs.last().settings.environment[artifactsVariable]).toBe(join(nas, "_tasks", "tickets", "t56"));
   });
 
+  it.each([false, true])("hands back within the Antigravity workspace for a fresh or repair task (repair: %s)", async (repair) => {
+    const projectsDir = join(realpathSync(scratch), "Projects");
+    mkdirSync(projectsDir);
+    const works = start({ storage: () => ({ projectsDir }) });
+    const ticket = 96;
+    const folder = repair ? 95 : ticket;
+    works.receive({ type: "work.task", task: writingTask(ticket, { folder, light: true }) });
+    const handle = await programs.prompted(1);
+    const workspace = join(projectsDir, "_agent", "_tasks", `t${folder}`);
+    const handback = join(workspace, `.superagent2-t${ticket}`, "handback.json");
+    expect(handle.options.workspace).toBe(workspace);
+    expect(handle.prompts[0]).toContain(`Hand back by writing the JSON file at: ${handback}`);
+    expect(handle.prompts[0]).toContain(join(workspace, `.superagent2-t${ticket}`, "question.json"));
+    writeFileSync(join(workspace, "output", "result.txt"), "Finished");
+    writeFileSync(handback, JSON.stringify({ report: summary, text: "result.txt" }));
+    handle.emit({ type: "turn.finished", outcome: "completed" });
+    expect(await ended(ticket)).toMatchObject({ kind: "delivered", outcome: "done", text: "Finished" });
+  });
+
   it("makes a scratch folder with the material, briefs the program without any repository, and delivers the text and files", async () => {
     const works = start();
     works.receive({ type: "work.task", task: writingTask(20, { ticketReference: "at-2026-11-19" }) });
@@ -55,7 +74,7 @@ describe("a task worker on the runner", () => {
     expect(prompt).toContain("Translate the notice in input/notice.txt into English.");
     expect(prompt).toContain("- input/notice.txt, from pasted by the owner in the conversation");
     expect(prompt).toContain("- Not a file: get it yourself from https://example.com/glossary (named glossary)");
-    expect(prompt).toContain(paths.handback);
+    expect(prompt).toContain(antigravityTaskPaths(paths, 20).handback);
     expect(prompt).toContain(join(paths.worktree, "output"));
     expect(works.busy()).toBe(1);
     handle.emit({ type: "session", session: "agy-conversation-20" });
@@ -183,8 +202,8 @@ describe("a task worker on the runner", () => {
     const before = await programs.prompted(1);
     before.emit({ type: "session", session: "light-question-session" });
     const paths = taskPaths(home, 24);
-    expect(before.prompts[0]).toContain(join(paths.folder, "question.json"));
-    writeFileSync(join(paths.folder, "question.json"), JSON.stringify({ question: "邮件收件人是谁？" }));
+    expect(before.prompts[0]).toContain(taskQuestionPath(antigravityTaskPaths(paths, 24)));
+    writeFileSync(taskQuestionPath(antigravityTaskPaths(paths, 24)), JSON.stringify({ question: "邮件收件人是谁？" }));
     await finishTurn(first, before);
     const question = events(24).find((message) => message.event.kind === "question")?.event;
     expect(question).toMatchObject({ kind: "question", text: "邮件收件人是谁？" });
@@ -203,8 +222,8 @@ describe("a task worker on the runner", () => {
     restarted.receive({ type: "work.message", ticket: 24, attempt: 1, id: "answer", from: "owner", text: "给 Maya" });
     await programs.changed.until(() => resumed.prompts.length === 1);
     expect(resumed.prompts[0]).toContain("给 Maya");
-    expect(existsSync(join(paths.folder, "question.json"))).toBe(false);
-    writeFileSync(paths.handback, JSON.stringify({ report: { en: "Done", zh: "写好了" } }));
+    expect(existsSync(taskQuestionPath(antigravityTaskPaths(paths, 24)))).toBe(false);
+    writeFileSync(antigravityTaskPaths(paths, 24).handback, JSON.stringify({ report: { en: "Done", zh: "写好了" } }));
     await finishTurn(restarted, resumed);
     expect(await ended(24)).toMatchObject({ kind: "delivered", report: { zh: "写好了" } });
   });
