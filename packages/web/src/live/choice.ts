@@ -1,4 +1,4 @@
-import { type ChoiceChange, engineOn, isComplete, type MachineChoice, offers, type ProgramId, type StartCard, waitsForProvider } from "@super-agent2/protocol";
+import { canQueueStart, type ChoiceChange, engineOn, type MachineChoice, offers, type ProgramId, type StartCard } from "@super-agent2/protocol";
 
 export interface ChoiceOptions {
   readonly machines: readonly string[];
@@ -13,6 +13,7 @@ function withCurrent<T>(values: readonly T[], current: T | null): T[] {
 
 export interface ChoiceSource {
   readonly machines: readonly MachineChoice[];
+  readonly ticket?: StartCard["ticket"];
   readonly choice: { readonly machine: string | null; readonly engine: ProgramId | null; readonly model: string | null; readonly effort: string | null };
 }
 
@@ -27,7 +28,8 @@ export function offersModel(machine: MachineChoice | undefined, engine: ProgramI
 export function choiceOptions(card: ChoiceSource): ChoiceOptions {
   const { choice } = card;
   const machine = machineOf(card);
-  const engines = machine?.engines.map((offer) => offer.engine) ?? [];
+  const engines = machine?.engines.map((offer) => offer.engine)
+    ?? (card.ticket?.enginePin === undefined ? [] : [...new Set(card.machines.flatMap((entry) => entry.engines.map((offer) => offer.engine)))]);
   const offered = choice.engine === null ? [] : (engineOn(machine, choice.engine)?.models ?? []);
   const efforts = offered.find((model) => model.id === choice.model)?.efforts ?? [];
   return {
@@ -83,5 +85,5 @@ export function changeOfEffort(effort: string): ChoiceChange {
 }
 
 export function canStartCard(card: StartCard): boolean {
-  return card.startable && (isComplete(card.choice) || waitsForProvider(card.choice));
+  return card.startable && canQueueStart(card.ticket, card.choice);
 }

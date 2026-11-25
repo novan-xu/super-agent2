@@ -9,6 +9,7 @@ import {
   ModelName,
   type OwnerChoice,
   type Platform,
+  type Ticket,
   type TicketKind,
 } from "./tickets.js";
 
@@ -137,7 +138,7 @@ export function defaultMachine(platform: Platform, engine: ProgramId, machines: 
   return candidates[0]?.name ?? null;
 }
 
-export const missingParts = ["defaults", "provider", "machine", "engine", "model", "effort"] as const;
+export const missingParts = ["defaults", "provider", "machine", "slot", "engine", "model", "effort"] as const;
 export const MissingPart = z.enum(missingParts);
 export type MissingPart = z.infer<typeof MissingPart>;
 
@@ -156,6 +157,8 @@ export interface StartInput {
   readonly difficulty: Difficulty | null;
   readonly platform: Platform | null;
   readonly requiredMachine?: string | null;
+  readonly machinePinned?: boolean | undefined;
+  readonly enginePin?: ProgramId | undefined;
   readonly stated: boolean;
   readonly owner: OwnerChoice;
 }
@@ -169,7 +172,7 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     : context;
   const automatic = input.stated || input.kind === "writing" ? defaultEngine(input.kind, startContext) : null;
   const explicitAntigravity = input.kind === "writing" && table.antigravity.some((choice) => choice.model === owner.model);
-  const engine = owner.engine ?? (explicitAntigravity ? "antigravity" : automatic);
+  const engine = owner.engine ?? input.enginePin ?? (explicitAntigravity ? "antigravity" : automatic);
   let fromTable = engine === null ? null : tableChoice(table, engine, input.difficulty);
   if (engine === "antigravity") {
     const candidates = machinesFor(input.platform, machines, owner.machine ?? required);
@@ -185,9 +188,11 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   const effort = owner.effort ?? fromTable?.effort ?? null;
   const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines, model, effort) : null);
   const missing = new Set<MissingPart>();
+  const providerUnavailable = engine === null || (input.enginePin !== undefined &&
+    (context.out.has(engine) || (engine === "antigravity" && model !== null && context.antigravityOut?.has(model))));
   if (!input.stated) {
     missing.add("defaults");
-  } else if (engine === null) {
+  } else if (providerUnavailable) {
     missing.add("provider");
   }
   const chosen = machine === null ? undefined : machines.find((entry) => entry.name === machine);
@@ -203,6 +208,8 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     missing.add("machine");
   } else if (chosen === undefined) {
     missing.add("machine");
+  } else if (input.machinePinned === true && chosen.free === 0) {
+    missing.add("slot");
   } else if (engine !== null && engineOn(chosen, engine) === undefined) {
     missing.add("engine");
   } else if (engine !== null && model !== null && effort !== null && !offers(chosen, engine, model, effort)) {
@@ -217,8 +224,8 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     model,
     effort,
     by: {
-      machine: owner.machine === null ? "default" : "owner",
-      engine: owner.engine === null ? "default" : "owner",
+      machine: owner.machine === null && input.machinePinned !== true ? "default" : "owner",
+      engine: owner.engine === null && input.enginePin === undefined ? "default" : "owner",
       model: owner.model === null ? "default" : "owner",
       effort: owner.effort === null ? "default" : "owner",
     },
@@ -232,6 +239,18 @@ export function isComplete(choice: StartChoice): boolean {
 
 export function waitsForProvider(choice: StartChoice): boolean {
   return choice.missing.length === 1 && choice.missing[0] === "provider";
+}
+
+export function hasStartPins(ticket: Pick<Ticket, "machinePinned" | "enginePin">): boolean {
+  return ticket.machinePinned === true || ticket.enginePin !== undefined;
+}
+
+export function requiredMachineFor(ticket: Pick<Ticket, "machinePinned" | "requiredMachine" | "ownerChoice">, owner = ticket.ownerChoice): string | null {
+  return ticket.machinePinned === true ? owner.machine ?? ticket.requiredMachine : ticket.requiredMachine;
+}
+
+export function canQueueStart(ticket: Pick<Ticket, "machinePinned" | "enginePin">, choice: StartChoice): boolean {
+  return isComplete(choice) || waitsForProvider(choice) || (hasStartPins(ticket) && !choice.missing.includes("defaults"));
 }
 
 export const ChoiceChange = z.object({

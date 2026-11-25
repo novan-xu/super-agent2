@@ -5,6 +5,7 @@ import {
   applyChange,
   arrangedAfter,
   canStartAlone,
+  canQueueStart,
   cardKey,
   chainDifficulty,
   type ChainNode,
@@ -13,6 +14,7 @@ import {
   type Difficulty,
   findCycle,
   fitsForm,
+  hasStartPins,
   isComplete,
   type MachineChoice,
   noOwnerChoice,
@@ -23,7 +25,9 @@ import {
   inWorkingOrder,
   indexOf,
   type Platform,
+  type ProgramId,
   RepositoryName,
+  requiredMachineFor,
   readyToBegin,
   type StartCard,
   startGaps,
@@ -68,6 +72,8 @@ export interface DefaultsSpec {
   readonly difficulty?: Difficulty | undefined;
   readonly reason: GeneratedText;
   readonly platform: Platform;
+  readonly machine?: string | undefined;
+  readonly ownerEngine?: ProgramId | undefined;
 }
 
 export type StateOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly reason: string };
@@ -158,6 +164,8 @@ export function chainFingerprint(shown: readonly ShownChain[]): string {
     ticket.form,
     ticket.repository,
     ticket.requiredMachine,
+    ticket.machinePinned,
+    ticket.enginePin,
     ticket.commitRef,
     ticket.deploys,
     ticket.kind,
@@ -188,6 +196,27 @@ const BeginRow = z.object({ ticket_id: z.number().int() });
 
 function antigravityForCode(ticket: Ticket, owner: OwnerChoice): boolean {
   return ticket.form === "code" && owner.engine === "antigravity";
+}
+
+function pinnedBlock(ticket: Ticket, choice: StartChoice): string {
+  const where = ticket.machinePinned === true ? choice.machine : null;
+  const engine = ticket.enginePin === undefined ? null : choice.engine;
+  const en = where === null ? [] : [`machine ${where}`];
+  const zh = where === null ? [] : [`指定机器 ${where}`];
+  if (engine !== null) {
+    en.push(`engine ${engine}`);
+    zh.push(`指定引擎 ${text(`engine.${engine}`)}`);
+  }
+  const reasons = choice.missing.filter((part) => part !== "defaults").map((part) =>
+    part === "provider" && engine !== null ? text("chains.missing.pinnedProvider")
+      : part === "machine" && where !== null ? text("chains.missing.pinnedMachine")
+        : text(`chains.missing.${part}`),
+  );
+  return JSON.stringify({
+    en: `Waiting for the owner's ${en.join(" and ")} (${choice.missing.join(", ")}).`,
+    zh: `等待${zh.join("和")}（${reasons.join("、")}）`,
+    pinned: true,
+  });
 }
 
 function reasonOf(error: unknown): string {
@@ -315,14 +344,23 @@ export function createChains(options: ChainsOptions): Chains {
             if (ticket?.state !== "waiting") {
               return false;
             }
-            if (ticket.chosenAt === null && (ticket.light !== undefined || ticket.scheduleRun !== undefined || ticket.startBlock != null)) {
+            if (ticket.chosenAt === null && (ticket.light !== undefined || ticket.scheduleRun !== undefined || hasStartPins(ticket) || ticket.startBlock != null)) {
               const choice = defaults.resolve(ticket);
               const run = chosenRun(choice);
               if (run === undefined) {
+                if (hasStartPins(ticket)) {
+                  const block = pinnedBlock(ticket, choice);
+                  const key = `start_block:${id}`;
+                  if (selectBlock.get(key)?.["value"] !== block) {
+                    saveBlock.run(key, block, clock.now());
+                    writes.touched(id);
+                  }
+                  return false;
+                }
                 const wanted = [ticket.platform ?? "any", choice.engine ?? "not set", choice.model ?? "not set", choice.effort ?? "not set"].join(" ");
                 const missing = choice.missing.join(", ");
                 const en = `missing ${missing}; wanted ${wanted}${ticket.requiredMachine === null ? "" : ` on ${ticket.requiredMachine}`}`;
-                const names = { defaults: "\u9ed8\u8ba4\u8bbe\u7f6e", provider: "\u4f9b\u5e94\u5546", machine: "\u673a\u5668", engine: "\u5f15\u64ce", model: "\u6a21\u578b", effort: "\u63a8\u7406\u5f3a\u5ea6" };
+                const names = { defaults: "\u9ed8\u8ba4\u8bbe\u7f6e", provider: "\u4f9b\u5e94\u5546", machine: "\u673a\u5668", engine: "\u5f15\u64ce", slot: "\u7a7a\u95f2\u69fd\u4f4d", model: "\u6a21\u578b", effort: "\u63a8\u7406\u5f3a\u5ea6" };
                 const zh = `\u65e0\u6cd5\u5f00\u59cb\uff1a\u7f3a\u5c11 ${choice.missing.map((part) => names[part]).join("\u3001")}\uff1b\u9700\u8981 ${wanted}${ticket.requiredMachine === null ? "" : `\uff0c\u6307\u5b9a\u673a\u5668 ${ticket.requiredMachine}`}`;
                 const key = `start_block:${id}`;
                 const previous = selectBlock.get(key) as { value: string } | undefined;
@@ -463,7 +501,7 @@ export function createChains(options: ChainsOptions): Chains {
     for (const id of order) {
       const ticket = index.get(id);
       const choice = ticket === undefined ? undefined : defaults.resolve(ticket);
-      if (choice === undefined || (!isComplete(choice) && !waitsForProvider(choice))) {
+      if (ticket === undefined || choice === undefined || !canQueueStart(ticket, choice)) {
         return { ok: false, error: "incomplete" };
       }
       choices.set(id, choice);
@@ -478,8 +516,8 @@ export function createChains(options: ChainsOptions): Chains {
             throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} is no longer pending`);
           }
           const run = chosenRun(choices.get(id));
-          if (run === undefined) {
-            saveBlock.run(`start_block:${id}`, providerBlock, clock.now());
+          if (hasStartPins(ticket) || run === undefined) {
+            if (!hasStartPins(ticket)) saveBlock.run(`start_block:${id}`, providerBlock, clock.now());
             writes.move(id, "waiting");
             continue;
           }
@@ -530,7 +568,8 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(ticket.ownerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines(), ticket.requiredMachine) || antigravityForCode(ticket, owner)) {
+    const machines = ticket.machinePinned === true ? defaults.machinesFor(ticket) : defaults.machines();
+    if (ownerGivesUnoffered(owner, choice, machines, requiredMachineFor(ticket, owner)) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     try {
@@ -561,9 +600,10 @@ export function createChains(options: ChainsOptions): Chains {
     if (closed || !reassignableStates.includes(ticket.state)) {
       return { ok: false, error: "conflict" };
     }
-    const owner = applyChange(noOwnerChoice, given.change);
+    const owner = applyChange(hasStartPins(ticket) ? ticket.ownerChoice : noOwnerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    if (ownerGivesUnoffered(owner, choice, defaults.machines(), ticket.requiredMachine) || antigravityForCode(ticket, owner)) {
+    const machines = ticket.machinePinned === true ? defaults.machinesFor(ticket) : defaults.machines();
+    if (ownerGivesUnoffered(owner, choice, machines, requiredMachineFor(ticket, owner)) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
     const run = chosenRun(choice);
@@ -605,7 +645,7 @@ export function createChains(options: ChainsOptions): Chains {
     if (specs.length === 0) {
       return refuse("no chain was named");
     }
-    const statements = new Map<number, DefaultsStatement>();
+    const statements = new Map<number, { statement: DefaultsStatement; spec: DefaultsSpec }>();
     for (const spec of specs) {
       if (statements.has(spec.ticket)) {
         return refuse(`ticket ${tickets.reference(spec.ticket) ?? "(unavailable)"} is named twice`);
@@ -649,18 +689,22 @@ export function createChains(options: ChainsOptions): Chains {
         return refuse(`ticket ${reference} needs a difficulty`);
       }
       statements.set(spec.ticket, {
-        kind: spec.kind,
-        difficulty,
-        difficultyReason: { en: spec.reason.en.trim(), zh: spec.reason.zh.trim() },
-        platform: spec.platform,
+        spec,
+        statement: {
+          kind: spec.kind,
+          difficulty,
+          difficultyReason: { en: spec.reason.en.trim(), zh: spec.reason.zh.trim() },
+          platform: spec.platform,
+        },
       });
     }
     try {
       tickets.change((writes) => {
-        for (const [id, statement] of statements) {
+        for (const [id, { statement, spec }] of statements) {
           if (writes.get(id)?.state !== "pending") {
             throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} is no longer pending`);
           }
+          writes.pins(id, spec);
           writes.state(id, statement);
         }
       }, turn);
@@ -784,7 +828,7 @@ export function createChains(options: ChainsOptions): Chains {
         }
       }
     }
-    const plans = new Map<string, { title: GeneratedText; summary: GeneratedText; kind: TicketKind; difficulty: Difficulty | null; platform: Platform | null; conversation: string | null }>();
+    const plans = new Map<string, { title: GeneratedText; summary: GeneratedText; kind: TicketKind; difficulty: Difficulty | null; platform: Platform | null; conversation: string | null; pins: Ticket[] }>();
     for (const spec of specs) {
       const issues = issuesOf.get(spec.name) ?? [];
       const from = [...new Set(issues.map((issue) => holder.get(issueKey(issue.repository, issue.number))))].flatMap((ticket) => (ticket === undefined ? [] : [ticket]));
@@ -806,6 +850,12 @@ export function createChains(options: ChainsOptions): Chains {
       if (head === undefined) {
         return refuse(`chain ${spec.name} has no issues`);
       }
+      const pins = from.filter(hasStartPins);
+      const machines = new Set(pins.filter((ticket) => ticket.machinePinned === true).map((ticket) => requiredMachineFor(ticket)));
+      const engines = new Set(pins.filter((ticket) => ticket.enginePin !== undefined).map((ticket) => ticket.ownerChoice.engine ?? ticket.enginePin));
+      if (machines.size > 1 || engines.size > 1) {
+        return refuse(`chain ${spec.name} has conflicting owner pins; keep those issues in separate chains`);
+      }
       plans.set(spec.name, {
         title,
         summary,
@@ -813,6 +863,7 @@ export function createChains(options: ChainsOptions): Chains {
         difficulty: spec.difficulty ?? chainDifficulty(from.map((ticket) => ticket.difficulty)),
         platform: spec.platform ?? platforms[0] ?? (from.some((ticket) => ticket.platform === "any") ? "any" : null),
         conversation: head.conversation,
+        pins,
       });
     }
     const claimed = new Map<string, number>();
@@ -937,6 +988,8 @@ export function createChains(options: ChainsOptions): Chains {
               writes.forgetDefaults(id);
             }
           }
+          for (const source of plan.pins) writes.inheritPins(id, source);
+          writes.pins(id, plan);
           writes.describe(id, plan);
           real.set(spec.name, id);
         }

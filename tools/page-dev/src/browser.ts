@@ -224,10 +224,27 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
         "preview actions": ".fv-header button, .fv-header a",
       }));
     }
+    if (name === "workbench-canvas" && issues.length === 0) {
+      await page.locator(`.wb-slot[data-ticket="${fixture.startCard}"] .wb-card--pending`).click();
+      const dialog = page.locator(".wb-dialog[open]");
+      await dialog.locator(".wcard-where").waitFor();
+      if (mode.kind === "check") {
+        const options = await dialog.locator("select option:checked").allTextContents();
+        if (!options.includes("指定 mac-mini") || !options.includes("指定 Claude Code")) {
+          issues.push("Start card is missing the pinned machine or engine label");
+        }
+        issues.push(...await checkLayout(page, width, {
+          "start card": ".wb-dialog[open]",
+          "start choices": ".wb-dialog select",
+          "start button": ".wb-dialog .card-actions button",
+        }));
+      }
+    }
     if (mode.kind === "check") {
       if (issues.length > 0) throw new Error(issues.join("\n"));
       process.stdout.write(`Layout passed for ${name} at ${width} (${viewports[width].width}px)\n`);
     } else {
+      if (name === "ticket" && phone) await page.locator(".panel-toggle").click();
       const file = join(mode.out, `${name}-${width}.png`);
       await page.screenshot({ path: file, animations: "disabled" });
       process.stdout.write(`Saved ${file}\n`);

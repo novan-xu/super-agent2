@@ -539,6 +539,102 @@ function reading(program: "codex" | "claude", state: "available" | "exhausted", 
 }
 
 describe("start defaults", () => {
+  const task = {
+    title: { en: "Check disk space", zh: "检查磁盘空间" },
+    summary: { en: "Read the free space on a Mac.", zh: "读取 Mac 的可用磁盘空间。" },
+    task: "Read the free disk space.",
+    kind: "operation",
+  };
+  const machinePin = { kind: "operation", difficulty: "mechanical", reason: task.summary, platform: "macos", machine: "mac-mini" };
+  const choiceOnCard = async (running: Hub, id: number) => {
+    const card = await cardOf(running, id);
+    return startCall(running, { body: JSON.stringify({ chains: [{ ticket: id, fingerprint: card.fingerprint }] }) });
+  };
+
+  it("keeps an owner-pinned machine through restating defaults and waits for that machine's free slot", async () => {
+    const running = await start();
+    const mac = machineReport("darwin");
+    running.machines.add({ name: "mac-mini", accessClientId: "mac-mini.access", system: "macos" });
+    connect(running, "macbook-air", mac);
+    expect((await callBrainTool(running, "open_task_ticket", task)).isError).toBe(false);
+    const choose = (fields: object) => callBrainTool(running, "choose_defaults", { chains: [{ ticket: "aa", ...machinePin, ...fields }] });
+    expect(await choose({ machine: "unknown" })).toMatchObject({ isError: true, text: expect.stringContaining("not registered") });
+    expect(await choose({ machine: "pc" })).toMatchObject({ isError: true, text: expect.stringContaining("does not match platform") });
+    expect(await choose({})).toMatchObject({ isError: false, text: expect.stringContaining("Pinned by the owner's request: machine mac-mini") });
+    expect(await choose({ machine: undefined })).toMatchObject({ isError: false, text: expect.stringContaining("machine mac-mini") });
+    expect((await cardOf(running, 1)).choice).toMatchObject({ machine: "mac-mini", missing: ["machine"] });
+    expect((await choiceOnCard(running, 1)).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({ state: "waiting", requiredMachine: "mac-mini", startBlock: { pinned: true, zh: expect.stringContaining("mac-mini") } });
+    connect(running, "mac-mini", { ...mac, slots: { total: 2, free: 0 } });
+    await expect.poll(() => running.tickets.get(1)?.startBlock?.zh).toContain("没有空闲");
+    expect(begun).toEqual([]);
+    connect(running, "mac-mini", { ...mac, slots: { total: 2, free: 1 } });
+    await expect.poll(() => running.tickets.get(1)).toMatchObject({ state: "working", machine: "mac-mini", startBlock: null });
+    expect(begun).toEqual([1]);
+  });
+
+  it("waits for a pinned provider despite available Codex quota and starts with Claude after recovery", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    const stated = await callBrainTool(running, "choose_defaults", {
+      chains: [{ ticket: "aa", kind: "feature", issues: [{ number: 1, difficulty: "complex" }], reason: task.summary, platform: "windows", ownerEngine: "claude" }],
+    });
+    expect(stated).toMatchObject({ isError: false, text: expect.stringContaining("Pinned by the owner's request: engine claude") });
+    const now = clock.now();
+    connect(running, "pc", machineReport("win32", [reading("codex", "available", now), reading("claude", "exhausted", now)]));
+    expect((await cardOf(running, 1)).choice).toMatchObject({ engine: "claude", missing: ["provider"], by: { engine: "owner" } });
+    expect((await choiceOnCard(running, 1)).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({ state: "waiting", chosenAt: null, startBlock: { pinned: true, en: expect.stringContaining("engine claude") } });
+    expect(begun).toEqual([]);
+    clock.advance(1_000);
+    connect(running, "pc", machineReport("win32", [reading("claude", "available", clock.now())]));
+    await expect.poll(() => running.tickets.get(1)).toMatchObject({ state: "working", engine: "claude", startBlock: null });
+    expect(begun).toEqual([1]);
+  });
+
+  it("uses the owner's card overrides and carries them with both pins into a repair", async () => {
+    const running = await start();
+    connect(running, "mac-mini", machineReport("darwin"));
+    connect(running, "macbook-air", machineReport("darwin"));
+    expect((await callBrainTool(running, "open_task_ticket", task)).isError).toBe(false);
+    expect((await callBrainTool(running, "choose_defaults", {
+      chains: [{ ticket: "aa", ...machinePin, difficulty: "standard", ownerEngine: "claude" }],
+    })).isError).toBe(false);
+    expect((await cardOf(running, 1)).machines.map((machine) => machine.name)).toEqual(["mac-mini", "macbook-air"]);
+    expect((await ownerSend(running, chainChoicePath, { ticket: 1, machine: "macbook-air", engine: "codex" })).status).toBe(202);
+    expect((await choiceOnCard(running, 1)).status).toBe(202);
+    expect(running.tickets.get(1)).toMatchObject({ state: "working", machine: "macbook-air", engine: "codex" });
+    running.tickets.stop(1, task.summary);
+    expect((await callBrainTool(running, "open_repair_ticket", { ticket: "aa" })).isError).toBe(false);
+    expect(running.tickets.get(2)).toMatchObject({ requiredMachine: "mac-mini", machinePinned: true, enginePin: "claude", ownerChoice: { machine: "macbook-air", engine: "codex" } });
+  });
+
+  it("retains a chain's pins when splitting its issues and refuses to combine conflicting pins", async () => {
+    const running = await start();
+    await fileIssue(running, "Move the state", "搬动状态");
+    await fileIssue(running, "Trace the result", "追踪结果");
+    const grouped = { name: "work", repository: sandbox, issues: [1, 2], title: task.title, summary: task.summary };
+    expect((await callBrainTool(running, "arrange_chains", { chains: [grouped] })).isError).toBe(false);
+    const issue = (number: number) => ({ number, difficulty: "standard" });
+    const statement = { kind: "feature", reason: task.summary, platform: "windows", machine: "pc", ownerEngine: "claude" };
+    expect((await callBrainTool(running, "choose_defaults", {
+      chains: [{ ticket: "aa", ...statement, issues: [issue(1), issue(2)] }],
+    })).isError).toBe(false);
+    const separate = [1, 2].map((number) => ({ name: `step-${number}`, repository: sandbox, issues: [number] }));
+    expect((await callBrainTool(running, "arrange_chains", { chains: separate })).isError).toBe(false);
+    const split = running.tickets.list({ open: true });
+    expect(split).toMatchObject([
+      { requiredMachine: "pc", machinePinned: true, enginePin: "claude", issues: [{ number: 2 }] },
+      { requiredMachine: "pc", machinePinned: true, enginePin: "claude", issues: [{ number: 1 }] },
+    ]);
+    expect((await callBrainTool(running, "choose_defaults", {
+      chains: [{ ...statement, ticket: split[0]!.code, ownerEngine: "codex", issues: [issue(2)] }],
+    })).isError).toBe(false);
+    expect(await callBrainTool(running, "arrange_chains", { chains: [grouped] })).toMatchObject({
+      isError: true, text: expect.stringContaining("conflicting owner pins"),
+    });
+  });
+
   it("defaults to GPT, then follows a reordered worker list and ignores a stored brain engine", async () => {
     const running = await start();
     await fileIssue(running, "Move the state", "搬动状态");

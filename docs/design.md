@@ -75,7 +75,8 @@ A worker does the same, decided by the hub.
   Tickets started meanwhile default to another provider.
   A mark is made only by a program really answering that it is unavailable, never by a reading: an unreadable allowance mostly means nobody could ask, so it stays "not used up".
   A provider that is marked is not tried again until its mark clears, which is what keeps two failing providers from handing a ticket back and forth.
-- The owner's explicit choice of provider is switched away from too, and the ticket's timeline says so, with the reason.
+- A manually selected provider on an unpinned ticket is switched away from too, and the ticket's timeline says so, with the reason.
+- A ticket with a provider pin waits for its selected provider to recover.
 - Claude Code and Codex both unavailable falls to `dsh`.
   When `dsh` is unavailable too, the ticket waits and tries again by itself when the earliest time passes or a reading shows one back; the brain is told once that it waits.
   Antigravity quota and rate limits apply to the model selected for that run, so prose continues on the next offered model in the Antigravity row.
@@ -363,7 +364,7 @@ The database, page routes, runner messages and folder paths use the stable inter
     At any step, the hub hands the failing output to the ticket's topic.
     The brain writes guidance and the worker tries again.
     What is already merged stays merged.
-    When a worker's program becomes unavailable, the hub continues the ticket on another provider and leaves the failure count unchanged (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
+    When a worker's program becomes unavailable, the hub routes the ticket by its provider settings and leaves the failure count unchanged (see [When a provider is unavailable](#when-a-provider-is-unavailable)).
 
 11. **Stuck.**
     After three guided rounds without passing, the ticket stops and waits for the owner on a card in 等你, who resumes it (a fresh count, with words for the brain) or gives it up.
@@ -536,7 +537,11 @@ Changed pairs must be offered by an online machine, as for page edits.
 
 For each chain the brain states its kind, difficulty, difficulty reason and platform.
 The hub resolves the machine, engine, model and effort.
-They are defaults: the owner can change any of them on the card before the start, and the owner's choice wins.
+The owner can change these values on the card before the start, and the owner's choice wins.
+The brain records any machine or provider the owner explicitly requests with `choose_defaults` or the light-task tools.
+The card marks pinned values, and an approved start waits for the pinned machine or provider and resumes when available.
+Pins apply to all issues of a ticket and carry over to repairs, follow-ups and regrouped issues.
+Tickets with conflicting pins must remain in separate chains.
 The card has one select for each, in that order; the page calls the engine 供应商.
 
 The hub uses these inputs to resolve the defaults.

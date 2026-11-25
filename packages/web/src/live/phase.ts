@@ -3,6 +3,7 @@ import { activeWorkStates, type FailedStep, type LoopFailureKind, type Ticket, t
 export const ticketPhases = [
   "pending",
   "waiting",
+  "pinnedWaiting",
   "beginFailed",
   "starting",
   "queued",
@@ -27,6 +28,7 @@ export type Tone = "mute" | "ok" | "info" | "warn" | "bad";
 export const phaseLooks: Readonly<Record<TicketPhase, { readonly tone: Tone; readonly live: boolean }>> = {
   pending: { tone: "mute", live: false },
   waiting: { tone: "mute", live: false },
+  pinnedWaiting: { tone: "warn", live: false },
   beginFailed: { tone: "bad", live: false },
   starting: { tone: "mute", live: false },
   queued: { tone: "mute", live: false },
@@ -49,8 +51,9 @@ export function ticketPhase(ticket: Ticket): TicketPhase {
   switch (ticket.state) {
     case "verifying":
       return ticket.verification?.state === "failed" ? "verifyFailed" : ticket.verification?.state === "conflict" ? "conflicted" : "verifying";
-    case "pending":
     case "waiting":
+      return ticket.startBlock?.pinned ? "pinnedWaiting" : "waiting";
+    case "pending":
     case "stuck":
     case "merged":
     case "delivered":
@@ -88,7 +91,7 @@ export type TicketProblem =
   | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly code: string | null; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
   | { readonly kind: "beginFailed"; readonly reason: string }
   | { readonly kind: "queued"; readonly machine: string }
-  | { readonly kind: "providerWaiting"; readonly reason: string }
+  | { readonly kind: "providerWaiting" | "pinnedWaiting"; readonly reason: string }
   | { readonly kind: "unreachable"; readonly machine: string; readonly since: number }
   | { readonly kind: "failed"; readonly failure: WorkFailure; readonly reason: string }
   | { readonly kind: "stopped"; readonly reason: string }
@@ -111,6 +114,8 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
       }
       return { kind: "waits", before };
     }
+    case "pinnedWaiting":
+      return { kind: "pinnedWaiting", reason: ticket.startBlock?.zh ?? "" };
     case "beginFailed":
       return { kind: "beginFailed", reason: ticket.beginFailure ?? "" };
     case "queued":

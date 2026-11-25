@@ -147,6 +147,7 @@ export function createFollowUps({ records, tickets, credentials, accountOf, fetc
         writes.state(next, {
           kind: given.kind, difficulty, platform, difficultyReason: previous.difficultyReason ?? original.difficultyReason ?? given.summary,
         });
+        writes.inheritPins(next, previous);
         records.insert({ ticket_id: next, original: original.id, previous: previous.id, folder, issue: number, comment, url: commentUrl });
         return writes.get(next);
       }, turn);

@@ -235,6 +235,25 @@ describe("light tasks", () => {
     expect(run.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { engine: ownerEngine ?? "dsh" } }]);
   });
 
+  it("holds an explicitly requested light-task engine through a worker quota failure", async () => {
+    const { link } = connectBrain();
+    const run = connectRunner();
+    const topic = hub.conversations.create().id;
+    const request = turn(link, topic, [owner(topic, "请用 mac 上的 Claude")]);
+    expect(await request.call("start_light_task", { ...operation, machine: "unknown" })).toMatchObject({ isError: true, text: expect.stringContaining("not registered") });
+    const result = await request.call("start_light_task", { ...operation, machine: "mac", ownerEngine: "claude" });
+    expect(result).toMatchObject({ isError: false, text: expect.stringContaining("machine mac and engine claude") });
+    request.finish();
+    const ticket = hub.tickets.list()[0]!;
+    expect(ticket).toMatchObject({ machine: "mac", requiredMachine: "mac", engine: "claude", enginePin: "claude" });
+    run.show(ticket.id, 1, { kind: "unavailable", category: "limit", reason: "Claude quota reached", until: clock.now() + 10_000, unsent: [] });
+    expect(hub.tickets.get(ticket.id)?.work).toMatchObject({ state: "unavailable", engine: "claude" });
+    expect(run.sent.filter((message) => message.type === "work.task")).toHaveLength(1);
+    clock.advance(11_000);
+    tickWork();
+    expect(run.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { engine: "claude" } }, { task: { engine: "claude" } }]);
+  });
+
   it("accepts a light task with a project alongside unrelated daily work", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;

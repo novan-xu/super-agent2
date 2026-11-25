@@ -105,6 +105,8 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
   To drop an issue from a started chain, close it on GitHub as not planned with an explanation and record the decision.
 - Call `choose_defaults` right after arranging or rearranging chains and after opening a visible task.
   Use `any` unless the work needs macOS or Windows.
+  If the owner explicitly names a machine or provider, record it using `machine` or `ownerEngine` in `choose_defaults`.
+  Apply it to each affected chain.
   Tell the owner what is arranged, what is missing and that they can start it from the card.
   The owner can override the selected machine, engine, model and effort there.
   One start authorizes the chain and work arranged after it.

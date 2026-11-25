@@ -1301,6 +1301,14 @@ export const migrations: readonly Migration[] = [
       INSERT INTO inbox_sources (id, name, client_id, token_id, kind) VALUES ('oauth', 'OAuth MCP', '', '', 'oauth');
     `,
   },
+  {
+    version: 68,
+    sql: `
+      ALTER TABLE tickets ADD COLUMN machine_pinned INTEGER NOT NULL DEFAULT 0 CHECK (machine_pinned IN (0, 1));
+      ALTER TABLE tickets ADD COLUMN engine_pin TEXT;
+      UPDATE tickets SET engine_pin = owner_engine WHERE light IS NOT NULL AND owner_engine IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

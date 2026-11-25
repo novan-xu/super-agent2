@@ -1,5 +1,5 @@
 import { ticketProject, ticketReference } from "@super-agent2/protocol";
-import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
+import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, requiredMachineFor, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
 
@@ -120,7 +120,7 @@ export function repairReport(ended: Ticket, repair: Ticket, followers: readonly 
     repair.form === "task"
       ? "It is the same task, in a new ticket, with the same material."
       : `It continues on branch ${repair.branch ?? "(none)"}${open === undefined ? "" : `, where pull request #${open.number} is open`}, and holds the issues still open: ${numbers(remaining)}. Its worker hands in that same pull request, or a new one if it sees fit. What is merged stays merged.`,
-    `It keeps the kind (${repair.kind}), difficulty (${chosen(repair.difficulty)}), platform (${chosen(repair.platform)}) and repository (${repair.repository ?? "none"}) of ticket ${ticketReference(ended)}${repair.requiredMachine === null ? "" : `, and runs only on ${repair.requiredMachine}`}. Its worker is given the account of what was done and what failed (every guided round, your description of why it was stuck, the owner's words, the decisions recorded), and ticket ${ticketReference(ended)}'s folder is kept for it.`,
+    `It keeps the kind (${repair.kind}), difficulty (${chosen(repair.difficulty)}), platform (${chosen(repair.platform)}) and repository (${repair.repository ?? "none"}) of ticket ${ticketReference(ended)}${requiredMachineFor(repair) === null ? "" : `, and runs only on ${requiredMachineFor(repair)}`}. Its worker is given the account of what was done and what failed (every guided round, your description of why it was stuck, the owner's words, the decisions recorded), and ticket ${ticketReference(ended)}'s folder is kept for it.`,
     followers.length === 0
       ? "No other ticket waited for it."
       : `What waited for ticket ${ticketReference(ended)} now waits for ticket ${ticketReference(repair)}: ${followers.map((follower) => `ticket ${ticketReference(follower)} (${follower.state})`).join(", ")}. The owner's 开始 on ticket ${ticketReference(repair)} starts those not yet started with it, and the ones already started begin once it has merged or is done.`,
@@ -227,7 +227,8 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
     }
   }
   lines.push(
-    `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}${ticket.requiredMachine === null ? "" : `; it runs only on ${ticket.requiredMachine}, the machine its deployment file names`}`,
+    `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}${ticket.requiredMachine === null || ticket.machinePinned === true ? "" : `; it runs only on ${ticket.requiredMachine}, the machine required for this ticket`}`,
+    ...(pinText(ticket) === "" ? [] : [pinText(ticket).trimEnd()]),
     `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}`,
     `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}${
       ticket.chosenBy === null
@@ -293,10 +294,17 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   return lines.join("\n");
 }
 
+export function pinText(ticket: Ticket): string {
+  const pins = [];
+  if (ticket.machinePinned === true) pins.push(`machine ${requiredMachineFor(ticket)}`);
+  if (ticket.enginePin !== undefined) pins.push(`engine ${ticket.ownerChoice.engine ?? ticket.enginePin}`);
+  return pins.length === 0 ? "" : `Pinned by the owner's request: ${pins.join(" and ")}. `;
+}
+
 export function choiceText(choice: StartChoice): string {
   const what = `${chosen(choice.machine)}, ${chosen(choice.engine)}, ${chosen(choice.model)}, ${chosen(choice.effort)}`;
   if (choice.missing.length === 0) {
-    return `It would run on ${what}.`;
+    return `Current start choice: ${what}.`;
   }
   const unavailable = choice.machine === null && choice.engine !== null && choice.model !== null && choice.effort !== null
     ? ` No online machine matching the platform offers ${choice.engine}, ${choice.model} at ${choice.effort}.`
