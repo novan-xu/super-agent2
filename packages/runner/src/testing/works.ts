@@ -306,8 +306,8 @@ export function writeOutput(ticket: number, files: Readonly<Record<string, strin
   }
   const content = typeof handback === "string" ? handback : JSON.stringify(handback);
   writeFileSync(paths.handback, content);
-  const antigravityHandback = join(paths.worktree, `.superagent2-t${ticket}`, "handback.json");
-  mkdirSync(join(paths.worktree, `.superagent2-t${ticket}`), { recursive: true });
+  const antigravityHandback = join(paths.scratch ?? paths.worktree, `.superagent2-t${ticket}`, "handback.json");
+  mkdirSync(join(paths.scratch ?? paths.worktree, `.superagent2-t${ticket}`), { recursive: true });
   writeFileSync(antigravityHandback, content);
 }
 
