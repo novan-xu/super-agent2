@@ -35,7 +35,7 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
           {choice.machine === null ? <option value="" /> : null}
           {options.machines.map((name) => (
             <option key={name} value={name}>
-              {name}
+              {card.ticket.machinePinned === true && name === choice.machine ? text("chains.pinned", { value: name }) : name}
             </option>
           ))}
         </select>
@@ -57,7 +57,7 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
           {choice.engine === null ? <option value="" /> : null}
           {options.engines.map((engine) => (
             <option key={engine} value={engine}>
-              {text(`engine.${engine}`)}
+              {card.ticket.enginePin !== undefined && engine === choice.engine ? text("chains.pinned", { value: text(`engine.${engine}`) }) : text(`engine.${engine}`)}
             </option>
           ))}
         </select>
@@ -144,9 +144,12 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
       <Choice card={card} busy={sending} choose={choose} />
       {card.choice.missing.length === 0 ? null : (
         <ul className="chain-missing">
-          {card.choice.missing.map((part) => (
-            <li key={part}>{text(`chains.missing.${part}`)}</li>
-          ))}
+          {card.choice.missing.map((part) => {
+            const key = part === "provider" && ticket.enginePin !== undefined ? "pinnedProvider"
+              : part === "machine" && ticket.machinePinned === true ? "pinnedMachine"
+                : part;
+            return <li key={part}>{text(`chains.missing.${key}`)}</li>;
+          })}
         </ul>
       )}
       {use.failure === null ? null : (

@@ -119,7 +119,7 @@ async function openLight(scheduled: ReturnType<typeof turn>) {
   expect(result.isError, result.text).toBe(false);
 }
 
-function runner(name: string) {
+function runner(name: string, engines: readonly ("codex" | "claude" | "dsh")[] = ["codex", "dsh"]) {
   hub.machines.add({ name, accessClientId: `${name}.access` });
   const machine = hub.machines.get(name);
   if (machine === undefined) throw new Error("The work machine was not stored");
@@ -127,7 +127,7 @@ function runner(name: string) {
   const link = hub.runners.attach(machine, { send: (message) => void sent.push(message), close: () => undefined });
   link.receive({ type: "hello", protocol: protocolVersion, works: [], machine: {
     hostname: name, platform: "darwin", release: "1", arch: "arm64", user: "owner", slots: { total: 2, free: 2 }, allowances: [],
-    programs: (["codex", "dsh"] as const).map((id) => ({
+    programs: engines.map((id) => ({
       id, installed: true, path: id, version: "1", source: "program" as const, problem: null,
       models: [{ id: startingEngineTable[id].standard.model, efforts: [startingEngineTable[id].standard.effort] }],
     })),
@@ -190,20 +190,23 @@ describe("scheduled work", () => {
     expect(schedule).toMatchObject({ topic, machine: "mac-mini", nextAt: Date.UTC(2026, 10, 22, 8) });
     expect(hub.tickets.list()).toEqual([]);
     const other = runner("other");
-    const mac = runner("mac-mini");
+    const mac = runner("mac-mini", ["codex", "claude", "dsh"]);
     hub.settings.setOrder("worker", ["deepseek", "gpt", "claude"]);
     const run = fire(schedule, inputs);
     expect(inputs.at(-1)).toMatchObject({ source: "hub", scheduleRun: run, text: expect.stringContaining(fields.instruction) });
     const scheduled = turn(link, topic, run);
-    const resultWithProject = await scheduled.call("run_scheduled_light_task", { ...light, project: repository });
+    expect(await scheduled.call("run_scheduled_light_task", { ...light, machine: "other" })).toMatchObject({
+      isError: true, text: expect.stringContaining("requires machine mac-mini"),
+    });
+    const resultWithProject = await scheduled.call("run_scheduled_light_task", { ...light, project: repository, machine: "mac-mini", ownerEngine: "claude" });
     expect(resultWithProject.isError, resultWithProject.text).toBe(false);
     expect(hub.conversations.get(topic)?.repository).toBeNull();
     const ticket = hub.tickets.list()[0]!;
-    expect(ticket).toMatchObject({ scheduleRun: run, light: "transfer", project: repository, state: "pending", requiredMachine: "mac-mini" });
+    expect(ticket).toMatchObject({ scheduleRun: run, light: "transfer", project: repository, state: "pending", requiredMachine: "mac-mini", enginePin: "claude" });
     expect(hub.chains.startScheduled(run)).toBeUndefined();
     scheduled.finish();
     expect(other.sent.filter((message) => message.type === "work.task")).toEqual([]);
-    expect(mac.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { checkout: null, light: true, ticket: ticket.id, engine: "dsh" } }]);
+    expect(mac.sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { checkout: null, light: true, ticket: ticket.id, engine: "claude" } }]);
     expect(hub.waiting.cards()).toEqual([]);
     mac.link.receive({ type: "work.event", ticket: ticket.id, attempt: 1, seq: 1, at: clock.now(),
       event: { kind: "delivered", text: "Free space checked.", files: [], report: { en: "Done", zh: "完成" } } });

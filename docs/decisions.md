@@ -3905,3 +3905,21 @@ Another option was to expand the set of engines that can start code tickets.
 - **Chosen:** Make the logo the sidebar's collapse toggle, as in the prototype, and draw the collapsed lamps in the lamp well itself, focusable only while collapsed and with a focus outline.
 - **Why:** The collapsed sidebar is then a pure crop of the expanded one, and keyboard users see where they are.
 - **Other options:** Keep the separate chevron button and the compact lamp row, which moves the logo and the lamps when the sidebar collapses.
+
+## 2026-11-25 — Explicit worker assignment (#344)
+
+- **Chosen:** Record machine and provider pins for visible tickets in `choose_defaults` and accept the same fields on both light-task tools.
+- **Why:** The brain already configures each visible ticket after arranging work, and a light task can start as soon as it is filed.
+- **Other options:** Add the fields to each filing and arrangement tool as well, or ask the owner to set them again on the card.
+
+- **Chosen:** Keep explicit pins separate from card choices and preserve existing deployment and schedule machine requirements.
+- **Why:** Cards can override an explicit pin, while a deployment recipe or an approved schedule can constrain which machine may run its work.
+- **Other options:** Convert all existing machine requirements into overridable preferences, or allow card choices to fall back when a pinned resource is unavailable.
+
+- **Chosen:** Carry pins to every chain created by splitting a ticket and refuse regrouping when pins conflict.
+- **Why:** Every issue in a pinned ticket was subject to the owner's assignment, and combining conflicting assignments would discard one of them.
+- **Other options:** Reuse the first ticket's pins or require the brain to re-enter pins after every arrangement.
+
+- **Chosen:** Wait for an explicitly pinned provider both before dispatch and after a worker reports it unavailable.
+- **Why:** The assignment still applies when quota runs out after work has started.
+- **Other options:** Apply the pin only to initial dispatch and let the normal provider fallback take over during work.

@@ -19,6 +19,7 @@ import {
   defaultGitHubAccount,
   deploymentFile,
   MaterialName,
+  MachineName,
   MessageId,
   TopicRename,
   mergedCommit,
@@ -54,8 +55,8 @@ import type { createFollowUps } from "./follow-ups.js";
 import type { MemoryService } from "./memories.js";
 import { memoryCall, memoryDefinitions } from "./memory-tools.js";
 import { topicCall, topicDefinitions } from "./topic-tools.js";
-import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
-import type { TicketService } from "./tickets.js";
+import { allowanceReport, chainProgress, choiceText, clip, commandReport, commandSummary, decisionLine, pinText, decisionReport, repairReport, repairLines, ticketLine, ticketReport, waitedLine } from "./reports.js";
+import { TicketError, type TicketService } from "./tickets.js";
 import { type TicketTurn, TicketWriteRefused } from "./ticket-versions.js";
 import { LightTaskRequest, type LightTasks } from "./light-tasks.js";
 import { ScheduleFields, ScheduleId } from "@super-agent2/protocol";
@@ -150,9 +151,6 @@ const TaskArguments = z.object({
 const ScheduledLightArguments = LightTaskRequest.omit({ materials: true }).extend({
   material: z.array(MaterialArgument).optional(),
 });
-const StartLightArguments = ScheduledLightArguments.extend({
-  ownerEngine: ProgramId.optional(),
-});
 const LegacyLightEngine = { engine: CodeEngineChoice.optional() };
 
 const ScheduleProposalArguments = ScheduleFields.extend({
@@ -207,6 +205,8 @@ const DefaultsArgument = z.object({
   difficulty: Difficulty.optional(),
   reason: GeneratedText,
   platform: Platform,
+  machine: MachineName.optional(),
+  ownerEngine: ProgramId.optional(),
 });
 
 const DefaultsArguments = z.object({ chains: z.array(DefaultsArgument).min(1) });
@@ -226,6 +226,11 @@ const generatedSchema = (what: string) => ({
   required: ["en", "zh"],
   additionalProperties: false,
 });
+
+const pinArguments = {
+  machine: { type: "string", description: "Machine explicitly requested by the owner. Wait for this machine if busy or offline." },
+  ownerEngine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner. Wait for it if unavailable." },
+};
 
 const startChoices = {
   difficulty: { type: "string", enum: [...difficulties], description: "How hard the work is, if already judged" },
@@ -409,11 +414,11 @@ function defaultsDefinitions() {
     },
     {
       name: "choose_defaults",
-      title: "State each chain's kind, difficulty and platform",
+      title: "State each chain's defaults and owner pins",
       description: [
         "Give each issue's difficulty for code chains and one difficulty for a task.",
         "Use mechanical for fixed procedures, standard for bounded work, and complex for cross-module, state, concurrency or open design work.",
-        "Writing defaults to Antigravity. Other work follows the owner's worker order.",
+        "Writing defaults to Antigravity. Other work follows the owner's worker order. Set machine or ownerEngine only for an explicit owner request. Pins apply to the whole ticket and survive restating its defaults.",
       ].join(" "),
       inputSchema: {
         type: "object",
@@ -446,6 +451,7 @@ function defaultsDefinitions() {
                 difficulty: { type: "string", enum: [...difficulties], description: "Task difficulty, defaulting to standard for writing" },
                 reason: generatedSchema("one-line reason for the chain's difficulty"),
                 platform: { type: "string", enum: [...platforms], description: "The platform the work needs" },
+                ...pinArguments,
               },
               required: ["ticket", "kind", "reason", "platform"],
               additionalProperties: false,
@@ -463,7 +469,7 @@ function statedText(outcome: StateOutcome, defaults: StartDefaults, scheduled: b
   if (!outcome.ok) {
     return { text: outcome.reason, isError: true };
   }
-  const lines = outcome.tickets.map((ticket) => `Ticket ${ticketReference(ticket)}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${choiceText(defaults.resolve(ticket))}`);
+  const lines = outcome.tickets.map((ticket) => `Ticket ${ticketReference(ticket)}: ${ticket.kind}, ${ticket.difficulty ?? "?"}, ${ticket.platform ?? "?"}. ${pinText(ticket)}${choiceText(defaults.resolve(ticket))}`);
   lines.push(scheduled ? "The hub will use these defaults when it starts the scheduled work after this turn." : "The owner sees these on the cards in 工作台 and can change them before the start.");
   return { text: lines.join("\n") };
 }
@@ -643,7 +649,7 @@ function ticketDefinitions() {
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
           reason: generatedSchema("one-line reason for the difficulty"),
-          ownerEngine: { type: "string", enum: ProgramId.options, description: "Provider explicitly requested by the owner" },
+          ...pinArguments,
         },
         required: ["title", "summary", "task", "kind", "reason"],
         additionalProperties: false,
@@ -1192,18 +1198,18 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const { material, engine: _engine, ...request } = parsed.data;
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
-        tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
-        return { text: "The light task is ready for this run. Its result arrives in the topic after the turn." };
+        const ticket = tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
+        return { text: `The light task is ready for this run. ${pinText(ticket)}Its result arrives in the topic after the turn.` };
       }
       case "start_light_task": {
         if (tools.light === undefined) return undefined;
-        const parsed = StartLightArguments.extend(LegacyLightEngine).safeParse(raw);
+        const parsed = ScheduledLightArguments.extend(LegacyLightEngine).safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
-        const { material, ownerEngine, engine: _engine, ...request } = parsed.data;
+        const { material, engine: _engine, ...request } = parsed.data;
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
-        const ticket = tools.light.start({ ...request, materials: chosen.materials }, ownerEngine, writeTurn());
-        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when a suitable machine and provider are available." : ""}` };
+        const ticket = tools.light.start({ ...request, materials: chosen.materials }, writeTurn());
+        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. ${pinText(ticket)}${ticket.startBlock?.pinned ? `${ticket.startBlock.en} ` : ""}Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when the required machine and provider are available." : ""}` };
       }
       case "answer_light_task": {
         if (tools.work === undefined) return undefined;
@@ -1630,7 +1636,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           topicCall(conversations.topics, options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation) ??
           (options.memories === undefined ? undefined : memoryCall(options.memories, parsed.data.name, parsed.data.arguments ?? {}, conversation)) ??
           (await ticketCall(parsed.data.name, parsed.data.arguments ?? {}, scope).catch((error: unknown) => {
-            if (error instanceof TicketWriteRefused || error instanceof ScheduleRefused) {
+            if (error instanceof TicketWriteRefused || error instanceof TicketError || error instanceof ScheduleRefused) {
               return { text: error.message, isError: true };
             }
             throw error;

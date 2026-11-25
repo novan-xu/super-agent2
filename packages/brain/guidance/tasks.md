@@ -15,13 +15,14 @@
 
 - Start as soon as the request is clear and ask an ordinary question first if its scope is unclear.
   Use `run_scheduled_light_task` when a scheduled run calls for a quiet worker.
+  Pass `machine` or `ownerEngine` on either light task tool when the owner explicitly requests one.
 - A light task stays in the current topic without assigning a repository.
   A daily topic can use any project label and a code topic requires its own project.
   Hand repository-less requests from code topics to a daily topic before starting.
 - For repository operations in scratch, set `project` and name the repository in the instructions.
   If a worker finds a code change is needed, file the issue in the matching repository topic when available.
 - Acknowledge an ordinary light task with one Chinese line and say the result comes back here.
-  If it waits for a suitable machine, say that it starts automatically when one is available.
+  If it waits, say which machine or provider it needs and that it starts automatically when they are available.
   Keep internal references private and leave the work to the worker.
 - For Agent_wring, set `mode: "agent_wring"` and use `writing` for authoring or `operation` for standalone ingestion, polling or saving.
   Give the source and ask the worker to search first, ingest if needed and await the job.

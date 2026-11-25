@@ -69,6 +69,7 @@ export function problemLines(problem: TicketProblem, now: number): readonly stri
   switch (problem.kind) {
     case "waits":
       return [problem.before.map((entry) => entry.title ?? (entry.code ?? text("ticket.missing"))).join("、")];
+    case "pinnedWaiting":
     case "beginFailed":
       return [problem.reason];
     case "queued":
@@ -115,6 +116,7 @@ export function problemTone(problem: TicketProblem): "bad" | "warn" | "mute" {
     case "failed":
     case "verifyFailed":
       return "bad";
+    case "pinnedWaiting":
     case "unreachable":
     case "providerWaiting":
     case "conflicted":

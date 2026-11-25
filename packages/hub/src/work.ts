@@ -21,6 +21,7 @@ import {
   mergedCommit,
   type ProgramId,
   routeProvider,
+  requiredMachineFor,
   screenshotImage,
   type ScreenshotSet,
   outFor,
@@ -1666,12 +1667,13 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       recordSwitch(ticket.id, { kind: "waiting", from: previous.engine, ...(previous.engine === "antigravity" ? { fromModel: previous.model } : {}), to: null, machine: null, model: null, effort: null, reason: previous.reason ?? "", until, owner: false, attempt: previous.attempt }),
     );
     const out = options.defaults?.out();
+    const scope = ticket.enginePin === undefined ? "Every provider that could run it" : "The engine pinned by the owner";
     tell(
       ticket.id,
       text("notice.waitingForProvider", { ticket: ticket.code }),
       [
         `[hub] Ticket ${ticketReference(ticket)} (${ticket.title.en}) waits for a provider. Its program, ${programNames[previous.engine]}, reported itself unavailable: ${previous.reason ?? "no reason was given"}.`,
-        `Every provider that could run it is unavailable now: ${engines.map((engine) => `${programNames[engine]} (${out?.get(engine)?.reason ?? "unavailable"})`).join("; ")}.`,
+        `${scope} is unavailable now: ${engines.map((engine) => `${programNames[engine]} (${out?.get(engine)?.reason ?? "unavailable"})`).join("; ")}.`,
         `The hub retries when the earliest wait ends (${whenWords(until)}) or an allowance reading shows a provider back. This takes no guided round. Leave the ticket waiting without guidance, stopping or reassignment.`,
         "Tell the owner in Chinese, in a line, that the ticket waits for a provider, and when it will be tried again if a time is known.",
       ].join("\n"),
@@ -1689,20 +1691,25 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const machines = defaults.machines();
     const online = machines.some((machine) => machine.name === previous.machine);
+    const pinnedEngine = ticket.enginePin === undefined ? undefined : ticket.ownerChoice.engine ?? ticket.enginePin;
+    const out = defaults.out();
+    const antigravityOut = defaults.antigravityOut();
     const routing = routeProvider({
       difficulty: ticket.difficulty,
       platform: ticket.platform,
-      requiredMachine: ticket.requiredMachine,
+      requiredMachine: requiredMachineFor(ticket),
       machine: previous.machine,
       canMove: ticket.form === "code" && online,
-      order: defaults.order(ticket.form === "task" && ticket.kind === "writing"),
+      order: pinnedEngine === undefined ? defaults.order(ticket.form === "task" && ticket.kind === "writing") : [pinnedEngine],
       table: defaults.table(),
       machines,
-      out: defaults.out(),
-      antigravityOut: defaults.antigravityOut(),
+      out,
+      antigravityOut,
     });
     if (routing.kind === "none") {
-      if (online) {
+      if (pinnedEngine !== undefined) {
+        waitForProvider(ticket, previous, [pinnedEngine], outFor(out, antigravityOut, pinnedEngine, previous.model)?.until ?? null);
+      } else if (online) {
         failProvider(ticket, previous, `${programNames[previous.engine]} is unavailable (${previous.reason ?? "no reason was given"}), and no other provider could take the work: none of them is offered with the model and effort of the start table for this ticket's difficulty on a machine that can run it`);
       }
       return;
@@ -1739,7 +1746,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
           engine: routing.engine,
           model: routing.model,
           effort: routing.effort,
-          by: { machine: ticket.chosenBy?.machine === "owner" && routing.machine === ticket.machine ? "owner" : "default", engine: "default", model: "default", effort: "default" },
+          by: { machine: ticket.chosenBy?.machine === "owner" && routing.machine === ticket.machine ? "owner" : "default", engine: pinnedEngine === undefined ? "default" : "owner", model: "default", effort: "default" },
         });
       });
       const updated = tickets.get(id) ?? ticket;

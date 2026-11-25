@@ -7,6 +7,7 @@ import { AttachmentUpload } from "@super-agent2/protocol";
 
 export interface LayoutFixture {
   readonly ticket: number;
+  readonly startCard: number;
   readonly previewName: string;
   readonly graphs: readonly (readonly number[])[];
 }
@@ -77,12 +78,22 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
       waitsFor,
     }).id;
   };
+  hub.machines.add({ name: "mac-mini", accessClientId: "layout.access", system: "macos" });
+  const pin = (ticket: number, issue: number) => {
+    const pinned = hub.chains.arranger.state([{
+      ticket, kind: "feature", issues: [{ number: issue, difficulty: "standard" }], platform: "macos",
+      reason: { en: "A bounded review of the greenhouse checklist.", zh: "复核温室巡检表中的一项改动。" },
+      machine: "mac-mini", ownerEngine: "claude",
+    }]);
+    if (!pinned.ok) throw new Error(pinned.reason);
+  };
   for (const [index, repository] of [...repositories, ...repositories, ...repositories, ...repositories].entries()) {
     const title = { en: `Improve the garden's weekly maintenance schedule (${index + 1})`, zh: `完善花园的每周维护计划与工作记录（${index + 1}）` };
     const id = open(repository, title);
     if (index === 0) {
       detail = id;
-      hub.tickets.move(id, "working");
+      pin(id, number);
+      hub.tickets.move(id, "waiting");
     }
     if (index >= 12) {
       stopped = id;
@@ -118,8 +129,10 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
   ]);
   hub.tickets.move(forkThenMerge[0]!, "verifying");
   hub.tickets.move(forkThenMerge[1]!, "waiting");
+  const startCard = open(repositories[0], { en: "Review the greenhouse checklist", zh: "复核温室巡检表" });
+  pin(startCard, number);
   for (const repository of repositories) hub.repositories.setPinned(repository, true);
 
   await seedTransfer(url, icon);
-  return { ticket: detail, previewName, graphs: [forkThenMerge, fork, merge] };
+  return { ticket: detail, startCard, previewName, graphs: [forkThenMerge, fork, merge] };
 }

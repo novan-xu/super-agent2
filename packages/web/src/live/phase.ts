@@ -88,7 +88,7 @@ export type TicketProblem =
   | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly code: string | null; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
   | { readonly kind: "beginFailed"; readonly reason: string }
   | { readonly kind: "queued"; readonly machine: string }
-  | { readonly kind: "providerWaiting"; readonly reason: string }
+  | { readonly kind: "providerWaiting" | "pinnedWaiting"; readonly reason: string }
   | { readonly kind: "unreachable"; readonly machine: string; readonly since: number }
   | { readonly kind: "failed"; readonly failure: WorkFailure; readonly reason: string }
   | { readonly kind: "stopped"; readonly reason: string }
@@ -107,7 +107,7 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
         return { id: wait.ticket, code: found?.code ?? wait.reference?.split("-")[0] ?? null, title: found === undefined ? null : found.title.zh, state: found?.state ?? null };
       });
       if (before.length === 0 && ticket.startBlock != null) {
-        return { kind: ticket.startBlock.provider ? "providerWaiting" : "beginFailed", reason: ticket.startBlock.zh };
+        return { kind: ticket.startBlock.pinned ? "pinnedWaiting" : ticket.startBlock.provider ? "providerWaiting" : "beginFailed", reason: ticket.startBlock.zh };
       }
       return { kind: "waits", before };
     }

@@ -203,6 +203,7 @@ function CanvasGrid({ chains, starts, stuck, waiting, actions, selected, select,
         </button> : <div className="wb-card"><StuckCard card={stopped} use={useOf(waiting, stopped.key)} focused={false} href={ticketHref(ticket.id)} open={() => select(ticket.id)} answer={(answer, words) => actions.answerStuck(stopped.key, answer, words)} /></div>}
         {node.after.length === 0 ? null : <span className="sr-only">{text("workbench.follows", { tickets: node.after.map((id) => `${codeOf(id)} ${(related.get(id)?.title.zh ?? "")}`.trim()).join("、") })}</span>}
         {ticket.state !== "waiting" || waits.length === 0 ? null : <p className="wb-after">{waits.map((wait) => text(wait.deployment ? "workbench.waitDeployment" : related.get(wait.ticket)?.form === "task" ? "workbench.waitTicket" : "workbench.waitMerge", { ticket: codeOf(wait.ticket) })).join("、")}</p>}
+        {ticket.startBlock?.pinned ? <p className="wb-after">{ticket.startBlock.zh}</p> : null}
         {node.missing.length === 0 ? null : <p className="wb-after">{text("workbench.follows", { tickets: node.missing.map(codeOf).join("、") })}</p>}
       </div>;
     })}</div>)}

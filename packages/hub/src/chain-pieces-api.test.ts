@@ -77,7 +77,7 @@ async function start(programs: MachineReport["programs"] = [], forgeFetch = forg
 
 const chainIssues = [7, 8, 9] as const;
 
-function begin(running: Hub, conversation: string): Ticket {
+function begin(running: Hub, conversation: string, pinned = false): Ticket {
   for (const issue of chainIssues) {
     forge.repository(repository).issues.set(issue, "open");
   }
@@ -96,6 +96,7 @@ function begin(running: Hub, conversation: string): Ticket {
     conversation,
   });
   running.tickets.change((writes) => {
+    if (pinned) writes.pins(opened.id, { machine: "pc", ownerEngine: "claude", platform: "windows", kind: "feature" });
     writes.choose(opened.id, { machine: "pc", engine: "claude", model: "claude-haiku-5-5", effort: "low", by: { machine: "owner", engine: "owner", model: "owner", effort: "owner" } });
     writes.move(opened.id, "working");
   });
@@ -286,6 +287,20 @@ describe("follow-ups of merged code tickets", () => {
     expect(starts(sent, third.id)[0]?.task).toMatchObject({
       session: "new-codex", folder: original.id, followUp: { workspaceOf: second.id, resumeOriginal: true },
     });
+  });
+
+  it("keeps explicit assignment on a follow-up when the original runner is offline", async () => {
+    const { running, runner, conversation } = await start(programs);
+    const original = begin(running, conversation, true);
+    await merge(running, runner, original, 70, chainIssues);
+    runner.closed();
+    const request = { ticket: ticketReference(original), issue: 7, comment: "Adjust the heading." };
+    const opened = await callBrainTool(running, "follow_up_ticket", request, conversation);
+    expect(opened.isError, opened.text).toBe(false);
+    const [followUp] = running.tickets.list({ open: true });
+    expect(followUp).toMatchObject({ requiredMachine: "pc", machinePinned: true, enginePin: "claude" });
+    const card = running.chains.cards().find((card) => card.ticket.id === followUp?.id);
+    expect(card?.choice).toMatchObject({ machine: "pc", engine: "claude", missing: ["machine"] });
   });
 
   it("reuses the comment if the response was lost before the issue could be reopened", async () => {

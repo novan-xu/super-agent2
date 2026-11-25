@@ -31,6 +31,9 @@ import {
   type RepairOpener,
   RepositoryName,
   fitsForm,
+  fitsPlatform,
+  hasStartPins,
+  type MachineStatus,
   Ticket,
   TicketCode,
   TicketCodeDate,
@@ -47,7 +50,7 @@ import {
   type TicketState,
   TicketSwitch,
   type OwnerChoice,
-  type ProgramId,
+  ProgramId,
   WorkStatus,
   TaskMaterial,
 } from "@super-agent2/protocol";
@@ -214,6 +217,8 @@ export interface TicketWrites {
   touched(id: number): void;
   state(id: number, statement: DefaultsStatement): void;
   forgetDefaults(id: number): void;
+  pins(id: number, settings: { machine?: string | undefined; ownerEngine?: ProgramId | undefined; platform: Platform | null; kind: TicketKind }): void;
+  inheritPins(id: number, from: Ticket): void;
   ownerChoice(id: number, choice: OwnerChoice): void;
   choose(id: number, chosen: ChosenRun): void;
   ran(id: number, run: TicketRun): void;
@@ -269,6 +274,7 @@ export interface TicketServiceOptions {
   readonly database: HubDatabase;
   readonly clock: Clock;
   readonly work?: TicketWork;
+  readonly machines?: () => readonly MachineStatus[];
   readonly topicChanged?: (id: string) => void;
   readonly entryChanged?: (id: string) => void;
 }
@@ -282,6 +288,8 @@ const TicketRow = z.object({
   code_date: TicketCodeDate,
   form: z.string(),
   required_machine: z.string().nullable(),
+  machine_pinned: z.union([z.literal(0), z.literal(1)]),
+  engine_pin: z.string().nullable(),
   repository: z.string().nullable(),
   project: z.string().nullable(),
   schedule_run: z.string().nullable(),
@@ -722,6 +730,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const clearDefaults = connection.prepare(
     "UPDATE tickets SET difficulty_reason_en = NULL, difficulty_reason_zh = NULL, brain_engine = NULL, owner_machine = NULL, owner_engine = NULL, owner_model = NULL, owner_effort = NULL WHERE id = ?",
   );
+  const updatePins = connection.prepare("UPDATE tickets SET required_machine = ?, machine_pinned = ?, engine_pin = ? WHERE id = ?");
   const updateOwnerChoice = connection.prepare("UPDATE tickets SET owner_machine = ?, owner_engine = ?, owner_model = ?, owner_effort = ? WHERE id = ?");
   const updateChosen = connection.prepare("UPDATE tickets SET machine = ?, engine = ?, model = ?, effort = ?, chosen_by = ?, chosen_at = ? WHERE id = ?");
   const updateRan = connection.prepare("UPDATE tickets SET ran = ? WHERE id = ?");
@@ -791,6 +800,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       difficultyReason: pair(value.difficulty_reason_en, value.difficulty_reason_zh),
       platform: value.platform,
       requiredMachine: value.required_machine,
+      machinePinned: value.machine_pinned === 1,
+      enginePin: ProgramId.optional().parse(value.engine_pin ?? undefined),
       commitRef: task?.commitRef ?? null,
       commit: task?.commit ?? null,
       deploys: task?.deploys ?? false,
@@ -1165,9 +1176,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           kind: old.kind,
           difficulty: old.difficulty ?? undefined,
           platform: old.platform ?? undefined,
-          requiredMachine: old.requiredMachine,
+          requiredMachine: old.machinePinned === true ? undefined : old.requiredMachine,
           ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys } }),
         }, writes.topic(id));
+        writes.inheritPins(repair, old);
         if (task?.commit !== undefined && task.commit !== null) {
           writes.setCommit(repair, task.commit);
         }
@@ -1267,6 +1279,47 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         existing(id);
         clearDefaults.run(id);
         touch(id);
+      },
+      pins: (id, settings) => {
+        const ticket = existing(id);
+        const required = settings.machine ?? ticket.requiredMachine;
+        const pinned = ticket.machinePinned === true || (settings.machine !== undefined && ticket.requiredMachine === null);
+        const engine = settings.ownerEngine ?? ticket.enginePin;
+        if (engine === "antigravity" && settings.kind !== "writing") {
+          throw new TicketError("Antigravity is available only for writing tasks.");
+        }
+        if (settings.machine !== undefined && !pinned && settings.machine !== ticket.requiredMachine) {
+          throw new TicketError(`This ticket requires machine ${ticket.requiredMachine}.`);
+        }
+        if (settings.machine !== undefined || pinned) {
+          const machine = options.machines?.().find((entry) => entry.name === required);
+          if (machine === undefined && settings.machine !== undefined) {
+            throw new TicketError(`Machine ${required} is not registered.`);
+          }
+          const platform = machine?.report?.platform ?? (machine?.system === "macos" ? "darwin" : machine?.system === "windows" ? "win32" : undefined);
+          if (platform !== undefined && settings.platform !== null && !fitsPlatform(settings.platform, platform)) {
+            throw new TicketError(`Machine ${required} does not match platform ${settings.platform}.`);
+          }
+        }
+        if (required !== ticket.requiredMachine || pinned !== (ticket.machinePinned === true) || engine !== ticket.enginePin) {
+          updatePins.run(required, pinned ? 1 : 0, engine ?? null, id);
+          touch(id);
+        }
+      },
+      inheritPins: (id, from) => {
+        if (!hasStartPins(from)) return;
+        const ticket = existing(id);
+        const copyMachine = from.machinePinned === true && (ticket.requiredMachine === null || ticket.machinePinned === true);
+        if (from.machinePinned === true && !copyMachine && (from.ownerChoice.machine ?? from.requiredMachine) !== ticket.requiredMachine) {
+          throw new TicketError(`This ticket requires machine ${ticket.requiredMachine} and cannot inherit a different machine pin.`);
+        }
+        updatePins.run(copyMachine ? from.requiredMachine : ticket.requiredMachine, copyMachine || ticket.machinePinned === true ? 1 : 0, from.enginePin ?? ticket.enginePin ?? null, id);
+        const { machine, engine, model, effort } = from.ownerChoice;
+        writes.ownerChoice(id, {
+          ...ticket.ownerChoice,
+          ...(copyMachine ? { machine } : {}),
+          ...(from.enginePin === undefined ? {} : { engine, model, effort }),
+        });
       },
       ownerChoice: (id, choice) => {
         existing(id);

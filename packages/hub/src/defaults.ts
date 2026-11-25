@@ -4,6 +4,8 @@ import {
   type Balance,
   EngineTable,
   engineOrder,
+  hasStartPins,
+  requiredMachineFor,
   isComplete,
   type EngineContext,
   type MachineChoice,
@@ -208,27 +210,30 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
       return true;
     },
     machines,
-    machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.requiredMachine),
+    machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.machinePinned === true ? null : ticket.requiredMachine),
     resolve: (ticket, owner = ticket.ownerChoice) => {
       const input = {
         kind: ticket.kind,
         difficulty: ticket.difficulty,
         platform: ticket.platform,
-        requiredMachine: ticket.requiredMachine,
+        requiredMachine: requiredMachineFor(ticket, owner),
+        machinePinned: ticket.machinePinned,
+        enginePin: ticket.enginePin,
         stated: ticket.difficultyReason !== null && ticket.platform !== null && ticket.difficulty !== null,
         owner,
       };
       const choices = table();
-      const online = machines();
+      const online = ticket.machinePinned === true ? machinesFor(ticket.platform, machines()) : machines();
       const context = contextOf();
       const ordinary = resolveStart(input, choices, online, context);
       const link = followUps.get(ticket.id);
       const source = link === undefined ? undefined : followUps.source(link.previous) ?? followUps.source(link.original);
       if (source === undefined || source.engine === "antigravity") return ordinary;
-      const engine = owner.engine ?? source.engine;
+      if (ticket.enginePin !== undefined && ordinary.missing.includes("provider")) return ordinary;
+      const engine = owner.engine ?? ticket.enginePin ?? source.engine;
       const sameEngine = engine === source.engine;
       if (owner.engine !== null || !context.out.has(engine)) {
-        const pinned = { ...owner, machine: owner.machine ?? source.machine, engine };
+        const pinned = { ...owner, machine: owner.machine ?? (ticket.machinePinned === true ? ticket.requiredMachine : source.machine), engine };
         const preferred = resolveStart({
           ...input, owner: { ...pinned, model: owner.model ?? (sameEngine ? source.model : null), effort: owner.effort ?? (sameEngine ? source.effort : null) },
         }, choices, online, context);
@@ -236,7 +241,7 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
         const updatedModel = resolveStart({ ...input, owner: pinned }, choices, online, context);
         if (isComplete(updatedModel)) return { ...updatedModel, by: ordinary.by };
       }
-      if (isComplete(ordinary) || owner.engine !== null || owner.model !== null || owner.effort !== null) return ordinary;
+      if (isComplete(ordinary) || hasStartPins(ticket) || owner.engine !== null || owner.model !== null || owner.effort !== null) return ordinary;
       const fallback = routeProvider({
         difficulty: ticket.difficulty,
         platform: ticket.platform,
