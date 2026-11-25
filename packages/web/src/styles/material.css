@@ -545,15 +545,15 @@
   box-shadow: inset 0 0 0 2px var(--mat-focus-ink);
 }
 :root .wb-tab:not(.is-active) > .wb-tab-select:focus-visible { box-shadow: none !important; }
-:root .conv-main .stream {
+:root .conv-main .stream, :root .wb-canvas {
   --mat-stream-fade: min(var(--space-4), 4%);
-  border-radius: var(--radius-md);
   mask-image: linear-gradient(to bottom,
     transparent var(--space-1), black var(--mat-stream-fade),
     black calc(100% - var(--mat-stream-fade)), transparent calc(100% - var(--space-1)));
 }
+:root .conv-main .stream { border-radius: var(--radius-md); }
 @media (forced-colors: active) {
-  :root .conv-main .stream { mask-image: none; }
+  :root .conv-main .stream, :root .wb-canvas { mask-image: none; }
   :root .wb-tab.is-active { outline: 1px solid Highlight; outline-offset: -1px; }
 }
 
