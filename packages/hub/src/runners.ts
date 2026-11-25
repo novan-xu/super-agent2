@@ -152,7 +152,7 @@ export function createRunners(options: RunnersOptions): Runners {
     refreshAllowance: () => {
       let count = 0;
       for (const link of links.values()) {
-        if (link.report !== undefined) { link.connection.send({ type: "allowance.refresh" }); count++; }
+        if (link.report !== undefined && link.report.platform !== "win32") { link.connection.send({ type: "allowance.refresh" }); count++; }
       }
       return count;
     },

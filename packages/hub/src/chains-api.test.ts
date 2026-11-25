@@ -749,6 +749,7 @@ describe("start defaults", () => {
     expect(inbox.messages.some((message) => message.type === "allowance")).toBe(true);
     expect((await ownerSend(running, allowancePath, {}, { headers: { origin: "https://elsewhere.example" } })).status).toBe(403);
     expect((await ownerSend(running, allowancePath, {}, { headers: { "content-type": "text/plain" } })).status).toBe(415);
+    connect(running, "mini", machineReport("darwin"));
     const response = await ownerSend(running, allowancePath, {});
     expect(await response.json()).toEqual({ requested: 1 });
     expect(sent).toContainEqual({ type: "allowance.refresh" });
@@ -831,6 +832,22 @@ describe("start defaults", () => {
     expect(running.settings.snapshot().unavailable).toEqual([]);
     expect((await cardOf(running, 1)).choice.engine).toBe("claude");
     expect((await callBrainTool(running, "read_allowance", {})).text).toContain("No worker program is marked unavailable.");
+  });
+
+  it("uses macOS readings when the Windows machine reports no allowances", async () => {
+    const running = await start();
+    const now = clock.now();
+    connect(running, "mini", machineReport("darwin", [reading("codex", "exhausted", now)]));
+    connect(running, "air", machineReport("darwin", [{ program: "dsh", readAt: now, available: true, wallets: [{ currency: "CNY", total: 42, granted: 0, toppedUp: 42 }], problem: null }]));
+    const response = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    const allowance = AllowanceReport.parse(await response.json());
+    expect(allowance.subscriptions[0]).toMatchObject({ machine: "mini", state: "exhausted" });
+    expect(allowance.balance).toMatchObject({ machine: "air", wallets: [{ total: 42 }] });
+    expect(running.defaults.out().has("codex")).toBe(true);
+    const report = (await callBrainTool(running, "read_allowance", {})).text;
+    expect(report).toContain("on mini");
+    expect(report).toContain("on air");
+    expect(report).not.toContain("on pc");
   });
 
   it("reports the newest Gemini quota to the page and brain independently of Antigravity routing marks", async () => {
