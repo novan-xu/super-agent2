@@ -393,11 +393,15 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-section + .wb-section { margin-top: 28px; }
 .wb-section h2 { font-size: var(--text-md); margin: 0 0 12px; }
 .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 32px 20px; align-items: start; }
-.wb-chain { min-width: 0; display: grid; gap: 20px; }
-.wb-chain--linked { position: relative; padding-left: 24px; }
-.wb-chain--linked .wb-slot:not(:last-child)::before { content: ""; position: absolute; left: -21px; top: 18px; bottom: -38px; border-left: 2px solid var(--border); }
-.wb-rail-dot { position: absolute; left: -24px; top: 14px; z-index: 1; }
-.wb-branch { margin: 0 0 5px; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.wb-chain { --wb-row-gap: 20px; min-width: 0; display: grid; gap: var(--wb-row-gap); }
+.wb-chain--linked { --wb-gutter: min(var(--wb-gutter-ideal), 25%); }
+.wb-chain--linked .wb-slot { padding-left: var(--wb-gutter); }
+.wb-gutter { position: absolute; top: 0; bottom: 0; left: 0; width: var(--wb-gutter); pointer-events: none; }
+.wb-slot:not(:last-child) .wb-gutter { bottom: calc(-1 * var(--wb-row-gap)); }
+.wb-lanes { display: block; width: 100%; height: 100%; fill: none; stroke: color-mix(in srgb, var(--fg) 36%, var(--bg)); stroke-width: 2; }
+.wb-lane-clearance { stroke: var(--bg); stroke-width: 5; }
+.wb-rail-dot { position: absolute; top: 18px; transform: translate(-50%, -50%); }
+.wb-rail-dot.dot--mute { background: var(--bg); }
 .wb-slot { min-width: 0; position: relative; z-index: 1; }
 .wb-card { display: flex; flex-direction: column; gap: 9px; width: 100%; min-height: 104px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); text-align: left; cursor: pointer; }
 .wb-card[aria-pressed="true"] { border-color: var(--accent); }

@@ -2,6 +2,7 @@ import { text } from "@super-agent2/catalog";
 import { chineseOf, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canvasOf, type CanvasChain } from "../live/canvas.js";
+import { graphOf, type GraphRow } from "../live/canvas-graph.js";
 import { canStartCard } from "../live/choice.js";
 import { clampPanelHeight, loadPanelHeight, minPanelHeight, panelHeightMaximum, savePanelHeight } from "../live/panel-height.js";
 import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
@@ -185,16 +186,16 @@ function CanvasGrid({ chains, starts, stuck, waiting, actions, selected, select,
 }) {
   const related = new Map(chains.flat().map((node) => [node.ticket.id, node.ticket]));
   return <div className="wb-grid">
-    {chains.map((chain) => <div className={`wb-chain${chain.length > 1 ? " wb-chain--linked" : ""}`} key={chain[0]!.ticket.id}>
-    {chain.map((node, index) => {
+    {chains.map(graphOf).map(({ lanes, rows }) => <div className={`wb-chain${rows.length > 1 ? " wb-chain--linked" : ""}`} key={rows[0]!.node.ticket.id} style={rows.length > 1 ? { "--wb-gutter-ideal": `${gutterWidth(lanes)}px` } as CSSProperties : undefined}>
+    {rows.map((row) => {
+      const { node } = row;
       const ticket = node.ticket, start = starts.get(ticket.id), stopped = stuck.get(ticket.id), phase = ticketPhase(ticket);
       const where = whereOf(ticket);
       const phaseIndex = ticket.state === "waiting" ? 0 : ticket.state === "verifying" ? (ticket.verification?.waiting === "finishing" || ticket.verification?.waiting === "mergeable" ? 3 : 2) : 1;
       const waits = ticket.waits.filter((wait) => !wait.waived && (node.after.includes(wait.ticket) || node.missing.includes(wait.ticket)));
       const codeOf = (id: number) => (related.get(id)?.code ?? waits.find((wait) => wait.ticket === id)?.reference?.split("-")[0] ?? "?").toUpperCase();
       return <div className="wb-slot" key={ticket.id} data-ticket={ticket.id}>
-        {chain.length > 1 ? <span className={`wb-rail-dot dot dot--${phaseLooks[phase].tone}`} aria-hidden="true" /> : null}
-        {node.after.length > 0 && (node.after.length !== 1 || node.after[0] !== chain[index - 1]?.ticket.id) ? <p className="wb-branch">{text("workbench.follows", { tickets: node.after.map(codeOf).join("、") })}</p> : null}
+        {rows.length > 1 ? <GraphGutter row={row} lanes={lanes} tone={phaseLooks[phase].tone} /> : null}
         {stopped === undefined || node.reference ? <button type="button" className={`wb-card${start === undefined ? "" : " wb-card--pending"}${node.reference ? " wb-card--reference" : ""}`} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`} aria-pressed={selected === ticket.id} onClick={(event) => start !== undefined && !node.reference ? openStart(start, event.currentTarget) : select(ticket.id)}>
           <span className="wb-card-title"><span className={`dot dot--${phaseLooks[phase].tone}`} /><TicketCodeLabel code={ticket.code} /><span>{chineseOf(ticket.title)}</span></span>
           {start === undefined ? <span className="wb-phases" aria-hidden="true">{[0, 1, 2, 3].map((step) => <i key={step} className={step <= phaseIndex ? "is-active" : ""} />)}</span> : null}
@@ -205,5 +206,40 @@ function CanvasGrid({ chains, starts, stuck, waiting, actions, selected, select,
         {node.missing.length === 0 ? null : <p className="wb-after">{text("workbench.follows", { tickets: node.missing.map(codeOf).join("、") })}</p>}
       </div>;
     })}</div>)}
+  </div>;
+}
+
+const laneX = (lane: number) => 7 + 14 * lane;
+const gutterWidth = (lanes: number) => 10 + 14 * lanes;
+
+function GraphGutter({ row, lanes, tone }: { readonly row: GraphRow; readonly lanes: number; readonly tone: string }) {
+  const width = gutterWidth(lanes);
+  const dot = laneX(row.lane);
+  const percent = (lane: number) => `${laneX(lane) / width * 100}%`;
+  const straight: string[] = [];
+  const turns: string[] = [];
+  for (const edge of row.passing) straight.push(`M ${laneX(edge.lane)} 0 V 36`);
+  for (const edge of row.incoming) {
+    const x = laneX(edge.lane);
+    if (x === dot) straight.push(`M ${x} 0 V 18`);
+    else turns.push(`M ${x} 0 V 4 Q ${x} 18 ${dot} 18`);
+  }
+  for (const edge of row.outgoing) {
+    const x = laneX(edge.lane);
+    if (x === dot) straight.push(`M ${x} 18 V 36`);
+    else turns.push(`M ${dot} 18 Q ${x} 18 ${x} 32 V 36`);
+  }
+  return <div className="wb-gutter" aria-hidden="true">
+    <svg className="wb-lanes">
+      <svg width="100%" height="36" viewBox={`0 0 ${width} 36`} preserveAspectRatio="none">
+        <path d={straight.join(" ")} vectorEffect="non-scaling-stroke" />
+        {turns.length === 0 ? null : <>
+          <path className="wb-lane-clearance" d={turns.join(" ")} vectorEffect="non-scaling-stroke" />
+          <path d={turns.join(" ")} vectorEffect="non-scaling-stroke" />
+        </>}
+      </svg>
+      {[...row.passing, ...row.outgoing].map(({ from, to, lane }) => <line key={`${from}-${to}`} x1={percent(lane)} x2={percent(lane)} y1="36" y2="100%" />)}
+    </svg>
+    <span className={`wb-rail-dot dot dot--${tone}`} style={{ left: percent(row.lane) }} />
   </div>;
 }

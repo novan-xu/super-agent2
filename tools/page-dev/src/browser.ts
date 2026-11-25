@@ -79,6 +79,27 @@ async function checkCanvasColumns(page: Page, width: Width): Promise<void> {
   if (problem !== "") throw new Error(problem);
 }
 
+async function checkCanvasGraphs(page: Page, graphs: LayoutFixture["graphs"]): Promise<void> {
+  const problem = await page.evaluate((chains) => {
+    const close = (a: number, b: number) => Math.abs(a - b) < 1;
+    for (const [index, ids] of chains.entries()) {
+      const chain = document.querySelector(`.wb-slot[data-ticket="${ids[0]}"]`)?.closest(".wb-chain");
+      const slots = Array.from(chain?.querySelectorAll<HTMLElement>(".wb-slot") ?? []);
+      if (slots.map((slot) => Number(slot.dataset.ticket)).join() !== ids.join()) return "Graph rows do not share one chain in dependency order";
+      const cards = slots.map((slot) => slot.querySelector(".wb-card")!.getBoundingClientRect());
+      const gutters = slots.map((slot) => slot.querySelector(".wb-gutter")?.getBoundingClientRect());
+      const dots = slots.map((slot) => slot.querySelector(".wb-rail-dot")?.getBoundingClientRect().left);
+      if (cards.some((card) => !close(card.left, cards[0]!.left) || !close(card.right, cards[0]!.right))) return "Graph cards are not aligned";
+      if (gutters.some((gutter, row) => gutter === undefined || !close(gutter.right, cards[row]!.left)
+        || (row < slots.length - 1 && !close(gutter.bottom, cards[row + 1]!.top)))) return "Graph gutters do not reach the next row or align with the cards";
+      if (dots.includes(undefined) || new Set(dots).size !== 2) return "Graph dots do not occupy two lanes";
+      if (chain?.querySelectorAll(".wb-lane-clearance").length !== (index === 0 ? 2 : 1)) return "Graph is missing a fork or merge arc";
+    }
+    return "";
+  }, graphs);
+  if (problem !== "") throw new Error(problem);
+}
+
 const views = {
   code: {
     route: { view: "conversations", conversation: null, scope: { kind: "code" } },
@@ -95,7 +116,7 @@ const views = {
   "workbench-canvas": {
     route: { view: "workbench" },
     ready: ".wb-card",
-    targets: { ...workbench, ...canvas },
+    targets: { ...workbench, ...canvas, "graph gutters": ".wb-gutter" },
     phone: { "workbench pane tabs": ".wb-mobile-tabs button" },
     desktop: composer,
     prepare: async (page, width) => {
@@ -190,6 +211,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
     await page.evaluate(async () => { await document.fonts.ready; });
     if (mode.kind === "check" && name === "workbench-canvas") {
       await checkCanvasColumns(page, width);
+      await checkCanvasGraphs(page, fixture.graphs);
       if (phone) await checkPhoneRepositoryTabs(page);
     }
     const targets = { [phone ? "bottom navigation" : "sidebar"]: phone ? ".tabbar" : ".side", ...view.targets, ...view[width] };

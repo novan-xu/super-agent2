@@ -27,6 +27,7 @@ describe("workbench canvas", () => {
     expect(project).not.toContain("工作 3");
     expect(project).toContain("工作 4");
     const daily = renderToStaticMarkup(<CanvasWorkbench {...props} repository={null} tickets={tickets} />);
+    expect(daily).not.toContain("wb-gutter");
     expect(daily).toContain("工作 3");
     expect(daily).not.toContain("工作 1");
     expect(daily).not.toContain("工作 4");
@@ -49,18 +50,19 @@ describe("workbench canvas", () => {
     expect(html).toContain("等工单 AA 合并");
     expect(html).not.toContain("wb-card--pending");
   });
-  it("renders branches in one timeline and labels non-adjacent predecessors", () => {
+  it("renders forks and merges in one timeline with accessible predecessor labels", () => {
     const branch = ticket(3, { repository: "org/one", waits: waits(1), waitsFor: [1] });
     const merge = ticket(4, { repository: "org/one", waits: [...waits(2), ...waits(3)], waitsFor: [2, 3] });
     const html = renderToStaticMarkup(<CanvasWorkbench {...props} tickets={[merge, branch, second, first]} waiting={{ ...initialWaiting, known: true }} />);
     expect(html).toContain('class="wb-chain wb-chain--linked"');
     expect((html.match(/class="wb-rail-dot /g) ?? [])).toHaveLength(4);
+    expect(html).toContain('class="wb-rail-dot dot dot--ok"');
     expect(html.indexOf('data-ticket="1"')).toBeLessThan(html.indexOf('data-ticket="2"'));
     expect(html.indexOf('data-ticket="2"')).toBeLessThan(html.indexOf('data-ticket="3"'));
     expect(html.indexOf('data-ticket="3"')).toBeLessThan(html.indexOf('data-ticket="4"'));
-    expect(html).toContain('class="wb-branch">在 AA 之后');
-    expect(html).toContain('class="wb-branch">在 AB、AC 之后');
-    expect(html).not.toContain("wb-links");
+    expect((html.match(/class="wb-lane-clearance"/g) ?? [])).toHaveLength(2);
+    expect(html).toContain('class="sr-only">在 AB 工作 2、AC 工作 3 之后');
+    expect(html).not.toContain("wb-branch");
   });
 
   it("shows ticket codes on reference cards too", () => {
