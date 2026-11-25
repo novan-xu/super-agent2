@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import {
   type Decision,
   type DeliveredFile,
@@ -27,6 +27,10 @@ export function taskPaths(home: string, ticket: number, repository: string | nul
   }
   const [owner = "unknown", name = "unknown"] = repository.split("/");
   return { clone: join(home, "repos", owner, name), worktree: join(home, "worktrees", `${name}-t${folderOf}`), folder, handback: join(folder, "handback.json"), scratch };
+}
+
+export function antigravityTaskPaths(paths: WorkPaths, ticket: number): WorkPaths {
+  return { ...paths, handback: join(scratchFolder(paths), `.superagent2-t${ticket}`, "handback.json") };
 }
 
 export function scratchFolder(paths: WorkPaths): string {
@@ -106,6 +110,7 @@ export function readDeploymentAt(checkout: string): DeploymentFileReading | unde
 }
 
 export function prepareScratch(paths: WorkPaths, materials: readonly TaskMaterial[], files: ReadonlyMap<string, string> = new Map()): void {
+  mkdirSync(dirname(paths.handback), { recursive: true });
   mkdirSync(inputFolder(paths), { recursive: true });
   mkdirSync(outputFolder(paths), { recursive: true });
   for (const material of materials) {
@@ -144,7 +149,7 @@ export function listOutput(paths: WorkPaths): string[] {
 }
 
 export function taskQuestionPath(paths: WorkPaths): string {
-  return join(paths.folder, "question.json");
+  return join(dirname(paths.handback), "question.json");
 }
 
 const QuestionFile = z.strictObject({ question: z.string().trim().min(1) });

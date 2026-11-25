@@ -60,7 +60,7 @@ import { replaceFile } from "./replace-file.js";
 import { screenshotTransferFolder, stageScreenshots } from "./screenshots.js";
 import { artifactsVariable, type StorageSelection, ticketArtifacts } from "./storage.js";
 import { folderState, gitHubRemote, pathsInProjects, prepareWorktree, type RemoteUrl, removeWorktree, saveWork, taskFolderInProjects, trackingRemote, withRepository, type WorkPaths, workPaths } from "./workplace.js";
-import { checkTaskHandback, clearOutput, readTaskQuestion, taskQuestionPath, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
+import { antigravityTaskPaths, checkTaskHandback, clearOutput, readTaskQuestion, taskQuestionPath, deploymentProblem, listOutput, outputFolder, prepareCheckout, prepareScratch, readDeploymentAt, scratchFolder, taskPaths, taskPlace } from "./task.js";
 
 export type WorkMessage = Extract<
   HubToRunner,
@@ -321,7 +321,8 @@ export function createWorks(options: WorksOptions): Works {
         const record = WorkRecord.parse(JSON.parse(readFileSync(join(folder, name, "work.json"), "utf8")));
         const folderOf = record.folder ?? record.ticket;
         const fallback = record.kind === "task" ? taskPaths(options.home, record.ticket, record.repository === "" ? null : record.repository, folderOf) : workPaths(options.home, record.repository, record.ticket, folderOf);
-        const paths = useLocation(fallback, record.workspace);
+        const located = useLocation(fallback, record.workspace);
+        const paths = record.kind === "task" && record.engine === "antigravity" ? antigravityTaskPaths(located, record.ticket) : located;
         works.set(record.ticket, blank(record, paths));
       } catch {
         continue;
@@ -634,7 +635,7 @@ export function createWorks(options: WorksOptions): Works {
       codexConfig: workerCodexConfig,
       processTree: true,
     });
-    const handle = adapter.open({ session, tools: null, ...(task.extraMcp === undefined ? {} : { extraMcp: task.extraMcp }), workspace: work.paths.worktree }, (event) => onProgram(work, handle, event));
+    const handle = adapter.open({ session, tools: null, ...(task.extraMcp === undefined ? {} : { extraMcp: task.extraMcp }), workspace: work.record.kind === "task" && task.engine === "antigravity" ? scratchFolder(work.paths) : work.paths.worktree }, (event) => onProgram(work, handle, event));
     work.handle = handle;
     const pid = handle.processId?.();
     if (pid !== undefined) {
@@ -1008,6 +1009,7 @@ export function createWorks(options: WorksOptions): Works {
         save(work);
       }
       if (work.stopping) return;
+      if ("assignment" in given && task.engine === "antigravity") work.paths = antigravityTaskPaths(work.paths, task.ticket);
       if (existing !== undefined && !sameAttempt && "assignment" in given && !given.assignment.takeover) clearOutput(work.paths);
       const artifacts = await ticketArtifacts(options.home, storage.artifactsDir, repository || null, task.ticket);
       if (work.stopping) return;
