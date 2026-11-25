@@ -8,6 +8,7 @@ import { AttachmentUpload } from "@super-agent2/protocol";
 export interface LayoutFixture {
   readonly ticket: number;
   readonly previewName: string;
+  readonly graphs: readonly (readonly number[])[];
 }
 
 const repositories = [
@@ -62,25 +63,63 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
   hub.memories.add(paragraph.repeat(4));
 
   let detail = 0;
-  for (const [index, repository] of [...repositories, ...repositories, ...repositories, ...repositories].entries()) {
-    const number = index + 1;
-    const title = { en: `Improve the garden's weekly maintenance schedule (${number})`, zh: `完善花园的每周维护计划与工作记录（${number}）` };
+  let stopped = 0;
+  let number = 0;
+  const open = (repository: string, title: { en: string; zh: string }, waitsFor: readonly number[] = []) => {
+    number++;
     const summary = { en: "Prepare the maintenance schedule and review the records at the next meeting.", zh: paragraph.repeat(3) };
-    const ticket = hub.tickets.open({
+    return hub.tickets.open({
       kind: "feature",
       repository,
       issues: [{ repository, number, title, summary, url: `https://github.com/${repository}/issues/${number}` }],
       title,
       summary,
-    });
+      waitsFor,
+    }).id;
+  };
+  for (const [index, repository] of [...repositories, ...repositories, ...repositories, ...repositories].entries()) {
+    const title = { en: `Improve the garden's weekly maintenance schedule (${index + 1})`, zh: `完善花园的每周维护计划与工作记录（${index + 1}）` };
+    const id = open(repository, title);
     if (index === 0) {
-      detail = ticket.id;
-      hub.tickets.move(ticket.id, "working");
+      detail = id;
+      hub.tickets.move(id, "working");
     }
-    if (index >= 12) hub.tickets.stop(ticket.id, { en: "Done for this season", zh: "本季的工作已经完成" });
+    if (index >= 12) {
+      stopped = id;
+      hub.tickets.stop(id, { en: "Done for this season", zh: "本季的工作已经完成" });
+    }
   }
+  open(repositories[5], { en: "Plan next season's maintenance", zh: "规划下一季维护工作" }, [stopped]);
+
+  const graph = (repository: string, nodes: readonly (readonly [string, string, ...number[]])[]) => {
+    const ids: number[] = [];
+    for (const [en, zh, ...after] of nodes) {
+      const id = open(repository, { en, zh }, after.map((index) => ids[index]!));
+      ids.push(id);
+      if (after.length === 0) hub.tickets.move(id, "working");
+    }
+    return ids;
+  };
+  const merge = graph(repositories[1], [
+    ["Fix the greenhouse sensors", "修复温室传感器"],
+    ["Update the irrigation logs", "更新灌溉记录"],
+    ["Check the monitoring dashboard", "校验监控面板", 0, 1],
+  ]);
+  const fork = graph(repositories[2], [
+    ["Organize the seed catalog", "整理种子目录"],
+    ["Make seed labels", "制作种子标签", 0],
+    ["Improve seed search", "调整种子检索", 0],
+  ]);
+  const forkThenMerge = graph(repositories[0], [
+    ["Update the garden maintenance process", "更新花园维护流程"],
+    ["Prepare the greenhouse checklist", "整理温室巡检表", 0],
+    ["Complete the irrigation records", "补充灌溉记录", 0],
+    ["Publish the maintenance plan", "发布维护计划", 1, 2],
+  ]);
+  hub.tickets.move(forkThenMerge[0]!, "verifying");
+  hub.tickets.move(forkThenMerge[1]!, "waiting");
   for (const repository of repositories) hub.repositories.setPinned(repository, true);
 
   await seedTransfer(url, icon);
-  return { ticket: detail, previewName };
+  return { ticket: detail, previewName, graphs: [forkThenMerge, fork, merge] };
 }
