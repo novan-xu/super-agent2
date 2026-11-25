@@ -139,7 +139,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
       {holds.length > 0 && (repository === undefined || repository === null) ? <section className="wb-section"><h2>{text("waiting.title")}</h2><div className="wb-holds">{holds.map((card) => <HoldCard key={card.key} card={card} use={useOf(waiting, card.key)} focused={props.focus === card.key} answer={(verdict) => actions.answer(card.key, verdict)} />)}</div></section> : null}
       {(["waits", "running", "ready", "later"] as const).map((section) => canvas[section].length === 0 ? null : <section key={section} className="wb-section">
         <h2>{text(`workbench.section.${section}`)}</h2>
-        <CanvasGrid chains={repository === null ? canvas[section].flatMap((chain) => chain.map((node) => [node])) : canvas[section]} daily={repository === null} starts={starts} stuck={stuck} waiting={waiting} actions={actions} selected={props.selected} select={select} openStart={openStart} ticketHref={props.ticketHref} />
+        <CanvasGrid chains={repository === null ? canvas[section].flatMap((chain) => chain.map((node) => [node])) : canvas[section]} starts={starts} stuck={stuck} waiting={waiting} actions={actions} selected={props.selected} select={select} openStart={openStart} ticketHref={props.ticketHref} />
       </section>)}
     </main>
     <div className="wb-splitter" role="separator" aria-label={text("workbench.resizePanel")} aria-orientation={portrait ? "horizontal" : "vertical"}
@@ -178,13 +178,13 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
   </div>;
 }
 
-function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, select, openStart, ticketHref }: {
-  readonly chains: readonly CanvasChain[]; readonly daily: boolean; readonly starts: ReadonlyMap<number, StartData>; readonly stuck: ReadonlyMap<number, Extract<WaitingState["cards"][number], { kind: "stuck" }>>;
+function CanvasGrid({ chains, starts, stuck, waiting, actions, selected, select, openStart, ticketHref }: {
+  readonly chains: readonly CanvasChain[]; readonly starts: ReadonlyMap<number, StartData>; readonly stuck: ReadonlyMap<number, Extract<WaitingState["cards"][number], { kind: "stuck" }>>;
   readonly waiting: WaitingState; readonly actions: CardActions; readonly selected: number | null; readonly select: (id: number) => void;
   readonly openStart: (card: StartData, element: HTMLElement) => void; readonly ticketHref: (id: number) => string;
 }) {
   const related = new Map(chains.flat().map((node) => [node.ticket.id, node.ticket]));
-  return <div className={`wb-grid${daily ? " wb-grid--daily" : ""}`}>
+  return <div className="wb-grid">
     {chains.map((chain) => <div className={`wb-chain${chain.length > 1 ? " wb-chain--linked" : ""}`} key={chain[0]!.ticket.id}>
     {chain.map((node, index) => {
       const ticket = node.ticket, start = starts.get(ticket.id), stopped = stuck.get(ticket.id), phase = ticketPhase(ticket);

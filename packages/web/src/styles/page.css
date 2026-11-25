@@ -392,8 +392,7 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-panel .page { padding: 16px; }
 .wb-section + .wb-section { margin-top: 28px; }
 .wb-section h2 { font-size: var(--text-md); margin: 0 0 12px; }
-.wb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 32px 20px; align-items: start; }
-.wb-grid--daily { grid-template-columns: minmax(0, 1fr); }
+.wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 32px 20px; align-items: start; }
 .wb-chain { min-width: 0; display: grid; gap: 20px; }
 .wb-chain--linked { position: relative; padding-left: 24px; }
 .wb-chain--linked .wb-slot:not(:last-child)::before { content: ""; position: absolute; left: -21px; top: 18px; bottom: -38px; border-left: 2px solid var(--border); }
