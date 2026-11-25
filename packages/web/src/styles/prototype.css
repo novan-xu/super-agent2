@@ -594,6 +594,8 @@ dialog.dlg.is-leaving { animation: sink var(--motion-exit) var(--ease-in) forwar
   .set-back { display: inline-flex !important; }
 }
 @media (max-width: 767px) {
+  html, body { overflow: hidden; overscroll-behavior: none; }
+  #app { position: fixed; inset: 0; height: auto; }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .side { display: none; }
   .tabbar {

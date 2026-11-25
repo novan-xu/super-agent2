@@ -10,6 +10,7 @@ import { offersSwitch, type PushPhase } from "../live/push.js";
 import { kindKey, phaseLooks, ticketPhase, whereOf } from "../live/phase.js";
 import { type WaitingState, useOf } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
+import { centerIn } from "../parts/scroll.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartCard } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
@@ -99,7 +100,10 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     const card = waiting.cards.find((entry) => entry.key === props.focus);
     if (card?.kind === "hold") {
       props.selectRepository(undefined);
-      window.setTimeout(() => document.getElementById(`card-${card.key}`)?.scrollIntoView({ block: "center" }), 0);
+      window.setTimeout(() => {
+        const element = document.getElementById(`card-${card.key}`);
+        if (element !== null) centerIn(element, element.closest<HTMLElement>(".wb-canvas"));
+      }, 0);
     } else if (card !== undefined) {
       props.selectRepository(scopeFor(ticketProject(card.ticket)));
       if (card.kind === "start") setPopup(card.ticket.id);

@@ -8,6 +8,7 @@ import type { TicketsState } from "../live/tickets.js";
 import { type Verdict, type WaitingState, useOf, waitingCount } from "../live/waiting.js";
 import { Icon } from "../parts/icons.js";
 import { followLink } from "../parts/Shell.js";
+import { centerIn } from "../parts/scroll.js";
 import { HoldCard } from "./HoldCard.js";
 import { StartBlocks } from "./StartCard.js";
 import { StuckCard } from "./StuckCard.js";
@@ -150,7 +151,8 @@ export function WorkbenchView({ waiting, actions, focus, focused, push, togglePu
       return;
     }
     if (present) {
-      document.getElementById(`card-${focus}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      const card = document.getElementById(`card-${focus}`);
+      if (card !== null) centerIn(card, card.closest<HTMLElement>(".main"), "smooth");
     }
     const timer = window.setTimeout(focused, present ? 2400 : 0);
     return () => window.clearTimeout(timer);

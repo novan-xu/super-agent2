@@ -12,6 +12,7 @@ import { AttachButton, PendingList, useAttachments } from "../parts/Attachments.
 import { Icon } from "../parts/icons.js";
 import { sendsOnEnter } from "../parts/keys.js";
 import { followLink } from "../parts/Shell.js";
+import { centerIn } from "../parts/scroll.js";
 import { clockOf, dayLabel, StreamEntry } from "./Entries.js";
 
 import { newTopicOption, TopicActionButton, TopicActionDialog, type TopicActions, type TopicEdit, titleOf } from "./TopicActions.js";
@@ -498,7 +499,7 @@ export function TopicStream({ streamKey, focusEntry, state, stream, scope, list,
     if (entry === null || !scroller.current?.contains(entry)) return;
     following.current = false;
     focused.current = focusEntry;
-    entry.scrollIntoView?.({ block: "center" });
+    centerIn(entry, scroller.current);
   }, [focusEntry, items, following, streamKey]);
 
   useEffect(() => {

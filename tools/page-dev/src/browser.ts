@@ -184,6 +184,26 @@ const views = {
 type ViewName = keyof typeof views;
 type Mode = { readonly kind: "check" } | { readonly kind: "screenshot"; readonly out: string; readonly theme: "light" | "dark" };
 
+async function checkMobileShell(browser: Browser, url: string, fixture: LayoutFixture): Promise<void> {
+  for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
+    const page = await browser.newPage({ viewport, isMobile: true, hasTouch: true });
+    try {
+      await page.goto(url + pagePath({ view: "ticket", ticket: fixture.ticket }));
+      await page.locator(".timeline").waitFor();
+      const result = await page.evaluate(() => {
+        const pane = document.querySelector<HTMLElement>(".main")!;
+        const target = document.querySelector<HTMLElement>(".timeline")!;
+        target.scrollIntoView({ block: "end" });
+        window.scrollTo(0, 300);
+        return { height: document.scrollingElement!.scrollHeight, viewport: innerHeight, scroll: scrollY, bottom: document.querySelector(".tabbar")!.getBoundingClientRect().bottom, top: document.querySelector(".top")!.getBoundingClientRect().top, pane: pane.clientHeight };
+      });
+      if (result.height !== result.viewport || result.scroll !== 0 || Math.abs(result.bottom - result.viewport) > 1 || result.top !== 0 || result.pane === 0) throw new Error(`Mobile shell escaped viewport at ${viewport.width}px: ${JSON.stringify(result)}`);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 function checkLayout(page: Page, width: Width, targets: LayoutTargets): Promise<string[]> {
   return page.evaluate(layoutProblems, { width: viewports[width].width, targets });
 }
@@ -275,6 +295,7 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
   try {
     const { url, fixture } = await Promise.race([ready, stopped]);
     browser = await chromium.launch({ executablePath, timeout: 0 });
+    if (mode.kind === "check") await checkMobileShell(browser, url, fixture);
     const failures: string[] = [];
     for (const name of names) {
       for (const width of widths) {
