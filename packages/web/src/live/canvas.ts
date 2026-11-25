@@ -77,27 +77,3 @@ export function canvasOf(tickets: readonly Ticket[], repository: string | null |
   }
   return result;
 }
-
-export interface CanvasCell { readonly node: CanvasNode; readonly column: number; readonly line: number }
-
-export function layoutChains(chains: readonly CanvasChain[], columns: number): CanvasCell[] {
-  const width = Math.max(1, Math.floor(columns));
-  const cells: CanvasCell[] = [];
-  let line = 0;
-  let column = 0;
-  for (const chain of chains) {
-    if (chain.length === 1) {
-      cells.push({ node: chain[0]!, line, column });
-      if (++column === width) { column = 0; line++; }
-    } else if (chain.length > 1) {
-      if (column > 0) { column = 0; line++; }
-      chain.forEach((node, index) => {
-        const row = Math.floor(index / width);
-        const offset = index % width;
-        cells.push({ node, line: line + row, column: row % 2 === 0 ? offset : width - 1 - offset });
-      });
-      line += Math.ceil(chain.length / width);
-    }
-  }
-  return cells;
-}

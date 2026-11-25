@@ -179,14 +179,5 @@ describe("workbench panel resizing", () => {
     expect(localStorage.getItem("workbench.panelHeight")).toBeNull();
   });
 
-  it("recomputes canvas columns and dependency paths when the grid changes width", async () => {
-    await render();
-    const grid = host.querySelector<HTMLElement>(".wb-grid")!;
-    expect(grid.style.getPropertyValue("--wb-columns")).toBe("3");
-    const path = host.querySelector(".wb-links > path")!.getAttribute("d");
-    gridWidth = 400;
-    await act(async () => { for (const callback of [...observers]) callback(); });
-    expect(grid.style.getPropertyValue("--wb-columns")).toBe("1");
-    expect(host.querySelector(".wb-links > path")!.getAttribute("d")).not.toBe(path);
-  });
+
 });
