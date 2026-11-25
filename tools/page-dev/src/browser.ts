@@ -63,6 +63,22 @@ async function checkPhoneRepositoryTabs(page: Page): Promise<void> {
   }
 }
 
+async function checkCanvasColumns(page: Page, width: Width): Promise<void> {
+  const problem = await page.evaluate((phone) => {
+    const grids = [...document.querySelectorAll<HTMLElement>(".wb-grid")];
+    const single = grids.find((grid) => grid.children.length === 1);
+    const multiple = grids.find((grid) => grid.children.length > 1);
+    if (single === undefined || multiple === undefined) return "Canvas fixture needs single and multiple chain sections";
+    const one = single.firstElementChild!.getBoundingClientRect();
+    const first = multiple.children[0]!.getBoundingClientRect();
+    const second = multiple.children[1]!.getBoundingClientRect();
+    if (Math.abs(one.width - first.width) > 1 || Math.abs(one.left - first.left) > 1) return "Canvas columns are not aligned across sections";
+    if (phone ? Math.abs(first.left - second.left) > 1 : second.left <= first.right) return "Canvas chains do not flow in the expected columns";
+    return "";
+  }, width === "phone");
+  if (problem !== "") throw new Error(problem);
+}
+
 const views = {
   code: {
     route: { view: "conversations", conversation: null, scope: { kind: "code" } },
@@ -172,7 +188,10 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
     await page.locator(ready).first().waitFor();
     await loadImages(page.locator(".att-image img"));
     await page.evaluate(async () => { await document.fonts.ready; });
-    if (mode.kind === "check" && name === "workbench-canvas" && phone) await checkPhoneRepositoryTabs(page);
+    if (mode.kind === "check" && name === "workbench-canvas") {
+      await checkCanvasColumns(page, width);
+      if (phone) await checkPhoneRepositoryTabs(page);
+    }
     const targets = { [phone ? "bottom navigation" : "sidebar"]: phone ? ".tabbar" : ".side", ...view.targets, ...view[width] };
     const issues = mode.kind === "check" ? await checkLayout(page, width, targets) : [];
     if (view.after !== undefined && issues.length === 0) {
