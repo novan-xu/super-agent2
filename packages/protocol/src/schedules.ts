@@ -47,8 +47,22 @@ export const Schedule = ScheduleFields.extend({
 });
 export type Schedule = z.infer<typeof Schedule>;
 
-export const ScheduleList = z.object({ timeZone: z.string(), schedules: z.array(Schedule) });
+export const ScheduleProposal = z.object({
+  id: ScheduleId,
+  fields: ScheduleFields,
+  topic: ConversationId,
+  topicRepository: RepositoryName.nullable(),
+  target: ScheduleId.nullable(),
+  targetRevision: z.number().int().positive().nullable(),
+  createdAt: z.number().int(),
+});
+export type ScheduleProposal = z.infer<typeof ScheduleProposal>;
+
+export const ScheduleList = z.object({ timeZone: z.string(), schedules: z.array(Schedule), proposals: z.array(ScheduleProposal) });
 export type ScheduleList = z.infer<typeof ScheduleList>;
+
+export const SchedulesUpdate = z.object({ type: z.literal("schedules.changed"), pending: z.number().int().nonnegative() });
+export type SchedulesUpdate = z.infer<typeof SchedulesUpdate>;
 
 export const ScheduleHistory = z.object({ runs: z.array(ScheduleRun) });
 export type ScheduleHistory = z.infer<typeof ScheduleHistory>;
@@ -57,3 +71,5 @@ export const ScheduleAction = z.enum(["pause", "resume", "delete"]);
 export type ScheduleAction = z.infer<typeof ScheduleAction>;
 
 export const ScheduleSave = z.strictObject({ fields: ScheduleFields, revision: z.number().int().positive().optional() });
+export const ScheduleProposalAction = z.enum(["confirm", "discard"]);
+export const ScheduleProposalConfirm = z.strictObject({ fields: ScheduleFields.optional() });

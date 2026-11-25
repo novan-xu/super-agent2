@@ -273,9 +273,9 @@ export function App() {
     [navigate],
   );
   const openLinked = useCallback((ticket: number) => navigate({ view: "ticket", ticket }), [navigate]);
-  const fromSchedules = useCallback((destination: PageRoute) => {
+  const fromSchedules = useCallback((destination: PageRoute, replace?: boolean) => {
     if (destination.view === "ticket") setOrigin("schedules");
-    navigate(destination);
+    navigate(destination, replace);
   }, [navigate]);
   const backRoute: PageRoute = origin === "history" ? { view: "settings", section: "history" } : { view: origin };
   const backFromTicket = useCallback(() => navigate(backRoute), [navigate, origin]);
@@ -345,6 +345,7 @@ export function App() {
       toast={toast}
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
+      pendingSchedules={page.schedules?.pending ?? 0}
       allowance={<AllowanceSidebar report={page.allowance} now={now} />}
       collapsedAllowance={<AllowanceRings report={page.allowance} now={now} />}
       headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} order={(repositories) => controller.setRepositoryOrder(repositories)} /> : undefined}
@@ -414,7 +415,7 @@ export function App() {
       ) : route.view === "memory" ? (
         <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
       ) : route.view === "schedules" ? (
-        <SchedulesView navigate={fromSchedules} />
+        <SchedulesView navigate={fromSchedules} update={page.schedules} focusedProposal={"proposal" in route ? route.proposal : undefined} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath(backRoute)} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
       ) : route.view === "settings" ? (

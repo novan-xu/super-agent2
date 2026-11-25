@@ -188,7 +188,7 @@
 }
 
 :root :is(.card, .wcard, .wb-card, .question-card, .mcard, .panel, .plan-side,
-  .schedule-card, .schedule-editor, .ui-screenshots, .accent-preview, .editor) {
+  .schedule-card, .schedule-editor--standalone, .ui-screenshots, .accent-preview, .editor) {
   background-color: var(--mat-card);
   background-origin: border-box;
   background-repeat: no-repeat;
@@ -196,11 +196,12 @@
   box-shadow: var(--mat-shadow-card);
 }
 :root :is(.card, .wcard, .wb-card, .mcard, .panel, .plan-side,
-  .schedule-card, .schedule-editor, .ui-screenshots, .accent-preview,
+  .schedule-card, .schedule-editor--standalone, .ui-screenshots, .accent-preview,
   .list, .rows, .mem-list, .allowance-compact, .delivery-text) {
   border-color: var(--mat-card-rim-top) var(--mat-card-rim) var(--mat-card-rim-bottom);
 }
 :root .wb-card--pending { border-style: solid; }
+:root .schedule-card--focused { border-color: var(--accent); }
 :root .wcard--focus,
 :root .wcard--focus:is(.wcard) {
   border-color: var(--accent);

@@ -1,4 +1,4 @@
-import type { AllowanceReport, BrainStatus, Conversation, ConversationDetail, ConversationEntry, ConversationList, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
+import type { AllowanceReport, BrainStatus, Conversation, ConversationDetail, ConversationEntry, ConversationList, SchedulesUpdate, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
@@ -26,6 +26,7 @@ export interface PageState {
   readonly memory: MemoryState;
   readonly settings: SettingsSnapshot | null;
   readonly allowance: AllowanceReport | null;
+  readonly schedules: SchedulesUpdate | null;
 }
 
 export type PageAction =
@@ -51,7 +52,7 @@ export type PageAction =
   | { readonly type: "history.more.failed"; readonly applied: string }
   | { readonly type: "settings"; readonly settings: SettingsSnapshot };
 
-export const initialPage: PageState = { status: "connecting", brain: { linked: false, model: null }, list: [], repositories: [], current: null, topicRedirect: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null };
+export const initialPage: PageState = { status: "connecting", brain: { linked: false, model: null }, list: [], repositories: [], current: null, topicRedirect: null, streaming: false, streamKey: "", stream: initialTopicStream, waiting: initialWaiting, tickets: initialTickets, detail: null, history: initialHistory, memory: initialMemory, settings: null, allowance: null, schedules: null };
 
 function updatedBrain(current: BrainStatus, update: BrainStatus): BrainStatus {
   return current.linked === update.linked && current.model === update.model ? current : update;
@@ -147,6 +148,7 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         return { ...state, list, current: { id: conversation.id, conversation, turns, entries } };
       }
       if (message.type === "allowance") return { ...state, allowance: message.allowance };
+      if (message.type === "schedules.changed") return { ...state, schedules: message };
       if (message.type === "settings") {
         return { ...state, settings: message.settings };
       }

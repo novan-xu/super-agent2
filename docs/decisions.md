@@ -3923,3 +3923,14 @@ Another option was to expand the set of engines that can start code tickets.
 - **Chosen:** Wait for an explicitly pinned provider both before dispatch and after a worker reports it unavailable.
 - **Why:** The assignment still applies when quota runs out after work has started.
 - **Other options:** Apply the pin only to initial dispatch and let the normal provider fallback take over during work.
+
+## 2026-11-25 — Schedule proposal cards (#351)
+
+- **Chosen:** Keep pending cards until the owner confirms or discards them, and keep one pending edit per target schedule across topics.
+  Keep separate new schedule proposals from the same topic available for individual review.
+- **Why:** The owner may plan several independent schedules in one topic, while only the latest edit should be actionable for a given schedule.
+- **Other options:** Expire all cards after 24 hours, or keep every proposed edit for the owner to compare.
+
+- **Chosen:** Migrate each topic's latest unexpired and unconfirmed legacy proposal, keeping the latest across topics if multiple proposals edit the same schedule.
+- **Why:** The cards preserve plans that were still actionable before the upgrade and keep the original conversation history available.
+- **Other options:** Discard all legacy proposals or restore previously superseded proposals as cards.

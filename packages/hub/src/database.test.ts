@@ -96,6 +96,41 @@ describe("applyMigrations", () => {
     expect(connection.prepare("SELECT schedule_run FROM tickets").all()).toEqual([]);
   });
 
+  it("moves actionable legacy schedule proposals to independent cards and keeps conversation history", () => {
+    using connection = new DatabaseSync(":memory:");
+    const clock = new TestClock();
+    applyMigrations(connection, migrations.filter(({ version }) => version <= 68), clock);
+    const now = clock.now();
+    const topic = connection.prepare("INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES (?, 'Topic', 'open', ?, ?)");
+    for (const id of ["new", "expired", "confirmed", "edit", "cross-topic"]) topic.run(id, now, now);
+    const entry = connection.prepare("INSERT INTO conversation_entries (id, conversation_id, seq, kind, body, created_at, stream_seq) VALUES (?, ?, ?, 'text', '{}', ?, ?)");
+    const proposal = connection.prepare("INSERT INTO schedule_proposals (id, topic, fields, target, target_revision, created_at, confirmed_schedule) VALUES (?, ?, '{}', ?, ?, ?, ?)");
+    connection.prepare("INSERT INTO schedules (id, topic, fields, state, confirmed_at, confirmed_by) VALUES ('schedule', 'confirmed', '{}', 'active', ?, 'owner')").run(now);
+    const legacy = [
+      { id: "older", topic: "new", seq: 1 },
+      { id: "pending", topic: "new", seq: 2 },
+      { id: "expired", topic: "expired", seq: 1, age: 86_400_000 },
+      { id: "older-confirmed-topic", topic: "confirmed", seq: 1 },
+      { id: "confirmed", topic: "confirmed", seq: 2, confirmed: "schedule" },
+      { id: "older-edit", topic: "edit", seq: 1, target: "schedule" },
+      { id: "latest-edit", topic: "cross-topic", seq: 1, target: "schedule" },
+    ];
+    for (const [index, row] of legacy.entries()) {
+      const at = now - (row.age ?? 0);
+      entry.run(row.id, row.topic, row.seq, at, index + 1);
+      proposal.run(row.id, row.topic, row.target ?? null, row.target === undefined ? null : 1, at, row.confirmed ?? null);
+    }
+
+    applyMigrations(connection, migrations, clock);
+
+    expect(connection.prepare("SELECT id, topic, target_revision FROM schedule_proposals ORDER BY id").all()).toEqual([
+      { id: "latest-edit", topic: "cross-topic", target_revision: 1 }, { id: "pending", topic: "new", target_revision: null },
+    ]);
+    expect(connection.prepare("SELECT count(*) AS count FROM conversation_entries").get()).toEqual({ count: legacy.length });
+    expect(connection.prepare("SELECT confirmed_by FROM schedules").get()).toEqual({ confirmed_by: "owner" });
+    expect(connection.prepare("PRAGMA foreign_key_list(schedule_proposals)").all().map((row) => row.table)).toEqual(["schedules", "conversations"]);
+  });
+
   it("backfills codes in local creation order and preserves the old work branch", () => {
     using connection = new DatabaseSync(":memory:");
     const clock = new TestClock();

@@ -1309,6 +1309,34 @@ export const migrations: readonly Migration[] = [
       UPDATE tickets SET engine_pin = owner_engine WHERE light IS NOT NULL AND owner_engine IS NOT NULL;
     `,
   },
+  {
+    version: 69,
+    sql: `
+      ALTER TABLE schedule_proposals RENAME TO legacy_schedule_proposals;
+      CREATE TABLE schedule_proposals (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL REFERENCES conversations(id),
+        fields TEXT NOT NULL,
+        target TEXT REFERENCES schedules(id),
+        target_revision INTEGER,
+        created_at INTEGER NOT NULL,
+        CHECK ((target IS NULL) = (target_revision IS NULL))
+      ) STRICT;
+      CREATE UNIQUE INDEX schedule_proposals_target ON schedule_proposals(target) WHERE target IS NOT NULL;
+    `,
+    backfill: (connection, _timeZone, now) => {
+      connection.prepare(`
+        WITH latest AS (
+          SELECT p.*, e.stream_seq, row_number() OVER (PARTITION BY p.topic ORDER BY e.stream_seq DESC) AS position
+          FROM legacy_schedule_proposals p JOIN conversation_entries e ON e.id = p.id AND e.conversation_id = p.topic
+        )
+        INSERT OR IGNORE INTO schedule_proposals (id, topic, fields, target, target_revision, created_at)
+        SELECT id, topic, fields, target, target_revision, created_at FROM latest
+        WHERE position = 1 AND confirmed_schedule IS NULL AND created_at > ? ORDER BY stream_seq DESC
+      `).run(now - 24 * 60 * 60 * 1000);
+      connection.exec("DROP TABLE legacy_schedule_proposals");
+    },
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

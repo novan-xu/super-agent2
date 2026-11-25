@@ -171,7 +171,6 @@ describe("the brain's ticket tools", () => {
       "open_repair_ticket",
       "follow_up_ticket",
       "propose_schedule",
-      "create_schedule",
       "list_schedules",
       "pause_schedule",
       "resume_schedule",

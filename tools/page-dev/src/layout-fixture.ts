@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { storeTopic, type Hub } from "@super-agent2/hub";
-import { AttachmentUpload } from "@super-agent2/protocol";
+import { AttachmentUpload, type ScheduleFields } from "@super-agent2/protocol";
 
 export interface LayoutFixture {
   readonly ticket: number;
@@ -48,10 +48,34 @@ async function seedTransfer(url: string, icon: Buffer): Promise<void> {
   await sent.body?.cancel();
 }
 
+function seedSchedules(hub: Hub, topic: string, now: number): void {
+  const plan = {
+    title: "整理温室巡检记录",
+    instruction: "Review the greenhouse logs, summarize unresolved maintenance items and post the report in this topic.",
+    recurrence: { cron: "0 9 * * 1" }, repository: repositories[0], machine: "mac-mini",
+  } satisfies ScheduleFields;
+  const paused = hub.schedules.save({ title: "归档传感器报告", instruction: "Archive the sensor report.", recurrence: { trigger: "garden-sensors" } });
+  hub.schedules.change(paused, "pause");
+  const completed = hub.schedules.save({ title: "核对灌溉清单", instruction: "Check the irrigation checklist.", recurrence: { at: now + 86_400_000 } });
+  const { connection } = hub.database;
+  connection.prepare("UPDATE schedules SET state = 'completed', next_at = NULL, fields = json_set(fields, '$.recurrence.at', ?) WHERE id = ?")
+    .run(now - 86_400_000, completed);
+  const active = hub.schedules.save(plan);
+  const entry = randomUUID();
+  hub.conversations.writeScheduleNotice(entry, topic, "巡检记录已整理。");
+  connection.prepare("UPDATE schedules SET topic = ? WHERE id = ?").run(topic, active);
+  connection.prepare("INSERT INTO schedule_runs (id, schedule, revision, due_at, entry, state) VALUES (?, ?, 1, ?, ?, 'completed')")
+    .run(randomUUID(), active, now, entry);
+  const revised = { ...plan, recurrence: { cron: "30 8 * * 1" }, machine: "mac-studio" };
+  connection.prepare("INSERT INTO schedule_proposals (id, topic, fields, target, target_revision, created_at) VALUES (?, ?, ?, ?, 1, ?)")
+    .run(randomUUID(), topic, JSON.stringify(revised), active, now);
+}
+
 export async function seedLayout(hub: Hub, url: string, pageDir: string): Promise<LayoutFixture> {
   const now = Date.now();
   const code = storeTopic(hub.database, now, "温室维护工具", { repository: repositories[0] });
   const daily = storeTopic(hub.database, now, "花园日常安排");
+  seedSchedules(hub, code, now);
   const icon = await readFile(join(pageDir, "icons", "icon-512.png"));
   const { attachment } = hub.attachments.create({ name: "garden-notes.png", size: icon.length, mediaType: "image/png" });
   const saved = await hub.attachments.write(attachment.id, 0, Readable.from([icon]));

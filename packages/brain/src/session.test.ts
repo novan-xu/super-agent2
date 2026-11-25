@@ -224,8 +224,8 @@ async function callTool(options: OpenOptions, name: string, args: Record<string,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
   });
   expect(response.status).toBe(200);
-  const body = (await response.json()) as { result: { content: { text: string }[] } };
-  return body.result.content.map((item) => item.text).join("\n");
+  const body = (await response.json()) as { result: { content: { text: string }[] } } | { error: { message: string } };
+  return "error" in body ? body.error.message : body.result.content.map((item) => item.text).join("\n");
 }
 
 describe("brain usage accounting", () => {
@@ -494,16 +494,19 @@ describe("the brain's session", () => {
       title: "空间检查",
       instruction: "Check available disk space.",
       recurrence: { at: clock.now() + 60_000 },
-      confirmation: "一分钟后检查磁盘空间，可以吗？",
     });
     const proposal = /Schedule proposal ([a-f0-9-]+)/.exec(planned)?.[1];
     if (proposal === undefined) throw new Error(planned);
-    request.handle.finish("等你确认。");
+    request.handle.finish(`请在[定时](/schedules?proposal=${proposal})确认。`);
     await turnEnded(topic.id, 1);
 
     await say(topic.id, "好。");
     const approval = await programs.gpt.next();
-    expect(await callTool(approval.handle.options, "create_schedule", { proposal })).toContain("was saved");
+    expect(approval.text).not.toContain("Current schedule proposal");
+    expect(await callTool(approval.handle.options, "create_schedule", { proposal })).toContain("Unknown tool");
+    expect(running.schedules.list().schedules).toEqual([]);
+    const confirmation = await owner(`/api/schedules/proposals/${proposal}/confirm`, { method: "POST", body: "{}" });
+    expect(confirmation.status).toBe(200);
     clock.advance(60_000);
     running.schedules.tick();
     await say(topic.id, "解释一下这个设置。");
@@ -513,9 +516,9 @@ describe("the brain's session", () => {
     expect(scheduled.text).toContain("Check available disk space.");
     expect(scheduled.text).not.toContain("解释一下这个设置。");
     scheduled.handle.finish("磁盘空间充足。");
-    const owner = await programs.gpt.next();
-    expect(owner.text.endsWith("解释一下这个设置。")).toBe(true);
-    owner.handle.finish("这个设置控制运行时间。");
+    const nextOwner = await programs.gpt.next();
+    expect(nextOwner.text.endsWith("解释一下这个设置。")).toBe(true);
+    nextOwner.handle.finish("这个设置控制运行时间。");
     await turnEnded(topic.id, 4);
   });
 

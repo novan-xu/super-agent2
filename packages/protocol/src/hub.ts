@@ -4,6 +4,7 @@ import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, ReadStreamPag
 import { ProtocolVersion } from "./version.js";
 import { MemoriesUpdate } from "./memory.js";
 import { AllowanceReport } from "./providers.js";
+import { SchedulesUpdate } from "./schedules.js";
 import { SettingsUpdate } from "./settings.js";
 import { TicketsUpdate, TicketUpdate } from "./tickets.js";
 import { WaitingUpdate } from "./waiting.js";
@@ -81,6 +82,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   WorkEventUpdate,
   MemoriesUpdate,
   SettingsUpdate,
+  SchedulesUpdate,
   z.object({ type: z.literal("allowance"), allowance: AllowanceReport }),
 ]);
 

@@ -184,6 +184,8 @@ export const scheduleApi = {
     ? call("/api/schedules", ScheduleList, { fields })
     : call(`/api/schedules/${encodeURIComponent(id)}`, ScheduleList, { fields, revision }, "PUT"),
   changeSchedule: (id: string, action: ScheduleAction) => call(`/api/schedules/${encodeURIComponent(id)}/${action}`, ScheduleList, {}),
+  confirmProposal: (id: string, fields?: ScheduleFields) => call(`/api/schedules/proposals/${encodeURIComponent(id)}/confirm`, ScheduleList, { fields }),
+  discardProposal: (id: string) => call(`/api/schedules/proposals/${encodeURIComponent(id)}/discard`, ScheduleList, {}),
 };
 
 export function attachmentPath(id: string): string {
