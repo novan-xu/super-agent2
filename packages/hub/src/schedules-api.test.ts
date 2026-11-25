@@ -2,8 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { protocolVersion, ScheduleHistory, ScheduleList, startingEngineTable, ticketReference, type BrainInput, type HubToRunner, type Schedule, type ScheduleFields } from "@super-agent2/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { protocolVersion, ScheduleHistory, ScheduleList, SchedulesUpdate, startingEngineTable, ticketReference, type BrainInput, type HubToRunner, type Schedule, type ScheduleFields } from "@super-agent2/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import WebSocket from "ws";
 import type { BrainLink } from "./conversations.js";
 import type { Hub } from "./hub.js";
 import { assertion, keySet, signingKey, staticKeySource, TestClock, testConfig, type SigningKey } from "./testing/access.js";
@@ -84,23 +85,23 @@ function owner(topic: string, words: string): string {
 
 async function propose(link: BrainLink, topic: string, plan: ScheduleFields = fields, target?: string): Promise<string> {
   const asking = turn(link, topic, owner(topic, requested));
-  const confirmation = "trigger" in plan.recurrence ? `收到 ${plan.recurrence.trigger} 的请求后整理知识库，可以吗？` : "每周日凌晨三点清理 mac-mini 的空间，可以吗？";
-  const result = await asking.call("propose_schedule", { ...plan, confirmation, ...(target === undefined ? {} : { schedule: target }) });
+  const result = await asking.call("propose_schedule", { ...plan, ...(target === undefined ? {} : { schedule: target }) });
   expect(result.isError, result.text).toBe(false);
-  const proposal = hub.conversations.entries(topic).findLast((entry) => entry.kind === "text")?.id;
-  if (proposal === undefined) throw new Error("Could not find the proposed schedule");
-  expect(result.text).toContain(proposal);
+  const proposal = /Schedule proposal ([a-f0-9-]+)/.exec(result.text)?.[1];
+  if (proposal === undefined) throw new Error(result.text);
+  expect(result.text).toContain(`[定时](/schedules?proposal=${proposal})`);
   asking.finish();
   return proposal;
 }
 
-async function approve(link: BrainLink, topic: string, proposal: string): Promise<Schedule> {
-  const approval = turn(link, topic, owner(topic, "好"));
-  const result = await approval.call("create_schedule", { proposal });
-  expect(result.isError, result.text).toBe(false);
-  expect(await approval.call("create_schedule", { proposal })).toEqual(result);
-  approval.finish();
-  const schedule = hub.schedules.list().schedules.find((item) => result.text.includes(item.id));
+async function approve(proposal: string, edited?: ScheduleFields): Promise<Schedule> {
+  const pending = hub.schedules.list().proposals.find(({ id }) => id === proposal);
+  if (pending === undefined) throw new Error("The proposal is missing");
+  const response = await request(`/proposals/${proposal}/confirm`, "POST", edited === undefined ? {} : { fields: edited });
+  expect(response.status).toBe(200);
+  const activated = ScheduleList.parse(await response.json());
+  expect(activated.proposals.some(({ id }) => id === proposal)).toBe(false);
+  const schedule = pending.target === null ? activated.schedules[0] : activated.schedules.find(({ id }) => id === pending.target);
   if (schedule === undefined) throw new Error("The schedule was not activated");
   return schedule;
 }
@@ -161,7 +162,7 @@ describe("scheduled work", () => {
   it("lets an authorized scheduled turn queue a topic merge and refuses it after a pause", async () => {
     const topic = hub.conversations.create().id;
     const { link, inputs } = brain();
-    const schedule = await approve(link, topic, await propose(link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
+    const schedule = await approve(await propose(link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
     const scheduled = turn(link, topic, fire(schedule, inputs));
     const source = hub.conversations.create().id;
     const destination = hub.conversations.create().id;
@@ -176,17 +177,18 @@ describe("scheduled work", () => {
     scheduled.finish();
   });
 
-  it("confirms once in the same topic, runs on the requested machine and delivers quietly", async () => {
+  it("confirms once on the schedules page, runs on the requested machine and delivers quietly", async () => {
     const topic = hub.conversations.create().id;
     const { link, inputs } = brain();
     const proposal = await propose(link, topic);
     expect(hub.schedules.list().schedules).toEqual([]);
-    const id = owner(topic, "好");
-    expect(inputs.at(-1)?.text).toContain(proposal);
-    const approval = turn(link, topic, id);
-    expect((await approval.call("create_schedule", { proposal })).isError).toBe(false);
-    approval.finish();
-    const schedule = hub.schedules.list().schedules[0]!;
+    const pending = ScheduleList.parse(await (await request("")).json()).proposals;
+    expect(pending).toEqual([{ id: proposal, topic, topicRepository: null, fields, target: null, targetRevision: null, createdAt: clock.now() }]);
+    expect(hub.conversations.entries(topic).map(({ kind }) => kind)).toEqual(["owner"]);
+    const schedule = await approve(proposal);
+    expect(hub.conversations.entries(topic).at(-1)).toMatchObject({ kind: "notice", text: "定时任务「清理 Mac 空间」已确认。" });
+    expect((await request(`/proposals/${proposal}/confirm`, "POST", {})).status).toBe(404);
+    expect(hub.schedules.list().schedules).toHaveLength(1);
     expect(schedule).toMatchObject({ topic, machine: "mac-mini", nextAt: Date.UTC(2026, 10, 22, 8) });
     expect(hub.tickets.list()).toEqual([]);
     const other = runner("other");
@@ -215,24 +217,63 @@ describe("scheduled work", () => {
     expect(hub.schedules.history(schedule.id)?.runs).toMatchObject([{ state: "completed", entry: result?.id }]);
   });
 
-  it("refuses activation without a newer owner message and after expiry", async () => {
+  it("keeps pending cards across a restart and removes a discarded proposal without activating it", async () => {
     const topic = hub.conversations.create().id;
     const { link } = brain();
     const proposal = await propose(link, topic);
-    const synthetic = turn(link, topic);
-    expect(await synthetic.call("create_schedule", { proposal })).toMatchObject({ isError: true, text: expect.stringContaining("newer owner message") });
-    expect((await synthetic.call("run_scheduled_light_task", light)).isError).toBe(true);
-    synthetic.finish();
-    const other = hub.conversations.create().id;
-    const wrong = turn(link, other, owner(other, "好"));
-    expect((await wrong.call("create_schedule", { proposal })).isError).toBe(true);
-    wrong.finish();
+    const independent = await propose(link, topic, { ...fields, title: "检查备份" });
+    await hub.close();
     clock.advance(24 * 60 * minute);
-    const late = turn(link, topic, owner(topic, "好"));
-    expect(await late.call("create_schedule", { proposal })).toMatchObject({ isError: true, text: expect.stringContaining("expired") });
-    late.finish();
-    expect(hub.schedules.list().schedules).toEqual([]);
-    expect(hub.tickets.list()).toEqual([]);
+    await start();
+
+    expect(hub.schedules.list().proposals.map(({ id }) => id)).toEqual([independent, proposal]);
+    const discardPath = `/proposals/${proposal}/discard`;
+    const confirmPath = `/proposals/${proposal}/confirm`;
+    const base = `http://127.0.0.1:${hub.address.port}`;
+    expect((await fetch(base + "/api/schedules" + confirmPath, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: "{}" })).status).toBe(403);
+    expect((await request(confirmPath, "POST", {}, false)).status).toBe(403);
+    expect((await request(discardPath, "POST", {}, false)).status).toBe(403);
+    expect((await request(discardPath, "POST", {})).status).toBe(200);
+    expect((await request(confirmPath, "POST", {})).status).toBe(404);
+    expect(hub.schedules.list()).toMatchObject({ schedules: [], proposals: [{ id: independent }] });
+    await approve(independent);
+    expect(hub.schedules.list().proposals).toEqual([]);
+  });
+
+  it("pushes the global pending count to the owner socket", async () => {
+    const base = `ws://127.0.0.1:${hub.address.port}`;
+    const socket = new WebSocket(base + "/ws", { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
+    const counts: number[] = [];
+    socket.on("message", (data) => {
+      const update = SchedulesUpdate.safeParse(JSON.parse(String(data)));
+      if (update.success) counts.push(update.data.pending);
+    });
+    try {
+      await vi.waitFor(() => expect(counts).toEqual([0]));
+      const proposal = await propose(brain().link, hub.conversations.create().id);
+      await vi.waitFor(() => expect(counts).toEqual([0, 1]));
+      expect((await request(`/proposals/${proposal}/discard`, "POST", {})).status).toBe(200);
+      await vi.waitFor(() => expect(counts).toEqual([0, 1, 0]));
+    } finally {
+      socket.close();
+    }
+  });
+
+  it.each(["pause", "delete"] as const)("refuses an edit proposal after the target receives %s", async (action) => {
+    const topic = hub.conversations.create().id;
+    const { link } = brain();
+    const target = await approve(await propose(link, topic));
+    const superseded = await propose(link, topic, { ...fields, title: "检查硬盘" }, target.id);
+    const source = hub.conversations.create().id;
+    const proposal = await propose(link, source, { ...fields, title: "检查主机" }, target.id);
+    expect(hub.schedules.list().proposals).toMatchObject([{ id: proposal, topic: source, target: target.id, targetRevision: 1 }]);
+    expect((await request(`/proposals/${superseded}/confirm`, "POST", {})).status).toBe(404);
+    expect((await request(`/${target.id}/${action}`, "POST", {})).status).toBe(200);
+    const refused = await request(`/proposals/${proposal}/confirm`, "POST", {});
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "conflict", reason: "The schedule changed or was deleted. Read it again." });
+    expect(hub.schedules.list().proposals).toMatchObject([{ id: proposal }]);
+    expect(hub.schedules.list().schedules.some(({ title }) => title === "检查主机")).toBe(false);
   });
 
   it("starts the arranged code chain and its task without starting an unrelated pending ticket", async () => {
@@ -245,7 +286,7 @@ describe("scheduled work", () => {
     expect((await ordinary.call("choose_defaults", { chains: [{ ...standard, ticket: ticketReference(other), kind: "maintenance", issues: [{ number: 3, difficulty: "standard" }] }] })).isError).toBe(false);
     ordinary.finish();
     const mac = runner("mac-mini");
-    const schedule = await approve(link, topic, await propose(link, topic, { ...fields, repository }));
+    const schedule = await approve(await propose(link, topic, { ...fields, repository }));
     const run = fire(schedule, inputs);
     expect(inputs.at(-1)?.text).toContain("State defaults for every visible ticket this run opens.");
     expect(inputs.at(-1)?.text).toContain("Arrange only work opened by this run");
@@ -281,7 +322,7 @@ describe("scheduled work", () => {
   it("collapses missed slots across a restart and skips while any prior run has active work", async () => {
     const topic = hub.conversations.create().id;
     const initial = brain();
-    const schedule = await approve(initial.link, topic, await propose(initial.link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
+    const schedule = await approve(await propose(initial.link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
     await hub.close();
     clock.advance(12 * minute);
     await start();
@@ -305,14 +346,18 @@ describe("scheduled work", () => {
     expect(hub.conversations.entries(topic).at(-1)).toMatchObject({ text: expect.stringContaining("已跳过") });
   });
 
-  it("requires fresh confirmation for conversation edits and invalidates a paused run before start", async () => {
+  it("applies owner-edited proposals as a new revision and invalidates a paused run before start", async () => {
     const topic = hub.conversations.create().id;
     const { link, inputs } = brain();
-    const schedule = await approve(link, topic, await propose(link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
-    const proposal = await propose(link, topic, { ...fields, instruction: "Check disk use.", recurrence: { cron: "* * * * *" } }, schedule.id);
+    const schedule = await approve(await propose(link, topic, { ...fields, recurrence: { cron: "* * * * *" } }));
+    const source = hub.conversations.create().id;
+    const plan = { ...fields, instruction: "Check disk use.", recurrence: { cron: "* * * * *" } };
+    const proposal = await propose(link, source, plan, schedule.id);
     expect(hub.schedules.list().schedules[0]?.instruction).toBe(fields.instruction);
-    const revised = await approve(link, topic, proposal);
-    expect(revised).toMatchObject({ id: schedule.id, revision: 2, instruction: "Check disk use." });
+    const edited = { ...plan, instruction: "Check disk use and report remaining space." };
+    const revised = await approve(proposal, edited);
+    expect(revised).toMatchObject({ id: schedule.id, topic, revision: 2, instruction: edited.instruction });
+    expect(hub.conversations.entries(topic).at(-1)).toMatchObject({ kind: "notice", text: expect.stringContaining("变更已确认") });
     const run = fire(revised, inputs);
     const scheduled = turn(link, topic, run);
     await openLight(scheduled);
@@ -406,7 +451,7 @@ describe("service-triggered schedules", () => {
     const { link, inputs } = brain();
     const proposal = await propose(link, topic, triggerFields);
     expect((await workRequest("before-confirmation")).status).toBe(409);
-    const schedule = await approve(link, topic, proposal);
+    const schedule = await approve(proposal);
     expect(schedule).toMatchObject({ state: "active", nextAt: null, recurrence: { trigger: "loom" } });
     const mac = runner("mac-mini");
     const response = await workRequest("organize-today");
@@ -420,7 +465,7 @@ describe("service-triggered schedules", () => {
     expect(JSON.parse(input.text.split("\n").at(-1)!)).toEqual({ requests: [{ ...receipt, ...loomRequest }] });
     expect(hub.conversations.entries(topic).at(-1)).toMatchObject({ kind: "notice", source: "loom", text: expect.stringContaining(loomRequest.text) });
     const scheduled = turn(link, topic, input.id);
-    expect(await scheduled.call("propose_schedule", { ...triggerFields, confirmation: "确认？" })).toMatchObject({ isError: true });
+    expect(await scheduled.call("propose_schedule", triggerFields)).toMatchObject({ isError: true });
     await openLight(scheduled);
     expect(hub.tickets.list()).toMatchObject([{ state: "pending", scheduleRun: input.id }]);
     expect(mac.sent.filter((message) => message.type === "work.task")).toHaveLength(0);

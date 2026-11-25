@@ -55,13 +55,14 @@ export interface ShellProps {
   readonly toast: string | null;
   readonly waiting: number;
   readonly suggestions?: number;
+  readonly pendingSchedules?: number;
   readonly allowance?: ReactNode;
   readonly collapsedAllowance?: ReactNode;
   readonly children?: ReactNode;
 }
 
-export function countOf(view: PageView, waiting: number, suggestions = 0): number {
-  return view === "workbench" ? waiting : view === "memory" ? suggestions : 0;
+export function countOf(view: PageView, waiting: number, suggestions = 0, pendingSchedules = 0): number {
+  return view === "workbench" ? waiting : view === "memory" ? suggestions : view === "schedules" ? pendingSchedules : 0;
 }
 
 const sidebarKey = "sidebar.collapsed";
@@ -78,7 +79,7 @@ export function Shell(props: ShellProps) {
     try { localStorage.setItem(sidebarKey, String(next)); } catch {}
   };
   const current = viewOf(props.route, props.ticketFrom);
-  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions);
+  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions, props.pendingSchedules);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
     <a
       key={destination.view}

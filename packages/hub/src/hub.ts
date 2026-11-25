@@ -256,7 +256,6 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       extraMcp: extraMcp.brain,
       mailReviewEnabled: mailEnabled,
       lightTaskContext: (topic, message) => lightQuestions.context(topic, message),
-      scheduleContext: (topic, message) => schedules?.context(topic, message) ?? "",
       database, clock, commands, tickets, memory: memories, archiveMilliseconds: config.topicArchiveMilliseconds, order: () => settings?.brainOrder(),
       routing: {
         primary: config.routingPrimary,

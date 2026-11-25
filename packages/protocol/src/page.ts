@@ -1,5 +1,6 @@
 import { ConversationId, MessageId, type TopicScope } from "./conversations.js";
 import { RepositoryName } from "./repositories.js";
+import { ScheduleId } from "./schedules.js";
 import { SettingsSection } from "./settings.js";
 
 export const pageViews = ["workbench", "conversations", "history", "memory", "schedules", "settings"] as const;
@@ -11,6 +12,7 @@ export type PageRoute =
   | { readonly view: "transfer" }
   | { readonly view: "ticket"; readonly ticket: number }
   | { readonly view: "settings"; readonly section: SettingsSection }
+  | { readonly view: "schedules"; readonly proposal: string }
   | { readonly view: Exclude<PageView, "conversations"> };
 
 export const pageAssetsPath = "/assets/";
@@ -70,6 +72,11 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
     const section = SettingsSection.safeParse(conversation);
     return section.success ? { view, section: section.data } : undefined;
   }
+  if (view === "schedules") {
+    if (conversation !== undefined) return undefined;
+    const proposal = ScheduleId.safeParse(new URLSearchParams(search).get("proposal"));
+    return { view, ...(proposal.success ? { proposal: proposal.data } : {}) };
+  }
   return conversation === undefined ? { view } : undefined;
 }
 
@@ -93,6 +100,8 @@ export function pagePath(route: PageRoute): string {
       return ticketAddress(route.ticket);
     case "settings":
       return "section" in route ? `/settings/${route.section}` : "/settings";
+    case "schedules":
+      return "proposal" in route ? `/schedules?proposal=${encodeURIComponent(route.proposal)}` : "/schedules";
     default:
       return `/${route.view}`;
   }

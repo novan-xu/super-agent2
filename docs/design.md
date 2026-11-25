@@ -417,12 +417,13 @@ Service-triggered schedules use `{ "trigger": "<source>" }` and have no next run
 A single run uses an absolute timestamp and keeps its history after completion.
 The schedule records who confirmed its plan and when.
 
-In conversation, the brain calls `propose_schedule` with an English instruction and a Chinese confirmation that states the timing and scope.
-It calls `create_schedule` when a newer owner message in the same topic explicitly agrees.
-The hub checks the active turn and the order of the messages, and the proposal expires after 24 hours.
-Replacing the plan uses the same flow with the schedule ID.
+During an active owner turn, the brain calls `propose_schedule` with an English instruction and briefly links to the pending card on 定时.
+The owner confirms, edits and confirms, or discards the proposal on 定时.
+Pending cards stay until the owner acts or a newer proposal replaces a pending edit for the same schedule.
+An edit proposal records the target revision and can apply only while that revision is current.
+The hub saves a confirmed plan as a new schedule or revision and posts a confirmation notice in the schedule's topic.
 `list_schedules`, `pause_schedule`, `resume_schedule` and `delete_schedule` manage existing schedules.
-The owner can also confirm a new or edited plan and manage schedules on the 定时 page.
+The owner can also create and edit schedules directly on 定时.
 
 At a due time or on a service trigger the hub records a run and posts its instruction into its topic as a scheduled input.
 The brain takes this input in a dedicated turn and decides what the work needs at that time.
@@ -940,8 +941,10 @@ Kept from it:
 
 Changed by this design:
 
-- 定时 lists each schedule with its recurrence, next run or triggering service, and latest outcome.
-  The owner can create, edit, pause, resume and delete schedules there.
+- 定时 uses a canvas of cards with a 待确认 group and persistent cards for active, paused and completed schedules.
+  The tab counts pending proposals, and each proposal links to its source topic and shows the changes when it proposes an edit.
+  Confirmed cards show the recurrence, next run or triggering service, and latest outcome.
+  The owner can create, edit, pause, resume and delete schedules on the canvas.
   The run history links to topic messages and visible tickets, and the workbench marks tickets that came from schedules.
 - 对话 keeps a switch at the top, 代码 | 日常 | 传输.
   代码 shows all repository topics or the topics in one selected repository.

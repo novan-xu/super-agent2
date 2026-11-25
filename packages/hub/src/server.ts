@@ -110,7 +110,7 @@ import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
 import type { MemoryService, OwnerMemoryError } from "./memories.js";
-import { ScheduleAction, ScheduleId, ScheduleSave, type ScheduleHistory, type ScheduleList } from "@super-agent2/protocol";
+import { ScheduleAction, ScheduleId, ScheduleProposalAction, ScheduleProposalConfirm, ScheduleSave, type ScheduleHistory, type ScheduleList } from "@super-agent2/protocol";
 import { ScheduleRefused, type Schedules } from "./schedules.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
@@ -1159,6 +1159,30 @@ export function createHubServer(options: HubServerOptions): HubServer {
   };
 
   const serveSchedules = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, schedules: Schedules): Promise<boolean> => {
+    const proposal = /^\/api\/schedules\/proposals\/([^/]+)\/([^/]+)$/.exec(path);
+    if (proposal !== null) {
+      const id = ScheduleId.safeParse(proposal[1]);
+      const action = ScheduleProposalAction.safeParse(proposal[2]);
+      if (method !== "POST" || !id.success || !action.success) return false;
+      if (!ownerAction(request, response)) return true;
+      const body = await readBody(request);
+      try {
+        if (action.data === "confirm") {
+          const given = parseJson(body, ScheduleProposalConfirm);
+          if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return true; }
+          schedules.confirm(id.data, given.fields);
+        } else {
+          if (parseJson(body, z.strictObject({})) === undefined) { sendJson(response, 400, { error: "bad_request" }); return true; }
+          schedules.discard(id.data);
+        }
+        sendJson(response, 200, schedules.list());
+      } catch (error) {
+        if (!(error instanceof ScheduleRefused)) throw error;
+        const status = error.code === "conflict" ? 409 : error.code === "not_found" ? 404 : 422;
+        sendJson(response, status, { error: error.code, reason: error.message });
+      }
+      return true;
+    }
     const parts = /^\/api\/schedules(?:\/([^/]+)(?:\/(pause|resume|delete))?)?$/.exec(path);
     if (parts === null) return false;
     const id = ScheduleId.safeParse(parts[1]);
@@ -1749,6 +1773,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const unsubscribeMemories = options.memories?.subscribe((list) => send({ type: "memories", ...list })) ?? (() => undefined);
     const unsubscribeAllowance = options.defaults?.subscribe(() => send({ type: "allowance", allowance: allowanceSnapshot(options.defaults!) })) ?? (() => undefined);
     const unsubscribeSettings = options.settings?.subscribe((settings) => send({ type: "settings", settings })) ?? (() => undefined);
+    const unsubscribeSchedules = options.schedules?.subscribe((pending) => send({ type: "schedules.changed", pending }));
     const unsubscribeWork =
       options.work?.subscribe((event) => {
         if (watchedTickets.has(event.ticket)) {
@@ -1763,6 +1788,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       unsubscribeTickets();
       unsubscribeMemories();
       unsubscribeSettings();
+      unsubscribeSchedules?.();
       unsubscribeAllowance();
     });
     client.on("message", (data, binary) => {
@@ -1861,6 +1887,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (options.settings !== undefined) {
       send({ type: "settings", settings: options.settings.snapshot() });
     }
+    if (options.schedules !== undefined) send({ type: "schedules.changed", pending: options.schedules.pendingCount() });
   };
 
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {

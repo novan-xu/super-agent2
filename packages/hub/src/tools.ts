@@ -59,7 +59,7 @@ import { allowanceReport, chainProgress, choiceText, clip, commandReport, comman
 import { TicketError, type TicketService } from "./tickets.js";
 import { type TicketTurn, TicketWriteRefused } from "./ticket-versions.js";
 import { LightTaskRequest, type LightTasks } from "./light-tasks.js";
-import { ScheduleFields, ScheduleId } from "@super-agent2/protocol";
+import { pagePath, ScheduleFields, ScheduleId } from "@super-agent2/protocol";
 import { ScheduleRefused, type Schedules } from "./schedules.js";
 import type { TaskTickets } from "./task-tickets.js";
 import { hubTargetName } from "./targets.js";
@@ -154,10 +154,8 @@ const ScheduledLightArguments = LightTaskRequest.omit({ materials: true }).exten
 const LegacyLightEngine = { engine: CodeEngineChoice.optional() };
 
 const ScheduleProposalArguments = ScheduleFields.extend({
-  confirmation: z.string().trim().min(1).max(2_000),
   schedule: ScheduleId.optional(),
 });
-const ScheduleConfirmArguments = z.strictObject({ proposal: MessageId });
 const ScheduleIdArguments = z.strictObject({ schedule: ScheduleId });
 
 
@@ -769,20 +767,15 @@ function scheduleDefinitions() {
       name: "propose_schedule",
       description: [
         "Read list_schedules first for existing plans and the hub time zone.",
-        "Write the run's scope and limits in English. In the Chinese confirmation, state what runs, where, and when or from which service.",
+        "Write the run's scope and limits in English and give the card a short title in the owner's language.",
         "Use a five-field numeric cron in hub time, an epoch timestamp in milliseconds, or a registered service name. Pass schedule to revise a plan.",
-        "End the turn after proposing.",
+        "The owner confirms the pending card on 定时. Reply briefly in Chinese with the card link and end the turn.",
       ].join(" "),
       inputSchema: z.toJSONSchema(ScheduleProposalArguments, { io: "input" }),
     },
     {
-      name: "create_schedule",
-      description: "Activate a proposal after explicit owner agreement in a newer message in this topic within 24 hours. Propose again if scope changed or it expired.",
-      inputSchema: z.toJSONSchema(ScheduleConfirmArguments, { io: "input" }),
-    },
-    {
       name: "list_schedules",
-      description: "Read schedules, their IDs and the hub time zone.",
+      description: "Read schedules, pending proposals, their IDs and the hub time zone.",
       inputSchema: z.toJSONSchema(z.strictObject({}), { io: "input" }),
     },
     ...(["pause", "resume", "delete"] as const).map((action) => ({
@@ -1170,16 +1163,10 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.schedules === undefined) return undefined;
         const parsed = ScheduleProposalArguments.safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
-        const { confirmation, schedule, ...fields } = parsed.data;
-        const proposal = tools.schedules.propose(fields, confirmation, writeTurn(), schedule);
-        return { text: `Schedule proposal ${proposal}. The confirmation is visible in the topic. End this turn and wait for the owner's agreement.` };
-      }
-      case "create_schedule": {
-        if (tools.schedules === undefined) return undefined;
-        const parsed = ScheduleConfirmArguments.safeParse(raw);
-        if (!parsed.success) return invalid(parsed.error);
-        const schedule = tools.schedules.confirm(parsed.data.proposal, writeTurn());
-        return { text: `Schedule ${schedule} was saved. The hub launches each run automatically. Confirm this briefly to the owner in Chinese.` };
+        const { schedule, ...fields } = parsed.data;
+        const proposal = tools.schedules.propose(fields, writeTurn(), schedule);
+        const link = pagePath({ view: "schedules", proposal });
+        return { text: `Schedule proposal ${proposal} is pending. Tell the owner briefly in Chinese that the card is ready on [定时](${link}) for their confirmation. End the turn.` };
       }
       case "pause_schedule":
       case "resume_schedule":

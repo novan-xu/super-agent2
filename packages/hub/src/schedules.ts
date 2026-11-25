@@ -7,7 +7,7 @@ import type { Chains } from "./chains.js";
 import type { Clock } from "./clock.js";
 import { storeTopic, type ConversationService } from "./conversations.js";
 import type { HubDatabase } from "./database.js";
-import { confirmationLifetime, ownerConfirmation } from "./owner-confirmation.js";
+import { ownerConfirmation } from "./owner-confirmation.js";
 import { TicketWriteRefused, type TicketTurn } from "./ticket-versions.js";
 import type { TicketService } from "./tickets.js";
 import { intervalTicker, type Ticker } from "./verification.js";
@@ -18,8 +18,8 @@ const ScheduleRow = z.object({
   state: ScheduleState, confirmed_at: z.number(), revision: z.number(),
 });
 const ProposalRow = z.object({
-  id: z.string(), fields: z.string(), target: z.string().nullable(), target_revision: z.number().nullable(),
-  created_at: z.number(), stream_seq: z.number(), confirmed_schedule: z.string().nullable(),
+  id: z.string(), topic: z.string(), fields: z.string(), target: z.string().nullable(), target_revision: z.number().nullable(),
+  created_at: z.number(),
 });
 const RunRow = z.object({
   id: z.string(), schedule: z.string(), revision: z.number(), due_at: z.number(), entry: z.string(),
@@ -50,7 +50,11 @@ interface ScheduleOptions {
   readonly report: (line: string) => void;
 }
 
-export class ScheduleRefused extends Error {}
+export class ScheduleRefused extends Error {
+  constructor(message: string, readonly code: "bad_request" | "conflict" | "not_found" = "bad_request") {
+    super(message);
+  }
+}
 
 function nextOccurrence(recurrence: ScheduleRecurrence, now: number, timeZone: string): number | null {
   if ("trigger" in recurrence) return null;
@@ -100,10 +104,11 @@ export function createSchedules({ database, clock, conversations, tickets, chain
     AND next_at IS NULL AND json_type(fields, '$.recurrence.at') IS NOT NULL`);
   const insertProposal = connection.prepare(`INSERT INTO schedule_proposals (id, topic, fields, target, target_revision, created_at)
     VALUES (?, ?, ?, ?, ?, ?)`);
-  const latestProposal = connection.prepare(`SELECT p.*, e.stream_seq FROM schedule_proposals p
-    JOIN conversation_entries e ON e.id = p.id AND e.conversation_id = p.topic
-    WHERE p.topic = ? ORDER BY e.stream_seq DESC LIMIT 1`);
-  const confirmProposal = connection.prepare("UPDATE schedule_proposals SET confirmed_schedule = ? WHERE id = ?");
+  const selectProposals = connection.prepare("SELECT * FROM schedule_proposals ORDER BY created_at DESC, rowid DESC");
+  const selectProposal = connection.prepare("SELECT * FROM schedule_proposals WHERE id = ?");
+  const countProposals = connection.prepare("SELECT count(*) AS pending FROM schedule_proposals");
+  const deleteProposal = connection.prepare("DELETE FROM schedule_proposals WHERE id = ?");
+  const deleteTargetProposal = connection.prepare("DELETE FROM schedule_proposals WHERE target = ?");
   const insertRun = connection.prepare("INSERT INTO schedule_runs (id, schedule, revision, due_at, entry, state) VALUES (?, ?, ?, ?, ?, ?)");
   const runView = `SELECT r.*, e.conversation_id AS topic, e.created_at AS at, t.state AS turn_state,
     (SELECT reply.id FROM conversation_entries reply WHERE reply.turn_id = t.id AND reply.kind = 'text' AND reply.hidden = 0
@@ -127,6 +132,12 @@ export function createSchedules({ database, clock, conversations, tickets, chain
   let stopTicker: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
   let closed = false;
+  const listeners = new Set<(pending: number) => void>();
+  const pendingCount = () => z.number().parse(countProposals.get()?.pending);
+  const changed = () => {
+    const pending = pendingCount();
+    for (const listener of listeners) listener(pending);
+  };
 
   const transaction = <T>(write: () => T): T => {
     connection.exec("BEGIN IMMEDIATE");
@@ -142,7 +153,11 @@ export function createSchedules({ database, clock, conversations, tickets, chain
 
   const rowOf = (id: string) => ScheduleRow.optional().parse(selectSchedule.get(id));
   const fieldsOf = (row: { fields: string }): ScheduleFields => ScheduleFields.parse(JSON.parse(row.fields));
-  const proposalOf = (topic: string) => ProposalRow.optional().parse(latestProposal.get(topic));
+  const proposalOf = (id: string) => {
+    const proposal = ProposalRow.optional().parse(selectProposal.get(id));
+    if (proposal === undefined) throw new ScheduleRefused("This proposal is no longer pending.", "not_found");
+    return proposal;
+  };
   const runOf = (raw: unknown): ScheduleRun => {
     const run = RunRow.parse(raw);
     const related = runTickets.all(run.id).map((item) => {
@@ -167,6 +182,14 @@ export function createSchedules({ database, clock, conversations, tickets, chain
 
   const list = (): ScheduleList => ({
     timeZone,
+    proposals: selectProposals.all().map((raw) => {
+      const row = ProposalRow.parse(raw);
+      const topic = conversations.get(row.topic);
+      return {
+        id: row.id, fields: fieldsOf(row), topic: topic?.id ?? row.topic, topicRepository: topic?.repository ?? null,
+        target: row.target, targetRevision: row.target_revision, createdAt: row.created_at,
+      };
+    }),
     schedules: selectAll.all().map((raw) => {
       const row = ScheduleRow.parse(raw);
       const topic = conversations.get(row.topic);
@@ -188,39 +211,45 @@ export function createSchedules({ database, clock, conversations, tickets, chain
   };
 
   const save = (fields: ScheduleFields, topic: string | undefined, target?: string, revision?: number): { id: string; topic: string } => {
-    const next = validate(fields);
     if (target !== undefined) {
       const row = rowOf(target);
-      if (row === undefined || (revision !== undefined && row.revision !== revision)) throw new ScheduleRefused("The schedule changed or was deleted. Read it again.");
+      if (row === undefined || (revision !== undefined && row.revision !== revision)) {
+        throw new ScheduleRefused("The schedule changed or was deleted. Read it again.", "conflict");
+      }
+      const next = validate(fields);
       updateSchedule.run(JSON.stringify(fields), row.state === "paused" ? "paused" : "active", next, clock.now(), owner, target);
       clearTrigger.run(target);
       return { id: target, topic: row.topic };
     }
+    const next = validate(fields);
     const id = randomUUID();
     const destination = topic === undefined ? storeTopic(database, clock.now(), fields.title, { repository: fields.repository ?? null }) : topic;
     insertSchedule.run(id, destination, JSON.stringify(fields), next, clock.now(), owner);
     return { id, topic: destination };
   };
 
-  const change = (id: string, action: ScheduleAction): void => transaction(() => {
-    const row = rowOf(id);
-    if (row === undefined) throw new ScheduleRefused("This schedule was deleted.");
-    if (action === "delete") {
-      changeState.run("deleted", null, id);
-      clearTrigger.run(id);
-    } else if (action === "pause" && row.state === "active") {
-      const { recurrence } = fieldsOf(row);
-      changeState.run(row.next_at === null && "at" in recurrence ? "completed" : "paused", row.next_at, id);
-      clearTrigger.run(id);
-    } else if (action === "resume" && row.state === "paused") {
-      const { recurrence } = fieldsOf(row);
-      changeState.run("active", nextOccurrence(recurrence, clock.now(), timeZone), id);
-    }
-  });
+  const change = (id: string, action: ScheduleAction): void => {
+    transaction(() => {
+      const row = rowOf(id);
+      if (row === undefined) throw new ScheduleRefused("This schedule was deleted.");
+      if (action === "delete") {
+        changeState.run("deleted", null, id);
+        clearTrigger.run(id);
+      } else if (action === "pause" && row.state === "active") {
+        const { recurrence } = fieldsOf(row);
+        changeState.run(row.next_at === null && "at" in recurrence ? "completed" : "paused", row.next_at, id);
+        clearTrigger.run(id);
+      } else if (action === "resume" && row.state === "paused") {
+        const { recurrence } = fieldsOf(row);
+        changeState.run("active", nextOccurrence(recurrence, clock.now(), timeZone), id);
+      }
+    });
+    changed();
+  };
 
-  const requireOwner = (turn: TicketTurn, after = 0): void => {
+  const requireOwner = (turn: TicketTurn): void => {
     tickets.versions.requireActive(turn);
-    if (!confirmation.turnAfter(turn, after)) throw new TicketWriteRefused("A newer owner message must be taken into the active turn of this topic.");
+    if (!confirmation.turnAfter(turn, 0)) throw new TicketWriteRefused("An owner message must be taken into the active turn of this topic.");
   };
 
   const finishRuns = () => {
@@ -336,47 +365,52 @@ export function createSchedules({ database, clock, conversations, tickets, chain
     save: (fields: ScheduleFields, target?: string, revision?: number): string => {
       const saved = transaction(() => save(fields, undefined, target, revision));
       if (target === undefined) conversations.announce(saved.topic);
+      changed();
       return saved.id;
     },
     change,
-    propose: (fields: ScheduleFields, summary: string, turn: TicketTurn, target?: string): string => {
-      const previous = proposalOf(turn.conversation);
-      requireOwner(turn, previous?.stream_seq ?? 0);
+    pendingCount,
+    subscribe: (listener: (pending: number) => void) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    propose: (fields: ScheduleFields, turn: TicketTurn, target?: string): string => {
+      requireOwner(turn);
       validate(fields);
-      const row = target === undefined ? undefined : rowOf(target);
-      if (target !== undefined && row === undefined) throw new ScheduleRefused("This schedule was deleted.");
-      const id = transaction(() => {
-        const entry = conversations.writeConfirmation(turn.conversation, turn.id, summary);
-        insertProposal.run(entry, turn.conversation, JSON.stringify(fields), target ?? null, row?.revision ?? null, clock.now());
-        return entry;
+      const id = randomUUID();
+      transaction(() => {
+        const row = target === undefined ? undefined : rowOf(target);
+        if (target !== undefined) {
+          if (row === undefined) throw new ScheduleRefused("This schedule was deleted.");
+          deleteTargetProposal.run(target);
+        }
+        insertProposal.run(id, turn.conversation, JSON.stringify(fields), target ?? null, row?.revision ?? null, clock.now());
       });
-      conversations.announceEntry(id);
+      changed();
       return id;
     },
-    confirm: (id: string, turn: TicketTurn): string => {
-      tickets.versions.requireActive(turn);
-      return transaction(() => {
-        const proposal = proposalOf(turn.conversation);
-        if (proposal?.id !== id) throw new TicketWriteRefused("This is not the current schedule proposal in this topic.");
-        if (proposal.confirmed_schedule !== null) return proposal.confirmed_schedule;
-        if (clock.now() - proposal.created_at >= confirmationLifetime) throw new TicketWriteRefused("The schedule proposal expired. Ask for confirmation again.");
-        requireOwner(turn, proposal.stream_seq);
-        const saved = save(fieldsOf(proposal), turn.conversation, proposal.target ?? undefined, proposal.target_revision ?? undefined);
-        confirmProposal.run(saved.id, id);
-        return saved.id;
+    confirm: (id: string, edited?: ScheduleFields): void => {
+      const entry = randomUUID();
+      transaction(() => {
+        const proposal = proposalOf(id);
+        const fields = edited ?? fieldsOf(proposal);
+        const topic = conversations.get(proposal.topic)?.id ?? proposal.topic;
+        const saved = save(fields, topic, proposal.target ?? undefined, proposal.target_revision ?? undefined);
+        const destination = conversations.get(saved.topic)?.id ?? saved.topic;
+        const message = proposal.target === null ? "schedule.notice.confirmed" : "schedule.notice.revised";
+        conversations.writeScheduleNotice(entry, destination, text(message, { title: fields.title }));
+        deleteProposal.run(id);
       });
+      conversations.announceEntry(entry);
+      changed();
+    },
+    discard: (id: string): void => {
+      if (deleteProposal.run(id).changes === 0) throw new ScheduleRefused("This proposal is no longer pending.", "not_found");
+      changed();
     },
     changeFromTurn: (id: string, action: ScheduleAction, turn: TicketTurn): void => {
       requireOwner(turn);
       change(id, action);
-    },
-    context: (topic: string, message: string): string => {
-      const proposal = proposalOf(topic);
-      if (proposal?.confirmed_schedule !== null || !confirmation.messageAfter(topic, message, proposal.stream_seq)) return "";
-      const title = JSON.stringify(fieldsOf(proposal).title);
-      return clock.now() - proposal.created_at >= confirmationLifetime
-        ? `\n\n[hub] The schedule proposal for ${title} expired. Propose it again if the owner still wants it.`
-        : `\n\n[hub] Current schedule proposal ${proposal.id}: ${title}. Call create_schedule only if this owner message agrees to the proposed plan.`;
     },
     tick,
     resume: () => {

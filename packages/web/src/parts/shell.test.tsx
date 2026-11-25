@@ -77,6 +77,13 @@ describe("Shell", () => {
     expect(html.match(/count count--hot/g)).toHaveLength(2);
   });
 
+  it("shows the pending proposal count on 定时 in both navigation areas", () => {
+    const html = render({ pendingSchedules: 2 });
+    expect([...html.matchAll(destinations)].filter((match) => match[1] === "定时 2")).toHaveLength(2);
+    expect(html).toContain('<span class="count count--hot">2</span>');
+    expect(html).toContain('<span class="tab-badge">2</span>');
+  });
+
   it("does not offer History in either navigation area", () => {
     expect(render()).not.toContain('href="/history"');
   });

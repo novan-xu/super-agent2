@@ -7,6 +7,7 @@ describe("pageRoute", () => {
     expect(pageRoute("/workbench")).toEqual({ view: "workbench" });
     expect(pageRoute("/history")).toEqual({ view: "history" });
     expect(pageRoute("/memory")).toEqual({ view: "memory" });
+    expect(pageRoute("/schedules")).toEqual({ view: "schedules" });
     expect(pageRoute("/settings/")).toEqual({ view: "settings" });
     expect(pageRoute("/settings/machines")).toEqual({ view: "settings", section: "machines" });
     expect(pageRoute("/settings/connections/")).toEqual({ view: "settings", section: "connections" });
@@ -21,6 +22,13 @@ describe("pageRoute", () => {
     expect(pageRoute("/transfer")).toEqual({ view: "transfer" });
     expect(pagePath({ view: "transfer" })).toBe("/transfer");
     expect(pageRoute("/tickets/12")).toEqual({ view: "ticket", ticket: 12 });
+  });
+
+  it("links directly to a pending schedule card", () => {
+    const proposal = "00000000-0000-4000-8000-000000000001";
+    expect(pagePath({ view: "schedules", proposal })).toBe(`/schedules?proposal=${proposal}`);
+    expect(pageRoute("/schedules", `?proposal=${proposal}`)).toEqual({ view: "schedules", proposal });
+    expect(pageRoute("/schedules", "?proposal=invalid")).toEqual({ view: "schedules" });
   });
 
   it("refuses paths the page does not have", () => {

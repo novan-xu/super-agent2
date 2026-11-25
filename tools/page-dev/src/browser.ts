@@ -172,6 +172,13 @@ const views = {
     ready: ".mrow-text",
     targets: { "memory text": ".mrow-text", "memory actions": ".mrow-actions button", "add memory": ".top button" },
   },
+  schedules: {
+    route: { view: "schedules" },
+    ready: ".schedule-card",
+    targets: { "schedule canvas": ".schedules", "schedule proposals": ".schedule-card--proposal", "schedule cards": ".schedule-card:not(.schedule-card--proposal)", "schedule actions": ".schedule-actions button" },
+    phone: { "pending count": ".tab[href='/schedules'] .tab-badge" },
+    desktop: { "pending count": ".nav-btn[href='/schedules'] .count" },
+  },
   history: {
     route: { view: "settings", section: "history" },
     ready: ".lrow",
@@ -234,8 +241,17 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
       await checkCanvasGraphs(page, fixture.graphs);
       if (phone) await checkPhoneRepositoryTabs(page);
     }
+    if (name === "schedules" && (mode.kind === "check" || await page.locator(".schedule-card--proposal").count() > 0)) {
+      await page.locator(phone ? ".tab[href='/schedules'] .tab-badge" : ".nav-btn[href='/schedules'] .count").waitFor({ timeout: 5000 });
+    }
     const targets = { [phone ? "bottom navigation" : "sidebar"]: phone ? ".tabbar" : ".side", ...view.targets, ...view[width] };
     const issues = mode.kind === "check" ? await checkLayout(page, width, targets) : [];
+    if (mode.kind === "check" && name === "schedules" && issues.length === 0) {
+      const proposal = page.locator(".schedule-card--proposal");
+      await proposal.locator("summary").click();
+      await proposal.getByRole("button", { name: "修改", exact: true }).click();
+      issues.push(...await checkLayout(page, width, { "proposal changes": ".schedule-changes dd", "proposal editor": ".schedule-card--proposal .schedule-editor", "editor fields": ".schedule-editor .field" }));
+    }
     if (view.after !== undefined && issues.length === 0) {
       await view.after(page, fixture);
       if (mode.kind === "check") issues.push(...await checkLayout(page, width, {

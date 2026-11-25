@@ -1,8 +1,6 @@
 import type { HubDatabase } from "./database.js";
 import type { TicketTurn } from "./ticket-versions.js";
 
-export const confirmationLifetime = 24 * 60 * 60 * 1000;
-
 export function ownerConfirmation({ connection }: HubDatabase) {
   const latestOwner = connection.prepare(`SELECT stream_seq FROM conversation_entries
     WHERE conversation_id = ? AND turn_id = ? AND kind = 'owner' AND taken = 1

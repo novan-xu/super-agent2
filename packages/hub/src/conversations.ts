@@ -190,7 +190,6 @@ export interface ConversationServiceOptions {
   readonly order?: () => readonly Provider[] | undefined;
   readonly routing?: RoutingOptions;
   readonly lightTaskContext?: (topic: string, message: string) => string;
-  readonly scheduleContext?: (topic: string, message: string) => string;
 }
 
 export interface MemoryBriefing {
@@ -826,7 +825,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     const input: BrainInput = {
       id: row.delivery_id ?? row.id, ...(row.delivery_id === null ? {} : { entry: row.id }),
       source: row.kind === "owner" ? "owner" : "hub",
-      text: row.prompt + (row.kind === "owner" ? (options.lightTaskContext?.(row.conversation_id, row.id) ?? "") + (options.scheduleContext?.(row.conversation_id, row.id) ?? "") : ""),
+      text: row.prompt + (row.kind === "owner" ? (options.lightTaskContext?.(row.conversation_id, row.id) ?? "") : ""),
       attachments: forBrain(attached),
       ...(typeof scheduleRun === "string" ? { scheduleRun } : {}),
       ...(mailReview ? { mailReview: true } : {}),
