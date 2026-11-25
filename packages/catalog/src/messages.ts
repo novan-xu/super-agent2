@@ -383,6 +383,7 @@ export const messages = {
   "ticket.missing": "找不到这个工单",
   "ticket.phase.pending": "待开始",
   "ticket.phase.waiting": "等前序",
+  "ticket.phase.pinnedWaiting": "等待指定资源",
   "ticket.phase.beginFailed": "没能开始",
   "ticket.phase.starting": "还没开始执行",
   "ticket.phase.queued": "排队中",
