@@ -1,7 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import { chineseOf, type StartCard as StartData, type Ticket, ticketProject } from "@super-agent2/protocol";
 import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { canvasOf, layoutChains, type CanvasChain } from "../live/canvas.js";
+import { canvasOf, type CanvasChain } from "../live/canvas.js";
 import { canStartCard } from "../live/choice.js";
 import { clampPanelHeight, loadPanelHeight, minPanelHeight, panelHeightMaximum, savePanelHeight } from "../live/panel-height.js";
 import { clampPanelWidth, defaultPanelWidth, loadPanelWidth, minPanelWidth, panelMaximum, savePanelWidth } from "../live/panel-width.js";
@@ -183,53 +183,18 @@ function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, 
   readonly waiting: WaitingState; readonly actions: CardActions; readonly selected: number | null; readonly select: (id: number) => void;
   readonly openStart: (card: StartData, element: HTMLElement) => void; readonly ticketHref: (id: number) => string;
 }) {
-  const grid = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-  const [paths, setPaths] = useState<string[]>([]);
-  const columns = daily ? 1 : Math.max(1, Math.floor((width + 20) / 240));
   const related = new Map(chains.flat().map((node) => [node.ticket.id, node.ticket]));
-  const cells = useMemo(() => layoutChains(chains, columns), [chains, columns]);
-  useLayoutEffect(() => {
-    const element = grid.current;
-    if (element === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      setWidth(window.matchMedia("(max-width: 767px)").matches ? 0 : element.clientWidth);
-      const bounds = element.getBoundingClientRect();
-      const path: string[] = [];
-      for (const cell of cells) for (const id of daily ? [] : cell.node.after) {
-        const from = element.querySelector<HTMLElement>(`[data-ticket="${id}"] .wb-card`);
-        const to = element.querySelector<HTMLElement>(`[data-ticket="${cell.node.ticket.id}"] .wb-card`);
-        if (from === null || to === null) continue;
-        const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-        const same = Math.abs(a.top - b.top) < 5;
-        if (same && Math.abs(a.left - b.left) <= Math.max(a.width, b.width) + 24) {
-          const forward = b.left > a.left;
-          const x1 = (forward ? a.right : a.left) - bounds.left, x2 = (forward ? b.left : b.right) - bounds.left;
-          path.push(`M ${x1} ${a.top + a.height / 2 - bounds.top} L ${x2} ${b.top + b.height / 2 - bounds.top}`);
-        } else if (same) {
-          const x1 = a.left + a.width / 2 - bounds.left, x2 = b.left + b.width / 2 - bounds.left;
-          const y1 = a.bottom - bounds.top, y2 = b.bottom - bounds.top, mid = Math.max(y1, y2) + 14;
-          path.push(`M ${x1} ${y1} L ${x1} ${mid} L ${x2} ${mid} L ${x2} ${y2}`);
-        } else {
-          const x1 = a.left + a.width / 2 - bounds.left, x2 = b.left + b.width / 2 - bounds.left;
-          const y1 = a.bottom - bounds.top, y2 = b.top - bounds.top, mid = (y1 + y2) / 2;
-          path.push(`M ${x1} ${y1} L ${x1} ${mid} L ${x2} ${mid} L ${x2} ${y2}`);
-        }
-      }
-      setPaths(path);
-    });
-    observer.observe(element);
-    element.querySelectorAll(".wb-card").forEach((card) => observer.observe(card));
-    return () => observer.disconnect();
-  }, [cells, daily]);
-  return <div ref={grid} className="wb-grid" style={{ "--wb-columns": columns } as CSSProperties}>
-    {cells.map(({ node, column, line }) => {
+  return <div className={`wb-grid${daily ? " wb-grid--daily" : ""}`}>
+    {chains.map((chain) => <div className={`wb-chain${chain.length > 1 ? " wb-chain--linked" : ""}`} key={chain[0]!.ticket.id}>
+    {chain.map((node, index) => {
       const ticket = node.ticket, start = starts.get(ticket.id), stopped = stuck.get(ticket.id), phase = ticketPhase(ticket);
       const where = whereOf(ticket);
       const phaseIndex = ticket.state === "waiting" ? 0 : ticket.state === "verifying" ? (ticket.verification?.waiting === "finishing" || ticket.verification?.waiting === "mergeable" ? 3 : 2) : 1;
       const waits = ticket.waits.filter((wait) => !wait.waived && (node.after.includes(wait.ticket) || node.missing.includes(wait.ticket)));
       const codeOf = (id: number) => (related.get(id)?.code ?? waits.find((wait) => wait.ticket === id)?.reference?.split("-")[0] ?? "?").toUpperCase();
-      return <div className="wb-slot" key={ticket.id} data-ticket={ticket.id} style={{ gridColumn: column + 1, gridRow: line + 1 }}>
+      return <div className="wb-slot" key={ticket.id} data-ticket={ticket.id}>
+        {chain.length > 1 ? <span className={`wb-rail-dot dot dot--${phaseLooks[phase].tone}`} aria-hidden="true" /> : null}
+        {node.after.length > 0 && (node.after.length !== 1 || node.after[0] !== chain[index - 1]?.ticket.id) ? <p className="wb-branch">{text("workbench.follows", { tickets: node.after.map(codeOf).join("、") })}</p> : null}
         {stopped === undefined || node.reference ? <button type="button" className={`wb-card${start === undefined ? "" : " wb-card--pending"}${node.reference ? " wb-card--reference" : ""}`} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`} aria-pressed={selected === ticket.id} onClick={(event) => start !== undefined && !node.reference ? openStart(start, event.currentTarget) : select(ticket.id)}>
           <span className="wb-card-title"><span className={`dot dot--${phaseLooks[phase].tone}`} /><TicketCodeLabel code={ticket.code} /><span>{chineseOf(ticket.title)}</span></span>
           {start === undefined ? <span className="wb-phases" aria-hidden="true">{[0, 1, 2, 3].map((step) => <i key={step} className={step <= phaseIndex ? "is-active" : ""} />)}</span> : null}
@@ -239,7 +204,6 @@ function CanvasGrid({ chains, daily, starts, stuck, waiting, actions, selected, 
         {ticket.state !== "waiting" || waits.length === 0 ? null : <p className="wb-after">{waits.map((wait) => text(wait.deployment ? "workbench.waitDeployment" : related.get(wait.ticket)?.form === "task" ? "workbench.waitTicket" : "workbench.waitMerge", { ticket: codeOf(wait.ticket) })).join("、")}</p>}
         {node.missing.length === 0 ? null : <p className="wb-after">{text("workbench.follows", { tickets: node.missing.map(codeOf).join("、") })}</p>}
       </div>;
-    })}
-    <svg className="wb-links" aria-hidden="true"><defs><marker id="wb-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M 0 0 L 6 3 L 0 6 z" /></marker></defs>{paths.map((path, index) => <path key={index} d={path} markerEnd="url(#wb-arrow)" />)}</svg>
+    })}</div>)}
   </div>;
 }

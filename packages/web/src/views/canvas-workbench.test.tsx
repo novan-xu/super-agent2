@@ -49,6 +49,20 @@ describe("workbench canvas", () => {
     expect(html).toContain("等工单 AA 合并");
     expect(html).not.toContain("wb-card--pending");
   });
+  it("renders branches in one timeline and labels non-adjacent predecessors", () => {
+    const branch = ticket(3, { repository: "org/one", waits: waits(1), waitsFor: [1] });
+    const merge = ticket(4, { repository: "org/one", waits: [...waits(2), ...waits(3)], waitsFor: [2, 3] });
+    const html = renderToStaticMarkup(<CanvasWorkbench {...props} tickets={[merge, branch, second, first]} waiting={{ ...initialWaiting, known: true }} />);
+    expect(html).toContain('class="wb-chain wb-chain--linked"');
+    expect((html.match(/class="wb-rail-dot /g) ?? [])).toHaveLength(4);
+    expect(html.indexOf('data-ticket="1"')).toBeLessThan(html.indexOf('data-ticket="2"'));
+    expect(html.indexOf('data-ticket="2"')).toBeLessThan(html.indexOf('data-ticket="3"'));
+    expect(html.indexOf('data-ticket="3"')).toBeLessThan(html.indexOf('data-ticket="4"'));
+    expect(html).toContain('class="wb-branch">在 AA 之后');
+    expect(html).toContain('class="wb-branch">在 AB、AC 之后');
+    expect(html).not.toContain("wb-links");
+  });
+
   it("shows ticket codes on reference cards too", () => {
     const predecessor = ticket(1, { repository: "org/other", state: "working", work: workStatus() });
     const html = renderToStaticMarkup(<CanvasWorkbench {...props} tickets={[predecessor, second]} repository="org/one" waiting={{ ...initialWaiting, known: true }} />);

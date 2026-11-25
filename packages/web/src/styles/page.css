@@ -392,7 +392,13 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-panel .page { padding: 16px; }
 .wb-section + .wb-section { margin-top: 28px; }
 .wb-section h2 { font-size: var(--text-md); margin: 0 0 12px; }
-.wb-grid { display: grid; position: relative; grid-template-columns: repeat(var(--wb-columns), minmax(0, 1fr)); gap: 32px 20px; }
+.wb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 32px 20px; align-items: start; }
+.wb-grid--daily { grid-template-columns: minmax(0, 1fr); }
+.wb-chain { min-width: 0; display: grid; gap: 20px; }
+.wb-chain--linked { position: relative; padding-left: 24px; }
+.wb-chain--linked .wb-slot:not(:last-child)::before { content: ""; position: absolute; left: -21px; top: 18px; bottom: -38px; border-left: 2px solid var(--border); }
+.wb-rail-dot { position: absolute; left: -24px; top: 14px; z-index: 1; }
+.wb-branch { margin: 0 0 5px; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .wb-slot { min-width: 0; position: relative; z-index: 1; }
 .wb-card { display: flex; flex-direction: column; gap: 9px; width: 100%; min-height: 104px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); text-align: left; cursor: pointer; }
 .wb-card[aria-pressed="true"] { border-color: var(--accent); }
@@ -405,9 +411,6 @@ ol.rows { margin: 0; padding: 0; list-style: none; }
 .wb-phases { display: flex; gap: 3px; }
 .wb-phases i { height: 3px; flex: 1; border-radius: 2px; background: var(--border); }
 .wb-phases i.is-active { background: var(--accent); }
-.wb-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.wb-links path { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 3; }
-.wb-links marker path { fill: var(--muted); stroke: none; }
 .wb-holds { display: grid; gap: 12px; }
 .wb-dialog { max-width: min(600px, 95vw); }
 .wb-close { float: right; }
