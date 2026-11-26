@@ -3984,3 +3984,9 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 - **Chosen:** Keep memory, schedules and the attachments in ordinary messages and task results available in the local edition.
 - **Why:** The hub stores and serves them even when every optional integration is off.
 - **Other options:** Hide these areas with the optional integration controls.
+
+## 2026-11-26 — Inverted logo colours (#361)
+
+The logo now uses a near-black tile with a white centre and ring while retaining the red upper-right dot.
+A subtle grey edge separates the tile from dark backgrounds, and the existing rounded desktop, maskable and Apple icon shapes remain unchanged.
+The previous white tile and dark glyph are replaced at the owner's request.
