@@ -22,6 +22,7 @@ it.each(["win32", "darwin", "linux"] as const)("schedules allowance reads on %s"
   vi.useFakeTimers();
   const service = await startRunnerService({
     files, platform, environment: { SUPERAGENT2_PROGRAM_AUTO_UPDATE: "0" }, log: () => undefined,
+    sampleLoad: async () => ({ sampledAt: Date.now(), cpuPercent: 25, ownCpuPercent: 8, gpuPercent: platform === "linux" ? null : 10 }),
     prober: { find: (name) => name === "codex" ? "/codex" : undefined, capture: async (_path, args) => { calls.push([...args]); return args[0] === "--version" ? "codex-cli 1.0.0" : ""; } },
     connect: (_url, _headers, handlers) => { events = handlers; return { send: (message) => sent.push(JSON.parse(message)), close: () => handlers.close(1000, ""), terminate: () => handlers.close(1000, "") }; },
   });
@@ -36,6 +37,10 @@ it.each(["win32", "darwin", "linux"] as const)("schedules allowance reads on %s"
   events.message(JSON.stringify({ type: "programs.refresh", id: "00000000-0000-4000-8000-000000000000" }));
   await vi.advanceTimersByTimeAsync(0);
   expect(allowanceCalls()).toBe(platform === "win32" ? 0 : 3);
+  expect(sent).toContainEqual(expect.objectContaining({
+    type: "report", refreshId: "00000000-0000-4000-8000-000000000000",
+    machine: expect.objectContaining({ load: expect.objectContaining({ cpuPercent: 25, ownCpuPercent: 8, gpuPercent: platform === "linux" ? null : 10 }) }),
+  }));
   await vi.advanceTimersByTimeAsync(600_000);
   expect(allowanceCalls()).toBe(platform === "win32" ? 0 : 4);
   const reports = sent.filter((message): message is { machine: { allowances: unknown[] } } => typeof message === "object" && message !== null && "machine" in message);

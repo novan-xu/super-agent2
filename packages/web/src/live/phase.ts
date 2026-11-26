@@ -90,7 +90,7 @@ export function ticketPhase(ticket: Ticket): TicketPhase {
 export type TicketProblem =
   | { readonly kind: "waits"; readonly before: readonly { readonly id: number; readonly code: string | null; readonly title: string | null; readonly state: Ticket["state"] | null }[] }
   | { readonly kind: "beginFailed"; readonly reason: string }
-  | { readonly kind: "queued"; readonly machine: string }
+  | { readonly kind: "queued"; readonly machine: string; readonly highLoad?: boolean }
   | { readonly kind: "providerWaiting" | "pinnedWaiting"; readonly reason: string }
   | { readonly kind: "unreachable"; readonly machine: string; readonly since: number }
   | { readonly kind: "failed"; readonly failure: WorkFailure; readonly reason: string }
@@ -119,7 +119,7 @@ export function ticketProblem(ticket: Ticket, known: ReadonlyMap<number, Ticket>
     case "beginFailed":
       return { kind: "beginFailed", reason: ticket.beginFailure ?? "" };
     case "queued":
-      return work === null ? null : { kind: "queued", machine: work.machine };
+      return work === null ? null : { kind: "queued", machine: work.machine, ...(work.reason === null ? {} : { highLoad: true }) };
     case "providerWaiting":
       return work === null ? null : { kind: "providerWaiting", reason: work.reason ?? "" };
     case "unreachable":

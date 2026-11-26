@@ -6,6 +6,7 @@ import {
   AllowanceReport,
   type AllowanceReading,
   brainToolsPath,
+  defaultMachineLoadSettings,
   type MachineReport,
   protocolVersion,
   PushPayload,
@@ -837,6 +838,30 @@ describe("start defaults", () => {
     const response = await fetch(`${base(running)}${allowancePath}`, { headers: { "Cf-Access-Jwt-Assertion": await assertion({ key, clock }) } });
     expect(await response.json()).not.toHaveProperty("openaiCost");
     expect((await callBrainTool(running, "read_allowance", {})).text).not.toContain("OpenAI API:");
+  });
+
+  it("applies and persists owner-only load thresholds and windows", async () => {
+    const running = await start();
+    const path = "/api/settings/machine-load";
+    const limits = { ...defaultMachineLoadSettings, gpuHigh: 60, highMinutes: 1 };
+    expect(running.settings.snapshot().machineLoad).toEqual(defaultMachineLoadSettings);
+    expect((await ownerSend(running, path, limits, { method: "PUT", token: null })).status).toBe(403);
+    expect((await ownerSend(running, path, { ...limits, gpuLow: 90 }, { method: "PUT" })).status).toBe(400);
+    expect((await ownerSend(running, path, limits, { method: "PUT" })).status).toBe(200);
+    const machine = running.machines.active("pc")!;
+    const link = running.runners.attach(machine, { send: () => undefined, close: () => undefined });
+    link.receive({ type: "hello", protocol: protocolVersion, machine: machineReport("win32"), works: [] });
+    const sample = (gpuPercent: number) => {
+      link.receive({ type: "report", machine: { ...machineReport("win32"), load: { cpuPercent: 20, ownCpuPercent: 3, gpuPercent, sampledAt: clock.now() } } });
+      clock.advance(30_000);
+    };
+    for (let index = 0; index < 5; index++) sample(50);
+    expect(running.runners.report("pc")?.load?.high).toBe(false);
+    for (let index = 0; index < 3; index++) sample(65);
+    expect(running.runners.report("pc")?.load?.high).toBe(true);
+    await running.close();
+    hub = undefined;
+    expect((await start()).settings.snapshot().machineLoad).toEqual(limits);
   });
 
   it("broadcasts fresh allowance windows and requests online runners to refresh", async () => {

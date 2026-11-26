@@ -174,6 +174,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
     machines,
+    now: () => clock.now(),
     ...(config.version === undefined ? {} : { version: config.version }),
     ...(options.machinePollMilliseconds === undefined ? {} : { pollMilliseconds: options.machinePollMilliseconds }),
   });

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  defaultMachineLoadSettings,
   type HubToRunner,
   type Identity,
   type MachineReport,
+  type MachineLoadSettings,
   type MachineStatus,
   protocolVersion,
   runnerCloseCodes,
@@ -13,6 +15,7 @@ import {
   type WorkHeld,
 } from "@super-agent2/protocol";
 import type { Machine, MachineStore } from "./machines.js";
+import { monitorMachineLoad } from "./machine-load.js";
 import type { StorageSettings } from "@super-agent2/protocol";
 
 export interface RunnerConnection {
@@ -42,6 +45,7 @@ export interface Runners {
   refreshPrograms(machine?: string): Promise<{ name: string; report?: MachineReport; status: "refreshed" | "not reached" | "timed out" }[]>;
   report(machine: string): MachineReport | undefined;
   setStorage(machine: string, storage: StorageSettings): boolean;
+  setLoadSettings(settings: MachineLoadSettings): void;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
   attach(machine: Machine, connection: RunnerConnection): RunnerLink;
   revoke(name: string): Machine | undefined;
@@ -55,17 +59,20 @@ export interface RunnersOptions {
   readonly machines: MachineStore;
   readonly pollMilliseconds?: number;
   readonly version?: string;
+  readonly now?: () => number;
 }
 
 interface Link {
   readonly machine: Machine;
   readonly connection: RunnerConnection;
   report: MachineReport | undefined;
+  readonly load: ReturnType<typeof monitorMachineLoad>;
 }
 
 export function createRunners(options: RunnersOptions): Runners {
   const { machines } = options;
   const links = new Map<string, Link>();
+  let loadSettings = defaultMachineLoadSettings;
   const refreshes = new Map<string, { name: string; finish: (report?: MachineReport) => void }>();
   let work: WorkLink | undefined;
   const tellWork = (body: (link: WorkLink) => void) => {
@@ -175,6 +182,12 @@ export function createRunners(options: RunnersOptions): Runners {
       }));
     },
     report: (name) => links.get(name)?.report,
+    setLoadSettings: (settings) => {
+      if (JSON.stringify(settings) === JSON.stringify(loadSettings)) return;
+      loadSettings = settings;
+      for (const link of links.values()) link.load.reset();
+      announce();
+    },
     setStorage: (name, storage) => {
       if (!machines.setStorage(name, storage)) {
         return false;
@@ -201,7 +214,8 @@ export function createRunners(options: RunnersOptions): Runners {
       if (previous !== undefined) {
         drop(previous, runnerCloseCodes.replaced, "replaced");
       }
-      const link: Link = { machine, connection, report: undefined };
+      const priorLoad = machines.active(machine.name)?.report?.load;
+      const link: Link = { machine, connection, report: undefined, load: monitorMachineLoad(options.now ?? Date.now, priorLoad) };
       links.set(machine.name, link);
       return {
         receive: (message) => {
@@ -210,11 +224,13 @@ export function createRunners(options: RunnersOptions): Runners {
           }
           if (message.type === "hello" || message.type === "report") {
             const first = link.report === undefined;
-            link.report = message.machine;
-            machines.seen(machine.name, message.machine);
+            const load = link.load.read(message.machine.load, loadSettings);
+            const report = load === undefined ? message.machine : { ...message.machine, load };
+            link.report = report;
+            machines.seen(machine.name, report);
             if (message.type === "report" && message.refreshId !== undefined) {
               const refresh = refreshes.get(message.refreshId);
-              if (refresh?.name === machine.name) refresh.finish(message.machine);
+              if (refresh?.name === machine.name) refresh.finish(report);
             }
             if (first) {
               connection.send({ type: "welcome", protocol: protocolVersion, name: machine.name, ...(options.version === undefined ? {} : { version: options.version }) });

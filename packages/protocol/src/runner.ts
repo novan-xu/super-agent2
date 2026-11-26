@@ -54,6 +54,36 @@ export type ProgramReport = z.infer<typeof ProgramReport>;
 export const MachinePlatform = z.enum(["win32", "darwin", "linux"]);
 export type MachinePlatform = z.infer<typeof MachinePlatform>;
 
+const LoadPercent = z.number().min(0).max(100);
+
+export const MachineLoad = z.object({
+  cpuPercent: LoadPercent.nullable(),
+  ownCpuPercent: LoadPercent.nullable(),
+  gpuPercent: LoadPercent.nullable(),
+  sampledAt: z.number().int().nonnegative(),
+  high: z.boolean().optional(),
+  since: z.number().int().nonnegative().nullable().optional(),
+});
+export type MachineLoad = z.infer<typeof MachineLoad>;
+
+const ThresholdPercent = LoadPercent.int();
+const LoadMinutes = z.number().int().min(1).max(60);
+
+export const MachineLoadSettings = z.strictObject({
+  cpuHigh: ThresholdPercent,
+  gpuHigh: ThresholdPercent,
+  highMinutes: LoadMinutes,
+  cpuLow: ThresholdPercent,
+  gpuLow: ThresholdPercent,
+  lowMinutes: LoadMinutes,
+}).refine((limits) => limits.cpuLow < limits.cpuHigh && limits.gpuLow < limits.gpuHigh);
+export type MachineLoadSettings = z.infer<typeof MachineLoadSettings>;
+
+export const defaultMachineLoadSettings: Readonly<MachineLoadSettings> = {
+  cpuHigh: 70, gpuHigh: 40, highMinutes: 2,
+  cpuLow: 50, gpuLow: 25, lowMinutes: 5,
+};
+
 export const MachineReport = z.object({
   hostname: z.string(),
   platform: MachinePlatform,
@@ -64,6 +94,7 @@ export const MachineReport = z.object({
   programs: z.array(ProgramReport),
   updatingPrograms: z.boolean().optional(),
   allowances: z.array(AllowanceReading).default([]),
+  load: MachineLoad.optional(),
   storage: StorageReport.optional(),
   version: Revision.optional(),
 });

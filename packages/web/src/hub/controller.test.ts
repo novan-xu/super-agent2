@@ -61,6 +61,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     addMachine: (name, system) => answer(`addMachine ${name} ${system}`, { name, system, command: "run" }),
     revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
     setMachineStorage: (name, storage) => answer(`setMachineStorage ${name}`, storage),
+    setMachineLoad: (machineLoad) => answer("setMachineLoad", settingsSnapshot({ machineLoad })),
     setOrder: (role, order) => answer(`setOrder ${role} ${order.join(",")}`, settingsSnapshot(role === "brain" ? { brain: { linked: true, order: [...order], providers: [] } } : { workerOrder: [...order] })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
     setAlias: (repository, alias) => answer(`setAlias ${repository} ${alias}`, settingsSnapshot()),

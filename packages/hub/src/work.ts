@@ -250,7 +250,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   );
   const selectTicketMessages = connection.prepare("SELECT * FROM ticket_work_events WHERE ticket_id = ? AND json_extract(event, '$.kind') = 'message' ORDER BY id");
   const updateState = connection.prepare("UPDATE ticket_attempts SET state = ? WHERE ticket_id = ? AND attempt = ?");
-  const updateStarted = connection.prepare("UPDATE ticket_attempts SET state = 'preparing', started_at = COALESCE(started_at, ?), unreachable_since = NULL WHERE ticket_id = ? AND attempt = ?");
+  const updateStarted = connection.prepare("UPDATE ticket_attempts SET state = 'preparing', started_at = COALESCE(started_at, ?), unreachable_since = NULL, reason = NULL WHERE ticket_id = ? AND attempt = ?");
+  const updateQueueReason = connection.prepare("UPDATE ticket_attempts SET reason = ? WHERE ticket_id = ? AND attempt = ?");
   const updateEnded = connection.prepare("UPDATE ticket_attempts SET state = ?, ended_at = ?, failure = ?, reason = ? WHERE ticket_id = ? AND attempt = ?");
   const updateSession = connection.prepare("UPDATE ticket_attempts SET session = ? WHERE ticket_id = ? AND attempt = ?");
   const clearResumeSession = connection.prepare("UPDATE ticket_attempts SET session = NULL, resume_session = NULL WHERE ticket_id = ? AND attempt = ?");
@@ -560,6 +561,12 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         continue;
       }
       const report = runners.report(attempt.machine);
+      const loaded = report?.load?.high === true;
+      const reason = loaded ? `${attempt.machine} is under high load. Work starts when its load falls.` : null;
+      if (attempt.reason !== reason) {
+        touch(ticket.id, () => updateQueueReason.run(reason, ticket.id, attempt.attempt));
+      }
+      if (loaded) continue;
       if (report === undefined) {
         if (options.defaults !== undefined && ticket.ownerChoice.machine === null && followUps.get(ticket.id) !== undefined) {
           const run = chosenRun(options.defaults.resolve(ticket));

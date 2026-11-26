@@ -89,6 +89,7 @@ export const MachineChoice = z.object({
   platform: MachinePlatform,
   free: z.number().int().nonnegative(),
   engines: z.array(EngineOffer),
+  loaded: z.literal(true).optional(),
 });
 export type MachineChoice = z.infer<typeof MachineChoice>;
 
@@ -103,6 +104,7 @@ export function machineChoices(statuses: readonly MachineStatus[]): MachineChoic
         name: status.name,
         platform: report.platform,
         free: report.slots.free,
+        ...(report.load?.high === true ? { loaded: true as const } : {}),
         engines: report.programs.filter((program) => program.installed).map((program) => ({ engine: program.id, models: program.problem === null ? program.models : [] })),
       },
     ];
@@ -131,11 +133,16 @@ export function offers(machine: MachineChoice | undefined, engine: ProgramId, mo
   return engineOn(machine, engine)?.models.some((offered) => offered.id === model && offered.efforts.includes(effort)) ?? false;
 }
 
-export function defaultMachine(platform: Platform, engine: ProgramId, machines: readonly MachineChoice[], model: string | null = null, effort: string | null = null): string | null {
-  const candidates = machinesFor(platform, machines)
+function rankedMachines(platform: Platform, engine: ProgramId, machines: readonly MachineChoice[], model: string | null, effort: string | null): MachineChoice[] {
+  return machinesFor(platform, machines)
     .filter((machine) => model !== null && effort !== null ? offers(machine, engine, model, effort) : engineOn(machine, engine) !== undefined)
-    .sort((a, b) => b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return candidates[0]?.name ?? null;
+    .sort((a, b) => Number(a.loaded === true) - Number(b.loaded === true)
+      || b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+export function defaultMachine(platform: Platform, engine: ProgramId, machines: readonly MachineChoice[], model: string | null = null, effort: string | null = null): string | null {
+  const first = rankedMachines(platform, engine, machines, model, effort)[0];
+  return first?.loaded ? null : first?.name ?? null;
 }
 
 export const missingParts = ["defaults", "provider", "machine", "slot", "engine", "model", "effort"] as const;
@@ -178,7 +185,9 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     const candidates = machinesFor(input.platform, machines, owner.machine ?? required);
     if (owner.model === null) {
       const choices = available.length === 0 ? table.antigravity : available;
-      fromTable = choices.find((choice) => candidates.some((machine) => offers(machine, engine, choice.model, owner.effort ?? choice.effort)))
+      const offered = (choice: ModelChoice, machine: MachineChoice) => offers(machine, engine, choice.model, owner.effort ?? choice.effort);
+      fromTable = choices.find((choice) => candidates.some((machine) => !machine.loaded && offered(choice, machine)))
+        ?? choices.find((choice) => candidates.some((machine) => offered(choice, machine)))
         ?? choices[0] ?? null;
     } else {
       fromTable = table.antigravity.find((choice) => choice.model === owner.model) ?? fromTable;
@@ -186,7 +195,8 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
   }
   const model = owner.model ?? fromTable?.model ?? null;
   const effort = owner.effort ?? fromTable?.effort ?? null;
-  const machine = owner.machine ?? required ?? (input.platform !== null && engine !== null ? defaultMachine(input.platform, engine, machines, model, effort) : null);
+  const candidates = input.platform !== null && engine !== null ? rankedMachines(input.platform, engine, machines, model, effort) : [];
+  const machine = owner.machine ?? required ?? candidates[0]?.name ?? null;
   const missing = new Set<MissingPart>();
   const providerUnavailable = engine === null || (input.enginePin !== undefined &&
     (context.out.has(engine) || (engine === "antigravity" && model !== null && context.antigravityOut?.has(model))));
@@ -208,7 +218,7 @@ export function resolveStart(input: StartInput, table: EngineTable, machines: re
     missing.add("machine");
   } else if (chosen === undefined) {
     missing.add("machine");
-  } else if (input.machinePinned === true && chosen.free === 0) {
+  } else if (input.machinePinned === true && chosen.free === 0 && !chosen.loaded) {
     missing.add("slot");
   } else if (engine !== null && engineOn(chosen, engine) === undefined) {
     missing.add("engine");

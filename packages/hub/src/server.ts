@@ -81,6 +81,7 @@ import {
   runnerTokenHeader,
   StuckAnswerRequest,
   MachineAddRequest,
+  MachineLoadSettings,
   type MachineAdded,
   type MachineRevoked,
   MachineName,
@@ -642,6 +643,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path === settingsPath && method === "GET" && options.settings !== undefined) {
+      sendJson(response, 200, options.settings.snapshot());
+      return;
+    }
+    if (path === "/api/settings/machine-load" && method === "PUT" && options.settings !== undefined) {
+      if (!ownerAction(request, response)) return;
+      const limits = parseJson(await readBody(request), MachineLoadSettings);
+      if (limits === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+      options.settings.setLoadSettings(limits);
       sendJson(response, 200, options.settings.snapshot());
       return;
     }

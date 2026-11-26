@@ -1,5 +1,5 @@
 import { ticketProject, ticketReference } from "@super-agent2/protocol";
-import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineChoice, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, requiredMachineFor, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
+import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineStatus, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, requiredMachineFor, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
 
@@ -340,7 +340,7 @@ const programWords: Readonly<Record<ProviderUnavailable["program"], string>> = {
   antigravity: "Antigravity",
 };
 
-export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineChoice[], unavailable: readonly ProviderUnavailable[] = [], balance?: import("@super-agent2/protocol").Balance, cost?: import("@super-agent2/protocol").OpenAICost): string {
+export function allowanceReport(subscriptions: Subscriptions, machines: readonly MachineStatus[], unavailable: readonly ProviderUnavailable[] = [], balance?: import("@super-agent2/protocol").Balance, cost?: import("@super-agent2/protocol").OpenAICost): string {
   const lines = [
     subscriptionLine("GPT subscription (codex)", subscriptions.codex),
     subscriptionLine("Claude subscription (claude)", subscriptions.claude),
@@ -367,11 +367,19 @@ export function allowanceReport(subscriptions: Subscriptions, machines: readonly
     }
     lines.push("A marked program counts as used up for choosing an engine. Running tickets switch away from it by themselves, and a mark clears when its time passes, when an attempt on that program succeeds, or when a newer allowance reading shows it available.");
   }
-  if (machines.length === 0) {
+  const online = machines.flatMap(({ name, online, report }) => online && report !== null ? [{ name, report }] : []);
+  if (online.length === 0) {
     lines.push("No work machine is online.");
   }
-  for (const machine of machines) {
-    lines.push(`Machine ${machine.name} (${machine.platform}), ${machine.free} free slot(s): ${machine.engines.map((offer) => offer.engine).join(", ") || "no programs"}`);
+  const percent = (value: number | null | undefined) => value == null ? "unknown" : `${value}%`;
+  for (const { name, report } of online) {
+    const { load } = report;
+    const state = load?.high === true
+      ? `loaded${load.since == null ? "" : ` since ${new Date(load.since).toISOString()}`}`
+      : load === undefined ? "normal (load reporting unavailable)" : "normal";
+    const sampled = load === undefined ? "" : `, sampled at ${new Date(load.sampledAt).toISOString()}`;
+    const programs = report.programs.filter((program) => program.installed).map((program) => program.id);
+    lines.push(`Machine ${name} (${report.platform}), ${report.slots.free} free slot(s), CPU ${percent(load?.cpuPercent)} (own ${percent(load?.ownCpuPercent)}), GPU ${percent(load?.gpuPercent)}, ${state}${sampled}: ${programs.join(", ") || "no programs"}`);
   }
   return lines.join("\n");
 }
