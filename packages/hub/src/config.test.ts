@@ -132,8 +132,12 @@ describe("loadConfig", () => {
     expect(JSON.stringify(result)).not.toMatch(/ProxyCommand|nas_ed25519/);
   });
 
-  it.each(["ACCESS_TEAM", "ACCESS_AUD", "OWNER_EMAIL", "HUB_DATA_DIR"] as const)("names %s when it is missing", (name) => {
+  it.each(["ACCESS_TEAM", "OWNER_EMAIL", "HUB_DATA_DIR"] as const)("names %s when it is missing", (name) => {
     expect(problemsFor({ ...valid, [name]: undefined })).toEqual([`${name} is required`]);
+  });
+
+  it("requires the owner audience when another Access application is configured", () => {
+    expect(problemsFor({ ...valid, ACCESS_AUD: undefined, ACCESS_RUNNER_AUD: "b".repeat(64) })).toEqual(["ACCESS_AUD is required"]);
   });
 
   it("refuses a team given as a host name", () => {
@@ -155,7 +159,7 @@ describe("loadConfig", () => {
   });
 
   it("reports every wrong value at once", () => {
-    const problems = problemsFor({ ACCESS_TEAM: "Bad Team", OWNER_EMAIL: "x" });
+    const problems = problemsFor({ ACCESS_TEAM: "Bad Team", OWNER_EMAIL: "x", ACCESS_MCP_AUD: "b".repeat(64) });
     expect(problems.map((problem) => problem.split(" ")[0])).toEqual(["ACCESS_TEAM", "ACCESS_AUD", "OWNER_EMAIL", "HUB_DATA_DIR"]);
   });
 

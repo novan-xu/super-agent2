@@ -2,6 +2,7 @@ import { AccessClaims, type Identity } from "@super-agent2/protocol";
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify, type JWK } from "jose";
 import type { Clock } from "./clock.js";
 import type { KeyCache } from "./keys.js";
+import type { loopbackOwnerProof } from "./loopback.js";
 
 export const accessAlgorithm = "RS256";
 
@@ -17,7 +18,8 @@ export interface AccessVerifierOptions {
 
 export type Verification = { readonly ok: true; readonly identity: Identity } | { readonly ok: false; readonly reason: string };
 
-export type AccessVerifier = (assertion: string | undefined) => Promise<Verification>;
+export type OwnerProof = string | typeof loopbackOwnerProof | undefined;
+export type AccessVerifier = (assertion: OwnerProof) => Promise<Verification>;
 
 export function accessIssuer(team: string): string {
   return `https://${team}.cloudflareaccess.com`;
@@ -44,7 +46,7 @@ export function createAccessVerifier(options: AccessVerifierOptions): AccessVeri
   const issuer = accessIssuer(options.team);
   const tolerance = options.clockToleranceSeconds ?? 30;
   return async (assertion) => {
-    if (assertion === undefined || assertion === "") {
+    if (typeof assertion !== "string" || assertion === "") {
       return refuse("no assertion");
     }
     try {

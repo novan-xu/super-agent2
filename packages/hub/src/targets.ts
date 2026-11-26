@@ -131,6 +131,7 @@ export interface LocalTargetOptions {
   readonly name?: string;
   readonly environment: Environment;
   readonly platform?: NodeJS.Platform;
+  readonly powerShell?: string;
 }
 
 export function localTarget(options: LocalTargetOptions): Target {
@@ -138,8 +139,13 @@ export function localTarget(options: LocalTargetOptions): Target {
   return {
     name: options.name ?? hubTargetName,
     run: (job, sink) => {
-      const child = spawn(job.command, {
-        shell: true,
+      const args = options.powerShell === undefined ? [] : ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from([
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new()",
+        job.command,
+        "if (!$?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }",
+      ].join("\n"), "utf16le").toString("base64")];
+      const child = spawn(options.powerShell ?? job.command, args, {
+        shell: options.powerShell === undefined,
         cwd: job.cwd,
         env: commandEnvironment(options.environment, job.credentials),
         detached: platform !== "win32",

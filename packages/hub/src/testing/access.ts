@@ -88,7 +88,7 @@ export function unsignedAssertion(claims: Record<string, unknown>, kid: string):
   return `${encode({ alg: "none", kid, typ: "JWT" })}.${encode(claims)}.`;
 }
 
-export function testConfig(dataDir: string): Config {
+export function testConfig(dataDir: string): Extract<Config, { readonly accessTeam: string }> {
   return {
     accessTeam: team,
     accessAudience: audience,

@@ -111,6 +111,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
   let welcomed = false;
   let attempt = 0;
   let closing = false;
+  let connecting: LinkSocket | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let watchdog: NodeJS.Timeout | undefined;
   let heard = Date.now();
@@ -149,6 +150,11 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
     let finished = false;
     const events: LinkSocketEvents = {
       open: () => {
+        connecting = undefined;
+        if (closing) {
+          current?.terminate();
+          return;
+        }
         heard = Date.now();
         socket = current;
         send({ type: "hello", protocol: protocolVersion, machine: options.report(), works: options.works?.()?.held() ?? [] });
@@ -199,6 +205,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
           return;
         }
         finished = true;
+        if (connecting === current) connecting = undefined;
         if (socket === current) {
           socket = undefined;
         }
@@ -214,12 +221,13 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
     current = connect(
       url,
       {
-        [accessClientIdHeader]: config.accessClientId,
-        [accessClientSecretHeader]: config.accessClientSecret,
+        ...(config.accessClientId === "" ? {} : { [accessClientIdHeader]: config.accessClientId }),
+        ...(config.accessClientSecret === "" ? {} : { [accessClientSecretHeader]: config.accessClientSecret }),
         [runnerTokenHeader]: config.runnerToken,
       },
       events,
     );
+    if (!finished && socket !== current) connecting = current;
   };
 
   return {
@@ -249,6 +257,8 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
       if (watchdog !== undefined) {
         clearInterval(watchdog);
       }
+      connecting?.terminate();
+      connecting = undefined;
       socket?.close();
       socket = undefined;
     },

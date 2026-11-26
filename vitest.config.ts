@@ -18,6 +18,7 @@ export default defineConfig({
       { extends: true, test: { name: "programs", root: "packages/programs" } },
       { extends: true, test: { name: "brain", root: "packages/brain" } },
       { extends: true, test: { name: "runner", root: "packages/runner" } },
+      { extends: true, test: { name: "local", root: "packages/local" } },
       { extends: true, plugins: [react()], test: { name: "web", root: "packages/web", exclude: [...configDefaults.exclude, "**/*.dom.test.tsx"], css: { include: [/page.css/] } } },
       { extends: true, plugins: [react()], test: { name: "web-dom", root: "packages/web", include: ["**/*.dom.test.tsx"], environment: "happy-dom" } },
       { extends: true, test: { name: "markup-text", root: "tools/markup-text" } },

@@ -62,7 +62,7 @@ export function parseSettings(text: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
-    if (line === "") {
+    if (line === "" || line.startsWith("#")) {
       continue;
     }
     const equals = line.indexOf("=");
@@ -107,7 +107,7 @@ export function parseModels(text: string): ProgramModel[] | undefined {
   return models;
 }
 
-export function loadConfig(values: Readonly<Record<string, string | undefined>>): ConfigResult {
+export function loadConfig(values: Readonly<Record<string, string | undefined>>, tokenOnly = false): ConfigResult {
   const problems: string[] = [];
   const required = (name: string): string => {
     const value = values[name] ?? "";
@@ -131,8 +131,8 @@ export function loadConfig(values: Readonly<Record<string, string | undefined>>)
   if (name !== "" && !MachineName.safeParse(name).success) {
     problems.push(`${settingNames.name} must be lower-case letters, digits and dashes`);
   }
-  const accessClientId = required(settingNames.accessClientId);
-  const accessClientSecret = required(settingNames.accessClientSecret);
+  const accessClientId = tokenOnly ? "" : required(settingNames.accessClientId);
+  const accessClientSecret = tokenOnly ? "" : required(settingNames.accessClientSecret);
   const runnerToken = required(settingNames.runnerToken);
   if (runnerToken !== "" && !/^[A-Za-z0-9_-]{43,}$/.test(runnerToken)) {
     problems.push(`${settingNames.runnerToken} is not a runner token`);

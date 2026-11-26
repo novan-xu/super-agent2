@@ -22,6 +22,7 @@ import { lockSettings } from "./irreversible.js";
 import { createMemoryService, type MemoryService } from "./memories.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
+import { localOwnerEmail, loopbackHost, verifyLoopbackOwner } from "./loopback.js";
 import { pageFiles } from "./page.js";
 import { createPushService, type PushService } from "./push-service.js";
 import { gitHubRelease } from "./release.js";
@@ -63,6 +64,7 @@ import { createTopicTidy } from "./topic-tidy.js";
 import { createWorkRequestServer } from "./work-requests.js";
 
 export interface HubOptions {
+  readonly commandShell?: { readonly powerShell?: string };
   readonly config: Config;
   readonly appGateway?: AppGateway;
   readonly mailPollTicker?: Ticker;
@@ -104,8 +106,8 @@ export function scheduleWorkDrain(drain: () => void): void {
 const accessCheckMilliseconds = 60 * 60 * 1000;
 const repositoryRefreshMilliseconds = 60 * 60 * 1000;
 
-export function defaultTargets(environment: Environment): Target[] {
-  return [localTarget({ environment })];
+export function defaultTargets(environment: Environment, commandShell?: HubOptions["commandShell"]): Target[] {
+  return [localTarget({ environment, ...commandShell })];
 }
 
 export interface Hub {
@@ -139,6 +141,10 @@ export interface Hub {
 export async function startHub(options: HubOptions): Promise<Hub> {
   const clock = options.clock ?? systemClock;
   const { config } = options;
+  const loopback = config.accessTeam === undefined;
+  const ownerEmail = loopback ? localOwnerEmail : config.ownerEmail;
+  const host = loopback ? loopbackHost(config.host) : config.host;
+  if (host === undefined) throw new Error("The hub must bind to a loopback address when Access is not configured");
   const environment = options.environment ?? process.env;
   const appGateway = options.appGateway ?? (config.appGateway ? new AppGateway({
     cwd: config.dataDir,
@@ -148,11 +154,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const mailEnabled = appGateway !== undefined && (config.mailIntake ?? (config.appGateway === true));
   const extraMcp = extraMcpFromEnvironment(environment);
   const database = openDatabase({ dataDir: config.dataDir, clock, ...(config.ticketTimeZone === undefined ? {} : { ticketTimeZone: config.ticketTimeZone }) });
-  const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(config.accessTeam), clock });
-  const verify = createAccessVerifier({ team: config.accessTeam, audience: config.accessAudience, keys, clock });
-  const verifyRunner = config.accessRunnerAudience === undefined ? verify : createAccessVerifier({ team: config.accessTeam, audience: config.accessRunnerAudience, keys, clock });
-  const verifyInbox = config.accessInboxAudience === undefined ? undefined : createAccessVerifier({ team: config.accessTeam, audience: config.accessInboxAudience, keys, clock });
-  const verifyMcp = config.accessMcpAudience === undefined ? undefined : createAccessVerifier({ team: config.accessTeam, audience: config.accessMcpAudience, keys, clock });
+  const accessVerifier = config.accessTeam === undefined ? undefined : (team => {
+    const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(team), clock });
+    return (audience: string | undefined) => audience === undefined ? undefined : createAccessVerifier({ team, audience, keys, clock });
+  })(config.accessTeam);
+  const verify = accessVerifier?.(config.accessAudience) ?? verifyLoopbackOwner;
+  const verifyRunner = accessVerifier?.(config.accessRunnerAudience);
+  const verifyInbox = accessVerifier?.(config.accessInboxAudience);
+  const verifyMcp = accessVerifier?.(config.accessMcpAudience);
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
@@ -229,7 +238,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     changed: () => settingsChanged(),
     report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
   });
-  const targets = fixedTargets(options.targets ?? defaultTargets(environment));
+  const targets = fixedTargets(options.targets ?? defaultTargets(environment, options.commandShell));
   try {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
     const brainToken = brainTokenCheck(brainSecret);
@@ -241,7 +250,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
             database,
             clock,
             verify,
-            ownerEmail: config.ownerEmail,
+            ownerEmail,
             settings: lockSettings({ projectFolders: config.projectFolders }),
           })
         : undefined;
@@ -326,13 +335,13 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       clock,
       tickets,
       verify,
-      ownerEmail: config.ownerEmail,
+      ownerEmail,
       defaults,
       tell: told.tell,
       work: ticketWork,
     });
     schedules = createSchedules({
-      database, clock, conversations, tickets, chains, owner: config.ownerEmail, ticker: options.scheduleTicker,
+      database, clock, conversations, tickets, chains, owner: ownerEmail, ticker: options.scheduleTicker,
       report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
     });
     const worker = work;
@@ -371,7 +380,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       verification: () => checked,
       tell: told.tell,
       verify,
-      ownerEmail: config.ownerEmail,
+      ownerEmail,
     });
     loop = failures;
     reviews = createDecisionReviews({
@@ -426,7 +435,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       const report = options.report ?? ((line: string) => process.stderr.write(`${line}\n`));
       mailTriage = createMailTriage({ database, clock, conversations, push, filter: options.mailFilter ?? codexMailFilter(process.cwd(), environment), memory: () => memories.list().map(({ text }) => text).join("\n"), ticker: options.mailTriageTicker, report });
       mailIntake = createMailIntake({
-        database, clock, gateway: appGateway, ownerEmail: config.ownerEmail, ticker: options.mailPollTicker, report,
+        database, clock, gateway: appGateway, ownerEmail, ticker: options.mailPollTicker, report,
         writeNotice: mailTriage.writeNotice, changed: () => { settingsChanged(); mailTriage?.pump(); },
       });
     }
@@ -436,17 +445,19 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       database,
       commands,
       verify,
-      verifyRunner,
+      ...(verifyRunner === undefined ? {} : { verifyRunner }),
       ...(verifyInbox === undefined ? {} : { verifyInbox }),
       ...(verifyMcp === undefined ? {} : { verifyMcp }),
+      ...(loopback ? { loopback } : {}),
       ...(verifyInbox === undefined && verifyMcp === undefined ? {} : { inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
-      admit: ownerOnly(config.ownerEmail),
+      admit: ownerOnly(ownerEmail),
       conversations,
       waiting,
       schedules,
       tools: createToolServer({
         commands,
         conversations,
+        ...(options.commandShell === undefined ? {} : { commandLocation: options.commandShell.powerShell === undefined ? "the local hub's POSIX shell" : "the local hub's Windows PowerShell" }),
         memories,
         attachments,
         transferTools: createTransferTools(database, attachments),
@@ -523,12 +534,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       throw new Error("The failure loop was not created");
     }
     work?.resume();
-    address = await server.listen(config.port, config.host);
+    address = await server.listen(config.port, host);
     let workRequestAddress: AddressInfo | undefined;
     if (config.workRequests !== undefined) {
       const { port, directory } = config.workRequests;
       const workRequests = createWorkRequestServer(directory, schedules, options.report ?? ((line) => process.stderr.write(`${line}\n`)));
-      workRequestAddress = await workRequests.listen(port, config.host);
+      workRequestAddress = await workRequests.listen(port, host);
       closeWorkRequests = workRequests.close;
     }
     chains.resume();

@@ -3946,3 +3946,13 @@ Another option was to expand the set of engines that can start code tickets.
 The logo uses a white tile, a near-black glyph and a red upper-right dot independently of the UI accent.
 Desktop icons use a rounded tile with a transparent margin and a subtle edge, while a separate full-bleed maskable icon and an opaque Apple touch icon let each platform apply its own mask.
 The previous shared full-bleed icon could not give desktop apps rounded corners while also meeting maskable icon requirements.
+
+## 2026-11-26 — Local launcher and front door (#356, #357)
+
+- **Chosen:** Use the configured HTTPS Access URL and a service credential for the local runner when Access is enabled.
+- **Why:** The local and remote runners use the same Access policy, and traffic arriving from the tunnel cannot qualify for local admission.
+- **Other options:** Add a separate internal runner endpoint for Access installations, with its own transport and admission rules.
+
+- **Chosen:** Run brain commands in Windows PowerShell on Windows.
+- **Why:** Windows PowerShell ships with Windows 11 and matches native Windows paths and cmdlets.
+- **Other options:** Locate and use Git Bash, which provides POSIX syntax on Windows.
