@@ -2,6 +2,7 @@ import {
   Questions,
   CodeEngineChoice,
   LightTaskMode,
+  type HubFeature,
   ProgramId,
   AntigravityRow,
   DifficultyRow,
@@ -264,6 +265,7 @@ export interface ToolServer {
 }
 
 export interface ToolServerOptions {
+  readonly features?: readonly HubFeature[];
   readonly commands: CommandService;
   readonly commandLocation?: string;
   readonly conversations: ConversationService;
@@ -569,7 +571,7 @@ function ticketOutcomeText(outcome: TicketOutcome, done: string): ToolResult {
   return { text: `${done}\n${ticketLine(outcome.ticket)}\n${began}` };
 }
 
-function ticketDefinitions() {
+function ticketDefinitions(agentWring: boolean) {
   return [
     {
       name: "file_issue",
@@ -634,7 +636,7 @@ function ticketDefinitions() {
     {
       name: "start_light_task",
       title: "Start an everyday task",
-      description: "Start a light worker task in this topic. Writing tries Antigravity first, then the configured worker order.",
+      description: "Start a light worker task in this topic using the available programs and the configured worker order.",
       inputSchema: {
         type: "object",
         properties: {
@@ -643,7 +645,7 @@ function ticketDefinitions() {
           task: { type: "string", description: "Full standalone work instructions in English for the worker, including what to deliver" },
           kind: { type: "string", enum: [...taskKinds] },
           project: { type: "string", description: "The related repository as owner/name, used as a task label" },
-          mode: { type: "string", enum: LightTaskMode.options, description: "Defaults to transfer" },
+          mode: { type: "string", enum: agentWring ? LightTaskMode.options : ["transfer"], description: "Defaults to transfer" },
           material: materialSchema,
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
@@ -762,7 +764,7 @@ function ticketDefinitions() {
   ];
 }
 
-function scheduleDefinitions() {
+function scheduleDefinitions(agentWring: boolean) {
   return [
     {
       name: "propose_schedule",
@@ -787,7 +789,7 @@ function scheduleDefinitions() {
     {
       name: "run_scheduled_light_task",
       description: "Stage a light task in the current scheduled run with the same task inputs as start_light_task.",
-      inputSchema: z.toJSONSchema(ScheduledLightArguments, { io: "input" }),
+      inputSchema: z.toJSONSchema(agentWring ? ScheduledLightArguments : ScheduledLightArguments.extend({ mode: z.literal("transfer").optional() }), { io: "input" }),
     },
   ];
 }
@@ -837,6 +839,7 @@ function heldText(command: CommandRecord): string {
 
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
+  const agentWring = options.features?.includes("agentWring") ?? true;
   const ownerTurn = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) =>
     conversation !== undefined && turn !== undefined && !aborted.aborted
     && conversations.activeTurnProvider(conversation, turn) !== undefined && conversations.ownerAppTurn(conversation, turn);
@@ -966,8 +969,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         description: "Move the latest owner message or the given message ID in this turn, with attachments and quote. Set ownerRequested for an explicit move. The turn stops and the destination answers.",
         inputSchema: z.toJSONSchema(HandoverArguments, { io: "input" }),
       },
-      ...(options.tickets === undefined ? [] : ticketDefinitions()),
-      ...(options.tickets?.schedules === undefined ? [] : scheduleDefinitions()),
+      ...(options.tickets === undefined ? [] : ticketDefinitions(agentWring)),
+      ...(options.tickets?.schedules === undefined ? [] : scheduleDefinitions(agentWring)),
       ...(options.tickets?.chains === undefined ? [] : chainDefinitions()),
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
@@ -1185,6 +1188,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const parsed = ScheduledLightArguments.extend(LegacyLightEngine).safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
         const { material, engine: _engine, ...request } = parsed.data;
+        if (request.mode === "agent_wring" && !agentWring) return { text: "Agent_wring is unavailable on this installation.", isError: true };
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
         const ticket = tools.light.scheduled({ ...request, materials: chosen.materials }, writeTurn());
@@ -1195,6 +1199,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const parsed = ScheduledLightArguments.extend(LegacyLightEngine).safeParse(raw);
         if (!parsed.success) return invalid(parsed.error);
         const { material, engine: _engine, ...request } = parsed.data;
+        if (request.mode === "agent_wring" && !agentWring) return { text: "Agent_wring is unavailable on this installation.", isError: true };
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
         const ticket = tools.light.start({ ...request, materials: chosen.materials }, writeTurn());

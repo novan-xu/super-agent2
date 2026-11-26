@@ -73,6 +73,53 @@ function live(url) {
   };
 }
 
+function isolatedEnvironment(paths, home) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(SystemRoot|ComSpec|TEMP|TMP|LOCALAPPDATA|USERPROFILE|HOME|PATHEXT|APPDATA)$/i.test(name)));
+  env.PATH = [...paths, dirname(process.execPath), ...(windows ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"])].join(delimiter);
+  env.SUPERAGENT2_HOME = home;
+  return env;
+}
+
+test("a fresh local installation exposes only configured integrations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "super-agent2-minimal-"));
+  const home = join(root, "home");
+  const projects = join(root, "projects");
+  mkdirSync(projects);
+  mkdirSync(home);
+  const settings = join(home, "local.env");
+  const minimal = `PROJECTS_DIR="${projects}"\n`;
+  const env = { ...isolatedEnvironment([], home), PORT: "0" };
+  let running;
+  let connection;
+  try {
+    writeFileSync(settings, minimal);
+    running = launch(env);
+    const url = await running.address(/^Super Agent is available at (.*)$/);
+    assert.equal((await fetch(new URL("health", url))).status, 200);
+    assert.equal((await fetch(new URL("api/transfer", url))).status, 404);
+    connection = live(url);
+    const initial = await connection.wait((message) => message.type === "settings"
+      && message.settings.machines.some((machine) => machine.name === "local" && machine.online));
+    assert.deepEqual(initial.settings.features, { enabled: [], workerPrograms: [], brainProviders: [], extraMcp: [] });
+    assert.doesNotMatch(running.output, /could not start|gateway|converter|Woodpecker|Agent_wring/i);
+    connection.socket.close();
+    await running.close();
+    running = undefined;
+
+    writeFileSync(settings, `${minimal}HUB_DEVICE_TRANSFER=1\n`);
+    running = launch(env);
+    const restarted = await running.address(/^Super Agent is available at (.*)$/);
+    const report = await (await fetch(new URL("api/settings", restarted))).json();
+    assert.deepEqual(report.features.enabled, ["deviceTransfer"]);
+    const transfers = await fetch(new URL("api/transfer", restarted));
+    assert.equal(transfers.status, 200);
+    assert.deepEqual(await transfers.json(), { items: [], more: false });
+  } finally {
+    connection?.socket.close();
+    try { await running?.close(); } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test("the pnpm local entry starts all parts, runs a worker and reopens the same state", async () => {
   const root = mkdtempSync(join(tmpdir(), "super-agent2-smoke-"));
   const home = join(root, "home");
@@ -84,9 +131,7 @@ test("the pnpm local entry starts all parts, runs a worker and reopens the same 
     ? `@set "dp0=%~dp0"\r\n@"${process.execPath}" "%dp0%\\fake.mjs" %*\r\n`
     : `#!/bin/sh\nexec ${pathOf(process.execPath)} ${pathOf(fake)} "$@"\n`, { mode: 0o700 });
   if (windows) writeFileSync(join(bin, "fake.mjs"), readFileSync(fake));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(SystemRoot|ComSpec|TEMP|TMP|LOCALAPPDATA|USERPROFILE|HOME|PATHEXT|APPDATA)$/i.test(name)));
-  env.PATH = [bin, dirname(process.execPath), ...(windows ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"])].join(delimiter);
-  env.SUPERAGENT2_HOME = home;
+  const env = isolatedEnvironment([bin], home);
   let running;
   let connection;
   try {
@@ -103,8 +148,9 @@ test("the pnpm local entry starts all parts, runs a worker and reopens the same 
     assert.equal((await fetch(url)).status, 200);
     connection = live(url);
     await connection.wait((message) => message.type === "brain" && message.brain.linked);
-    await connection.wait((message) => message.type === "settings" && message.settings.machines.some((machine) => machine.name === "local"
-      && machine.online && machine.report?.programs.some((program) => program.id === "codex" && program.version === "1.0.0")));
+    const features = await connection.wait((message) => message.type === "settings" && message.settings.features?.workerPrograms.includes("codex")
+      && message.settings.features.brainProviders.includes("gpt"));
+    assert.deepEqual(features.settings.features, { enabled: [], workerPrograms: ["codex"], brainProviders: ["gpt"], extraMcp: [] });
     connection.socket.send(JSON.stringify({ type: "watch.stream", scope: { kind: "daily" } }));
     await connection.wait((message) => message.type === "stream.page");
     const post = (path, body) => fetch(new URL(path, url), {
@@ -118,12 +164,21 @@ test("the pnpm local entry starts all parts, runs a worker and reopens the same 
       message.entry.text === "Local smoke worker completed." || message.entry.text?.includes("The smoke task was refused")
     ));
     assert.equal(result.entry.text, "Local smoke worker completed.");
+    assert.deepEqual(result.entry.files.map((file) => file.name), ["notes.txt"]);
+    const file = await fetch(new URL(`api/tickets/${result.entry.ticket}/files/notes.txt`, url));
+    assert.equal(file.status, 200);
+    assert.equal(await file.text(), "A file delivered without device transfer.");
     const tokens = [join(home, "hub", "brain.token"), join(home, "runner", "runner.env")];
     const saved = tokens.map((file) => readFileSync(file, "utf8"));
     connection.socket.close();
     await running.close();
-    running = launch(env);
+    running = launch({ ...env, FAKE_CODEX_SIGNED_OUT: "1" });
     const restarted = await running.address(/^Super Agent is available at (.*)$/);
+    connection = live(restarted);
+    const signedOut = await connection.wait((message) => message.type === "settings" && message.settings.machines.some((machine) => machine.online
+      && machine.report?.programs.some((program) => program.id === "codex" && program.signedIn === false)));
+    assert.deepEqual(signedOut.settings.features.workerPrograms, []);
+    assert.deepEqual(signedOut.settings.features.brainProviders, []);
     const restored = await fetch(new URL(`api/conversations/${conversation.id}`, restarted));
     assert.equal(restored.status, 200);
     assert.match(await restored.text(), /Local smoke worker completed\./);

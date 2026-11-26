@@ -156,9 +156,9 @@ const views = {
   },
   settings: {
     route: { view: "settings" },
-    ready: (width) => width === "phone" ? ".set-nav" : ".add-machine",
+    ready: (width) => width === "phone" ? ".set-nav" : ".load-fields",
     targets: settingsMenu,
-    desktop: { "add machine": ".add-machine button[type=submit]" },
+    desktop: { "machine load settings": ".load-fields input" },
   },
   machines: {
     route: { view: "settings", section: "machines" },
@@ -326,13 +326,14 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
   }
 }
 
-async function run(names: readonly ViewName[], widths: readonly Width[], mode: Mode, pageDir?: string): Promise<void> {
+async function run(names: readonly ViewName[], widths: readonly Width[], mode: Mode, pageDir?: string, minimalIntegrations = false): Promise<void> {
   const executablePath = chromiumExecutable();
   const scratch = resolve(process.env.SUPERAGENT2_ARTIFACTS_DIR || tmpdir());
   await mkdir(scratch, { recursive: true });
   const data = await mkdtemp(join(scratch, "page-layout-"));
   const child = fork(fileURLToPath(new URL("cli.js", import.meta.url)), [
     "--port", "0", "--data", data, "--brain", "none", "--push", "none", "--layout-fixture",
+    ...(minimalIntegrations ? ["--minimal-integrations", "--cloudflare", "none"] : []),
     ...(pageDir === undefined ? [] : ["--page-dir", resolve(pageDir)]),
   ], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
   const exited = once(child, "exit");
@@ -368,13 +369,13 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, theme: { type: "string" }, "page-dir": { type: "string" }, help: { type: "boolean" } },
+  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, theme: { type: "string" }, "page-dir": { type: "string" }, "minimal-integrations": { type: "boolean" }, help: { type: "boolean" } },
 });
 const names = Object.keys(views) as ViewName[];
 const widths = Object.keys(viewports) as Width[];
 const usage = [
   "pnpm layout [--page-dir <built page dir>]",
-  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--theme light|dark] [--page-dir <built page dir>]`,
+  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--theme light|dark] [--page-dir <built page dir>] [--minimal-integrations]`,
 ].join("\n");
 const [command] = positionals;
 if (values.help) {
@@ -384,7 +385,7 @@ if (values.help) {
 } else if (command === "screenshot" && positionals.length === 1 && names.includes(values.view as ViewName) && (values.width === undefined || widths.includes(values.width as Width)) && (values.theme === undefined || values.theme === "light" || values.theme === "dark")) {
   const out = resolve(values.out || process.env.SUPERAGENT2_ARTIFACTS_DIR || ".");
   await mkdir(out, { recursive: true });
-  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out, theme: values.theme === "dark" ? "dark" : "light" }, values["page-dir"]);
+  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out, theme: values.theme === "dark" ? "dark" : "light" }, values["page-dir"], values["minimal-integrations"]);
 } else {
   process.stderr.write(`${usage}\n`);
   process.exitCode = 1;

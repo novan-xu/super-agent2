@@ -11,6 +11,7 @@ export * from "./decisions.js";
 export * from "./defaults.js";
 export * from "./deployments.js";
 export * from "./generated.js";
+export * from "./features.js";
 export * from "./holds.js";
 export * from "./history.js";
 export * from "./memory.js";

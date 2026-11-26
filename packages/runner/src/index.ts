@@ -12,6 +12,7 @@ export * from "./ledger.js";
 export * from "./link.js";
 export * from "./machine.js";
 export * from "./programs.js";
+export * from "./sign-in.js";
 export * from "./secret-file.js";
 export * from "./service.js";
 export * from "./setup.js";

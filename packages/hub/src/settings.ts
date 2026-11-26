@@ -5,6 +5,8 @@ import {
   type Device,
   defaultMachineLoadSettings,
   type EngineTable,
+  type HubFeatures,
+  type MachineStatus,
   fullOrder,
   gitHubAccounts,
   MachineLoadSettings,
@@ -54,6 +56,7 @@ export interface SettingsOptions {
   readonly credentials: CredentialSource;
   readonly pushKey: string | undefined;
   readonly appGateway?: () => AppGatewayStatus;
+  readonly features?: (machines: readonly MachineStatus[], brain: BrainSettings, apps?: AppGatewayStatus) => HubFeatures;
 }
 
 const orderKeys = { brain: "brain_order", worker: "worker_order" };
@@ -127,20 +130,25 @@ export function createSettings(options: SettingsOptions): Settings {
   const snapshot = (): SettingsSnapshot => {
     const conversations = options.conversations();
     const subscriptions = options.defaults.subscriptions();
+    const machines = options.runners.statuses();
+    const brain = brainSettings(conversations?.linked() ?? false, brainOrder(), conversations?.providers());
+    const appGateway = options.appGateway?.();
+    const features = options.features?.(machines, brain, appGateway);
     return {
       openaiBudget: budget(),
-      machines: options.runners.statuses(),
+      machines,
       machineLoad: loadSettings(),
       canAdd: { ...options.admin.canAdd },
       repositories: options.repositories.list(),
       accounts: gitHubAccounts.map((account) => ({ account, configured: options.credentials(account).ok })),
-      brain: brainSettings(conversations?.linked() ?? false, brainOrder(), conversations?.providers()),
+      brain,
       workerOrder: workerOrder(),
       table: options.defaults.table(),
       subscriptions: [subscriptions.codex, subscriptions.claude],
       unavailable: options.defaults.unavailable(),
       devices: devices(),
-      ...(options.appGateway === undefined ? {} : { appGateway: options.appGateway() }),
+      ...(appGateway === undefined ? {} : { appGateway }),
+      ...(features === undefined ? {} : { features }),
     };
   };
 

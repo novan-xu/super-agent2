@@ -90,6 +90,7 @@ export function unsignedAssertion(claims: Record<string, unknown>, kid: string):
 
 export function testConfig(dataDir: string): Extract<Config, { readonly accessTeam: string }> {
   return {
+    deviceTransfer: true,
     accessTeam: team,
     accessAudience: audience,
     ownerEmail,

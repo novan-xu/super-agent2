@@ -1,6 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import { useEffect, useRef, useState } from "react";
 import { sizeOf } from "../live/size.js";
+import { useFeature } from "../live/features.js";
 import { canDrawBytes, decodeText, delimiterOf, kindOf, parseTable, svgImage, type FileKind } from "./filekind.js";
 import { Markdown } from "./Markdown.js";
 import { showPdf } from "./pdf.js";
@@ -72,7 +73,9 @@ export function FileViewer({ files, index, close }: { files: readonly ViewFile[]
     void fetch(file.url, { method: "HEAD", signal: abort.signal }).then(response => { setMime(response.ok ? response.headers.get("x-file-media-type") ?? "application/octet-stream" : "application/octet-stream"); }).catch(() => { if (!abort.signal.aborted) setMime("application/octet-stream"); });
     return () => abort.abort();
   }, [file]);
-  const kind = kindOf({ name: file.name, mime });
+  const officePreviews = useFeature("officePreviews");
+  const detectedKind = kindOf({ name: file.name, mime });
+  const kind = detectedKind === "office" && !officePreviews ? "other" : detectedKind;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     layer.current?.focus();

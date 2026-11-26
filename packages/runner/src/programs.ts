@@ -27,6 +27,8 @@ export interface ProgramDefinition {
   readonly configured?: readonly ProgramModel[];
 }
 
+export type CheckSignIn = (id: ProgramId, path: string, version: string | null) => Promise<boolean>;
+
 const effortLevels = ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 function firstLine(output: string): string | null {
@@ -184,7 +186,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function probeProgram(definition: ProgramDefinition, prober: Prober): Promise<ProgramReport> {
+export async function probeProgram(definition: ProgramDefinition, prober: Prober, checkSignIn?: CheckSignIn): Promise<ProgramReport> {
   const path = prober.find(definition.executable);
   if (path === undefined) {
     return { id: definition.id, installed: false, path: null, version: null, models: [], source: "none", problem: null };
@@ -196,10 +198,15 @@ export async function probeProgram(definition: ProgramDefinition, prober: Prober
   } catch (error) {
     problems.push(`version: ${messageOf(error)}`);
   }
+  if (checkSignIn !== undefined && !await checkSignIn(definition.id, path, version)) {
+    return { id: definition.id, installed: true, signedIn: false, path, version, models: [], source: "none", problem: null };
+  }
+  const account = checkSignIn === undefined ? {} : { signedIn: true };
   if (definition.models === undefined) {
     return {
       id: definition.id,
       installed: true,
+      ...account,
       path,
       version,
       models: [...(definition.configured ?? [])],
@@ -209,15 +216,15 @@ export async function probeProgram(definition: ProgramDefinition, prober: Prober
   }
   try {
     const models = await definition.models(prober, path);
-    return { id: definition.id, installed: true, path, version, models, source: "program", problem: problems.length > 0 ? problems.join("; ") : null };
+    return { id: definition.id, installed: true, ...account, path, version, models, source: "program", problem: problems.length > 0 ? problems.join("; ") : null };
   } catch (error) {
     problems.push(`models: ${messageOf(error)}`);
-    return { id: definition.id, installed: true, path, version, models: [], source: "none", problem: problems.join("; ") };
+    return { id: definition.id, installed: true, ...account, path, version, models: [], source: "none", problem: problems.join("; ") };
   }
 }
 
-export function probePrograms(definitions: readonly ProgramDefinition[], prober: Prober): Promise<ProgramReport[]> {
-  return Promise.all(definitions.map((definition) => probeProgram(definition, prober)));
+export function probePrograms(definitions: readonly ProgramDefinition[], prober: Prober, checkSignIn?: CheckSignIn): Promise<ProgramReport[]> {
+  return Promise.all(definitions.map((definition) => probeProgram(definition, prober, checkSignIn)));
 }
 
 function isFile(path: string): boolean {

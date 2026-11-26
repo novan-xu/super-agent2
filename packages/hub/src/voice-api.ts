@@ -11,7 +11,7 @@ export async function voiceRequest(service: VoiceService | undefined, owner: str
   }
   const match = callRoute.exec(path);
   const id = match?.[1];
-  if (method !== "POST" || service === undefined || (path !== `${voicePath}/session` && id === undefined)) {
+  if (method !== "POST" || (id === undefined ? path !== `${voicePath}/session` : service === undefined)) {
     request.resume();
     return { status: 404, body: { error: "not_found" } };
   }
@@ -22,8 +22,10 @@ export async function voiceRequest(service: VoiceService | undefined, owner: str
   const body = await readBody(request, match?.[2] === "confirm" ? 3_200_000 : 128_000);
   if (path === `${voicePath}/session`) {
     const offer = parseJson(body, VoiceOffer);
-    if (offer !== undefined) return service.open(owner, offer);
-  } else if (id !== undefined) {
+    if (offer !== undefined) return service === undefined
+      ? { status: 503, body: { error: "unavailable" } }
+      : service.open(owner, offer);
+  } else if (id !== undefined && service !== undefined) {
     if (match?.[2] === "tool") {
       const tool = parseJson(body, VoiceToolCall);
       if (tool !== undefined) return service.tool(owner, id, tool);

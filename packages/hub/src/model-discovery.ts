@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import { programIds, type MachineStatus, type ProgramId } from "@super-agent2/protocol";
+import { programIds, programIsConfigured, type MachineStatus, type ProgramId } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { HubDatabase } from "./database.js";
 import type { StartDefaults } from "./defaults.js";
@@ -10,7 +10,7 @@ export function createModelDiscovery(database: HubDatabase, defaults: StartDefau
   const save = db.prepare("INSERT INTO hub_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
   const scan = (statuses: readonly MachineStatus[]) => {
     for (const engine of programIds) {
-      const offers = statuses.flatMap((machine) => (machine.report?.programs ?? []).filter((program) => program.id === engine && program.installed).flatMap((program) => program.models.map((model) => ({ machine: machine.name, ...model }))));
+      const offers = statuses.flatMap((machine) => (machine.report?.programs ?? []).filter((program) => program.id === engine && programIsConfigured(program)).flatMap((program) => program.models.map((model) => ({ machine: machine.name, ...model }))));
       if (offers.length === 0) continue;
       const key = `known_models_${engine}`;
       const row = z.object({ value: z.string() }).safeParse(read.get(key));

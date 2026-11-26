@@ -70,6 +70,17 @@ For each GitHub account the launcher uses its configured token or the token fetc
 The local edition can use Cloudflare Access with the same audience and service authentication as the NAS edition.
 See the [local installation checklist](local.md) for setup and configuration.
 
+### Optional integrations
+
+The hub derives integration availability from configuration and publishes it in the settings snapshot alongside the reported brain providers and worker programs.
+The page uses this snapshot for navigation, settings, previews and allowance rows, and the hub uses the same configuration to enable optional services and brain tools.
+The app gateway lists mailboxes, Teams and TickTick when it discovers the corresponding tools.
+Inbox and OAuth MCP use separate Access audiences, and either can make the transfer history available even with device sending disabled.
+Conversation and ticket attachments, including light-task results, can still be opened from their original messages.
+The local brain checks provider sign-in at launch, and runners check it during program discovery and on refresh.
+Older runner reports keep their reported offers until a runner reports sign-in status.
+Woodpecker remains optional and uses the repository's runner verification rules when its credentials are absent.
+
 ## LLM providers
 
 Every provider is used through its own command-line program.

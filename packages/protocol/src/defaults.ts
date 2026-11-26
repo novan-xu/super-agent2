@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { type EngineContext, noEngineContext } from "./providers.js";
-import { MachinePlatform, type MachineStatus, ProgramId, ProgramModel } from "./runner.js";
+import { MachinePlatform, type MachineStatus, ProgramId, ProgramModel, programIsConfigured } from "./runner.js";
 import {
   ChosenBy,
   type Difficulty,
@@ -105,7 +105,7 @@ export function machineChoices(statuses: readonly MachineStatus[]): MachineChoic
         platform: report.platform,
         free: report.slots.free,
         ...(report.load?.high === true ? { loaded: true as const } : {}),
-        engines: report.programs.filter((program) => program.installed).map((program) => ({ engine: program.id, models: program.problem === null ? program.models : [] })),
+        engines: report.programs.filter(programIsConfigured).map((program) => ({ engine: program.id, models: program.problem === null ? program.models : [] })),
       },
     ];
   });

@@ -41,7 +41,7 @@ async function main(): Promise<void> {
       const url = `http://${host}:${hub.address.port}`;
       const runner = runnerSettings(url, access, env);
       const runnerHome = join(home, "runner");
-      const brainEnvironment = preflight({
+      const brainConfiguration = await preflight({
         ...environment,
         BRAIN_HUB_URL: url,
         BRAIN_TOKEN_FILE: config.brainTokenFile,
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
         BRAIN_ATTACHMENTS_DIR: join(home, "brain", "attachments"),
       }, report);
       prepareRunner(hub, runnerHome, projects, runner, env);
-      const brain = startBrain(brainEnvironment, systemClock, report);
+      const brain = startBrain(brainConfiguration.environment, systemClock, report, brainConfiguration.available);
       if (brain === undefined) throw new Error("The brain could not start");
       try {
         const closeRunner = superviseRunner(runnerHome, runner.tokenOnly, env, report);

@@ -2,7 +2,7 @@ import { cp, lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { selfUpdateFor } from "./program-update-self.js";
-import type { ProgramId, ProgramReport } from "@super-agent2/protocol";
+import { type ProgramId, programIsConfigured, type ProgramReport } from "@super-agent2/protocol";
 import type { Prober } from "./programs.js";
 
 const packages: Partial<Record<ProgramId, string>> = { codex: "@openai/codex", claude: "@anthropic-ai/claude-code", dsh: "@deepseek-ai/dsh" };
@@ -125,7 +125,7 @@ export function createProgramUpdater(options: {
     running = (async () => {
       const updates = new Map<ProgramId, { path: string | null; update: NonNullable<ProgramReport["update"]> }>();
       for (const program of options.report()) {
-        if (closed || !program.installed) continue;
+        if (closed || !programIsConfigured(program)) continue;
         try {
           const update = await options.steps.check(program);
           if (update === undefined) {

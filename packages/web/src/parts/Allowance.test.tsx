@@ -1,6 +1,26 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { emptyFeatures, FeatureContext } from "../live/features.js";
 import { AllowanceCompact, AllowanceRings, AllowanceSidebar } from "./Allowance.js";
+
+it("only shows allowances for providers or cost reporting enabled by the hub", () => {
+  const render = (features: typeof emptyFeatures, report: Parameters<typeof AllowanceSidebar>[0]["report"] = null) => renderToStaticMarkup(
+    <FeatureContext.Provider value={features}><AllowanceSidebar report={report} now={0} /></FeatureContext.Provider>,
+  );
+  expect(render(emptyFeatures)).toBe("");
+  const sidebar = render({ ...emptyFeatures, workerPrograms: ["antigravity"], brainProviders: ["claude"] });
+  expect(sidebar).toContain("<strong>Claude</strong>");
+  expect(sidebar).toContain("<strong>Antigravity</strong>");
+  expect(sidebar).not.toContain("<strong>DeepSeek</strong>");
+  expect(sidebar).not.toContain("<strong>GPT</strong>");
+  const costs = render({ ...emptyFeatures, enabled: ["openaiCosts"] }, {
+    subscriptions: [], unavailable: [],
+    openaiCost: { state: "available", amount: 12.34, currency: "USD", readAt: 1, budget: null },
+  });
+  expect(costs).toContain("$12.34");
+  expect(costs).not.toContain("allowance-meta");
+  expect(costs).not.toContain("<strong>Claude</strong>");
+});
 
 describe("allowance components", () => {
   it("renders an unknown compact line and the expandable full panel", () => {

@@ -3970,3 +3970,17 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 - **Chosen:** Declare a pnpm script that installs the locked dependencies and browser before running `pnpm check`.
 - **Why:** The declaration must run in Windows PowerShell as well as POSIX shells, and verification starts in a clean checkout.
 - **Other options:** Put a shell-specific command chain in the declaration or require the runner to preinstall test dependencies.
+
+## 2026-11-26 — Optional local integrations (#359)
+
+- **Chosen:** Gate device sending with `HUB_DEVICE_TRANSFER` and enable it explicitly in the NAS Compose configuration.
+- **Why:** A fresh local installation has no device sending entry point, existing NAS users keep it, and inbox and OAuth MCP can still expose their history independently.
+- **Other options:** Enable sending whenever Access is configured or put all transfers behind the device sending setting.
+
+- **Chosen:** Use provider sign-in checks for new runner reports and the local brain, keeping older runner reports compatible.
+- **Why:** Installed but signed-out programs otherwise appear in model choices and can cause work to be assigned to an unusable provider.
+- **Other options:** Keep offering every installed CLI or require the owner to maintain a list of usable providers by hand.
+
+- **Chosen:** Keep memory, schedules and the attachments in ordinary messages and task results available in the local edition.
+- **Why:** The hub stores and serves them even when every optional integration is off.
+- **Other options:** Hide these areas with the optional integration controls.

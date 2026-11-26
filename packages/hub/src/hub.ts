@@ -2,6 +2,8 @@ import { createOpenAICosts } from "./openai-costs.js";
 import { createVoice } from "./voice.js";
 import { codexMailFilter, type MailFilter } from "./mail-filter.js";
 import { extraMcpFromEnvironment } from "./extra-mcp.js";
+import { configuredFeatures } from "./features.js";
+import { hasTransfer } from "@super-agent2/protocol";
 import { createModelDiscovery } from "./model-discovery.js";
 import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
@@ -153,6 +155,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   }) : undefined);
   const mailEnabled = appGateway !== undefined && (config.mailIntake ?? (config.appGateway === true));
   const extraMcp = extraMcpFromEnvironment(environment);
+  const features = configuredFeatures({ config, environment, appGateway: appGateway !== undefined, mailIntake: mailEnabled, inboxSources: options.inboxServiceTokens !== undefined, extraMcp });
+  const { enabled } = features;
   const database = openDatabase({ dataDir: config.dataDir, clock, ...(config.ticketTimeZone === undefined ? {} : { ticketTimeZone: config.ticketTimeZone }) });
   const accessVerifier = config.accessTeam === undefined ? undefined : (team => {
     const keys = createKeyCache({ source: options.keySource ?? fetchKeySource(team), clock });
@@ -416,6 +420,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       conversations: () => linkedConversations,
       defaults,
       credentials,
+      features: features.snapshot,
       pushKey: config.vapid?.publicKey,
       ...(appGateway === undefined ? {} : { appGateway: () => {
         const status = appGateway.status();
@@ -442,6 +447,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     }
     health = createHealthNotices({ database, clock, runners, defaults, conversations, push, ticker: options.healthTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
     server = createHubServer({
+      features: enabled,
       ...(config.converterUrl === undefined ? {} : { converterUrl: config.converterUrl }),
       database,
       commands,
@@ -461,7 +467,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         ...(options.commandShell === undefined ? {} : { commandLocation: options.commandShell.powerShell === undefined ? "the local hub's POSIX shell" : "the local hub's Windows PowerShell" }),
         memories,
         attachments,
-        transferTools: createTransferTools(database, attachments),
+        ...(hasTransfer(enabled) ? { transferTools: createTransferTools(database, attachments) } : {}),
+        features: enabled,
         ...(appGateway === undefined ? {} : { appGateway, appTodos: createAppTodos(database, clock) }),
         ...(mailTriage === undefined ? {} : { mailTriage }),
         tickets: {
@@ -488,12 +495,12 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(openaiCost === undefined ? {} : { openaiCost, refreshOpenAICost: () => { void openaiCosts?.refresh(); } }),
       admin,
       repositories,
-      voice: createVoice({
+      ...(enabled.includes("voice") ? { voice: createVoice({
         clock, conversations, topics: conversations.topics, repositories, credentials,
         fetch: options.forgeFetch ?? fetch, base: options.gitHubBase,
         apiKey: environment.OPENAI_API_KEY, model: environment.HUB_VOICE_DELEGATION_MODEL?.trim() || undefined,
         liveFetch: options.liveFetch,
-      }),
+      }) } : {}),
       refreshRepositories: repositoryDiscovery.refresh,
       ...(work === undefined ? {} : { work }),
       chains: chains.starter,

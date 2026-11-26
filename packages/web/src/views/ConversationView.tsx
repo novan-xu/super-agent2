@@ -6,6 +6,7 @@ import { text } from "@super-agent2/catalog";
 import { type Conversation, type ConversationEntry, type ReviewedStreamDestination, type StreamEntry as StreamRecord, type StreamPreview, type StreamPreviewRequest, type TopicScope, topicInScope } from "@super-agent2/protocol";
 import { type KeyboardEvent, type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SocketStatus } from "../hub/socket.js";
+import { useFeature } from "../live/features.js";
 import { type ConversationState, isWorking } from "../live/conversation.js";
 import { combinedStreamItems, streamItems } from "../live/stream.js";
 import { topicScopeKey } from "../live/topic-scope.js";
@@ -297,6 +298,7 @@ export interface ConversationViewProps {
 }
 
 export function ConversationView(props: ConversationViewProps) {
+  const voiceEnabled = useFeature("voice");
   const { state, stream, now, conversation, scope, list, hrefOf, open } = props;
   const following = useRef(true);
   const picker = useRef<HTMLDialogElement>(null);
@@ -385,7 +387,7 @@ export function ConversationView(props: ConversationViewProps) {
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
           move={props.topicActions.move} openEdit={openEdit} waiting={props.waiting} tickets={props.tickets} startChains={props.startChains} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
-          quote={quotes[draftKey]} clearQuote={clearQuote} voiceScope={scope}
+          quote={quotes[draftKey]} clearQuote={clearQuote} voiceScope={voiceEnabled ? scope : undefined}
           routing={conversation === null && props.previewStream !== undefined ? {
             scope, topics: filtered, status: props.status, preview: props.previewStream,
           } : undefined} />

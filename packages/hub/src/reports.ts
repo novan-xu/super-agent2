@@ -1,4 +1,4 @@
-import { ticketProject, ticketReference } from "@super-agent2/protocol";
+import { programIsConfigured, ticketProject, ticketReference } from "@super-agent2/protocol";
 import { type CommandRecord, deploymentFile, type LoopFailureKind, type MachineStatus, mergedIssueNumbers, openIssueNumbers, openPullRequest, type ProviderUnavailable, requiredMachineFor, type StartChoice, type Subscription, type Subscriptions, type Ticket, type TicketDecision, type TicketMove, type TicketWait } from "@super-agent2/protocol";
 import { durationWords, overrunFactor } from "./pipeline-times.js";
 import type { WaitedFor } from "./verification.js";
@@ -379,7 +379,7 @@ export function allowanceReport(subscriptions: Subscriptions, machines: readonly
       ? `loaded${load.since == null ? "" : ` since ${new Date(load.since).toISOString()}`}`
       : load === undefined ? "normal (load reporting unavailable)" : "normal";
     const sampled = load === undefined ? "" : `, sampled at ${new Date(load.sampledAt).toISOString()}`;
-    const programs = report.programs.filter((program) => program.installed).map((program) => program.id);
+    const programs = report.programs.filter(programIsConfigured).map((program) => program.id);
     lines.push(`Machine ${name} (${report.platform}), ${report.slots.free} free slot(s), CPU ${percent(load?.cpuPercent)} (own ${percent(load?.ownCpuPercent)}), GPU ${percent(load?.gpuPercent)}, ${state}${sampled}: ${programs.join(", ") || "no programs"}`);
   }
   return lines.join("\n");

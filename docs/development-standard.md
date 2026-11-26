@@ -50,6 +50,7 @@ The view names are `code`, `daily`, `workbench-canvas`, `workbench-conversation`
 Omit `--width` to capture both widths, or use `--width desktop` for the desktop width alone.
 The command writes PNGs named `<view>-<width>.png` to `--out`, then falls back to `SUPERAGENT2_ARTIFACTS_DIR` if set, or the current directory.
 Use `--page-dir <built page dir>` with `pnpm layout` or `pnpm screenshot` to use a compatible build from another revision with the same sample data and viewport.
+Use `--minimal-integrations` with `pnpm screenshot` to capture the sample views with optional integrations off and one signed-in worker provider.
 
 ## Verification and merge
 

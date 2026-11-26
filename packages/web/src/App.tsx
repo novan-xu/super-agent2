@@ -7,6 +7,7 @@ import { browserPush } from "./hub/browser-push.js";
 import { PushController } from "./hub/push.js";
 import { browserSocket } from "./hub/socket.js";
 import { destinationOfMessage } from "./live/address.js";
+import { emptyFeatures, FeatureContext, featureEnabled, transferEnabled } from "./live/features.js";
 import { initialPage } from "./live/page.js";
 import { conversationRepositories, scopeOfTopic, topicScopeKey, workbenchScope } from "./live/topic-scope.js";
 import { initialPushFacts, pushPhase } from "./live/push.js";
@@ -25,7 +26,7 @@ import { type MemoryActions, MemoryView } from "./views/MemoryView.js";
 import { type TicketActions, type TicketOrigin, TicketView } from "./views/TicketView.js";
 import { RepositoryTabs } from "./views/RepositoryTabs.js";
 import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
-import { type SettingsActions, SettingsView } from "./views/SettingsView.js";
+import { type SettingsActions, settingsSectionEnabled, SettingsView } from "./views/SettingsView.js";
 import { SchedulesView } from "./views/SchedulesView.js";
 import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
@@ -90,6 +91,9 @@ export function App() {
   );
 
   const page = useSyncExternalStore(controller.store.subscribe, controller.store.getState, () => initialPage);
+  const features = page.settings === null ? emptyFeatures : page.settings.features;
+  const pushEnabled = featureEnabled(features, "push");
+  const canTransfer = transferEnabled(features);
 
   const [pushController] = useState(() => new PushController({ api: hubApi, browser: browserPush(), onFailure: (failure) => showFailure(failure) }));
   const pushFacts = useSyncExternalStore(pushController.store.subscribe, pushController.store.getState, () => initialPushFacts);
@@ -97,10 +101,10 @@ export function App() {
   const clearFocus = useCallback(() => setFocus(null), []);
 
   useEffect(() => {
-    if (page.status === "open") {
+    if (page.status === "open" && pushEnabled) {
       void pushController.start();
     }
-  }, [page.status, pushController]);
+  }, [page.status, pushController, pushEnabled]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -153,6 +157,11 @@ export function App() {
   const conversationId = inWorkbench ? workTopic : route.view === "conversations" ? route.conversation : null;
   const inConversation = route.view === "conversations" || route.view === "home";
   const inTransfer = route.view === "transfer";
+  useEffect(() => {
+    if (inTransfer && page.settings !== null && !canTransfer) {
+      navigate({ view: "conversations", conversation: null }, true);
+    }
+  }, [inTransfer, page.settings, canTransfer, navigate]);
   const inStream = (inConversation || inWorkbench) && conversationId === null;
   const currentTopic = page.current?.id === conversationId ? page.current : null;
   const selectedTopic = currentTopic?.conversation ?? page.list.find((topic) => topic.id === conversationId);
@@ -186,6 +195,12 @@ export function App() {
   }, [controller, route.view, page.settings, page.status]);
 
   const inRepositories = route.view === "settings" && "section" in route && route.section === "repositories";
+  const section = route.view === "settings" && "section" in route ? route.section : null;
+  useEffect(() => {
+    if (page.settings !== null && section !== null && !settingsSectionEnabled(section, page.settings)) {
+      navigate({ view: "settings" }, true);
+    }
+  }, [navigate, page.settings, section]);
   useEffect(() => {
     if (inRepositories && page.status === "open") void hubApi.refreshRepositories();
   }, [inRepositories, page.status]);
@@ -332,6 +347,7 @@ export function App() {
   const conversationTabs = <ConversationTabs scope={scope} transfer={inTransfer} repositories={repositories} navigate={navigate} />;
 
   return (
+    <FeatureContext.Provider value={features}>
     <Shell
       route={route}
       ticketFrom={origin}
@@ -384,7 +400,7 @@ export function App() {
           now={now}
         />
       ) : inTransfer ? (
-        <TransferView navigation={conversationTabs} />
+        canTransfer ? <TransferView navigation={conversationTabs} /> : null
       ) : route.view === "workbench" ? (
         <CanvasWorkbench
           tickets={page.tickets.open}
@@ -400,7 +416,7 @@ export function App() {
           ticketHref={ticketHref}
           focus={focus}
           focused={clearFocus}
-          push={pushPhase(pushFacts)}
+          push={pushEnabled ? pushPhase(pushFacts) : "hidden"}
           togglePush={togglePush}
           rearrange={rearrange}
           rearranging={rearranging}
@@ -446,5 +462,6 @@ export function App() {
         <div className="page" />
       )}
     </Shell>
+    </FeatureContext.Provider>
   );
 }
