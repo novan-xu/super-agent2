@@ -869,7 +869,7 @@ describe("start defaults", () => {
   it("applies and persists owner-only load thresholds and windows", async () => {
     const running = await start();
     const path = "/api/settings/machine-load";
-    const limits = { ...defaultMachineLoadSettings, gpuHigh: 60, highMinutes: 1 };
+    const limits = { ...defaultMachineLoadSettings, gpuHigh: 60, gpuLow: 25, highMinutes: 1 };
     expect(running.settings.snapshot().machineLoad).toEqual(defaultMachineLoadSettings);
     expect((await ownerSend(running, path, limits, { method: "PUT", token: null })).status).toBe(403);
     expect((await ownerSend(running, path, { ...limits, gpuLow: 90 }, { method: "PUT" })).status).toBe(400);
