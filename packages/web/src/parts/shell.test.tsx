@@ -36,6 +36,14 @@ describe("Shell", () => {
     expect(render()).toMatch(/<button class="side-toggle brand-toggle"[^>]*aria-expanded="true"[^>]*><svg class="logo" width="48" height="48"/);
   });
 
+  it("renders the brand colours independently of the accent", () => {
+    const html = render();
+    expect(html).toContain('rx="6" fill="#ffffff" stroke="#dddddd"');
+    expect(html).toContain('r="3.3" fill="#1a1917"');
+    expect(html).toContain('stroke="#1a1917" stroke-width="2"');
+    expect(html).toContain('r="2.1" fill="#e5484d"');
+  });
+
   it("marks the current destination", () => {
     const current = [...render({ route: { view: "memory" } }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
     expect(current).toEqual(["记忆", "记忆"]);

@@ -3984,3 +3984,9 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 - **Chosen:** Keep memory, schedules and the attachments in ordinary messages and task results available in the local edition.
 - **Why:** The hub stores and serves them even when every optional integration is off.
 - **Other options:** Hide these areas with the optional integration controls.
+
+## 2026-11-26 — Apple home screen icon colours (#361)
+
+The logo retains its white tile, near-black glyph and red dot, while the Apple touch icon uses a full-bleed near-black background with a white glyph and the same red dot.
+This separate icon keeps the glyph visible when iOS dark mode changes a light home screen icon background, since a web app cannot reliably supply a separate dark-mode Apple touch icon.
+The alternative was to use the white logo for every icon or invert the logo on every platform.
