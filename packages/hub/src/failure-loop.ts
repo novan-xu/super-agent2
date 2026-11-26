@@ -16,7 +16,7 @@ import {
   type Ticket,
   type TicketRound,
 } from "@super-agent2/protocol";
-import type { AccessVerifier } from "./access.js";
+import type { AccessVerifier, OwnerProof } from "./access.js";
 import type { Tell } from "./chains.js";
 import { chainProgress, decisionReport, loopFailureWords as failureWords, repairReport, tail } from "./reports.js";
 import { TicketError, type TicketService } from "./tickets.js";
@@ -37,7 +37,7 @@ export type StuckAnswerError = "forbidden" | "not_found" | "conflict";
 export type StuckAnswerOutcome = { readonly ok: true; readonly ticket: Ticket } | { readonly ok: false; readonly error: StuckAnswerError };
 
 export interface OwnerStuckAnswer {
-  readonly assertion: string | undefined;
+  readonly assertion: OwnerProof;
   readonly ticket: number;
   readonly request: StuckAnswerRequest;
 }
@@ -107,7 +107,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
   const owner = options.ownerEmail.toLowerCase();
   let closed = false;
 
-  const isOwner = async (assertion: string | undefined): Promise<boolean> => {
+  const isOwner = async (assertion: OwnerProof): Promise<boolean> => {
     try {
       const result = await options.verify(assertion);
       return result.ok && result.identity.kind === "person" && result.identity.email === owner;

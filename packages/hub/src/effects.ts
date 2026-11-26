@@ -203,6 +203,21 @@ function rsync(invocation: Invocation): Effect[] {
   return effects;
 }
 
+function robocopy(invocation: Invocation): Effect[] {
+  const [source, destination] = invocation.args.filter(({ text }) => !/^\/[a-z]+(?::|$)/i.test(text));
+  if (source === undefined || destination === undefined) return [];
+  const flags = invocation.args.map(({ text }) => text.toLowerCase());
+  if (flags.includes("/l")) return [];
+  const effects: Effect[] = [];
+  if (flags.includes("/purge") || flags.includes("/mir")) {
+    effects.push({ kind: "delete", target: locate(destination.text, invocation.cwd), contents: true });
+  }
+  if (flags.includes("/move") || flags.includes("/mov")) {
+    effects.push({ kind: "delete", target: locate(source.text, invocation.cwd), contents: false });
+  }
+  return effects;
+}
+
 const gitGlobalValues = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--super-prefix"];
 
 const defaultHead = new Set(["HEAD", "@"]);
@@ -413,6 +428,7 @@ type Interpreter = (invocation: Invocation) => Effect[];
 const interpreters: Readonly<Record<string, Interpreter>> = {
   find: findDeletions,
   rsync,
+  robocopy,
   git,
   dd,
   gh,
@@ -442,7 +458,7 @@ export function effectsOf(invocation: Invocation): Effect[] {
   const effects: Effect[] = [];
   if (deletePrograms.has(invocation.program)) {
     effects.push(...deletions(invocation));
-  } else if (invocation.program.startsWith("mkfs") || invocation.program === "wipefs") {
+  } else if (invocation.program.startsWith("mkfs") || ["wipefs", "format-volume", "clear-disk", "remove-partition"].includes(invocation.program)) {
     effects.push({ kind: "delete", target: unknownLocation, contents: true });
   } else {
     const interpreter = interpreters[invocation.program];

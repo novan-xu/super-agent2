@@ -94,7 +94,8 @@ import {
 } from "@super-agent2/protocol";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
-import { type AccessVerifier, type Admission, assertionHeader } from "./access.js";
+import { type AccessVerifier, type Admission, type OwnerProof, assertionHeader } from "./access.js";
+import { admitsLoopback, loopbackHost, loopbackOwnerProof } from "./loopback.js";
 import type { BrainTokenCheck } from "./brain-token.js";
 import type { ChainStarter, StartError, StartOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
@@ -106,7 +107,7 @@ import type { DecisionReviews } from "./reviews.js";
 import type { TicketFiles } from "./files.js";
 import type { AttachmentStore, ChosenAttachments } from "./attachments.js";
 import { serveAttachments } from "./attachments-api.js";
-import type { AnswerError, ConfirmationLock } from "./lock.js";
+import type { AnswerError, ConfirmationLock, OwnerAnswer } from "./lock.js";
 import { type PageFiles, pageSecurityHeaders } from "./page.js";
 import type { PushService } from "./push-service.js";
 import type { Machine } from "./machines.js";
@@ -207,6 +208,7 @@ export interface HubServerOptions {
   readonly converterUrl?: string;
   readonly commands: CommandService;
   readonly verify: AccessVerifier;
+  readonly loopback?: boolean;
   readonly verifyRunner?: AccessVerifier;
   readonly verifyInbox?: AccessVerifier;
   readonly verifyMcp?: AccessVerifier;
@@ -399,6 +401,9 @@ function refuseSocket(socket: Duplex, status: 403 | 404): void {
 }
 
 export function createHubServer(options: HubServerOptions): HubServer {
+  const ownerProof = (request: IncomingMessage): OwnerProof => options.loopback && admitsLoopback(request) && !isBrain(request)
+    ? loopbackOwnerProof
+    : headerValue(request);
   const previews = new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
@@ -408,7 +413,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
 
   const authenticate = async (request: IncomingMessage, verify = options.verify): Promise<Identity | undefined> => {
     try {
-      const result = await verify(headerValue(request));
+      const result = await verify(ownerProof(request));
       if (!result.ok || !options.admit(result.identity)) {
         return undefined;
       }
@@ -426,6 +431,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return undefined;
     }
     try {
+      if (options.loopback) return runners.admitLocal(runnerToken(request));
       const result = await (options.verifyRunner ?? options.verify)(headerValue(request));
       return result.ok ? runners.admit(result.identity, runnerToken(request)) : undefined;
     } catch {
@@ -504,13 +510,19 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const path = pathOf(request);
     const method = request.method ?? "GET";
-    if (path === "/work-requests" || path.startsWith("/work-requests/")) {
-      request.resume(); sendJson(response, 404, { error: "not_found" }); return;
-    }
     if (path === healthPath && (method === "GET" || method === "HEAD")) {
       const healthy = options.database.healthy();
       sendJson(response, healthy ? 200 : 503, { status: healthy ? "ok" : "unavailable", ...(options.version === undefined ? {} : { version: options.version }) }, method === "HEAD");
       return;
+    }
+    if (options.loopback && !admitsLoopback(request)) {
+      request.resume(); sendJson(response, 403, { error: "forbidden" }); return;
+    }
+    if (path === "/work-requests" || path.startsWith("/work-requests/")) {
+      request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+    }
+    if (options.loopback && (path === runnerInstallPath || path === runnerReleasePath)) {
+      request.resume(); sendJson(response, 404, { error: "not_found" }); return;
     }
     if (path === "/mcp") {
       const { inbox, verifyMcp } = options;
@@ -960,7 +972,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 400, { error: "bad_request" });
       return;
     }
-    const given = { assertion: headerValue(request), fingerprint: decision.fingerprint };
+    const given: OwnerAnswer = { assertion: ownerProof(request), fingerprint: decision.fingerprint };
     const outcome = verdict === "release" ? await lock.release(id, given) : await lock.refuse(id, given);
     if (!outcome.ok) {
       sendJson(response, answerStatus[outcome.error], { error: outcome.error });
@@ -997,7 +1009,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 400, { error: "bad_request" });
       return;
     }
-    const outcome = await chains.start({ assertion: headerValue(request), chains: start.chains });
+    const outcome = await chains.start({ assertion: ownerProof(request), chains: start.chains });
     if (!outcome.ok) {
       sendJson(response, outcome.error === "forbidden" ? 403 : 409, { error: outcome.error });
       return;
@@ -1054,7 +1066,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return;
       }
       const { ticket: id, ...change } = given;
-      sendOutcome(response, await chains.choose({ assertion: headerValue(request), ticket: id, change }));
+      sendOutcome(response, await chains.choose({ assertion: ownerProof(request), ticket: id, change }));
       return;
     }
     const change = parseJson(body, ChoiceChange.strict());
@@ -1062,7 +1074,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       sendJson(response, 400, { error: "bad_request" });
       return;
     }
-    sendOutcome(response, await chains.reassign({ assertion: headerValue(request), ticket, change }));
+    sendOutcome(response, await chains.reassign({ assertion: ownerProof(request), ticket, change }));
   };
 
   const allowanceSnapshot = (defaults: StartDefaults) => {
@@ -1608,7 +1620,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         sendJson(response, 400, { error: "bad_request" });
         return true;
       }
-      const outcome = await loop.answer({ assertion: headerValue(request), ticket: id, request: given });
+      const outcome = await loop.answer({ assertion: ownerProof(request), ticket: id, request: given });
       if (!outcome.ok) {
         sendJson(response, stuckAnswerStatus[outcome.error], { error: outcome.error });
         return true;
@@ -1900,6 +1912,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
   };
 
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    if (options.loopback && !admitsLoopback(request)) {
+      refuseSocket(socket, 403);
+      return;
+    }
     const path = pathOf(request);
     if (isBrainPath(path)) {
       if (!isBrain(request)) {
@@ -1958,9 +1974,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
     transferChanged,
     listen: (port, host) =>
       new Promise((resolve, reject) => {
+        const bind = options.loopback ? loopbackHost(host) : host;
+        if (bind === undefined) {
+          reject(new Error("The hub must bind to a loopback address when Access is not configured"));
+          return;
+        }
         const failed = (error: Error) => reject(error);
         server.once("error", failed);
-        server.listen(port, host, () => {
+        server.listen(port, bind, () => {
           server.off("error", failed);
           resolve(server.address() as AddressInfo);
         });

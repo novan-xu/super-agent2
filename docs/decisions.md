@@ -3940,3 +3940,13 @@ Another option was to expand the set of engines that can start code tickets.
 - **Chosen:** Show a turn's start card only in its own topic and retain the chain fingerprint shown at the end of the turn.
 - **Why:** The card stays beside the discussion and cannot start a different arrangement after the chain or its start choices change.
 - **Other options:** Show cards in every affected topic or let an old card start the latest arrangement.
+
+## 2026-11-26 — Local launcher and front door (#356, #357)
+
+- **Chosen:** Use the configured HTTPS Access URL and a service credential for the local runner when Access is enabled.
+- **Why:** The local and remote runners use the same Access policy, and traffic arriving from the tunnel cannot qualify for local admission.
+- **Other options:** Add a separate internal runner endpoint for Access installations, with its own transport and admission rules.
+
+- **Chosen:** Run brain commands in Windows PowerShell on Windows.
+- **Why:** Windows PowerShell ships with Windows 11 and matches native Windows paths and cmdlets.
+- **Other options:** Locate and use Git Bash, which provides POSIX syntax on Windows.

@@ -34,7 +34,9 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 | Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (with a checkout when requested) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
-The front door is Cloudflare Access on the existing host name, with four applications and no Bypass rule anywhere.
+### Front door
+
+With Access audiences configured, the front door is Cloudflare Access on the existing host name, with four applications and no Bypass rule anywhere.
 The host's own application admits only the owner, signed in with Google.
 A second application for the path `runner` admits only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the owner's pages and the owner's sign-in never reaches the runners' paths.
 A third application for the path `inbox` admits only service tokens tagged for inbox sources, and the hub checks the source identity and its separate audience on that path.
@@ -45,6 +47,28 @@ Cloudflare handles OAuth discovery, client registration, authorization and token
 The hub verifies each application's own assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes, which the brain reaches on the NAS's internal network with its own token.
 A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes its service token and runner token at once and shows, once, a one-line install command that carries them to the machine.
 The new system took over the existing host name at its first deployment, and the first Super-agent was stopped then.
+
+Without Access audiences, the hub binds only to loopback and treats requests as `owner@local.invalid` when their `Host` is the bound loopback address or `localhost` on the hub port, their optional `Origin` is one of those HTTP origins, and fetch metadata does not mark them cross-site.
+The hub applies this check to HTTP and WebSocket requests before routing them, with public status and version at `/health`.
+The brain and runner links still require their own tokens, and the brain token is refused on owner routes.
+The inbox, OAuth MCP and Access runner install and release endpoints are disabled in loopback mode.
+Access and loopback are mutually exclusive for the life of the hub, including when a tunnel forwards requests over a loopback socket.
+
+## Local edition
+
+`corepack pnpm local` starts a native hub and brain in one Node process and a supervised runner named `local` in a child process.
+The installation keeps its own database, memory, brain workspace, runner sessions and credentials under `%LOCALAPPDATA%\super-agent2` on Windows or `~/.super-agent2` on other systems.
+`SUPERAGENT2_HOME` overrides this location, and the launcher refuses to use a state folder inside `PROJECTS_DIR`.
+The first start writes `local.env` and exits so the owner can set the projects folder.
+Further settings use the hub, brain and runner's existing environment names, with port `18180` and the computer's time zone by default.
+The launcher and child hold presence sockets so an exited process cannot leave a stale PID that prevents another start.
+The launcher restarts the runner with bounded exponential backoff and closes the runner, brain and hub in order when it stops.
+The runner uses its usual persisted sessions and reconnect protocol on restart.
+The launcher uses Windows PowerShell for brain commands on Windows and a POSIX shell on macOS and Linux.
+The same confirmation lock checks Windows cmdlets and native commands that remove files or erase storage.
+For each GitHub account the launcher uses its configured token or the token fetched from the local `gh` sign-in for that account.
+The local edition can use Cloudflare Access with the same audience and service authentication as the NAS edition.
+See the [local installation checklist](local.md) for setup and configuration.
 
 ## LLM providers
 

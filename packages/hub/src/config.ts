@@ -6,6 +6,7 @@ import { brainTokenFileName } from "./brain-token.js";
 import { isAbsolutePath } from "./paths.js";
 import { vapidProblem } from "./push.js";
 import { validTicketTimeZone } from "./ticket-codes.js";
+import { loopbackHost, localOwnerEmail } from "./loopback.js";
 
 function list(text: string | undefined): string[] {
   return (text ?? "")
@@ -27,20 +28,21 @@ function positiveMinutes() {
     .transform(Number).pipe(z.number().int().min(1, { error: "must be at least 1" })));
 }
 
+const accessTeam = z.string(present("must be text")).regex(
+  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
+  present("must be the team name alone, as in <team>.cloudflareaccess.com, in lower case"),
+);
+const accessAudience = z.string(present("must be text"))
+  .regex(/^[0-9a-f]{64}$/, present("must be the application's audience tag, 64 lower-case hexadecimal characters"));
+const ownerEmail = z.email(present("must be an email address"));
+
 const Environment = z.object({
-  ACCESS_TEAM: z
-    .string(present("must be text"))
-    .regex(
-      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
-      present("must be the team name alone, as in <team>.cloudflareaccess.com, in lower case"),
-    ),
-  ACCESS_AUD: z
-    .string(present("must be text"))
-    .regex(/^[0-9a-f]{64}$/, present("must be the application's audience tag, 64 lower-case hexadecimal characters")),
+  ACCESS_TEAM: unlessEmpty(accessTeam),
+  ACCESS_AUD: unlessEmpty(accessAudience),
   ACCESS_RUNNER_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the runner application's audience tag, 64 lower-case hexadecimal characters" })),
   ACCESS_INBOX_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the inbox application's audience tag, 64 lower-case hexadecimal characters" })),
   ACCESS_MCP_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the OAuth MCP application's audience tag, 64 lower-case hexadecimal characters" })),
-  OWNER_EMAIL: z.email(present("must be an email address")),
+  OWNER_EMAIL: unlessEmpty(ownerEmail),
   HUB_DATA_DIR: z.string(present("must be text")).min(1, { error: "must not be empty" }),
   HUB_PORT: z
     .string()
@@ -48,7 +50,7 @@ const Environment = z.object({
     .transform(Number)
     .pipe(z.number().int().max(65535, { error: "must be between 0 and 65535" }))
     .default(8080),
-  HUB_HOST: z.string().min(1, { error: "must not be empty" }).default("0.0.0.0"),
+  HUB_HOST: z.string().min(1, { error: "must not be empty" }).optional(),
   HUB_WORK_REQUEST_PORT: unlessEmpty(z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().max(65535))),
   HUB_WORK_SOURCES_DIR: unlessEmpty(z.string().refine(isAbsolutePath, { error: "must be an absolute folder" })),
   HUB_TICKET_TIME_ZONE: unlessEmpty(z.string().refine(validTicketTimeZone, { error: "must be a valid time zone, such as America/New_York" })),
@@ -80,12 +82,19 @@ const Environment = z.object({
   VAPID_SUBJECT: unlessEmpty(z.string().regex(/^(?:mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/, { error: "must be a mailto: address or an https URL" })),
 });
 
-export interface Config {
+const AccessEnvironment = Environment.extend({ ACCESS_TEAM: accessTeam, ACCESS_AUD: accessAudience, OWNER_EMAIL: ownerEmail });
+
+interface AccessConfig {
   readonly accessTeam: string;
   readonly accessAudience: string;
   readonly accessRunnerAudience?: string;
   readonly accessInboxAudience?: string;
   readonly accessMcpAudience?: string;
+}
+
+type LoopbackConfig = { readonly [Key in keyof AccessConfig]?: never };
+
+export type Config = (AccessConfig | LoopbackConfig) & {
   readonly ownerEmail: string;
   readonly dataDir: string;
   readonly port: number;
@@ -110,7 +119,7 @@ export interface Config {
   readonly topicTidyEnabled?: boolean;
   readonly routingModels?: string;
   readonly routingPrimary?: "model" | "bigram";
-}
+};
 
 export interface VapidSettings {
   readonly publicKey: string;
@@ -140,12 +149,26 @@ export const defaultPageDir = fileURLToPath(new URL("../../web/dist/", import.me
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
 
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigResult {
-  const parsed = Environment.safeParse(env);
+  const access = [env.ACCESS_AUD, env.ACCESS_RUNNER_AUD, env.ACCESS_INBOX_AUD, env.ACCESS_MCP_AUD].some((value) => value !== undefined && value !== "");
+  const schema = access ? AccessEnvironment : Environment;
+  const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const problems = parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`);
     return { ok: false, problems };
   }
   const value = parsed.data;
+  const accessConfig: AccessConfig | LoopbackConfig = access ? {
+    accessTeam: value.ACCESS_TEAM!,
+    accessAudience: value.ACCESS_AUD!,
+    ...(value.ACCESS_RUNNER_AUD === undefined ? {} : { accessRunnerAudience: value.ACCESS_RUNNER_AUD }),
+    ...(value.ACCESS_INBOX_AUD === undefined ? {} : { accessInboxAudience: value.ACCESS_INBOX_AUD }),
+    ...(value.ACCESS_MCP_AUD === undefined ? {} : { accessMcpAudience: value.ACCESS_MCP_AUD }),
+  } : {};
+  const host = value.HUB_HOST ?? (access ? "0.0.0.0" : "127.0.0.1");
+  const bind = access ? host : loopbackHost(host);
+  if (bind === undefined) {
+    return { ok: false, problems: ["HUB_HOST must be a loopback address when Access is not configured"] };
+  }
   if (value.ACCESS_RUNNER_AUD !== undefined && value.ACCESS_RUNNER_AUD === value.ACCESS_AUD) {
     return { ok: false, problems: ["ACCESS_RUNNER_AUD must be the audience tag of the separate application for the path runner, not ACCESS_AUD"] };
   }
@@ -169,15 +192,11 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
   return {
     ok: true,
     config: {
-      accessTeam: value.ACCESS_TEAM,
-      accessAudience: value.ACCESS_AUD,
-      ...(value.ACCESS_RUNNER_AUD === undefined ? {} : { accessRunnerAudience: value.ACCESS_RUNNER_AUD }),
-      ...(value.ACCESS_INBOX_AUD === undefined ? {} : { accessInboxAudience: value.ACCESS_INBOX_AUD }),
-      ...(value.ACCESS_MCP_AUD === undefined ? {} : { accessMcpAudience: value.ACCESS_MCP_AUD }),
-      ownerEmail: value.OWNER_EMAIL.toLowerCase(),
+      ...accessConfig,
+      ownerEmail: access ? value.OWNER_EMAIL!.toLowerCase() : localOwnerEmail,
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,
-      host: value.HUB_HOST,
+      host: bind,
       ...(workPort === undefined || workDirectory === undefined ? {} : { workRequests: { port: workPort, directory: workDirectory } }),
       ...(value.HUB_TICKET_TIME_ZONE === undefined ? {} : { ticketTimeZone: value.HUB_TICKET_TIME_ZONE }),
       projectFolders: value.HUB_PROJECT_FOLDERS,
