@@ -307,6 +307,11 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
     } else {
       if (name === "ticket" && phone) await page.locator(".panel-toggle").click();
       if (name === "machines" && phone) await page.locator(".mcard").first().evaluate((card) => card.scrollIntoView({ block: "start" }));
+      if (name === "daily" || name === "code" || name === "workbench-conversation") {
+        const chain = page.locator(".conversation-chains").first();
+        await chain.waitFor();
+        await chain.evaluate((card) => card.scrollIntoView({ block: "end" }));
+      }
       const file = join(mode.out, `${name}-${width}.png`);
       await page.screenshot({ path: file, animations: "disabled" });
       process.stdout.write(`Saved ${file}\n`);

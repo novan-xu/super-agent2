@@ -40,7 +40,13 @@ export function ConversationChains({ entry, waiting, tickets, start }: { readonl
         {card.before.map((before) => <p key={before.id}>{text("conversation.chains.waits", { title: chineseOf(before.title) })}</p>)}
         {arrangedAfter([card.ticket.id], cards.map((item) => item.ticket)).filter((id) => id !== card.ticket.id).map((id) => {
           const follower = cards.find((item) => item.ticket.id === id);
-          return follower === undefined ? null : <p key={id}>{text("conversation.chains.with", { title: chineseOf(follower.ticket.title) })}</p>;
+          return follower === undefined ? null : <div key={id}>
+            <p>{text("conversation.chains.with", { title: chineseOf(follower.ticket.title) })} <TicketCodeLabel code={follower.ticket.code} /></p>
+            <p>{follower.ticket.issues.map((issue) => `#${issue.number}`).join(" → ")}</p>
+            {follower.before.map((before) => <p key={before.id}>{text("conversation.chains.waits", { title: chineseOf(before.title) })}</p>)}
+            <p>{[follower.choice.machine, follower.choice.engine, follower.choice.model, follower.choice.effort].map((value) => value ?? "—").join(" · ")}</p>
+            <MissingChoices card={follower} />
+          </div>;
         })}
         {card.fingerprint !== snapshot.fingerprint ? <p>{text("conversation.chains.changed")}</p> : <MissingChoices card={card} />}
         {useOf(waiting, card.key).failure === null ? null : <p role="alert">{failureText(useOf(waiting, card.key).failure!)}</p>}
