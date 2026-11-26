@@ -5,7 +5,7 @@ import { GitHubAccount } from "./commands.js";
 import { Provider, providers, startingBrainOrder } from "./conversations.js";
 import { EngineTable, type MachineChoice, offers } from "./defaults.js";
 import { ProviderUnavailable } from "./providers.js";
-import { MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
+import { MachineLoadSettings, MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
 import { type Difficulty, difficulties, RepositoryName } from "./tickets.js";
 
 export const tableEngines = ["codex", "claude", "dsh", "antigravity"] as const;
@@ -141,6 +141,7 @@ export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
 export const SettingsSnapshot = z.object({
   openaiBudget: z.number().positive().nullable().optional(),
   machines: z.array(MachineStatus),
+  machineLoad: MachineLoadSettings.optional(),
   canAdd: z.object({ cloudflare: z.boolean(), release: z.boolean() }),
   repositories: z.array(RepositoryAccount),
   accounts: z.array(AccountState),

@@ -3,9 +3,11 @@ import {
   type AppGatewayStatus,
   type BrainSettings,
   type Device,
+  defaultMachineLoadSettings,
   type EngineTable,
   fullOrder,
   gitHubAccounts,
+  MachineLoadSettings,
   Provider,
   ProviderOrderChange,
   pushServiceOf,
@@ -35,6 +37,7 @@ export interface Settings {
   setTable(table: EngineTable): TableOutcome;
   budget(): number | null;
   setBudget(value: number | null): void;
+  setLoadSettings(settings: MachineLoadSettings): void;
   changed(): void;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
   close(): void;
@@ -54,6 +57,7 @@ export interface SettingsOptions {
 }
 
 const orderKeys = { brain: "brain_order", worker: "worker_order" };
+const loadKey = "machine_load";
 
 const ValueRow = z.object({ value: z.string() });
 const DeviceRow = z.object({ endpoint: z.string(), created_at: z.number().int() });
@@ -94,6 +98,16 @@ export function createSettings(options: SettingsOptions): Settings {
 
   const brainOrder = () => readOrder("brain");
   const workerOrder = () => readOrder("worker") ?? [...startingWorkerOrder];
+  const loadSettings = (): MachineLoadSettings => {
+    const row = selectSetting.get(loadKey);
+    if (row === undefined) return defaultMachineLoadSettings;
+    try {
+      return MachineLoadSettings.parse(JSON.parse(ValueRow.parse(row).value));
+    } catch {
+      return defaultMachineLoadSettings;
+    }
+  };
+  options.runners.setLoadSettings(loadSettings());
 
   const devices = (): Device[] =>
     options.pushKey === undefined
@@ -116,6 +130,7 @@ export function createSettings(options: SettingsOptions): Settings {
     return {
       openaiBudget: budget(),
       machines: options.runners.statuses(),
+      machineLoad: loadSettings(),
       canAdd: { ...options.admin.canAdd },
       repositories: options.repositories.list(),
       accounts: gitHubAccounts.map((account) => ({ account, configured: options.credentials(account).ok })),
@@ -186,6 +201,11 @@ export function createSettings(options: SettingsOptions): Settings {
     setBudget: (value) => {
       upsertSetting.run("openai_monthly_budget", value === null ? "" : String(value), options.clock.now());
       options.defaults.changed();
+    },
+    setLoadSettings: (settings) => {
+      upsertSetting.run(loadKey, JSON.stringify(settings), options.clock.now());
+      options.runners.setLoadSettings(settings);
+      changed();
     },
     changed,
     subscribe: (listener) => {

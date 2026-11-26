@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { storeTopic, type Hub } from "@super-agent2/hub";
-import { AttachmentUpload, type ScheduleFields } from "@super-agent2/protocol";
+import { AttachmentUpload, type MachineReport, protocolVersion, type ScheduleFields, startingEngineTable } from "@super-agent2/protocol";
 
 export interface LayoutFixture {
   readonly ticket: number;
@@ -103,6 +103,19 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
     }).id;
   };
   hub.machines.add({ name: "mac-mini", accessClientId: "layout.access", system: "macos" });
+  hub.runners.setStorage("mac-mini", { projectsDir: "/Users/demo/Projects", artifactsDir: "/Volumes/Workspace/Artifacts" });
+  const machine = hub.machines.get("mac-mini");
+  if (machine === undefined) throw new Error("Could not seed the layout machine");
+  const link = hub.runners.attach(machine, { send: () => undefined, close: () => undefined });
+  const claude = startingEngineTable.claude.standard;
+  const report: MachineReport = {
+    hostname: "mac-mini", platform: "darwin", arch: "arm64", release: "1", user: "owner", slots: { total: 4, free: 4 }, allowances: [],
+    programs: [{ id: "claude", installed: true, path: null, version: null, source: "configuration", problem: null, models: [{ id: claude.model, efforts: [claude.effort] }] }],
+  };
+  link.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
+  for (let seconds = 120; seconds >= 0; seconds -= 15) {
+    link.receive({ type: "report", machine: { ...report, load: { cpuPercent: 85, ownCpuPercent: 3, gpuPercent: 97, sampledAt: now - seconds * 1_000 } } });
+  }
   const pin = (ticket: number, issue: number) => {
     const pinned = hub.chains.arranger.state([{
       ticket, kind: "feature", issues: [{ number: issue, difficulty: "standard" }], platform: "macos",

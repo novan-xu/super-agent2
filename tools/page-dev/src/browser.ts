@@ -160,6 +160,13 @@ const views = {
     targets: settingsMenu,
     desktop: { "add machine": ".add-machine button[type=submit]" },
   },
+  machines: {
+    route: { view: "settings", section: "machines" },
+    ready: ".mcard",
+    targets: { "machine load indicator": ".mcard .chip--warn", "load thresholds": ".load-fields input" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
+  },
   models: {
     route: { view: "settings", section: "models" },
     ready: ".set-body select",
@@ -215,6 +222,23 @@ function checkLayout(page: Page, width: Width, targets: LayoutTargets): Promise<
   return page.evaluate(layoutProblems, { width: viewports[width].width, targets });
 }
 
+async function checkLoadSettings(page: Page): Promise<void> {
+  const form = page.locator(".load-settings");
+  const cpu = form.locator('input[type="number"]').first();
+  const save = form.locator('button[type="submit"]');
+  await cpu.fill("49");
+  if (await save.isEnabled()) throw new Error("The load threshold form allows a pause threshold below its resume threshold");
+  await cpu.fill("75");
+  const [response] = await Promise.all([
+    page.waitForResponse((result) => result.url().endsWith("/api/settings/machine-load") && result.request().method() === "PUT", { timeout: 5000 }),
+    save.click({ timeout: 5000 }),
+  ]);
+  if (!response.ok()) throw new Error(`Saving load thresholds returned HTTP ${response.status()}`);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await cpu.waitFor({ timeout: 5000 });
+  if (await cpu.inputValue() !== "75") throw new Error("The saved load threshold was lost on reload");
+}
+
 async function visit(browser: Browser, url: string, fixture: LayoutFixture, name: ViewName, width: Width, mode: Mode): Promise<void> {
   const phone = width === "phone";
   const page = await browser.newPage({
@@ -246,6 +270,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
     }
     const targets = { [phone ? "bottom navigation" : "sidebar"]: phone ? ".tabbar" : ".side", ...view.targets, ...view[width] };
     const issues = mode.kind === "check" ? await checkLayout(page, width, targets) : [];
+    if (mode.kind === "check" && name === "machines" && width === "desktop" && issues.length === 0) await checkLoadSettings(page);
     if (mode.kind === "check" && name === "schedules" && issues.length === 0) {
       const proposal = page.locator(".schedule-card--proposal");
       await proposal.locator("summary").click();
@@ -281,6 +306,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
       process.stdout.write(`Layout passed for ${name} at ${width} (${viewports[width].width}px)\n`);
     } else {
       if (name === "ticket" && phone) await page.locator(".panel-toggle").click();
+      if (name === "machines" && phone) await page.locator(".mcard").first().evaluate((card) => card.scrollIntoView({ block: "start" }));
       const file = join(mode.out, `${name}-${width}.png`);
       await page.screenshot({ path: file, animations: "disabled" });
       process.stdout.write(`Saved ${file}\n`);

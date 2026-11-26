@@ -1,6 +1,7 @@
 import {
   activeMarks,
   currentBalance,
+  defaultMachine,
   type Balance,
   EngineTable,
   engineOrder,
@@ -232,8 +233,15 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
       if (ticket.enginePin !== undefined && ordinary.missing.includes("provider")) return ordinary;
       const engine = owner.engine ?? ticket.enginePin ?? source.engine;
       const sameEngine = engine === source.engine;
+      const sourceLoaded = online.some((machine) => machine.name === source.machine && machine.loaded);
+      const flexible = owner.machine === null && requiredMachineFor(ticket, owner) === null;
+      const alternate = flexible && sourceLoaded && input.platform !== null
+        ? defaultMachine(input.platform, engine, online, owner.model ?? (sameEngine ? source.model : null), owner.effort ?? (sameEngine ? source.effort : null))
+        : null;
       if (owner.engine !== null || !context.out.has(engine)) {
-        const pinned = { ...owner, machine: owner.machine ?? (ticket.machinePinned === true ? ticket.requiredMachine : source.machine), engine };
+        if (flexible && sourceLoaded && alternate === null && isComplete(ordinary)
+          && online.some((machine) => machine.name === ordinary.machine && !machine.loaded)) return ordinary;
+        const pinned = { ...owner, machine: owner.machine ?? (ticket.machinePinned === true ? ticket.requiredMachine : alternate ?? source.machine), engine };
         const preferred = resolveStart({
           ...input, owner: { ...pinned, model: owner.model ?? (sameEngine ? source.model : null), effort: owner.effort ?? (sameEngine ? source.effort : null) },
         }, choices, online, context);

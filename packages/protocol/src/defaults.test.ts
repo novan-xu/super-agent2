@@ -86,6 +86,17 @@ describe("the default engine", () => {
 });
 
 describe("the default machine", () => {
+  it("prefers a normal machine but can queue on a fitting loaded machine when needed", () => {
+    const busy: MachineChoice = { ...pc, loaded: true };
+    const base = input({ platform: "any" });
+    expect(defaultMachine("any", "codex", [busy, mini])).toBe("mini");
+    expect(defaultMachine("windows", "codex", [busy, mini])).toBeNull();
+    expect(resolveStart(base, startingEngineTable, [busy, mini])).toMatchObject({ machine: "mini", missing: [] });
+    expect(resolveStart(base, startingEngineTable, [busy])).toMatchObject({ machine: "pc", missing: [] });
+    expect(resolveStart({ ...base, machinePinned: true, requiredMachine: "pc" }, startingEngineTable, [{ ...busy, free: 0 }, mini]))
+      .toMatchObject({ machine: "pc", missing: [] });
+  });
+
   it("takes the platform, the engines a runner has and its free slots", () => {
     expect(defaultMachine("macos", "codex", [pc, mini])).toBe("mini");
     expect(defaultMachine("windows", "codex", [pc, mini])).toBe("pc");

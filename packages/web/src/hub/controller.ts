@@ -9,6 +9,7 @@ import {
   type GitHubAccount,
   type MachineAdded,
   type MachineChoice,
+  type MachineLoadSettings,
   machineChoices,
   type MachineRevoked,
   type MachineSystem,
@@ -289,6 +290,10 @@ export class PageController {
     }
     await this.loadSettings();
     return true;
+  }
+
+  setMachineLoad(limits: MachineLoadSettings): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setMachineLoad(limits));
   }
 
   setOrder(role: "brain" | "worker", order: readonly Provider[]): Promise<boolean> {

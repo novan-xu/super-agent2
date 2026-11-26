@@ -321,6 +321,57 @@ describe("a deployment arranged with the work it deploys", () => {
 });
 
 describe("opening a task ticket", () => {
+  it("holds new code and task attempts on a loaded machine without interrupting work", async () => {
+    const { running, runners, conversation } = await start();
+    const pc = runners.get("pc")!;
+    const mac = runners.get("mac")!;
+    const pcReport = { ...machine("pc"), slots: { total: 8, free: 8 } };
+    const sample = (gpuPercent: number) => {
+      pc.link.receive({ type: "report", machine: { ...pcReport, load: { cpuPercent: 85, ownCpuPercent: 36, gpuPercent, sampledAt: clock.now() } } });
+      clock.advance(15_000);
+    };
+    const startTicket = async (ticket: Ticket) => {
+      const card = (await cards(running)).find((entry) => entry.ticket.id === ticket.id);
+      expect((await ownerPost(running, chainStartPath, { chains: [{ ticket: ticket.id, fingerprint: card?.fingerprint }] })).status).toBe(202);
+    };
+    sample(15);
+    const active = chain(running, conversation, 10);
+    await stated(running, [active]);
+    await startTicket(active);
+    event(pc.link, active.id, 1, { kind: "phase", phase: "started", detail: "Started" });
+    expect(current(running, active.id)).toMatchObject({ work: { machine: "pc", state: "running" } });
+    const later = chain(running, conversation, 11);
+    const pinned = chain(running, conversation, 12);
+    const opened = await callBrainTool(running, "open_task_ticket", {
+      title: { en: "Check the PC", zh: "检查 PC" }, summary: { en: "Check settings", zh: "核对设置" }, task: "Read the configuration.", kind: "operation",
+    }, conversation);
+    expect(opened.isError, opened.text).toBe(false);
+    const task = running.tickets.list().find((ticket) => ticket.form === "task")!;
+    await stated(running, [later, pinned, task]);
+    expect((await ownerPost(running, chainChoicePath, { ticket: pinned.id, machine: "pc" })).status).toBe(202);
+    expect((await ownerPost(running, chainChoicePath, { ticket: task.id, machine: "pc" })).status).toBe(202);
+    for (let index = 0; index < 9; index++) sample(97);
+    await startTicket(later);
+    await startTicket(pinned);
+    await startTicket(task);
+    expect(mac.sent).toContainEqual(expect.objectContaining({ type: "work.start", task: expect.objectContaining({ ticket: later.id }) }));
+    for (const ticket of [pinned, task]) {
+      expect(current(running, ticket.id)).toMatchObject({ work: { state: "queued", machine: "pc", reason: expect.stringContaining("pc is under high load") } });
+    }
+    expect(pc.sent.filter((message) => message.type === "work.start" || message.type === "work.task" || message.type === "work.stop")).toMatchObject([{ type: "work.start", task: { ticket: active.id } }]);
+    const allowance = await callBrainTool(running, "read_allowance", {});
+    expect(allowance.text).toContain("Machine pc (win32), 8 free slot(s), CPU 85% (own 36%), GPU 97%, loaded since");
+    expect(allowance.text).toContain("Machine mac (win32), 2 free slot(s), CPU unknown (own unknown), GPU unknown");
+    const detail = await callBrainTool(running, "read_ticket", { ticket: pinned.code }, conversation);
+    expect(detail.text).toContain("pc is under high load");
+    for (let index = 0; index < 20; index++) sample(15);
+    expect(current(running, pinned.id).work?.state).toBe("queued");
+    sample(15);
+    expect(current(running, pinned.id)).toMatchObject({ work: { state: "preparing", machine: "pc", reason: null, attempt: 1 } });
+    expect(tasksSent(pc.sent, task.id)).toMatchObject([{ task: { ticket: task.id, attempt: 1 } }]);
+    expect(current(running, active.id).work?.state).toBe("running");
+  });
+
   it("places operations under their project and starts them in scratch", async () => {
     const { running, runners, conversation } = await start();
     const args = {

@@ -1,9 +1,11 @@
 import { text } from "@super-agent2/catalog";
 import {
+  defaultMachineLoadSettings,
   gitHubAccounts,
   type GitHubAccount,
   machineChoices,
   type MachineAdded,
+  MachineLoadSettings,
   type MachineRevoked,
   type MachineStatus,
   machineAccessWarning,
@@ -53,6 +55,7 @@ export interface SettingsActions {
   readonly addMachine: (name: string, system: MachineSystem) => Promise<MachineAdded | { readonly refused: string } | undefined>;
   readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
   readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
+  readonly setMachineLoad: (limits: MachineLoadSettings) => Promise<boolean>;
   readonly setOrder: (role: "brain" | "worker", order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
@@ -141,6 +144,8 @@ function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly 
   const slots = slotsOf(machine);
   const system = machine.report === null ? (machine.system ?? null) : machine.report.platform === "darwin" ? "macos" : machine.report.platform === "win32" ? "windows" : null;
   const expiry = machine.accessExpiresAt;
+  const load = machine.online ? machine.report?.load : undefined;
+  const percentage = (value: number | null) => value === null ? text("machine.loadUnknown") : `${value}%`;
   const programs = (machine.report?.programs ?? []).filter((program) => program.installed);
   const confirm = () => {
     setStep("sending");
@@ -151,11 +156,18 @@ function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly 
       <div className="mcard-head">
         <span className={`dot ${machine.online ? "dot--ok" : "dot--mute"}`} />
         <span className="mcard-name od-fill od-truncate">{machine.name}</span>
+        {load?.high ? <span className="chip chip--warn">{text("machine.busy")}</span> : null}
         {system === null ? null : <span className="chip">{text(`machine.system.${system}`)}</span>}
       </div>
       <p className="card-sub">
         {machine.online ? text("machine.online") : machine.lastSeenAt === null ? text("machine.never") : text("machine.seen", { time: momentOf(machine.lastSeenAt, now) })}
       </p>
+      {load === undefined ? null : (
+        <div className="slot-legend">
+          <span>{text("machine.cpuLoad", { value: percentage(load.cpuPercent), own: percentage(load.ownCpuPercent) })}</span>
+          <span>{text("machine.gpuLoad", { value: percentage(load.gpuPercent) })}</span>
+        </div>
+      )}
       {expiry === undefined ? null : (
         <p className={expiry - now <= machineAccessWarning ? "field-err" : "card-sub"}>{expiry <= now ? text("machine.tokenExpired") : text("machine.tokenUntil", { time: momentOf(expiry, now) })}</p>
       )}
@@ -168,7 +180,7 @@ function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly 
           </div>
           <div className="slot-legend">
             <span>{text("machine.running", { count: slots.running })}</span>
-            <span>{text("machine.free", { count: slots.free })}</span>
+            <span>{text("machine.free", { count: load?.high ? 0 : slots.free })}</span>
           </div>
         </div>
       )}
@@ -333,6 +345,52 @@ function AddMachine({ machines, add }: { readonly machines: readonly MachineStat
   );
 }
 
+const loadColumns = ["machine.loadCpu", "machine.loadGpu", "machine.loadMinutes"] as const;
+const loadRows = [
+  ["machine.loadPause", ["cpuHigh", "gpuHigh", "highMinutes"]],
+  ["machine.loadResume", ["cpuLow", "gpuLow", "lowMinutes"]],
+] as const;
+
+function MachineLoadFields({ limits, save }: { readonly limits: MachineLoadSettings; readonly save: SettingsActions["setMachineLoad"] }) {
+  const [draft, setDraft] = useState<Partial<Record<keyof MachineLoadSettings, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const edits = Object.entries(draft);
+  const edited = edits.some(([key, value]) => value !== String(limits[key as keyof MachineLoadSettings]));
+  const parsed = MachineLoadSettings.safeParse({ ...limits, ...Object.fromEntries(edits.map(([key, value]) => [key, value === "" ? NaN : Number(value)])) });
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!parsed.success || !edited || saving) return;
+    setSaving(true);
+    try {
+      if (await save(parsed.data)) setDraft({});
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form className="load-settings section" onSubmit={(event) => void submit(event)}>
+      <h3>{text("machine.loadThresholds")}</h3>
+      <div className="load-fields">
+        <span aria-hidden="true" />
+        {loadColumns.map((column) => <span key={column}>{text(column)}</span>)}
+        {loadRows.map(([label, keys]) => (
+          <div className="load-field-row" key={label}>
+            <span>{text(label)}</span>
+            {keys.map((key, index) => (
+              <input className="field" key={key} type="number" inputMode="numeric"
+                min={index === 2 ? 1 : 0} max={index === 2 ? 60 : 100}
+                aria-label={`${text(label)} · ${text(loadColumns[index]!)}`} value={draft[key] ?? String(limits[key])}
+                disabled={saving} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} required />
+            ))}
+          </div>
+        ))}
+      </div>
+      {edited && !parsed.success ? <p className="field-err" role="status">{text("machine.loadInvalid")}</p> : null}
+      <button className="btn btn-sm" type="submit" disabled={!edited || !parsed.success || saving}>{text("machine.loadSave")}</button>
+    </form>
+  );
+}
+
 function MachinesSection({ settings, tickets, actions, now }: { readonly settings: SettingsSnapshot; readonly tickets: readonly Ticket[]; readonly actions: SettingsActions; readonly now: number }) {
   const [note, setNote] = useState<string | null>(null);
   const revoke = async (name: string) => {
@@ -361,6 +419,7 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
           ))}
         </div>
       )}
+      <MachineLoadFields limits={settings.machineLoad ?? defaultMachineLoadSettings} save={actions.setMachineLoad} />
       <AddMachine machines={settings.machines} add={actions.addMachine} />
     </>
   );

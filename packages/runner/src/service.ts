@@ -1,9 +1,10 @@
-import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
+import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type MachineLoad, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
 import { readAllowances } from "./allowance.js";
 import { loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
 import { machineReport } from "./machine.js";
+import { createLoadSampler, loadChanged, loadSampleInterval } from "./machine-load.js";
 import { type Prober, probePrograms, programDefinitions, systemProber } from "./programs.js";
 import { createProgramUpdater, systemProgramUpdateSteps, type ProgramUpdateSteps } from "./program-update.js";
 import { createUpdater, systemSteps, type Updater, type UpdateSteps } from "./update.js";
@@ -20,6 +21,7 @@ export interface RunnerServiceOptions {
   readonly retryDelay?: (attempt: number) => number;
   readonly reprobeMilliseconds?: number;
   readonly allowanceMilliseconds?: number;
+  readonly sampleLoad?: () => Promise<MachineLoad>;
   readonly now?: () => number;
   readonly work?: Partial<Pick<WorksOptions, "adapters" | "findProgram" | "run" | "remote" | "readPullRequest">>;
   readonly mainPath?: string;
@@ -97,6 +99,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   let updater: Updater | undefined;
   let programUpdater: ReturnType<typeof createProgramUpdater> | undefined;
   let updatingPrograms = false;
+  let load: MachineLoad = { cpuPercent: null, ownCpuPercent: null, gpuPercent: null, sampledAt: Date.now() };
   const queued: WorkMessage[] = [];
   const works = createWorks({
     home: files.home,
@@ -116,12 +119,19 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   });
   let requestAllowance: () => void = () => undefined;
   let requestPrograms: (id: string) => void = () => undefined;
+  const report = () => ({
+    ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : works.busy()),
+    updatingPrograms,
+    storage: storageReport,
+    load,
+    ...(options.version === undefined ? {} : { version: options.version }),
+  });
   const link = createRunnerLink({
     config,
     setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
     refreshPrograms: (id) => requestPrograms(id),
-    report: () => ({ ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : works.busy()), updatingPrograms, storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }),
+    report,
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
@@ -191,6 +201,22 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     });
   }
   link.start();
+  const sampleLoad = options.sampleLoad ?? createLoadSampler({ platform });
+  let readingLoad = false;
+  let closed = false;
+  const refreshLoad = () => {
+    if (readingLoad) return;
+    readingLoad = true;
+    void sampleLoad().then((reading) => {
+      if (!closed && loadChanged(load, reading)) {
+        load = reading;
+        link.update();
+      }
+    }).catch(() => undefined).finally(() => { readingLoad = false; });
+  };
+  refreshLoad();
+  const loadTimer = setInterval(refreshLoad, loadSampleInterval);
+  loadTimer.unref();
   refreshStorage();
   const storageTimer = setInterval(refreshStorage, 30000);
   storageTimer.unref();
@@ -237,7 +263,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
         await probe();
         if (reading !== undefined) await reading;
         await readAllowance();
-        for (const id of ids) link.send({ type: "report", machine: { ...machineReport(config.slots, programs, platform, allowances, works.busy()), storage: storageReport, ...(options.version === undefined ? {} : { version: options.version }) }, refreshId: id });
+        for (const id of ids) link.send({ type: "report", machine: report(), refreshId: id });
       } catch (error) {
         log(`Could not recheck the programs: ${String(error)}`);
       } finally {
@@ -261,6 +287,8 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     probed,
     allowanceRead,
     close: async () => {
+      closed = true;
+      clearInterval(loadTimer);
       clearInterval(timer);
       clearInterval(allowanceTimer);
       clearInterval(storageTimer);

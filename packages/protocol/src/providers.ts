@@ -115,7 +115,9 @@ function placesFor(input: RouteInput, engine: ProgramId): RoutedRun[] {
   const choices = engine === "antigravity" ? input.table.antigravity : choice === null ? [] : [choice];
   const fitting = machinesFor(input.platform, input.machines, input.requiredMachine)
     .filter((machine) => input.canMove || machine.name === input.machine)
-    .sort((a, b) => Number(b.name === input.machine) - Number(a.name === input.machine) || b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    .sort((a, b) => Number(a.loaded === true) - Number(b.loaded === true)
+      || Number(b.name === input.machine) - Number(a.name === input.machine)
+      || b.free - a.free || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return choices.flatMap((pair) => {
     const found = fitting.find((machine) => offers(machine, engine, pair.model, pair.effort));
     return found === undefined ? [] : [{ machine: found.name, engine, ...pair }];
@@ -135,7 +137,9 @@ export function routeProvider(input: RouteInput): Routing {
     return { kind: "none" };
   }
   const markOf = (candidate: RoutedRun) => outFor(input.out, input.antigravityOut, candidate.engine, candidate.model);
-  const usable = candidates.find((candidate) => markOf(candidate) === undefined);
+  const loaded = new Set(input.machines.filter((machine) => machine.loaded).map(({ name }) => name));
+  const usable = candidates.find((candidate) => !loaded.has(candidate.machine) && markOf(candidate) === undefined)
+    ?? candidates.find((candidate) => markOf(candidate) === undefined);
   if (usable !== undefined) {
     return { kind: "run", ...usable };
   }

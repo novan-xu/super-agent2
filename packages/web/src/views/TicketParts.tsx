@@ -73,7 +73,7 @@ export function problemLines(problem: TicketProblem, now: number): readonly stri
     case "beginFailed":
       return [problem.reason];
     case "queued":
-      return [text("ticket.queuedOn", { machine: problem.machine })];
+      return [text(problem.highLoad ? "ticket.queuedForLoad" : "ticket.queuedOn", { machine: problem.machine })];
     case "providerWaiting":
       return withReason(text("ticket.waitsForProvider"), problem.reason);
     case "unreachable":

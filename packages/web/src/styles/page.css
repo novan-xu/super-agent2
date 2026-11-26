@@ -255,6 +255,11 @@ a.back:hover { text-decoration: none; }
 .machine-storage, .machine-storage-field { display: grid; gap: var(--space-2); min-width: 0; }
 .machine-storage-field .field { min-width: 0; }
 .machine-storage > button { justify-self: start; }
+.load-settings > button { justify-self: start; }
+.load-fields { display: grid; grid-template-columns: max-content repeat(3, minmax(0, 1fr)); align-items: center; gap: var(--space-2); }
+.load-fields span { color: var(--muted); font-size: var(--text-sm); }
+.load-field-row { display: contents; }
+.load-fields .field { width: 100%; min-width: 0; }
 .slot-bar { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
 .add-machine .seg button { min-height: 32px; }
 ol.rows { margin: 0; padding: 0; list-style: none; }

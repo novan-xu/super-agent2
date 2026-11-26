@@ -162,6 +162,26 @@ function entries(topic: string, project?: string) {
 }
 
 describe("light tasks", () => {
+  it("queues a light task on its pinned machine until the load clears", async () => {
+    const { runner, sent } = connectRunner();
+    const sample = (gpuPercent: number) => {
+      runner.receive({ type: "report", machine: { ...mac, load: { cpuPercent: 65, ownCpuPercent: 30, gpuPercent, sampledAt: clock.now() } } });
+      clock.advance(30_000);
+    };
+    for (let index = 0; index < 5; index++) sample(95);
+    const { link } = connectBrain();
+    const topic = hub.conversations.create().id;
+    const request = turn(link, topic, [owner(topic, "用 Mac 写一封感谢邮件")]);
+    const result = await request.call("start_light_task", { ...writing, machine: "mac" });
+    expect(result).toMatchObject({ isError: false, text: expect.stringContaining("mac is under high load") });
+    request.finish();
+    const ticket = hub.tickets.list().find((candidate) => candidate.light !== undefined)!;
+    expect(ticket).toMatchObject({ machinePinned: true, work: { machine: "mac", state: "queued", attempt: 1 } });
+    expect(sent.filter((message) => message.type === "work.task")).toEqual([]);
+    for (let index = 0; index < 11; index++) sample(12);
+    expect(sent.filter((message) => message.type === "work.task")).toMatchObject([{ task: { ticket: ticket.id, light: true, attempt: 1 } }]);
+  });
+
   it("requires an owner message in the active turn and starts multiple distinct requests without confirmation", async () => {
     const { link } = connectBrain();
     const topic = hub.conversations.create().id;

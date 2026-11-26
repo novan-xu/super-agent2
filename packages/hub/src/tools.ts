@@ -401,7 +401,7 @@ function defaultsDefinitions() {
     {
       name: "read_allowance",
       title: "Read provider allowances",
-      description: "Read subscription quotas, DeepSeek balance, unavailable providers and online worker capacity.",
+      description: "Read subscription quotas, DeepSeek balance, unavailable providers and online machines' CPU and GPU load and worker capacity.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
@@ -1196,7 +1196,8 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         const chosen = materialsOf(material ?? []);
         if (!chosen.ok) return chosen.result;
         const ticket = tools.light.start({ ...request, materials: chosen.materials }, writeTurn());
-        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.state}. ${pinText(ticket)}${ticket.startBlock?.pinned ? `${ticket.startBlock.en} ` : ""}Acknowledge in one short Chinese line what was started and that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when the required machine and provider are available." : ""}` };
+        const reason = ticket.work?.state === "queued" ? ticket.work.reason : ticket.startBlock?.pinned ? ticket.startBlock.en : null;
+        return { text: `Light task ${ticketReference(ticket)} (internal only) is ${ticket.work?.state === "queued" ? "queued" : ticket.state}. ${pinText(ticket)}${reason ? `${reason} ` : ""}Acknowledge in one short Chinese line that the result comes back here. ${ticket.state === "waiting" ? "Say it starts automatically when the required machine and provider are available." : ""}` };
       }
       case "answer_light_task": {
         if (tools.work === undefined) return undefined;
@@ -1371,7 +1372,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         if (tools.defaults === undefined) {
           return undefined;
         }
-        return { text: allowanceReport(tools.defaults.subscriptions(), tools.defaults.machines(), tools.defaults.unavailable(), tools.defaults.balance(), tools.openaiCost?.()) };
+        return { text: allowanceReport(tools.defaults.subscriptions(), tools.runners?.statuses() ?? [], tools.defaults.unavailable(), tools.defaults.balance(), tools.openaiCost?.()) };
       }
       case "recheck_machines": {
         if (tools.runners === undefined) return undefined;
