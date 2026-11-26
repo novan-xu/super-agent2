@@ -560,14 +560,15 @@ export class PageController {
     return true;
   }
 
-  async startChains(keys: readonly string[]): Promise<boolean> {
+  async startChains(keys: readonly string[], fingerprints?: Readonly<Record<string, string>>): Promise<boolean> {
     const waiting = this.store.getState().waiting;
     if (!canStart(waiting, keys)) {
       return false;
     }
     const cards = startedWith(waiting.cards, keys);
+    if (fingerprints !== undefined && cards.some((card) => fingerprints[card.key] !== card.fingerprint)) return false;
     this.store.dispatch({ type: "waiting", action: { type: "starting", keys } });
-    const answer = await this.options.api.startChains(cards.map((card) => ({ ticket: card.ticket.id, fingerprint: card.fingerprint })));
+    const answer = await this.options.api.startChains(cards.map((card) => ({ ticket: card.ticket.id, fingerprint: fingerprints?.[card.key] ?? card.fingerprint })));
     if (!answer.ok) {
       for (const key of keys) {
         this.store.dispatch({ type: "waiting", action: { type: "failed", key, failure: answer.error } });

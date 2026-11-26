@@ -131,7 +131,10 @@ export type ToolEntry = z.infer<typeof ToolEntry>;
 export const QuestionEntry = z.object({ ...entryBase, kind: z.literal("question"), turn: z.string(), questions: Questions, answer: z.union([z.object({ kind: z.literal("card"), answers: QuestionAnswers }), z.object({ kind: z.literal("message"), text: z.string() })]).nullable() });
 export type QuestionEntry = z.infer<typeof QuestionEntry>;
 
-export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, DeliveryEntry, TextEntry, ToolEntry, QuestionEntry]);
+export const ChainsEntry = z.object({ ...entryBase, kind: z.literal("chains"), turn: z.string(), chains: z.array(z.object({ ticket: z.number().int().positive(), fingerprint: z.string().regex(/^[0-9a-f]{64}$/) })) });
+export type ChainsEntry = z.infer<typeof ChainsEntry>;
+
+export const ConversationEntry = z.discriminatedUnion("kind", [OwnerEntry, NoticeEntry, DeliveryEntry, TextEntry, ToolEntry, QuestionEntry, ChainsEntry]);
 export type ConversationEntry = z.infer<typeof ConversationEntry>;
 
 export const BrainStatus = z.object({

@@ -108,6 +108,20 @@ function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: bo
   );
 }
 
+export function MissingChoices({ card }: { readonly card: Card }) {
+  const { ticket } = card;
+  return card.choice.missing.length === 0 ? null : (
+    <ul className="chain-missing">
+      {card.choice.missing.map((part) => {
+        const key = part === "provider" && ticket.enginePin !== undefined ? "pinnedProvider"
+          : part === "machine" && ticket.machinePinned === true ? "pinnedMachine"
+            : part;
+        return <li key={part}>{text(`chains.missing.${key}`)}</li>;
+      })}
+    </ul>
+  );
+}
+
 export function StartCard({ card, use, focused, start, choose }: StartCardProps) {
   const { ticket } = card;
   const repository = ticketProject(ticket);
@@ -142,16 +156,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
         ))}
       </ol>
       <Choice card={card} busy={sending} choose={choose} />
-      {card.choice.missing.length === 0 ? null : (
-        <ul className="chain-missing">
-          {card.choice.missing.map((part) => {
-            const key = part === "provider" && ticket.enginePin !== undefined ? "pinnedProvider"
-              : part === "machine" && ticket.machinePinned === true ? "pinnedMachine"
-                : part;
-            return <li key={part}>{text(`chains.missing.${key}`)}</li>;
-          })}
-        </ul>
-      )}
+      <MissingChoices card={card} />
       {use.failure === null ? null : (
         <p className="field-err" role="alert">
           {failureText(use.failure)}

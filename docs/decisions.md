@@ -3934,3 +3934,9 @@ Another option was to expand the set of engines that can start code tickets.
 - **Chosen:** Migrate each topic's latest unexpired and unconfirmed legacy proposal, keeping the latest across topics if multiple proposals edit the same schedule.
 - **Why:** The cards preserve plans that were still actionable before the upgrade and keep the original conversation history available.
 - **Other options:** Discard all legacy proposals or restore previously superseded proposals as cards.
+
+## 2026-11-26 — Conversation chain cards (#360)
+
+- **Chosen:** Show a turn's start card only in its own topic and retain the chain fingerprint shown at the end of the turn.
+- **Why:** The card stays beside the discussion and cannot start a different arrangement after the chain or its start choices change.
+- **Other options:** Show cards in every affected topic or let an old card start the latest arrangement.

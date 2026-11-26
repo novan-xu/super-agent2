@@ -930,6 +930,10 @@ The look and layout follow the prototype in [ui/prototype/](ui/prototype/), copi
 It specifies look and layout, not behaviour.
 The finish is the owner-approved skeuomorphic material in `packages/web/src/styles/material.css`, specified in [ui/skeuomorphic-spec.md](ui/skeuomorphic-spec.md) with the geometry it must reproduce in [ui/skeuomorphic-measurements.txt](ui/skeuomorphic-measurements.txt).
 
+A brain turn that opens or arranges work waiting for the owner shows a compact start card in its own topic.
+The card retains the arrangement fingerprint from that turn and uses the live start choices and the same owner start route as 工作台.
+A changed arrangement cannot be started from its older card.
+
 Kept from it:
 
 - warm graphite grounds, in light and dark

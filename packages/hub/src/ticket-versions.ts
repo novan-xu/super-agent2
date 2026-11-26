@@ -50,6 +50,11 @@ export function createTicketVersions({ connection }: HubDatabase) {
 
   return {
     requireActive,
+    trackStart: (turn: TicketTurn, ids: readonly number[]) => {
+      requireActive(turn);
+      const insert = connection.prepare("INSERT OR IGNORE INTO turn_start_tickets (turn_id, ticket_id) VALUES (?, ?)");
+      for (const id of ids) insert.run(turn.id, id);
+    },
     seen: (turn: TicketTurn, ticket: number) => {
       if (canWrite(turn)) {
         remember.run(turn.conversation, ticket);

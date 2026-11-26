@@ -32,7 +32,7 @@ const entry = (value: ConversationEntry): ServerMessage => ({ type: "entry", ent
 const delta = (entryId: string, text: string, field: "text" | "output" = "text"): ServerMessage => ({ type: "delta", conversation: id, entry: entryId, field, text });
 
 function texts(state: ConversationState): string[] {
-  return state.entries.map((value) => (value.kind === "tool" ? `${value.id}:${value.output}` : value.kind === "question" ? value.id : `${value.id}:${value.text}`));
+  return state.entries.map((value) => (value.kind === "tool" ? `${value.id}:${value.output}` : value.kind === "question" || value.kind === "chains" ? value.id : `${value.id}:${value.text}`));
 }
 
 describe("receive", () => {

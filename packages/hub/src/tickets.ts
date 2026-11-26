@@ -242,7 +242,7 @@ export interface TicketWrites {
 
 export interface TicketService {
   announce(ids: readonly number[]): void;
-  readonly versions: Pick<ReturnType<typeof createTicketVersions>, "requireActive" | "seen">;
+  readonly versions: Pick<ReturnType<typeof createTicketVersions>, "requireActive" | "seen" | "trackStart">;
   open(request: TicketToOpen, turn?: TicketTurn): Ticket;
   get(id: number): Ticket | undefined;
   topic(id: number): string;

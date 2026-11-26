@@ -1337,6 +1337,10 @@ export const migrations: readonly Migration[] = [
       connection.exec("DROP TABLE legacy_schedule_proposals");
     },
   },
+  {
+    version: 70,
+    sql: `CREATE TABLE turn_start_tickets (turn_id TEXT NOT NULL REFERENCES turns(id), ticket_id INTEGER NOT NULL REFERENCES tickets(id), PRIMARY KEY(turn_id, ticket_id)) STRICT;`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

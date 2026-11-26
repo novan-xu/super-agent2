@@ -361,6 +361,7 @@ export function App() {
     >
       {inConversation ? (
         <ConversationView
+          waiting={page.waiting} tickets={page.tickets.open} startChains={(keys, fingerprints) => void controller.startChains(keys, fingerprints)}
           conversation={conversationId}
           focusEntry={route.view === "conversations" ? route.entry : undefined}
           scope={scope}
@@ -404,6 +405,7 @@ export function App() {
           rearrange={rearrange}
           rearranging={rearranging}
           panel={workTicket === null ? <ConversationView
+            waiting={page.waiting} tickets={page.tickets.open} startChains={(keys, fingerprints) => void controller.startChains(keys, fingerprints)}
             compact conversation={conversationId} scope={scope} state={currentTopic}
             stream={inStream && page.streamKey === topicScopeKey(scope) ? page.stream : null}
             list={page.list} status={page.status} linked={linked} model={model}
