@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   defaultMachineLoadSettings,
+  type CancelCheck,
+  type CheckReply,
   type HubToRunner,
   type Identity,
   type MachineReport,
@@ -9,6 +11,7 @@ import {
   protocolVersion,
   runnerCloseCodes,
   type RunnerToHub,
+  type RunCheck,
   type FetchAttachment,
   type FilePart,
   type RunnerWorkEvent,
@@ -39,6 +42,8 @@ export interface WorkLink {
 }
 
 export interface Runners {
+  bindChecks(receive: (machine: string, message: CheckReply) => void): () => void;
+  sendCheck(machine: string, message: RunCheck | CancelCheck): boolean;
   bindWork(link: WorkLink): void;
   sendWork(machine: string, message: WorkMessageToRunner): boolean;
   refreshAllowance(): number;
@@ -76,6 +81,7 @@ export function createRunners(options: RunnersOptions): Runners {
   let loadSettings = defaultMachineLoadSettings;
   const refreshes = new Map<string, { name: string; finish: (report?: MachineReport) => void }>();
   let work: WorkLink | undefined;
+  let checks: ((machine: string, message: CheckReply) => void) | undefined;
   const tellWork = (body: (link: WorkLink) => void) => {
     if (work === undefined) {
       return;
@@ -146,6 +152,16 @@ export function createRunners(options: RunnersOptions): Runners {
       });
 
   return {
+    bindChecks: (receive) => {
+      checks = receive;
+      return () => { if (checks === receive) checks = undefined; };
+    },
+    sendCheck: (name, message) => {
+      const link = links.get(name);
+      if (link?.report?.repositoryChecks !== true) return false;
+      link.connection.send(message);
+      return true;
+    },
     bindWork: (link) => {
       work = link;
     },
@@ -252,6 +268,10 @@ export function createRunners(options: RunnersOptions): Runners {
           }
           if (message.type === "work.file.part") {
             tellWork((bound) => bound.part(machine.name, message));
+            return;
+          }
+          if (message.type === "check.reply") {
+            checks?.(machine.name, message);
             return;
           }
           tellWork((bound) => bound.attachment?.(machine.name, message));

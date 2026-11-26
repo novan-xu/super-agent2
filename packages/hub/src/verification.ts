@@ -3,12 +3,15 @@ import type { GitHubAccount } from "@super-agent2/protocol";
 import { text } from "@super-agent2/catalog";
 import {
   changeLevel,
+  checkFile,
   type ClosedChainIssue,
   deploymentFile,
   type FailedStep,
   type GeneratedText,
   mergedIssueNumbers,
   openIssueNumbers,
+  readCheck,
+  Revision,
   uiConfigFile,
   type Ticket,
   VerificationRule,
@@ -31,6 +34,8 @@ import type { TicketService } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
 import { invalidUiConfig, screenshotProblem, touchesUi, uiPaths } from "./ui-verification.js";
 import { closedIssuesOf, closesOf, logsOf, type StepLog, VerificationRow } from "./verification-record.js";
+import { createVerificationChecks } from "./verification-checks.js";
+import type { Runners } from "./runners.js";
 import { createWoodpeckerApi, type Pipeline, pipelinePageSize, type PipelineSummary, type PipelineWorkflow, type WoodpeckerApi } from "./woodpecker.js";
 
 export type Ticker = (tick: () => void) => () => void;
@@ -63,6 +68,7 @@ export interface VerificationOptions {
   readonly ticker?: Ticker;
   readonly pollMilliseconds?: number;
   readonly report?: (report: FailureReport) => void;
+  readonly runners?: Runners;
   readonly firstAllowanceMinutes?: number;
 }
 
@@ -158,6 +164,8 @@ export function judge(head: string, expected: readonly string[], pipeline: Pipel
 const ruleWords: Readonly<Record<VerificationRule, string>> = {
   documentation: "only text and documentation files changed, so no pipeline was waited for",
   workflows: "every Woodpecker workflow on the head commit was green",
+  check: "the repository's check on the head commit was green",
+  "no-check": "the repository declares no check",
   none: "the repository has no Woodpecker workflow, so there was no rule to wait for",
   skipped: "you merged it with the rules skipped",
   outside: "it was merged on GitHub outside the hub",
@@ -236,6 +244,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
   const states = new Map<number, string>();
   let stopTicker: (() => void) | undefined;
   let closed = false;
+  const checks = createVerificationChecks(options.database, clock, options.runners, (id) => { void check(id); });
 
   const selectRow = connection.prepare("SELECT * FROM ticket_verifications WHERE ticket_id = ?");
   const deleteRow = connection.prepare("DELETE FROM ticket_verifications WHERE ticket_id = ?");
@@ -400,16 +409,14 @@ export function createVerification(options: VerificationOptions): VerificationSe
     return createGitHubApi({ fetch: doFetch, token, ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }) });
   };
 
-  const woodpeckerFor = (repository: string): WoodpeckerApi | undefined => {
+  const woodpeckerFor = (repository: string): WoodpeckerApi | "incomplete" | undefined => {
     const found = options.credentials((options.accountOf ?? accountFor)(repository));
     if (!found.ok) {
       return undefined;
     }
     const server = found.credentials["WOODPECKER_SERVER"];
     const token = found.credentials["WOODPECKER_TOKEN"];
-    if (server === undefined || server === "" || token === undefined || token === "") {
-      return undefined;
-    }
+    if (!server || !token) return server || token ? "incomplete" : undefined;
     return createWoodpeckerApi({ fetch: doFetch, server, token });
   };
 
@@ -453,17 +460,12 @@ export function createVerification(options: VerificationOptions): VerificationSe
     return undefined;
   };
 
-  const workflowsOutcome = async (ticket: Ticket, repository: string, pullRequest: number, head: string, gitHub: GitHubApi): Promise<Outcome> => {
-    const woodpecker = woodpeckerFor(repository);
-    if (woodpecker === undefined) {
-      const names = await configured(gitHub, repository, head, "");
-      if (names.length === 0) {
-        return { kind: "none", reason: `The head ${short(head)} defines no Woodpecker workflow` };
-      }
+  const workflowsOutcome = async (woodpecker: WoodpeckerApi | "incomplete", ticket: Ticket, repository: string, pullRequest: number, head: string, gitHub: GitHubApi): Promise<Outcome> => {
+    if (woodpecker === "incomplete") {
       return {
         kind: "waiting",
         wait: "woodpecker",
-        reason: `The head ${short(head)} defines Woodpecker workflows (${names.join(", ")}), and the hub has no WOODPECKER_SERVER and WOODPECKER_TOKEN to read their results`,
+        reason: "Set both WOODPECKER_SERVER and WOODPECKER_TOKEN to read Woodpecker results",
         pipeline: null,
         workflows: [],
       };
@@ -863,6 +865,51 @@ export function createVerification(options: VerificationOptions): VerificationSe
     wait(ticket.id, "screenshots", outcome?.ok === true ? `${prefix} ${problem}` : `${problem} The hand-in could not be returned: ${outcome?.reason ?? "the hub has no worker service"}.`);
   };
 
+  const repositoryCheck = async (ticket: Ticket, repository: string, pull: PullRequestState, entry: number, gitHub: GitHubApi): Promise<VerificationRule | undefined> => {
+    const id = ticket.id;
+    const source = pull.headRepository ?? repository;
+    const contents = await gitHub.contents(source, checkFile, pull.head);
+    const body = contents?.kind === "file" ? await gitHub.fileText(source, checkFile, pull.head) : undefined;
+    if (closed || tickets.get(id)?.state !== "verifying") return undefined;
+    if (contents === null) return "no-check";
+
+    const failed = (reason: string, logs: StepLog[] = []) => {
+      const evidence = [`Pull request #${pull.number} in ${repository}, head ${pull.head}.`, reason,
+        ...logs.map(({ log }) => `The repository check output ends with:\n${tail(log || "(empty)", 8_000)}`)].join("\n");
+      const notice = text("notice.verificationFailed", { ticket: ticket.code });
+      save(id, { rule: "check", state: "failed", waiting: null, reason, logs: JSON.stringify(logs), ...unwatched });
+      reportOnce(ticket, `check-failed:${entry}:${pull.head}`, { ticket: id, failure: { kind: "check", detail: reason }, evidence }, notice, `[hub] ${described(ticket)} failed its repository check.\n${evidence}`);
+    };
+
+    const command = typeof body === "string" ? readCheck(body) : undefined;
+    if (command === undefined) {
+      failed(`${checkFile} must contain only a nonempty single-line command of at most 4096 characters.`);
+      return undefined;
+    }
+    if (pull.headRepository?.toLowerCase() !== repository.toLowerCase() || pull.headRef !== ticket.branch || !Revision.safeParse(pull.head).success) {
+      wait(id, "check", "Waiting for the check declaration on the ticket's own branch in this repository", { rule: "check" });
+      return undefined;
+    }
+    save(id, { rule: "check" });
+    const outcome = checks.evaluate({ ticket: id, repository, pullRequest: pull.number, head: pull.head, entry, preferred: ticket.work?.machine ?? ticket.machine, command });
+    if (outcome.kind === "finished") {
+      const { artifact, exitCode, output } = outcome.result;
+      if (exitCode === 0) return "check";
+      failed(`The check on ${outcome.machine} exited with code ${exitCode}. Full log: ${artifact}`,
+        [{ workflow: "", step: "Repository check", log: output, exitCode }]);
+      return undefined;
+    }
+    wait(id, "check", outcome.reason, { rule: "check" });
+    if (outcome.assignment !== undefined) {
+      const elapsed = clock.now() - outcome.assignment.assigned_at;
+      if (elapsed >= firstAllowance) {
+        tellOnce(ticket, `check-long:${outcome.assignment.id}`, text("notice.checkLong", { ticket: ticket.code, machine: outcome.assignment.machine }),
+          `[hub] The repository check for ${described(ticket)} on ${outcome.assignment.machine} is still waiting after ${durationWords(elapsed)}. The result is pending and the hub will keep waiting.`);
+      }
+    }
+    return undefined;
+  };
+
   const examine = async (id: number): Promise<void> => {
     const ticket = tickets.get(id);
     if (ticket === undefined || closed) {
@@ -952,7 +999,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       return;
     }
     const skipping = row.skip_at !== null;
-    if (!skipping && ((row.state === "failed" && row.rule !== "workflows") || row.state === "conflict")) {
+    if (!skipping && row.state === "conflict") {
       return;
     }
     let level = row.level;
@@ -986,7 +1033,14 @@ export function createVerification(options: VerificationOptions): VerificationSe
       if (level === "documentation") {
         rule = "documentation";
       } else {
-        const outcome = await workflowsOutcome(ticket, repository, number, pull.head, gitHub);
+        const woodpecker = woodpeckerFor(repository);
+        if (woodpecker === undefined) {
+          if (row.state === "failed" && row.rule === "check") return;
+          const result = await repositoryCheck(ticket, repository, pull, entry, gitHub);
+          if (result !== undefined) await merge(ticket, gitHub, pull, result);
+          return;
+        }
+        const outcome = await workflowsOutcome(woodpecker, ticket, repository, number, pull.head, gitHub);
         if (closed) {
           return;
         }
@@ -1096,6 +1150,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     }
     const ids = [...selectVerifying.all(), ...selectUnreported.all(), ...selectSettling.all()].map((row) => IdRow.parse(row).ticket_id);
     await Promise.all([...new Set(ids)].map((id) => check(id)));
+    if (!closed) checks.cancelRetired();
   };
 
   const unsubscribe = tickets.subscribe((ticket) => {
@@ -1170,6 +1225,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     close: () => {
       closed = true;
       stopTicker?.();
+      checks.close();
       unsubscribe();
     },
   };

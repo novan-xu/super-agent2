@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { killTree } from "./shell.js";
 
 export interface RunResult {
   readonly code: number | null;
@@ -9,20 +10,23 @@ export interface RunResult {
 export type ProcessRunner = (
   command: string,
   args: readonly string[],
-  options: { readonly cwd: string; readonly env: Readonly<Record<string, string>> },
+  options: { readonly cwd: string; readonly env: Readonly<Record<string, string>>; readonly signal?: AbortSignal },
 ) => Promise<RunResult>;
 
 export const runProcess: ProcessRunner = (command, args, options) =>
   new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, [...args], { cwd: options.cwd, env: { ...options.env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      if (options.signal?.aborted) { resolve({ code: null, stdout: "", stderr: "Cancelled" }); return; }
+      child = spawn(command, [...args], { cwd: options.cwd, env: { ...options.env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: options.signal !== undefined && process.platform !== "win32" });
     } catch (error) {
       resolve({ code: null, stdout: "", stderr: error instanceof Error ? error.message : String(error) });
       return;
     }
     const out: Buffer[] = [];
     const err: Buffer[] = [];
+    const abort = () => { if (child.pid !== undefined) void killTree(child.pid); };
+    options.signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
     let settled = false;
@@ -31,6 +35,7 @@ export const runProcess: ProcessRunner = (command, args, options) =>
         return;
       }
       settled = true;
+      options.signal?.removeEventListener("abort", abort);
       resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: `${Buffer.concat(err).toString("utf8")}${extra}` });
     };
     child.once("error", (error) => finish(null, error.message));

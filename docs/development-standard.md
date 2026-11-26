@@ -57,7 +57,8 @@ Use `--page-dir <built page dir>` with `pnpm layout` or `pnpm screenshot` to use
 - A pull request that changes only text and documentation files may merge without waiting for CI.
 - Text and documentation files are those ending in `.md`, `.markdown`, `.rst`, `.adoc` or `.txt`, and files named `README`, `LICENSE`, `CHANGELOG` and the like without an extension.
 - Build inputs such as `requirements*.txt` and `CMakeLists.txt`, and files such as `.mdx` and `.svg`, count as code.
-- Any other pull request merges only when every CI workflow on its head commit is green.
+- With Woodpecker configured, a code pull request follows the Woodpecker workflow rule on its head commit.
+- Without Woodpecker, a code pull request uses the check declared at `.superagent2/check.json` on its head, or merges directly if the head has no declaration.
 - Green means the newest pipeline for the head commit, with every workflow successful.
 - Pending, running, cancelled or skipped is not green, and neither is a result on an older commit.
 - A pull request whose CI has not reported waits; it is not failed because of time.

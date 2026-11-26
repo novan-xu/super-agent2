@@ -30,7 +30,7 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 | --- | --- | --- |
 | Brain | LLM containers on the NAS | Talks with the owner, clarifies the need, files issues and opens task tickets, arranges work, evaluates failures, and operates through the hub |
 | Hub | A container on the NAS, always on, with no way into the NAS host | Holds the credentials, runs commands for the brain in its own container, keeps ticket state, enforces the code constraints, serves the front door |
-| Runner | One process on each work machine (PC, Mac mini, others later) | Starts the workers of the tickets the owner started; runs nothing else |
+| Runner | One process on each work machine (PC, Mac mini, others later) | Starts workers for the tickets the owner starts and runs repository checks requested by the hub |
 | Worker | On a runner | One LLM session per ticket, in full-access mode: in its own git worktree for a code ticket, in a scratch folder (with a checkout when requested) for a task ticket |
 | CI | The existing Woodpecker server on the NAS, with agents on the Mac mini and the PC | Runs the verification rules |
 
@@ -669,10 +669,26 @@ The level is computed from its changed files, not judged by an LLM.
 | Change | Rule |
 | --- | --- |
 | Text and documentation files only | None. Merge. |
-| Anything else | The Woodpecker pipeline on the pull request's head is green: tests, build, type check, zero-comment check. Then merge. |
+| Anything else, with Woodpecker configured | Apply the Woodpecker workflow rule on the pull request's head. |
+| Anything else, with Woodpecker unset | Run the repository's declared check on the pull request's head. Merge when the check is green or when the head declares no check. |
 
 The worker's own test run is part of the work, not a verification stage.
 The brain can skip the CI rules when the owner wants that.
+
+Without Woodpecker, the hub reads `.superagent2/check.json` from the exact pull request head and expects a JSON object with a single `command` field containing one line of at most 4096 characters.
+An absent declaration produces a direct merge with the rule recorded on the ticket.
+The runner executes declared checks for the ticket's own branch in the repository, using a clean detached checkout and the same operating-system shell as a local brain.
+It uses a temporary profile and an allowlist of runtime variables for the command.
+Fetching a missing commit can use the runner's own Git sign-in, and the hub sends no GitHub credential with a check request.
+The hub prefers the ticket's worker machine, then tries available runners with the repository.
+The hub keeps one assignment per repository across reconnects and restarts, and releases it on completion or when the runner reports that it cannot run the check.
+A runner's absence or loss of available slots leaves the check waiting.
+The hub sends a notice after the first-time allowance if an assigned check is still pending.
+A nonzero command exit or invalid declaration enters the guided failure loop as a repository check failure.
+The runner writes the full output to the ticket's artifacts, and the brain receives its last lines on failure.
+The ticket page shows the rule that applied.
+Setting only one of the two Woodpecker settings leaves code verification waiting for a complete configuration.
+This repository declares `corepack pnpm verify:checkout`, which installs its locked dependencies and browser and then runs `pnpm check`.
 
 The hub reads the optional `.superagent2/ui.json` at the pull request's head and matches its `paths` globs against changed files, including the old name of a renamed file.
 A match requires screenshot files for the same head with an after image at both the phone and desktop widths and a paired before image wherever the view already existed.
@@ -1065,7 +1081,7 @@ The work is tracked as GitHub issues under five milestones.
 2. **Dispatch.**
    Runners, tickets and chains, start defaults, and workers through to an opened pull request; writing tickets; 工作台.
 3. **Verification and merge.**
-   Woodpecker rules, automatic merge, the failure loop and its retry cap.
+   Woodpecker and runner verification rules, automatic merge, the failure loop and its retry cap.
 4. **Deployment.**
    Deployment by the brain with health check and rollback, Super Agent itself included.
 5. **Interface completion.**

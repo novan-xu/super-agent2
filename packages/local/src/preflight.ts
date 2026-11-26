@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { loadBrainConfig } from "@super-agent2/brain";
+import { windowsPowerShell } from "@super-agent2/programs";
 import { gitHubAccounts, providers } from "@super-agent2/protocol";
 import { findExecutable, programDefinitions } from "@super-agent2/runner";
 import { githubToken } from "./credentials.js";
@@ -40,7 +41,7 @@ export function preflight(environment: Environment, report: (line: string) => vo
 
 export function commandShell(environment: Environment): { powerShell?: string } {
   if (process.platform !== "win32") return {};
-  const path = join(environment.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const path = windowsPowerShell(environment);
   if (!existsSync(path)) throw new Error(`Windows PowerShell was not found at ${path}`);
   return { powerShell: path };
 }

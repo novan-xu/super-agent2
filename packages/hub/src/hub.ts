@@ -349,6 +349,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       database,
       clock,
       tickets,
+      runners,
       credentials,
       fetch: options.forgeFetch ?? fetch,
       ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),

@@ -15,6 +15,7 @@
     "markup": "node tools/markup-text/dist/cli.js",
     "check": "pnpm typecheck && pnpm test && pnpm build && pnpm test:local && pnpm comments && pnpm markup && pnpm sentences && pnpm layout",
     "test:local": "node --test packages/local/test/smoke.mjs",
+    "verify:checkout": "pnpm install --frozen-lockfile && pnpm browser:install && pnpm check",
     "browser:install": "node tools/page-dev/src/chromium.ts",
     "layout": "node tools/page-dev/dist/browser.js check",
     "screenshot": "node tools/page-dev/dist/browser.js screenshot",

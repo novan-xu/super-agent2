@@ -17,6 +17,7 @@ export function clip(text: string, limit: number = reportLimit): string {
 
 export const loopFailureWords: Readonly<Record<LoopFailureKind, string>> = {
   workflow: "a Woodpecker workflow on its pull request's head is red",
+  check: "the repository check on its pull request's head failed",
   "no-pull-request": "the worker ended without handing back a valid result",
   program: "the worker's program failed (it exited, crashed, reported an error, or no other provider could take over from one that was unavailable)",
   lost: "the worker was lost: its machine came back without it",

@@ -4,6 +4,7 @@ export * from "./allowance.js";
 export * from "./attachments.js";
 export * from "./brain.js";
 export * from "./chains.js";
+export * from "./check-file.js";
 export * from "./commands.js";
 export * from "./conversations.js";
 export * from "./decisions.js";
