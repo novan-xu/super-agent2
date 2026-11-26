@@ -130,21 +130,14 @@
 }
 
 :root .brand-toggle {
-  background: var(--mat-gradient-accent) var(--accent);
-  box-shadow: inset 0 1px 0 var(--mat-accent-rim-top), inset 0 -1px 0 var(--mat-accent-rim-bottom),
-    inset 1px 0 0 var(--mat-accent-rim), inset -1px 0 0 var(--mat-accent-rim),
-    var(--mat-hi-accent), var(--mat-drop-accent);
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
 }
-:root .brand-toggle .logo > rect { fill: transparent; }
 @media (hover: hover) {
-  :root .brand-toggle:hover {
-    box-shadow: inset 0 1px 0 var(--mat-accent-rim-top), inset 0 -1px 0 var(--mat-accent-rim-bottom),
-      inset 1px 0 0 var(--mat-accent-rim), inset -1px 0 0 var(--mat-accent-rim),
-      var(--mat-hi-accent), var(--mat-drop-accent-hover);
-  }
+  :root .brand-toggle:hover { box-shadow: 0 2px 6px rgb(0 0 0 / 25%); }
 }
 :root .brand-toggle:active { box-shadow: var(--mat-shadow-pressed); }
-:root .brand-toggle:focus-visible { outline: 0; box-shadow: var(--mat-drop-accent), var(--mat-focus); }
+:root .brand-toggle:focus-visible { outline: 0; box-shadow: 0 1px 4px rgb(0 0 0 / 18%), var(--mat-focus); }
 
 :root .side,
 :root .top {

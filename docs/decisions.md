@@ -3941,6 +3941,12 @@ Another option was to expand the set of engines that can start code tickets.
 - **Why:** The card stays beside the discussion and cannot start a different arrangement after the chain or its start choices change.
 - **Other options:** Show cards in every affected topic or let an old card start the latest arrangement.
 
+## 2026-11-26 — Logo colours and installed icons (#361)
+
+The logo uses a white tile, a near-black glyph and a red upper-right dot independently of the UI accent.
+Desktop icons use a rounded tile with a transparent margin and a subtle edge, while a separate full-bleed maskable icon and an opaque Apple touch icon let each platform apply its own mask.
+The previous shared full-bleed icon could not give desktop apps rounded corners while also meeting maskable icon requirements.
+
 ## 2026-11-26 — Local launcher and front door (#356, #357)
 
 - **Chosen:** Use the configured HTTPS Access URL and a service credential for the local runner when Access is enabled.

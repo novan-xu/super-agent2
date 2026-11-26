@@ -148,11 +148,11 @@ export function Icon({ name, size }: { readonly name: IconName; readonly size?: 
 export function Logo({ size = 22 }: { readonly size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <rect width="24" height="24" rx="6" fill="var(--accent)" />
+      <rect width="24" height="24" rx="6" fill="#ffffff" stroke="#dddddd" strokeWidth=".3" />
       <g transform="translate(2.16 2.16) scale(.82)">
-        <circle cx="12" cy="12" r="3.3" fill="var(--accent-on)" />
-        <path d="M19.24 10.06A7.5 7.5 0 1 1 13.94 4.76" fill="none" stroke="var(--accent-on)" strokeWidth="2" strokeLinecap="round" />
-        <circle cx="17.4" cy="6.6" r="2.1" fill="var(--accent-on)" />
+        <circle cx="12" cy="12" r="3.3" fill="#1a1917" />
+        <path d="M19.24 10.06A7.5 7.5 0 1 1 13.94 4.76" fill="none" stroke="#1a1917" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="17.4" cy="6.6" r="2.1" fill="#e5484d" />
       </g>
     </svg>
   );
