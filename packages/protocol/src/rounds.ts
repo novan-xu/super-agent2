@@ -5,7 +5,7 @@ import type { WorkStatus } from "./work.js";
 
 export const roundCap = 3;
 
-export const loopFailureKinds = ["workflow", "no-pull-request", "program", "lost", "prepare", "task-failed"] as const;
+export const loopFailureKinds = ["workflow", "check", "no-pull-request", "program", "lost", "prepare", "task-failed"] as const;
 export const LoopFailureKind = z.enum(loopFailureKinds);
 export type LoopFailureKind = z.infer<typeof LoopFailureKind>;
 
@@ -56,7 +56,7 @@ export interface LoopTicket {
   readonly round: number;
   readonly freeRetry: boolean;
   readonly work: Pick<WorkStatus, "state" | "failure" | "reason"> | null;
-  readonly verification: Pick<TicketVerification, "state" | "reason"> | null;
+  readonly verification: (Pick<TicketVerification, "state" | "reason"> & Partial<Pick<TicketVerification, "rule">>) | null;
   readonly stuck: TicketStuck | null;
 }
 
@@ -86,7 +86,7 @@ export function loopFailureOf(ticket: LoopTicket): LoopFailure | null {
   if (ticket.state === "verifying") {
     const verification = ticket.verification;
     if (verification?.state === "failed") {
-      return { kind: "workflow", detail: verification.reason ?? "" };
+      return { kind: verification.rule === "check" ? "check" : "workflow", detail: verification.reason ?? "" };
     }
   }
   return null;

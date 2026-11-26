@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const verificationRules = ["documentation", "workflows", "none", "skipped", "outside"] as const;
+export const verificationRules = ["documentation", "workflows", "check", "no-check", "none", "skipped", "outside"] as const;
 export const VerificationRule = z.enum(verificationRules);
 export type VerificationRule = z.infer<typeof VerificationRule>;
 
@@ -8,7 +8,7 @@ export const verificationStates = ["checking", "waiting", "failed", "conflict", 
 export const VerificationState = z.enum(verificationStates);
 export type VerificationState = z.infer<typeof VerificationState>;
 
-export const verificationWaits = ["github", "woodpecker", "pipeline", "workflows", "halted", "mergeable", "closed", "finishing", "screenshots"] as const;
+export const verificationWaits = ["github", "woodpecker", "pipeline", "workflows", "check", "halted", "mergeable", "closed", "finishing", "screenshots"] as const;
 export const VerificationWait = z.enum(verificationWaits);
 export type VerificationWait = z.infer<typeof VerificationWait>;
 

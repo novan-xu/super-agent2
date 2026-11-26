@@ -1,4 +1,4 @@
-import { type ScreenshotSet, ticketReference, uiConfigFile } from "@super-agent2/protocol";
+import { checkFile, type HubToRunner, loopFailureOf, nextRound, protocolVersion, type RunCheck, type ScreenshotSet, ticketReference, uiConfigFile } from "@super-agent2/protocol";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type ChainDefaults, type Chains, createChains } from "./chains.js";
 import type { CredentialSource } from "./credentials.js";
 import { type HubDatabase, openDatabase } from "./database.js";
+import { createMachineStore } from "./machines.js";
+import { createRunners, type RunnerLink, type Runners } from "./runners.js";
 import { TestClock } from "./testing/access.js";
 import { type FakeForge, fakeForge, fakeGitHubBase, type FakePipeline, fakeWoodpeckerServer } from "./testing/forge.js";
 import { createTicketService, type TicketService } from "./tickets.js";
@@ -30,6 +32,8 @@ let database: HubDatabase;
 let tickets: TicketService;
 let chains: Chains;
 let verification: VerificationService;
+let runners: Runners;
+let wire: { machine: string; message: HubToRunner }[];
 let told: Told[];
 let begun: number[];
 let sentBack: { readonly ticket: number; readonly note: string }[];
@@ -57,6 +61,7 @@ const credentials: CredentialSource = (account) => ({
 function open(): void {
   database = openDatabase({ dataDir, clock });
   databases.push(database);
+  runners = createRunners({ machines: createMachineStore(database, clock) });
   tickets = createTicketService({ database, clock, work: { begin: () => undefined, stop: () => undefined } });
   chains = createChains({
     database,
@@ -72,6 +77,7 @@ function open(): void {
     clock,
     tickets,
     credentials,
+    runners,
     fetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
     ...(allowanceMinutes === undefined ? {} : { firstAllowanceMinutes: allowanceMinutes }),
@@ -91,6 +97,7 @@ function open(): void {
 async function shut(): Promise<void> {
   verification.close();
   await verification.idle();
+  runners.close();
   chains.close();
   await chains.idle();
   database.close();
@@ -110,6 +117,7 @@ beforeEach(() => {
   begun = [];
   sentBack = [];
   ticks = [];
+  wire = [];
   withWoodpecker = true;
   allowanceMinutes = undefined;
   open();
@@ -118,6 +126,7 @@ beforeEach(() => {
 afterEach(async () => {
   verification.close();
   await verification.idle();
+  runners.close();
   chains.close();
   await chains.idle();
   for (const opened of databases) {
@@ -280,15 +289,18 @@ describe("a documentation-only pull request", () => {
   it("counts a renamed code file as code, even when its new name is documentation", async () => {
     withWoodpecker = false;
     const ticket = openTicket([5]);
-    forge.pull(repository, 9, "r1", [], `sa2/ticket-${ticket.id}-beef`).files = [{ path: "notes.md", previous: "src/notes.ts" }];
-    forge.tree(repository, "r1", ["notes.md", ".woodpecker.yaml"]);
+    const head = "d".repeat(40);
+    const branch = `sa2/ticket-${ticket.id}-beef`;
+    forge.pull(repository, 9, head, [], branch).files = [{ path: "notes.md", previous: "src/notes.ts" }];
+    forge.file(repository, head, checkFile, JSON.stringify({ command: "node check.mjs" }));
     tickets.change((writes) => {
       writes.move(ticket.id, "working");
+      writes.setBranch(ticket.id, branch);
       writes.setPullRequest(ticket.id, 9, { en: "Done", zh: "做完了" });
       writes.move(ticket.id, "verifying");
     });
     await settle();
-    expect(current(ticket.id).verification).toMatchObject({ level: "code", rule: "workflows", state: "waiting", waiting: "woodpecker" });
+    expect(current(ticket.id).verification).toMatchObject({ level: "code", rule: "check", state: "waiting", waiting: "check" });
     expect(forge.merges).toEqual([]);
   });
 });
@@ -482,15 +494,169 @@ describe("a repository without a Woodpecker workflow", () => {
     expect(current(ticket.id).verification).toMatchObject({ rule: "none", state: "merged" });
   });
 
-  it("reads the workflows from the head when the hub has no Woodpecker, and waits rather than guess when there are some", async () => {
+  it("records the absent declaration when the hub has no Woodpecker", async () => {
     withWoodpecker = false;
     const none = verifying([43], 19, "n3", ["src/app.ts"]);
     const some = verifying([44], 20, "n4", ["src/app.ts"], ["src/app.ts", ".woodpecker.yml"]);
     await settle();
     expect(current(none.id).state).toBe("merged");
-    expect(current(some.id).state).toBe("verifying");
-    expect(current(some.id).verification).toMatchObject({ state: "waiting", waiting: "woodpecker" });
-    expect(current(some.id).verification?.reason).toContain("(woodpecker)");
+    expect(current(some.id).verification).toMatchObject({ state: "merged", rule: "no-check" });
+  });
+});
+
+describe("repository checks", () => {
+  const head = "a".repeat(40);
+  const later = "b".repeat(40);
+  const declaration = JSON.stringify({ command: "node check.mjs" });
+
+  function online(machine: string, free = 1): RunnerLink {
+    const store = createMachineStore(database, clock);
+    const record = store.active(machine) ?? store.add({ name: machine, accessClientId: "service" }).machine;
+    const link = runners.attach(record, { send: (message) => void wire.push({ machine, message }), close: () => undefined });
+    link.receive({ type: "hello", protocol: protocolVersion, works: [], machine: {
+      hostname: machine, platform: "win32", release: "1", arch: "x64", user: "owner", programs: [], allowances: [],
+      slots: { total: 1, free }, repositoryChecks: true,
+    } });
+    return link;
+  }
+
+  function sent(machine: string): RunCheck {
+    const matching = wire.findLast((entry) => entry.machine === machine && entry.message.type === "check.run")?.message;
+    if (matching?.type !== "check.run") throw new Error(`No check reached ${machine}`);
+    return matching;
+  }
+
+  function complete(link: RunnerLink, id: string, exitCode: number): void {
+    link.receive({ type: "check.reply", id, result: { state: "finished", exitCode, artifact: "artifacts/check.log", output: "Last line of the check" } });
+  }
+
+  it("waits for the runner, ignores the result from another machine and merges after green on the exact head", async () => {
+    withWoodpecker = false;
+    const ticket = verifying([144], 40, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, declaration);
+    await settle();
+    expect(current(ticket.id).verification).toMatchObject({ rule: "check", state: "waiting", waiting: "check" });
+    expect(forge.merges).toEqual([]);
+    const preferred = online("pc");
+    const other = online("backup");
+    await poll();
+    const job = sent("pc");
+    expect(job).toMatchObject({ head, ticket: ticket.id, repository, command: "node check.mjs" });
+    complete(other, job.id, 0);
+    await settle();
+    expect(forge.merges).toEqual([]);
+    complete(preferred, job.id, 0);
+    await settle();
+    expect(forge.merges).toEqual([{ repository, number: 40, sha: head, method: "squash" }]);
+    expect(current(ticket.id).verification).toMatchObject({ rule: "check", state: "merged" });
+  });
+
+  it("waits through reconnects and hub restart with the same assignment", async () => {
+    withWoodpecker = false;
+    const ticket = verifying([145], 41, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, declaration);
+    const busy = online("pc", 0);
+    const fallback = online("fallback");
+    await settle();
+    const job = sent("fallback");
+    fallback.closed();
+    busy.closed();
+    await shut();
+    restart();
+    online("pc");
+    await settle();
+    expect(current(ticket.id).verification?.waiting).toBe("check");
+    const resumed = online("fallback");
+    await poll();
+    expect(sent("fallback").id).toBe(job.id);
+    complete(resumed, job.id, 0);
+    await settle();
+    expect(current(ticket.id).state).toBe("merged");
+  });
+
+  it("releases an unavailable runner and reports red output as a counted check failure", async () => {
+    withWoodpecker = false;
+    const ticket = verifying([146], 42, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, declaration);
+    const preferred = online("pc");
+    const fallback = online("backup");
+    await settle();
+    preferred.receive({ type: "check.reply", id: sent("pc").id, result: { state: "unavailable", reason: "Missing checkout" } });
+    await settle();
+    complete(fallback, sent("backup").id, 7);
+    await settle();
+    const stopped = current(ticket.id);
+    const failure = loopFailureOf(stopped);
+    expect(failure).toMatchObject({ kind: "check", detail: expect.stringContaining("artifacts/check.log") });
+    expect(nextRound(stopped, failure!).counted).toBe(true);
+    expect(told).toHaveLength(1);
+    expect(told[0]?.prompt).toContain("Last line of the check");
+    expect(verification.logs(ticket.id)).toMatchObject([{ exitCode: 7, log: "Last line of the check" }]);
+    expect(forge.merges).toEqual([]);
+  });
+
+  it("cancels a superseded job and waits for a green result on the replacement head", async () => {
+    withWoodpecker = false;
+    const ticket = verifying([147], 43, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, declaration);
+    const worker = online("pc");
+    await settle();
+    const old = sent("pc");
+    forge.repository(repository).pulls.get(43)!.head = later;
+    forge.file(repository, later, checkFile, declaration);
+    await poll();
+    expect(wire.some(({ message }) => message.type === "check.cancel" && message.id === old.id)).toBe(true);
+    complete(worker, old.id, 0);
+    await poll();
+    expect(forge.merges).toEqual([]);
+    const currentJob = sent("pc");
+    expect(currentJob).toMatchObject({ head: later });
+    expect(currentJob.id).not.toBe(old.id);
+    complete(worker, currentJob.id, 0);
+    await settle();
+    expect(current(ticket.id).state).toBe("merged");
+    expect(forge.merges[0]?.sha).toBe(later);
+  });
+
+  it("fails an invalid declaration and takes the documentation path without evaluating it", async () => {
+    withWoodpecker = false;
+    const code = verifying([148], 44, head, ["src/app.ts"]);
+    const docs = verifying([149], 45, later, ["docs/example.md"]);
+    forge.file(repository, head, checkFile, JSON.stringify({ command: "node test.mjs\nnode other.mjs" }));
+    forge.file(repository, later, checkFile, "invalid");
+    online("pc");
+    await settle();
+    expect(loopFailureOf(current(code.id))).toMatchObject({ kind: "check", detail: expect.stringContaining(checkFile) });
+    expect(current(docs.id).verification).toMatchObject({ state: "merged", rule: "documentation" });
+    expect(wire.some(({ message }) => message.type === "check.run")).toBe(false);
+    expect(forge.calledWith(/contents\/.superagent2\/check\.json/)).toHaveLength(2);
+  });
+
+  it("keeps Woodpecker on the configured installation even if the check declaration is invalid", async () => {
+    const ticket = verifying([150], 46, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, "invalid");
+    online("pc");
+    await settle();
+    expect(current(ticket.id).verification).toMatchObject({ state: "merged", rule: "none" });
+    expect(forge.calledWith(/contents\/.superagent2\/check\.json/)).toEqual([]);
+  });
+
+  it("uses Woodpecker after restart when the local check previously failed", async () => {
+    withWoodpecker = false;
+    const ticket = verifying([151], 47, head, ["src/app.ts"], ["src/app.ts", ".woodpecker.yml"]);
+    forge.file(repository, head, checkFile, declaration);
+    const worker = online("pc");
+    await settle();
+    complete(worker, sent("pc").id, 7);
+    await settle();
+    expect(current(ticket.id).verification).toMatchObject({ state: "failed", rule: "check" });
+    await shut();
+    withWoodpecker = true;
+    woodpeckerRepository();
+    pipeline(18, head, 47, "success", [["woodpecker", "success"]], ["woodpecker"]);
+    restart();
+    await settle();
+    expect(current(ticket.id).verification).toMatchObject({ state: "merged", rule: "workflows" });
   });
 });
 
@@ -623,9 +789,11 @@ describe("after the merge", () => {
   it("stops polling a ticket that is no longer verifying", async () => {
     withWoodpecker = false;
     const ticket = verifying([91], 28, "q1", ["src/app.ts"]);
-    const stopped = verifying([92], 29, "q2", ["src/app.ts"], ["src/app.ts", ".woodpecker.yml"]);
+    const head = "a".repeat(40);
+    const stopped = verifying([92], 29, head, ["src/app.ts"]);
+    forge.file(repository, head, checkFile, JSON.stringify({ command: "node check.mjs" }));
     await settle();
-    expect(current(stopped.id).verification).toMatchObject({ waiting: "woodpecker" });
+    expect(current(stopped.id).verification).toMatchObject({ waiting: "check" });
     tickets.stop(stopped.id, { en: "Not wanted", zh: "不要了" });
     const before = forge.calls.length;
     await poll();
@@ -720,13 +888,15 @@ describe("merging exactly once", () => {
 
   it("checks every ticket in verifying again after a restart, without being told", async () => {
     withWoodpecker = false;
-    const ticket = verifying([131], 34, "u1", ["src/app.ts"], ["src/app.ts", ".woodpecker.yml"]);
+    const head = "a".repeat(40);
+    const ticket = verifying([131], 34, head, ["src/app.ts"], ["src/app.ts", ".woodpecker.yml"]);
+    forge.file(repository, head, checkFile, JSON.stringify({ command: "node check.mjs" }));
     await settle();
     expect(current(ticket.id).state).toBe("verifying");
     await shut();
     withWoodpecker = true;
     woodpeckerRepository();
-    pipeline(10, "u1", 34, "success", [["woodpecker", "success"]], ["woodpecker"]);
+    pipeline(10, head, 34, "success", [["woodpecker", "success"]], ["woodpecker"]);
     restart();
     await settle();
     expect(current(ticket.id).state).toBe("merged");

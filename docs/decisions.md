@@ -3956,3 +3956,17 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 - **Chosen:** Run brain commands in Windows PowerShell on Windows.
 - **Why:** Windows PowerShell ships with Windows 11 and matches native Windows paths and cmdlets.
 - **Other options:** Locate and use Git Bash, which provides POSIX syntax on Windows.
+
+## 2026-11-26 — Runner verification without Woodpecker (#358)
+
+- **Chosen:** Record a direct merge when the head declares no repository check.
+- **Why:** Local installations can work with repositories that have no check or CI, and the ticket records the rule it used.
+- **Other options:** Block code merges for every repository until it adds a check declaration.
+
+- **Chosen:** Execute declared checks only for the ticket's own branch in the repository and retain an active runner assignment through reconnects.
+- **Why:** The hand-in identifies the work under verification, and keeping the assignment prevents two runners from executing the same repository check concurrently.
+- **Other options:** Execute fork heads as well or reassign a check as soon as its runner goes offline.
+
+- **Chosen:** Declare a pnpm script that installs the locked dependencies and browser before running `pnpm check`.
+- **Why:** The declaration must run in Windows PowerShell as well as POSIX shells, and verification starts in a clean checkout.
+- **Other options:** Put a shell-specific command chain in the declaration or require the runner to preinstall test dependencies.

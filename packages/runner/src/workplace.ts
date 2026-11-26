@@ -160,6 +160,16 @@ async function matchesOrigin(git: Git, checkout: string, url: string, repository
   return false;
 }
 
+export async function existingProjectCheckout(git: Git, projects: string, repository: string): Promise<string | undefined> {
+  const root = realpathSync(projects);
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.toLowerCase() === "_agent") continue;
+    const candidate = join(root, entry.name);
+    if (existsSync(join(candidate, ".git")) && await matchesOrigin(git, candidate, gitHubRemote(repository), repository.toLowerCase())) return candidate;
+  }
+  return undefined;
+}
+
 async function exists(git: Git, ref: string, cwd: string): Promise<boolean> {
   return (await git.run(["rev-parse", "--verify", "--quiet", ref], cwd)).code === 0;
 }

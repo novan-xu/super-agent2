@@ -1,5 +1,6 @@
 import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type MachineLoad, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
 import { readAllowances } from "./allowance.js";
+import { createChecks } from "./checks.js";
 import { loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
@@ -118,10 +119,18 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     ...(options.now === undefined ? {} : { now: options.now }),
     ...options.work,
   });
+  const busy = () => works.busy() + checks.busy();
+  const checks = createChecks({
+    home: files.home, environment: options.environment, storage: () => storage.selection(), ledger, log,
+    available: () => !updatingPrograms && busy() < config.slots,
+    send: (reply) => bound?.send(reply),
+    changed: () => { bound?.update(); updater?.changed(); programUpdater?.changed(); },
+  });
   let requestAllowance: () => void = () => undefined;
   let requestPrograms: (id: string) => void = () => undefined;
   const report = () => ({
-    ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : works.busy()),
+    ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : busy()),
+    repositoryChecks: true as const,
     updatingPrograms,
     storage: storageReport,
     load,
@@ -133,6 +142,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     refreshAllowance: () => requestAllowance(),
     refreshPrograms: (id) => requestPrograms(id),
     report,
+    check: checks.receive,
     works: () => ({ ...works, receive: (message) => { if (updatingPrograms) queued.push(message); else works.receive(message); } }),
     ...(options.connect === undefined ? {} : { connect: options.connect }),
     ...(options.retryDelay === undefined ? {} : { retryDelay: options.retryDelay }),
@@ -162,7 +172,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
           environment: options.environment,
           nodePath: process.execPath,
         }),
-      busy: () => works.busy() + (updatingPrograms ? 1 : 0),
+      busy: () => busy() + (updatingPrograms ? 1 : 0),
       restart: options.restart ?? (() => undefined),
       log,
       now,
@@ -188,7 +198,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   if (options.environment.SUPERAGENT2_PROGRAM_AUTO_UPDATE !== "0") {
     programUpdater = createProgramUpdater({
       steps: options.programUpdateSteps ?? systemProgramUpdateSteps(prober),
-      busy: () => works.busy() + (probing ? 1 : 0),
+      busy: () => busy() + (probing ? 1 : 0),
       report: () => programs,
       publish: (reports) => { programs = reports; link.update(); },
       reprobe: probe,
@@ -294,6 +304,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
       clearInterval(allowanceTimer);
       clearInterval(storageTimer);
       await programUpdater?.close();
+      await checks.close();
       await works.close();
       await link.close();
     },

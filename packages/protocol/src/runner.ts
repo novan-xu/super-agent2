@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { AllowanceReading } from "./allowance.js";
 import { TargetName } from "./commands.js";
+import { checkCommand } from "./check-file.js";
 import { ProtocolVersion } from "./version.js";
 import { SetRunnerStorage, StorageReport, StorageSettings } from "./storage.js";
 import { AttachmentPart, FetchAttachment, FetchFile, FilePart, MessageWork, RunnerWorkEvent, StartTask, StartWork, StopWork, SyncWork, WorkHeld } from "./work.js";
+import { RepositoryName } from "./repositories.js";
 
 export const runnerLinkPath = "/runner/link";
 export const runnerReleasePath = "/runner/release";
@@ -93,6 +95,7 @@ export const MachineReport = z.object({
   slots: z.object({ total: z.number().int().nonnegative(), free: z.number().int().nonnegative() }),
   programs: z.array(ProgramReport),
   updatingPrograms: z.boolean().optional(),
+  repositoryChecks: z.literal(true).optional(),
   allowances: z.array(AllowanceReading).default([]),
   load: MachineLoad.optional(),
   storage: StorageReport.optional(),
@@ -115,7 +118,17 @@ export const RunnerReport = z.object({
 });
 export type RunnerReport = z.infer<typeof RunnerReport>;
 
-export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerWorkEvent, FilePart, FetchAttachment]);
+export const CheckResult = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("finished"), exitCode: z.number().int(), artifact: z.string().min(1).max(4096), output: z.string().max(24_000) }),
+  z.object({ state: z.literal("unavailable"), reason: z.string().max(1000) }),
+  z.object({ state: z.literal("busy") }),
+]);
+export type CheckResult = z.infer<typeof CheckResult>;
+
+export const CheckReply = z.object({ type: z.literal("check.reply"), id: z.string().uuid(), result: CheckResult });
+export type CheckReply = z.infer<typeof CheckReply>;
+
+export const RunnerToHub = z.discriminatedUnion("type", [RunnerHello, RunnerReport, RunnerWorkEvent, FilePart, FetchAttachment, CheckReply]);
 export type RunnerToHub = z.infer<typeof RunnerToHub>;
 
 export const RunnerWelcome = z.object({
@@ -130,7 +143,15 @@ export const RefreshAllowance = z.object({ type: z.literal("allowance.refresh") 
 
 export const RefreshPrograms = z.object({ type: z.literal("programs.refresh"), id: z.string().uuid() });
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, RefreshPrograms, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart]);
+export const RunCheck = z.object({
+  type: z.literal("check.run"), id: z.string().uuid(), ticket: z.number().int().positive(), repository: RepositoryName,
+  pullRequest: z.number().int().positive(), head: Revision, command: checkCommand,
+});
+export type RunCheck = z.infer<typeof RunCheck>;
+export const CancelCheck = z.object({ type: z.literal("check.cancel"), id: z.string().uuid() });
+export type CancelCheck = z.infer<typeof CancelCheck>;
+
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, RefreshPrograms, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart, RunCheck, CancelCheck]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {

@@ -2,6 +2,7 @@ export * from "./adapters.js";
 export * from "./antigravity.js";
 export * from "./claude.js";
 export * from "./clock.js";
+export * from "./command-shell.js";
 export * from "./codex.js";
 export * from "./dsh.js";
 export * from "./process.js";

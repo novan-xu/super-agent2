@@ -117,9 +117,9 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
   };
 
   const evidenceOf = (ticket: Ticket, failure: LoopFailure): string => {
-    if (failure.kind === "workflow") {
+    if (failure.kind === "workflow" || failure.kind === "check") {
       const logs = options.verification?.()?.logs(ticket.id) ?? [];
-      return logs.flatMap((log) => [`The log of workflow ${log.workflow}, step ${log.step}, ends with:`, tail(log.log || "(empty)", 8_000)]).join("\n");
+      return logs.flatMap((log) => [failure.kind === "check" ? "The repository check output ends with:" : `The log of workflow ${log.workflow}, step ${log.step}, ends with:`, tail(log.log || "(empty)", 8_000)]).join("\n");
     }
     const output = options.work()?.output(ticket.id, 8_000) ?? "";
     return output === "" ? "" : `The worker's output ends with:\n${output}`;
@@ -169,7 +169,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
     const counting = next.counted
       ? `Guided rounds so far: ${ticket.round} of ${roundCap}. Your guidance starts round ${next.round}${next.round === roundCap ? ", the last: if it fails too, the hub stops the ticket for the owner" : ""}.`
       : `This failure is the machine's, not the worker's, so your guidance starts a retry that is not counted as a guided round (still ${ticket.round} of ${roundCap}). A second failure of the machine in a row is counted.`;
-    const verifying = report.failure.kind === "workflow";
+    const verifying = report.failure.kind === "workflow" || report.failure.kind === "check";
     const providerBlock = report.failure.kind === "program"
       ? ["The hub handles temporary provider unavailability separately. If no machine offers a compatible provider, guide only if you can identify what to change. Otherwise report the blocker for a visible ticket."]
       : [];

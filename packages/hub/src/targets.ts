@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { shellInvocation } from "@super-agent2/programs";
 import type { OutputStream } from "@super-agent2/protocol";
 import { accountTokenVariable } from "./credentials.js";
 
@@ -139,13 +140,9 @@ export function localTarget(options: LocalTargetOptions): Target {
   return {
     name: options.name ?? hubTargetName,
     run: (job, sink) => {
-      const args = options.powerShell === undefined ? [] : ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from([
-        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new()",
-        job.command,
-        "if (!$?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }",
-      ].join("\n"), "utf16le").toString("base64")];
-      const child = spawn(options.powerShell ?? job.command, args, {
-        shell: options.powerShell === undefined,
+      const { file, args, shell } = shellInvocation(job.command, options.powerShell);
+      const child = spawn(file, args, {
+        shell,
         cwd: job.cwd,
         env: commandEnvironment(options.environment, job.credentials),
         detached: platform !== "win32",

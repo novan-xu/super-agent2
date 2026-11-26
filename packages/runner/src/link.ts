@@ -1,6 +1,7 @@
 import {
   accessClientIdHeader,
   accessClientSecretHeader,
+  type CancelCheck,
   HubToRunner,
   type MachineReport,
   protocolVersion,
@@ -8,6 +9,7 @@ import {
   runnerLinkPath,
   type RunnerToHub,
   runnerTokenHeader,
+  type RunCheck,
   type StorageSettings,
 } from "@super-agent2/protocol";
 import WebSocket from "ws";
@@ -39,6 +41,7 @@ export type LinkEvent =
   | { readonly type: "retrying"; readonly delay: number };
 
 export interface RunnerLinkOptions {
+  readonly check?: (message: RunCheck | CancelCheck) => void;
   readonly config: RunnerConfig;
   readonly report: () => MachineReport;
   readonly connect?: Connect;
@@ -194,6 +197,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         if (message.type === "programs.refresh") { options.refreshPrograms?.(message.id); return; }
         if (message.type === "allowance.refresh") { options.refreshAllowance?.(); return; }
         if (message.type === "storage.set") { options.setStorage?.(message.settings); return; }
+        if (message.type === "check.run" || message.type === "check.cancel") { options.check?.(message); return; }
         options.works?.()?.receive(message);
       },
       ping: () => {
