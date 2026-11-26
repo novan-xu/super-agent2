@@ -130,7 +130,7 @@
 }
 
 :root .brand-toggle {
-  background: #1a1917;
+  background: #fff;
   box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
 }
 @media (hover: hover) {

@@ -38,9 +38,9 @@ describe("Shell", () => {
 
   it("renders the brand colours independently of the accent", () => {
     const html = render();
-    expect(html).toContain('rx="6" fill="#1a1917" stroke="#777777"');
-    expect(html).toContain('r="3.3" fill="#ffffff"');
-    expect(html).toContain('stroke="#ffffff" stroke-width="2"');
+    expect(html).toContain('rx="6" fill="#ffffff" stroke="#dddddd"');
+    expect(html).toContain('r="3.3" fill="#1a1917"');
+    expect(html).toContain('stroke="#1a1917" stroke-width="2"');
     expect(html).toContain('r="2.1" fill="#e5484d"');
   });
 

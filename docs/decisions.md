@@ -3985,8 +3985,8 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 - **Why:** The hub stores and serves them even when every optional integration is off.
 - **Other options:** Hide these areas with the optional integration controls.
 
-## 2026-11-26 — Inverted logo colours (#361)
+## 2026-11-26 — Apple home screen icon colours (#361)
 
-The logo now uses a near-black tile with a white centre and ring while retaining the red upper-right dot.
-A subtle grey edge separates the tile from dark backgrounds, and the existing rounded desktop, maskable and Apple icon shapes remain unchanged.
-The previous white tile and dark glyph are replaced at the owner's request.
+The logo retains its white tile, near-black glyph and red dot, while the Apple touch icon uses a full-bleed near-black background with a white glyph and the same red dot.
+This separate icon keeps the glyph visible when iOS dark mode changes a light home screen icon background, since a web app cannot reliably supply a separate dark-mode Apple touch icon.
+The alternative was to use the white logo for every icon or invert the logo on every platform.
