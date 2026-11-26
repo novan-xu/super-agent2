@@ -1,6 +1,7 @@
-import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type MachineLoad, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
+import { accessClientIdHeader, accessClientSecretHeader, type AllowanceReading, type MachineLoad, programIsConfigured, type ProgramReport, runnerTokenHeader } from "@super-agent2/protocol";
 import { readAllowances } from "./allowance.js";
 import { createChecks } from "./checks.js";
+import { programSignedIn } from "./sign-in.js";
 import { loadConfig, readSettingsFile, type RunnerFiles } from "./config.js";
 import { createLedger } from "./ledger.js";
 import { type Connect, createRunnerLink, type LinkEvent, type RunnerLink } from "./link.js";
@@ -13,6 +14,7 @@ import { MachineStorage } from "./storage.js";
 import { createWorks, type WorkMessage, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
+  readonly checkSignIn?: boolean;
   readonly tokenOnly?: boolean;
   readonly files: RunnerFiles;
   readonly environment: Readonly<Record<string, string | undefined>>;
@@ -181,16 +183,19 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   const prober = options.prober ?? systemProber({ environment: options.environment, cwd: files.probe });
   const definitions = programDefinitions(config.models);
   let probing = false;
+  const checkSignIn = options.checkSignIn
+    ? (id: ProgramReport["id"], path: string, version: string | null) => programSignedIn(id, path, version, options.environment, prober)
+    : undefined;
   const probe = async () => {
     const previous = programs;
-    programs = (await probePrograms(definitions, prober)).map((program) => {
+    programs = (await probePrograms(definitions, prober, checkSignIn)).map((program) => {
       const prior = previous.find((entry) => entry.id === program.id && entry.installed && program.installed && entry.path === program.path);
       return prior?.update === undefined ? program : { ...program, update: prior.update };
     });
     log(
-      `Programs: ${programs
-        .map((program) => (program.installed ? `${program.id} ${program.version ?? "?"} (${program.models.length} models from ${program.source})` : `${program.id} not installed`))
-        .join(", ")}`,
+      `Programs: ${programs.filter(programIsConfigured)
+        .map((program) => `${program.id} ${program.version ?? "?"} (${program.models.length} models from ${program.source})`)
+        .join(", ") || "none signed in"}`,
     );
     link.update();
   };

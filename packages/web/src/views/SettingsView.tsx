@@ -14,6 +14,7 @@ import {
   type ModelChoice,
   type PageRoute,
   pagePath,
+  programIsConfigured,
   type Provider,
   type SettingsSection,
   type SettingsSnapshot,
@@ -25,6 +26,7 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
+import { featureEnabled, programForProvider } from "../live/features.js";
 import {
   availableNow,
   cellOf,
@@ -146,7 +148,7 @@ function MachineCard({ machine, running, revoke, saveStorage, now }: { readonly 
   const expiry = machine.accessExpiresAt;
   const load = machine.online ? machine.report?.load : undefined;
   const percentage = (value: number | null) => value === null ? text("machine.loadUnknown") : `${value}%`;
-  const programs = (machine.report?.programs ?? []).filter((program) => program.installed);
+  const programs = (machine.report?.programs ?? []).filter(programIsConfigured);
   const confirm = () => {
     setStep("sending");
     void revoke().finally(() => setStep("idle"));
@@ -420,7 +422,7 @@ function MachinesSection({ settings, tickets, actions, now }: { readonly setting
         </div>
       )}
       <MachineLoadFields limits={settings.machineLoad ?? defaultMachineLoadSettings} save={actions.setMachineLoad} />
-      <AddMachine machines={settings.machines} add={actions.addMachine} />
+      {settings.features === undefined || (settings.canAdd.cloudflare && settings.canAdd.release) ? <AddMachine machines={settings.machines} add={actions.addMachine} /> : null}
     </>
   );
 }
@@ -565,17 +567,21 @@ function ProviderOrderSection({ title, rows, moving, move }: { readonly title: s
 
 function ModelsSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
   const [moving, setMoving] = useState(false);
+  const features = settings.features;
+  const workers = providerRows(settings.workerOrder).filter(({ provider }) => features === undefined || features.workerPrograms.includes(programForProvider[provider]));
+  const brain = providerRows(settings.brain.order, settings.brain.providers).filter(({ provider }) => features === undefined || features.brainProviders.includes(provider));
   const move = (role: "brain" | "worker", provider: Provider) => {
     if (moving) return;
     const order = role === "brain" ? settings.brain.order : settings.workerOrder;
+    const visible = (role === "brain" ? brain : workers).map((row) => row.provider);
     setMoving(true);
-    void actions.setOrder(role, movedEarlier(order, provider)).finally(() => setMoving(false));
+    void actions.setOrder(role, movedEarlier(order, provider, visible)).finally(() => setMoving(false));
   };
   return (
     <>
-      <ProviderOrderSection title={text("models.worker")} rows={providerRows(settings.workerOrder)} moving={moving} move={(provider) => move("worker", provider)} />
-      <ProviderOrderSection title={text("models.brain")} rows={providerRows(settings.brain.order, settings.brain.providers)} moving={moving} move={(provider) => move("brain", provider)} />
-      {tableRows(settings.table).map((group) => (
+      {workers.length === 0 ? null : <ProviderOrderSection title={text("models.worker")} rows={workers} moving={moving} move={(provider) => move("worker", provider)} />}
+      {brain.length === 0 ? null : <ProviderOrderSection title={text("models.brain")} rows={brain} moving={moving} move={(provider) => move("brain", provider)} />}
+      {tableRows(settings.table).filter(({ engine }) => features === undefined || features.workerPrograms.includes(engine)).map((group) => (
         <section className="section" key={group.engine}>
           <div className="section-head">
             <h2>{text(`engine.${group.engine}`)}</h2>
@@ -587,7 +593,7 @@ function ModelsSection({ settings, actions }: { readonly settings: SettingsSnaps
           </div>
         </section>
       ))}
-      <AntigravityModels settings={settings} actions={actions} />
+      {features === undefined || features.workerPrograms.includes("antigravity") ? <AntigravityModels settings={settings} actions={actions} /> : null}
     </>
   );
 }
@@ -751,6 +757,9 @@ function InboxSources() {
 
 function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
   const gateway = settings.appGateway;
+  const features = settings.features;
+  const accounts = settings.accounts.filter((account) => features === undefined || account.configured);
+  const brain = providerRows(settings.brain.order, settings.brain.providers).filter(({ provider }) => features === undefined || features.brainProviders.includes(provider));
   const mailboxLabel = (provider: string, label: string) => provider === "outlook" && label.includes("@") ? `Outlook · ${label}` : label;
   const connectedApps = gateway === undefined ? [] : [
     ...gateway.mailboxes.flatMap(({ provider, label, reading }) => reading === undefined ? [mailboxLabel(provider, label)] : []),
@@ -759,7 +768,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
   ];
   return (
     <>
-      <InboxSources />
+      {featureEnabled(features, "inboxSources") ? <InboxSources /> : null}
       {gateway === undefined ? null : (
         <section className="section">
           <div className="rows">
@@ -782,12 +791,12 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
           </div>
         </section>
       )}
-      <section className="section">
+      {accounts.length === 0 ? null : <section className="section">
         <div className="section-head">
           <h2>{text("connections.github")}</h2>
         </div>
         <div className="rows">
-          {settings.accounts.map((account) => (
+          {accounts.map((account) => (
             <div className="srow" key={account.account}>
               <span className={`dot ${account.configured ? "dot--ok" : "dot--bad"}`} />
               <div className="srow-text">
@@ -797,8 +806,8 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
             </div>
           ))}
         </div>
-      </section>
-      <section className="section">
+      </section>}
+      {brain.length === 0 ? null : <section className="section">
         <div className="section-head">
           <h2>{text("connections.brain")}</h2>
         </div>
@@ -811,7 +820,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
               </div>
             </div>
           )}
-          {providerRows(settings.brain.order, settings.brain.providers).map((row) => {
+          {brain.map((row) => {
             const available = settings.brain.linked ? availableNow(row.state, now) : undefined;
             const subscription = subscriptionOf(settings.subscriptions, row.provider);
             const workers = workersOut(settings.unavailable, row.provider);
@@ -840,8 +849,8 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
             );
           })}
         </div>
-      </section>
-      <section className="section">
+      </section>}
+      {featureEnabled(features, "push") ? <section className="section">
         <div className="section-head">
           <h2>{text("connections.devices")}</h2>
           <span className="count">{settings.devices.length}</span>
@@ -863,7 +872,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
             ))
           )}
         </div>
-      </section>
+      </section> : null}
     </>
   );
 }
@@ -932,7 +941,19 @@ function UsageSection({ budget }: { readonly budget: number | null | undefined }
   </>;
 }
 
+export function settingsSectionEnabled(section: SettingsSection, settings: SettingsSnapshot | null): boolean {
+  const features = settings?.features;
+  if (features === undefined && settings !== null) return true;
+  if (section === "models") return !!features && (features.workerPrograms.length > 0 || features.brainProviders.length > 0);
+  if (section === "connections") return !!features && (
+    features.brainProviders.length > 0 || settings?.accounts.some((account) => account.configured) === true
+    || features.enabled.some((feature) => feature === "inboxSources" || feature === "appGateway" || feature === "push")
+  );
+  return true;
+}
+
 export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now, history }: SettingsViewProps) {
+  const groups = settingsGroups.map((group) => ({ ...group, sections: group.sections.filter((item) => settingsSectionEnabled(item, settings)) })).filter((group) => group.sections.length > 0);
   const active = section ?? firstSection;
   const link = (target: SettingsSection | null) => {
     const route = routeOf(target);
@@ -940,7 +961,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
   };
   const body = () => {
     if (active === "history") return history;
-    if (active === "usage") return <UsageSection budget={settings === null ? undefined : settings.openaiBudget ?? null} />;
+    if (active === "usage") return <UsageSection budget={settings === null || !featureEnabled(settings.features, "openaiCosts") ? undefined : settings.openaiBudget ?? null} />;
     if (active === "appearance") {
       return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
     }
@@ -966,7 +987,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
     <div className="page">
       <div className={section === null ? "settings" : "settings is-section"}>
         <nav className="set-nav" aria-label={text("settings.sections")}>
-          {settingsGroups.map((group) => (
+          {groups.map((group) => (
             <div className="set-group" key={group.group}>
               <p className="set-group-title">{text(`settings.group.${group.group}`)}</p>
               <ul className="nav">

@@ -7,6 +7,7 @@ import type { Answer } from "../hub/api.js";
 import { FileViewer, type ViewFile } from "../parts/FileViewer.js";
 import { Icon } from "../parts/icons.js";
 import { sizeOf } from "../live/size.js";
+import { useFeature } from "../live/features.js";
 import type { UploadApi } from "../live/upload.js";
 
 const itemSchema = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), at: z.number(), title: z.string().optional(), files: z.array(Attachment) });
@@ -50,6 +51,7 @@ export function RecentFiles({ items, open }: { readonly items: readonly Item[]; 
 }
 
 export function TransferView({ navigation }: { readonly navigation: ReactNode }) {
+  const deviceTransfer = useFeature("deviceTransfer");
   const [items, setItems] = useState<Item[]>([]);
   const [more, setMore] = useState(false);
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem("transfer.draft") ?? ""; } catch { return ""; } });
@@ -123,11 +125,12 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
       </article>)}
       </div>
     </div>
-    <div className="composer-wrap"><form className="composer" onSubmit={(event) => void send(event)} onDragOver={attaching.over} onDrop={attaching.drop}>
-      {error ? <p role="alert">{error}</p> : null}<PendingList attaching={attaching} />
+    {error ? <p role="alert">{error}</p> : null}
+    {deviceTransfer ? <div className="composer-wrap"><form className="composer" onSubmit={(event) => void send(event)} onDragOver={attaching.over} onDrop={attaching.drop}>
+      <PendingList attaching={attaching} />
       <textarea ref={field} rows={1} aria-label={t("transfer.content")} value={draft} onPaste={attaching.paste} onChange={(event) => { setDraft(event.target.value); try { localStorage.setItem("transfer.draft", event.target.value); } catch {} }} />
       <div className="composer-foot"><AttachButton add={attaching.add} /><span className="od-fill" /><button className="btn btn-primary btn-sm" type="submit" disabled={sending}><Icon name="send" />{t("transfer.send")}</button></div>
-    </form></div>
+    </form></div> : null}
   </div>
   <aside className="rail" aria-label={t("transfer.recentFiles")}><RecentFiles items={items} open={openFile} /></aside>
   <dialog className="dlg" ref={picker} aria-label={t("transfer.recentFiles")}><div className="dlg-in"><div className="dlg-head"><h2>{t("transfer.recentFiles")}</h2><button className="icon-btn" type="button" aria-label={t("conversation.close")} onClick={() => picker.current?.close()}><Icon name="x" /></button></div><RecentFiles items={items} open={openFile} /></div></dialog>

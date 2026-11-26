@@ -27,6 +27,7 @@ const { values } = parseArgs({
     cloudflare: { type: "string", default: "fake" },
     "page-dir": { type: "string" },
     "layout-fixture": { type: "boolean", default: false },
+    "minimal-integrations": { type: "boolean", default: false },
   },
 });
 
@@ -137,8 +138,10 @@ const vapid = vapidKeys();
 const cloudflare = values.cloudflare === "fake" ? fakeServiceTokens() : undefined;
 const allowance = createAllowanceForcing();
 const forge = values.forge === "fake" ? fakeForge() : undefined;
+const minimalIntegrations = values["minimal-integrations"];
 
 const hub = await startHub({
+  ...(minimalIntegrations ? { environment: {} } : {}),
   config: {
     accessTeam: team,
     accessAudience: audience,
@@ -149,6 +152,7 @@ const hub = await startHub({
     host: "127.0.0.1",
     projectFolders: [],
     brainTokenFile: join(hubDir, "brain.token"),
+    deviceTransfer: !minimalIntegrations,
     pageDir: values["page-dir"] === undefined ? defaultPageDir : resolve(values["page-dir"]),
     ...(vapid === undefined ? {} : { vapid }),
     ...(values.announce === undefined ? {} : { version: values.announce, sourceRepository: values.source }),
@@ -158,7 +162,9 @@ const hub = await startHub({
   credentials:
     forge !== undefined
       ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder", WOODPECKER_SERVER: fakeWoodpeckerServer, WOODPECKER_TOKEN: "page-dev-placeholder" } })
-      : values.credentials === "environment"
+      : minimalIntegrations
+        ? environmentCredentials({})
+        : values.credentials === "environment"
         ? environmentCredentials(process.env)
         : values.credentials === "placeholder"
           ? () => ({ ok: true, credentials: { GH_TOKEN: "page-dev-placeholder", GITHUB_TOKEN: "page-dev-placeholder" } })
@@ -338,7 +344,7 @@ const harness = createHarness({
 });
 
 if (values["layout-fixture"]) {
-  const fixture = await seedLayout(hub, publicUrl, defaultPageDir);
+  const fixture = await seedLayout(hub, publicUrl, defaultPageDir, !minimalIntegrations);
   process.send?.({ url: publicUrl, fixture });
 }
 

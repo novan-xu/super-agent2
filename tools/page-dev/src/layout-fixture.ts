@@ -71,7 +71,7 @@ function seedSchedules(hub: Hub, topic: string, now: number): void {
     .run(randomUUID(), topic, JSON.stringify(revised), active, now);
 }
 
-export async function seedLayout(hub: Hub, url: string, pageDir: string): Promise<LayoutFixture> {
+export async function seedLayout(hub: Hub, url: string, pageDir: string, deviceTransfer: boolean): Promise<LayoutFixture> {
   const now = Date.now();
   const code = storeTopic(hub.database, now, "温室维护工具", { repository: repositories[0] });
   const daily = storeTopic(hub.database, now, "花园日常安排");
@@ -177,6 +177,6 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
   }
   for (const repository of repositories) hub.repositories.setPinned(repository, true);
 
-  await seedTransfer(url, icon);
+  if (deviceTransfer) await seedTransfer(url, icon);
   return { ticket: detail, startCard, previewName, graphs: [forkThenMerge, fork, merge] };
 }

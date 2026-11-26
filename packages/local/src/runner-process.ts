@@ -17,6 +17,7 @@ async function main(): Promise<void> {
   try {
     if (stop.signal.aborted || !process.connected) return;
     const service = await startRunnerService({
+      checkSignIn: true,
       files: runnerFiles(home), environment: process.env, tokenOnly: mode === "--loopback",
       log: (line) => process.stdout.write(`Local runner: ${line}\n`),
     });

@@ -3,6 +3,7 @@ import { Previews, previewFile } from "./previews.js";
 import { join } from "node:path";
 import { sendFile } from "./file-response.js";
 import { serveTransfer } from "./transfer.js";
+import { hasTransfer, type HubFeature } from "@super-agent2/protocol";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
@@ -204,6 +205,7 @@ const defaultListLimit = 50;
 const maximumListLimit = 500;
 
 export interface HubServerOptions {
+  readonly features?: readonly HubFeature[];
   readonly database: HubDatabase;
   readonly converterUrl?: string;
   readonly commands: CommandService;
@@ -401,13 +403,16 @@ function refuseSocket(socket: Duplex, status: 403 | 404): void {
 }
 
 export function createHubServer(options: HubServerOptions): HubServer {
+  const deviceTransfer = options.features?.includes("deviceTransfer") ?? true;
+  const transfer = options.features === undefined || hasTransfer(options.features);
   const ownerProof = (request: IncomingMessage): OwnerProof => options.loopback && admitsLoopback(request) && !isBrain(request)
     ? loopbackOwnerProof
     : headerValue(request);
-  const previews = new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
+  const previews = options.converterUrl === undefined ? undefined : new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
   const transferChanged = () => {
+    if (!transfer) return;
     for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
   };
 
@@ -728,6 +733,12 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if (path.startsWith("/api/schedules") && options.schedules !== undefined
       && await serveSchedules(request, response, path, method, options.schedules)) return;
     if (path.startsWith("/api/transfer") && options.database !== undefined) {
+      const read = method === "GET" || method === "HEAD";
+      const download = read && /^\/api\/transfer\/files\/[0-9a-f]{32}(?:\/render)?$/.test(path);
+      const inboxView = transfer && (path === "/api/transfer" && read || /^\/api\/transfer\/\d+$/.test(path) && method === "DELETE");
+      if (!deviceTransfer && !download && !inboxView) {
+        request.resume(); sendJson(response, 404, { error: "not_found" }); return;
+      }
       const handled = await serveTransfer({ request, response, path, method, database: options.database, sameOrigin: isSameOrigin(request), readBody: () => readBody(request), changed: transferChanged });
       if (handled) return;
     }
@@ -760,7 +771,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
         try { file = options.files?.get(Number(ticket[1]), decodeURIComponent(ticket[2])); } catch { file = undefined; }
       }
       if (attachment || ticket) {
-        if (!file) { sendJson(response, 404, { error: "not_found" }); return; }
+        if (!file || previews === undefined) { sendJson(response, 404, { error: "not_found" }); return; }
         try { const pdf = previewFile(await previews.pdf(file)); sendFile(request, response, pdf, 'attachment; filename="preview.pdf"', "private, no-store"); }
         catch (error) { response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" }); response.end(JSON.stringify({ message: error instanceof Error && error.name === "TimeoutError" ? "The conversion took too long." : error instanceof Error ? error.message : "The converter is unavailable." })); }
         return;

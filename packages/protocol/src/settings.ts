@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HubFeatures } from "./features.js";
 import { Subscription } from "./allowance.js";
 import { ProviderState } from "./brain.js";
 import { GitHubAccount } from "./commands.js";
@@ -139,6 +140,7 @@ export const AppGatewayStatus = z.object({
 export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
 
 export const SettingsSnapshot = z.object({
+  features: HubFeatures.optional(),
   openaiBudget: z.number().positive().nullable().optional(),
   machines: z.array(MachineStatus),
   machineLoad: MachineLoadSettings.optional(),

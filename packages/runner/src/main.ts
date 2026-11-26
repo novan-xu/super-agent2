@@ -96,6 +96,7 @@ async function main(argv: readonly string[]): Promise<number> {
       const supervised = process.env[supervisedVariable] === "1";
       let autostartKept = !supervised;
       const service = await startRunnerService({
+        checkSignIn: true,
         files,
         environment: process.env,
         log,

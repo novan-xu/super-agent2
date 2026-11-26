@@ -44,6 +44,7 @@ export type ProgramModel = z.infer<typeof ProgramModel>;
 export const ProgramReport = z.object({
   id: ProgramId,
   installed: z.boolean(),
+  signedIn: z.boolean().optional(),
   path: z.string().nullable(),
   version: z.string().nullable(),
   models: z.array(ProgramModel),
@@ -52,6 +53,10 @@ export const ProgramReport = z.object({
   update: z.object({ channel: z.string().nullable(), note: z.string().nullable() }).optional(),
 });
 export type ProgramReport = z.infer<typeof ProgramReport>;
+
+export function programIsConfigured(program: ProgramReport): boolean {
+  return program.installed && program.signedIn !== false;
+}
 
 export const MachinePlatform = z.enum(["win32", "darwin", "linux"]);
 export type MachinePlatform = z.infer<typeof MachinePlatform>;

@@ -6,7 +6,7 @@
 4. Run `corepack pnpm local` to create `local.env` in `%LOCALAPPDATA%\super-agent2` on Windows or `~/.super-agent2` elsewhere, or in `SUPERAGENT2_HOME` if set.
 5. Set `PROJECTS_DIR` in `local.env` to an existing absolute folder for your repositories and keep the state folder outside it.
 6. Run `corepack pnpm local` again and open the printed address, normally `http://127.0.0.1:18180/`.
-7. Check that `local` appears online and the runner lists the installed provider programs.
+7. Check that `local` appears online and the runner lists the provider programs it finds signed in.
 8. Press Ctrl+C to stop the installation, and use the same state folder to resume it.
 
 Set `PORT` to change the listening port or `TIME_ZONE` to override the computer's time zone.
@@ -21,3 +21,27 @@ Set `ACCESS_CLIENT_ID` and `ACCESS_CLIENT_SECRET` to the service token for the l
 For additional runners, use the usual Access service and runner tokens.
 
 See the [front-door design](design.md#front-door) for the admission rules.
+
+## Optional integrations
+
+An installation can start with only `PROJECTS_DIR`.
+Set the relevant variables in `local.env` and restart to enable an integration.
+
+| Integration | Settings |
+| --- | --- |
+| Device transfer | `HUB_DEVICE_TRANSFER=1`. |
+| Inbox | `ACCESS_INBOX_AUD` for the inbox Access application, with Cloudflare API and policy settings to manage inbox sources. |
+| OAuth MCP | `ACCESS_MCP_AUD` for the Managed OAuth Access application. |
+| Mail, Teams and TickTick | `HUB_APP_GATEWAY=1` and a Codex login with those apps connected. |
+| Mail intake | Enabled with the app gateway when mailboxes are available, and can be disabled with `HUB_MAIL_INTAKE=0`. |
+| Push | `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, plus `VAPID_SUBJECT` if needed. |
+| Voice | `OPENAI_API_KEY`. |
+| Office previews | `HUB_CONVERTER_URL` for a compatible converter. |
+| OpenAI API costs | `OPENAI_ADMIN_KEY`. |
+| Extra MCP and Agent_wring | `HUB_EXTRA_MCP_SERVERS` and each server's named token variable, with a worker server named `Agent_wring` for its light-task mode. |
+| Providers | Install and sign in to the CLI for Codex, Claude Code, `dsh` or Antigravity, then restart the local brain or refresh the runner's programs. |
+| Woodpecker | `WOODPECKER_SERVER` and `WOODPECKER_TOKEN`. |
+
+Antigravity needs a CLI version with the read-only `/usage` command for sign-in detection.
+Memory, schedules and ordinary file attachments are part of the local edition.
+Device transfer controls sending between devices, and inbox and OAuth MCP can independently enable the transfer history.

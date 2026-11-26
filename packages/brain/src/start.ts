@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { brainToolsPath, providers } from "@super-agent2/protocol";
+import { brainToolsPath, type Provider, providers } from "@super-agent2/protocol";
 import { type Brain, createBrain } from "./brain.js";
 import type { Clock } from "@super-agent2/programs";
 import { type BrainConfig, loadBrainConfig } from "./config.js";
@@ -16,13 +16,13 @@ export interface RunningBrain {
   close(): Promise<void>;
 }
 
-export function startBrain(config: BrainConfig, environment: Readonly<Record<string, string | undefined>>, clock: Clock, report: (line: string) => void): RunningBrain {
+export function startBrain(config: BrainConfig, environment: Readonly<Record<string, string | undefined>>, clock: Clock, report: (line: string) => void, available: readonly Provider[] = providers): RunningBrain {
   const token = readFileSync(config.tokenFile, "utf8").trim();
   prepareWorkspace(config.workspace);
   const programDir = environment.BRAIN_PROGRAM_DIR;
   const programEnvironment = programDir === undefined ? environment : { ...environment, PATH: `${join(programDir, "bin")}${delimiter}${environment.PATH ?? ""}` };
   const adapters = new Map<BrainConfig["order"][number], ProgramAdapter>(
-    providers.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment: programEnvironment, clock })]),
+    available.map((provider) => [provider, programAdapter(provider, { ...config.providers[provider], environment: programEnvironment, clock })]),
   );
   const link = createHubLink({ hubUrl: config.hubUrl, token, report });
   const brain = createBrain({
@@ -56,6 +56,7 @@ export function startFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
   clock: Clock,
   report: (line: string) => void,
+  available?: readonly Provider[],
 ): RunningBrain | undefined {
   const loaded = loadBrainConfig(environment);
   if (!loaded.ok) {
@@ -65,5 +66,5 @@ export function startFromEnvironment(
     }
     return undefined;
   }
-  return startBrain(loaded.config, environment, clock, report);
+  return startBrain(loaded.config, environment, clock, report, available);
 }

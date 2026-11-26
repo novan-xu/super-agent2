@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import type { MachineStatus } from "@super-agent2/protocol";
+import { type MachineStatus, programIsConfigured } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { Clock } from "./clock.js";
 import type { ConversationService } from "./conversations.js";
@@ -46,7 +46,7 @@ export function createHealthNotices(options: {
         }
         if (machine.report?.updatingPrograms === true) continue;
         for (const program of machine.report?.programs ?? []) {
-          if (!program.installed) continue;
+          if (!programIsConfigured(program)) continue;
           const probeProblems = (program.problem ?? "").split("; ").filter((part) => part !== "" && !part.startsWith("auto-update:"));
           const problems = probeProblems.filter((part) => !limitWords.test(part));
           if (probeProblems.length > 0 && problems.length === 0) continue;

@@ -1,7 +1,8 @@
 import { text } from "@super-agent2/catalog";
 import type { AllowanceReport } from "@super-agent2/protocol";
-import { useRef } from "react";
+import { useContext, useRef } from "react";
 import { compactValue, providersOf, usageTone, type ProviderView } from "../live/allowance.js";
+import { FeatureContext, programForProvider } from "../live/features.js";
 import { Icon } from "./icons.js";
 
 function time(at: number): string {
@@ -23,14 +24,26 @@ function Provider({ provider }: { readonly provider: ProviderView }) {
     </div>)}
   </section>;
 }
-function Panel({ report, now, refresh }: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
-  return <div className="allowance-panel"><div className="allowance-heading"><strong>{text("allowance.title")}</strong><button className="icon-btn" type="button" aria-label={text("allowance.refresh")} title={text("allowance.refresh")} onClick={refresh}><Icon name="history" /></button></div>{providersOf(report, now).map((provider) => <Provider key={provider.id} provider={provider} />)}</div>;
+function useProviders(report: AllowanceReport | null, now: number): ProviderView[] {
+  const features = useContext(FeatureContext);
+  return providersOf(report, now).flatMap((row) => {
+    if (features === undefined || features.workerPrograms.includes(row.id)
+      || features.brainProviders.some((provider) => programForProvider[provider] === row.id)) return [row];
+    return row.id === "codex" && row.api !== undefined && features.enabled.includes("openaiCosts")
+      ? [{ ...row, windows: [], unavailableUntil: undefined, tone: row.api.tone }]
+      : [];
+  });
+}
+function Panel({ providers, refresh }: { readonly providers: readonly ProviderView[]; readonly refresh: () => void }) {
+  return <div className="allowance-panel"><div className="allowance-heading"><strong>{text("allowance.title")}</strong><button className="icon-btn" type="button" aria-label={text("allowance.refresh")} title={text("allowance.refresh")} onClick={refresh}><Icon name="history" /></button></div>{providers.map((provider) => <Provider key={provider.id} provider={provider} />)}</div>;
 }
 export function AllowanceSidebar({ report, now }: { readonly report: AllowanceReport | null; readonly now: number }) {
-  return <div className="allowance-sidebar"><div className="allowance-panel">{providersOf(report, now).map((provider) => <Provider key={provider.id} provider={provider} />)}</div></div>;
+  const providers = useProviders(report, now);
+  return providers.length === 0 ? null : <div className="allowance-sidebar"><div className="allowance-panel">{providers.map((provider) => <Provider key={provider.id} provider={provider} />)}</div></div>;
 }
 export function AllowanceRings({ report, now }: { readonly report: AllowanceReport | null; readonly now: number }) {
-  return <div className="allowance-rings">{providersOf(report, now).map((provider) => {
+  const providers = useProviders(report, now);
+  return providers.length === 0 ? null : <div className="allowance-rings">{providers.map((provider) => {
     const values = provider.windows.flatMap((window) => window.used === null ? [] : [window.used]);
     const used = values.length === 0 ? null : Math.max(...values);
     const tone = provider.id === "dsh" ? provider.tone : usageTone(used);
@@ -48,5 +61,6 @@ export function AllowanceRings({ report, now }: { readonly report: AllowanceRepo
 }
 export function AllowanceCompact(props: { readonly report: AllowanceReport | null; readonly now: number; readonly refresh: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  return <div className="allowance-mobile"><button className="allowance-compact" type="button" aria-label={text("allowance.open")} onClick={() => dialog.current?.showModal()}>{providersOf(props.report, props.now).map((provider) => <span className={`allowance-text--${provider.tone}`} key={provider.id}>{provider.compactName} {provider.unavailableUntil !== undefined ? text("allowance.unavailable") : compactValue(provider) ?? text("allowance.unknown")}</span>)}</button><dialog className="dlg allowance-dialog" ref={dialog} aria-label={text("allowance.title")}><button className="icon-btn allowance-close" type="button" aria-label={text("allowance.close")} onClick={() => dialog.current?.close()}><Icon name="x" /></button><Panel {...props} /></dialog></div>;
+  const providers = useProviders(props.report, props.now);
+  return providers.length === 0 ? null : <div className="allowance-mobile"><button className="allowance-compact" type="button" aria-label={text("allowance.open")} onClick={() => dialog.current?.showModal()}>{providers.map((provider) => <span className={`allowance-text--${provider.tone}`} key={provider.id}>{provider.compactName} {provider.unavailableUntil !== undefined ? text("allowance.unavailable") : compactValue(provider) ?? text("allowance.unknown")}</span>)}</button><dialog className="dlg allowance-dialog" ref={dialog} aria-label={text("allowance.title")}><button className="icon-btn allowance-close" type="button" aria-label={text("allowance.close")} onClick={() => dialog.current?.close()}><Icon name="x" /></button><Panel providers={providers} refresh={props.refresh} /></dialog></div>;
 }

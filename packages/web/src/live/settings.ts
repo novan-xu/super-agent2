@@ -57,12 +57,13 @@ export function nameProblem(name: string, machines: readonly MachineStatus[]): N
   return machines.some((machine) => machine.name === name) ? "taken" : null;
 }
 
-export function movedEarlier(order: readonly Provider[], provider: Provider): Provider[] {
+export function movedEarlier(order: readonly Provider[], provider: Provider, visible: readonly Provider[] = fullOrder(order)): Provider[] {
   const chosen = fullOrder(order);
   const index = chosen.indexOf(provider);
-  if (index > 0) {
-    chosen.splice(index, 1);
-    chosen.splice(index - 1, 0, provider);
+  const previous = chosen.slice(0, Math.max(0, index)).findLastIndex((item) => visible.includes(item));
+  if (previous >= 0) {
+    chosen[index] = chosen[previous]!;
+    chosen[previous] = provider;
   }
   return chosen;
 }

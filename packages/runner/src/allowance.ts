@@ -165,13 +165,21 @@ const AntigravityBucket = z.object({
   reset_time: z.string().nullish().catch(null),
 });
 
-function supportsAntigravityUsage(version: string | null): boolean {
+export function supportsAntigravityUsage(version: string | null): boolean {
   const parts = /\bv?(\d+)\.(\d+)\.(\d+)\b/.exec(version ?? "");
   if (parts === null) return false;
   const major = Number(parts[1]);
   const minor = Number(parts[2]);
   const patch = Number(parts[3]);
   return major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 11)));
+}
+
+export function hasAntigravityAccount(output: string): boolean {
+  try {
+    return AntigravityUsage.safeParse(JSON.parse(output)).success;
+  } catch {
+    return false;
+  }
 }
 
 function antigravityAllowance(output: string, readAt: number): SubscriptionReading {
@@ -254,12 +262,16 @@ export function dshBalance(output: string, readAt: number): AllowanceReading {
 
 async function readDsh(prober: Prober, programs: readonly ProgramReport[], now: () => number): Promise<AllowanceReading> {
   const program = programs.find((entry) => entry.id === "dsh");
-  if (!program?.installed || program.path === null) return { program: "dsh", readAt: now(), available: null, wallets: [], problem: "the program is not installed here" };
+  if (!program?.installed || program.signedIn === false || program.path === null) return { program: "dsh", readAt: now(), available: null, wallets: [], problem: "the program is not configured here" };
+  return readDshAt(prober, program.path, now);
+}
+
+export async function readDshAt(prober: Prober, path: string, now: () => number): Promise<AllowanceReading> {
   const plugin = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./dsh-balance.ts" : "./dsh-balance.js", import.meta.url));
   const patch = join(tmpdir(), `super-agent2-balance-${randomUUID()}.yml`);
   try {
     writeFileSync(patch, `- insert:\n    - id: super-agent2-balance\n      name: ${JSON.stringify(plugin.replaceAll("\\", "/"))}\n`);
-    const output = await prober.capture(program.path, ["--profile", "sdk", "--patch", patch], { input: "", until: (line) => line.includes('"superagent2-balance"') });
+    const output = await prober.capture(path, ["--profile", "sdk", "--patch", patch], { input: "", until: (line) => line.includes('"superagent2-balance"'), limitMilliseconds: 12_000 });
     return dshBalance(output, now());
   } catch { return { program: "dsh", readAt: now(), available: null, wallets: [], problem: "dsh could not read the account balance" }; }
   finally { rmSync(patch, { force: true }); }
@@ -273,7 +285,7 @@ export async function readAllowances(prober: Prober, programs: readonly ProgramR
   return Promise.all([
     ...allowanceSources.map(async (source) => {
       const program = programs.find((entry) => entry.id === source.program);
-      if (program === undefined || !program.installed || program.path === null) {
+      if (program === undefined || !program.installed || program.signedIn === false || program.path === null) {
         return unknownAllowance(source.program, now(), "the program is not installed here");
       }
       if (source.program === "antigravity" && !supportsAntigravityUsage(program.version)) {

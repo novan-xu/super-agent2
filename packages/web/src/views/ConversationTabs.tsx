@@ -1,5 +1,7 @@
 import { text } from "@super-agent2/catalog";
 import { type PageRoute, pagePath, type TopicScope } from "@super-agent2/protocol";
+import { useContext } from "react";
+import { FeatureContext, transferEnabled } from "../live/features.js";
 import { codeScope, dailyScope } from "../live/topic-scope.js";
 import type { Navigate } from "../parts/route.js";
 import { followLink } from "../parts/Shell.js";
@@ -17,11 +19,12 @@ export function ConversationTabs({ scope, transfer, repositories, navigate }: {
   readonly navigate: Navigate;
 }) {
   const active = transfer ? "transfer" : scope.kind === "daily" ? "daily" : "code";
+  const canTransfer = transferEnabled(useContext(FeatureContext));
   const selected = scope.kind === "repository" ? scope.repository.toLowerCase() : "";
   return (
     <div className="conv-navigation">
       <nav className="conv-tabs" aria-label={text("conversation.tabs")}>
-        {tabs.map(({ key, label, route }) => (
+        {tabs.filter(({ key }) => key !== "transfer" || canTransfer).map(({ key, label, route }) => (
           <a key={key} href={pagePath(route)} aria-current={key === active ? "page" : undefined}
             onClick={(event) => followLink(event, () => navigate(route))}>
             {text(label)}
