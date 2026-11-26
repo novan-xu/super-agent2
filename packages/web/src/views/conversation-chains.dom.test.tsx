@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { startCard } from "../live/fixtures.js";
+import { startCard, ticket } from "../live/fixtures.js";
 import { initialWaiting } from "../live/waiting.js";
 import { ConversationChains } from "./ConversationChains.js";
 
@@ -15,7 +15,11 @@ it("starts the shown fingerprint and disables a rearranged card", async () => {
   if (card.kind !== "start") throw new Error("missing start card");
   const entry = { kind: "chains" as const, id: "e", conversation: "c", seq: 1, at: 1, turn: "t", chains: [{ ticket: 1, fingerprint: card.fingerprint }] };
   const show = async (fingerprint: string) => act(async () => root.render(<ConversationChains entry={entry} tickets={[]} waiting={{ ...initialWaiting, known: true, cards: [{ ...card, fingerprint }] }} start={start} />));
-  await show(card.fingerprint);
+  const follower = startCard(2, { before: [{ id: 1, zh: "工作 1" }], startable: false, ticket: { waits: [{ ticket: 1, deployment: false, waived: false }] } });
+  await act(async () => root.render(<ConversationChains entry={entry} tickets={[]} waiting={{ ...initialWaiting, known: true, cards: [card, follower] }} start={start} />));
+  expect(host.textContent).toContain("随它一起开始：工作 2");
+  expect(host.textContent).toContain("#2");
+  expect(host.querySelectorAll("button")).toHaveLength(1);
   const button = host.querySelector("button")!;
   expect(button.disabled).toBe(false);
   await act(async () => button.click());
@@ -23,6 +27,9 @@ it("starts the shown fingerprint and disables a rearranged card", async () => {
   await show("f".repeat(64));
   expect(host.querySelector("button")?.disabled).toBe(true);
   expect(host.textContent).toContain("排列已变");
+  await act(async () => root.render(<ConversationChains entry={entry} tickets={[ticket(1, { state: "working" })]} waiting={{ ...initialWaiting, known: true }} start={start} />));
+  expect(host.textContent).toContain("已开始");
+  expect(host.querySelector("button")).toBeNull();
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
