@@ -82,8 +82,8 @@ export const MachineLoadSettings = z.strictObject({
 export type MachineLoadSettings = z.infer<typeof MachineLoadSettings>;
 
 export const defaultMachineLoadSettings: Readonly<MachineLoadSettings> = {
-  cpuHigh: 70, gpuHigh: 40, highMinutes: 2,
-  cpuLow: 50, gpuLow: 25, lowMinutes: 5,
+  cpuHigh: 70, gpuHigh: 85, highMinutes: 2,
+  cpuLow: 50, gpuLow: 60, lowMinutes: 5,
 };
 
 export const MachineReport = z.object({
