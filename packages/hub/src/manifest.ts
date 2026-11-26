@@ -4,7 +4,7 @@ import { pageIconsPath } from "@super-agent2/protocol";
 export const manifestIcons = [
   { name: "icon-192.png", sizes: "192x192", purpose: "any" },
   { name: "icon-512.png", sizes: "512x512", purpose: "any" },
-  { name: "icon-512.png", sizes: "512x512", purpose: "maskable" },
+  { name: "icon-maskable-512.png", sizes: "512x512", purpose: "maskable" },
 ] as const;
 
 export function webManifest(): string {

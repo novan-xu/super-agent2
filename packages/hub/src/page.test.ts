@@ -116,7 +116,7 @@ describe("the page", () => {
     const body = (await manifest.json()) as { name: string; short_name: string; display: string; lang: string; icons: { src: string; purpose: string }[] };
     expect(body).toMatchObject({ name: "Super Agent", short_name: "Super Agent", display: "standalone", lang: "zh-CN" });
     expect(body.icons.map((entry) => entry.purpose)).toEqual(["any", "any", "maskable"]);
-    expect(body.icons.every((entry) => entry.src.startsWith("/icons/"))).toBe(true);
+    expect(body.icons.map((entry) => entry.src)).toEqual(["/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"]);
   });
 
   it("keeps the worker, the icons and the manifest behind the front door", async () => {
