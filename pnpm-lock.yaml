@@ -259,6 +259,28 @@ importers:
         specifier: 8.18.2
         version: 8.18.2
 
+  packages/local:
+    dependencies:
+      '@super-agent2/brain':
+        specifier: workspace:*
+        version: link:../brain
+      '@super-agent2/hub':
+        specifier: workspace:*
+        version: link:../hub
+      '@super-agent2/programs':
+        specifier: workspace:*
+        version: link:../programs
+      '@super-agent2/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@super-agent2/runner':
+        specifier: workspace:*
+        version: link:../runner
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+
   packages/programs:
     dependencies:
       '@modelcontextprotocol/sdk':

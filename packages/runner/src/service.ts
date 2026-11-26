@@ -12,6 +12,7 @@ import { MachineStorage } from "./storage.js";
 import { createWorks, type WorkMessage, type Works, type WorksOptions } from "./works.js";
 
 export interface RunnerServiceOptions {
+  readonly tokenOnly?: boolean;
   readonly files: RunnerFiles;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly log: (line: string) => void;
@@ -67,7 +68,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     log(`There are no settings in ${files.settings}; run the setup first.`);
     return undefined;
   }
-  const loaded = loadConfig(settings);
+  const loaded = loadConfig(settings, options.tokenOnly);
   if (!loaded.ok) {
     log(`The settings in ${files.settings} are not usable:`);
     for (const problem of loaded.problems) {

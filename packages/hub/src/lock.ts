@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { text } from "@super-agent2/catalog";
 import { type CommandRecord, Hold, type HoldAnswer } from "@super-agent2/protocol";
 import { z } from "zod";
-import type { AccessVerifier } from "./access.js";
+import type { AccessVerifier, OwnerProof } from "./access.js";
 import type { Clock } from "./clock.js";
 import type { CommandGate, GateDecision } from "./commands.js";
 import type { HubDatabase } from "./database.js";
@@ -15,7 +15,7 @@ export const withdrawnReason = text("command.reason.withdrawn");
 export const changedReason = text("command.reason.changed");
 
 export interface OwnerAnswer {
-  readonly assertion: string | undefined;
+  readonly assertion: OwnerProof;
   readonly fingerprint: string;
 }
 
@@ -142,7 +142,7 @@ export function createConfirmationLock(options: ConfirmationLockOptions): Confir
     return wait(command, control.stopped);
   };
 
-  const isOwner = async (assertion: string | undefined): Promise<string | undefined> => {
+  const isOwner = async (assertion: OwnerProof): Promise<string | undefined> => {
     try {
       const result = await options.verify(assertion);
       if (result.ok && result.identity.kind === "person" && result.identity.email === owner) {

@@ -41,7 +41,7 @@ import {
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import { scheduleAccess } from "./schedule-access.js";
-import type { AccessVerifier } from "./access.js";
+import type { AccessVerifier, OwnerProof } from "./access.js";
 import type { Clock } from "./clock.js";
 import type { HubDatabase } from "./database.js";
 import { type ChosenRun, type DefaultsStatement, TicketError, type TicketService, type TicketWork, type WaitToSet } from "./tickets.js";
@@ -104,7 +104,7 @@ export interface ChainArranger {
 }
 
 export interface OwnerStart {
-  readonly assertion: string | undefined;
+  readonly assertion: OwnerProof;
   readonly chains: readonly ChainStartItem[];
 }
 
@@ -113,7 +113,7 @@ export type StartError = "forbidden" | "conflict" | "incomplete" | "unsupported"
 export type StartOutcome = { readonly ok: true; readonly tickets: readonly Ticket[] } | { readonly ok: false; readonly error: StartError };
 
 export interface OwnerChange {
-  readonly assertion: string | undefined;
+  readonly assertion: OwnerProof;
   readonly ticket: number;
   readonly change: ChoiceChange;
 }
@@ -461,7 +461,7 @@ export function createChains(options: ChainsOptions): Chains {
     });
   };
 
-  const isOwner = async (assertion: string | undefined): Promise<boolean> => {
+  const isOwner = async (assertion: OwnerProof): Promise<boolean> => {
     try {
       const result = await options.verify(assertion);
       return result.ok && result.identity.kind === "person" && result.identity.email === owner;

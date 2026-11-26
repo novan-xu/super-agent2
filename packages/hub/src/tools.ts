@@ -265,6 +265,7 @@ export interface ToolServer {
 
 export interface ToolServerOptions {
   readonly commands: CommandService;
+  readonly commandLocation?: string;
   readonly conversations: ConversationService;
   readonly tickets?: TicketTools;
   readonly memories?: MemoryService;
@@ -886,7 +887,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       {
         name: "run_command",
         title: "Run a shell command",
-        description: `Run a command and wait for its result in the hub container. gh uses the selected account's GH_TOKEN (default ${defaultGitHubAccount}).`,
+        description: `Run a command and wait for its result in ${options.commandLocation ?? "the hub container"}. gh uses the selected account's GH_TOKEN (default ${defaultGitHubAccount}).`,
         inputSchema: {
           type: "object",
           properties: {
@@ -1020,7 +1021,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
     const target = parsed.data.target ?? hubTargetName;
     if (target !== hubTargetName) {
       return {
-        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in the hub's container (target hub). Work on a machine is done by a worker. Use start_light_task for everyday work in 日常 or open_task_ticket for a visible ticket.`,
+        text: `Nothing was run: ${target} is not where your commands run. run_command runs only in ${options.commandLocation ?? "the hub's container"} (target hub). Work on a machine is done by a worker. Use start_light_task for everyday work in 日常 or open_task_ticket for a visible ticket.`,
         isError: true,
       };
     }

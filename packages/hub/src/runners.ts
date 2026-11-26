@@ -47,6 +47,7 @@ export interface Runners {
   setStorage(machine: string, storage: StorageSettings): boolean;
   setLoadSettings(settings: MachineLoadSettings): void;
   admit(identity: Identity, token: string | undefined): Machine | undefined;
+  admitLocal(token: string | undefined): Machine | undefined;
   attach(machine: Machine, connection: RunnerConnection): RunnerLink;
   revoke(name: string): Machine | undefined;
   statuses(): MachineStatus[];
@@ -209,6 +210,7 @@ export function createRunners(options: RunnersOptions): Runners {
       }
       return machine;
     },
+    admitLocal: (token) => token === undefined ? undefined : machines.byToken(token),
     attach: (machine, connection) => {
       const previous = links.get(machine.name);
       if (previous !== undefined) {
