@@ -8,6 +8,8 @@ import {
   type Attachment,
   attachmentPartBytes,
   type DeliveredFile,
+  defaultMachine,
+  deploymentMachinesFor,
   type FetchAttachment,
   type FilePart,
   filePartBytes,
@@ -252,6 +254,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   const updateState = connection.prepare("UPDATE ticket_attempts SET state = ? WHERE ticket_id = ? AND attempt = ?");
   const updateStarted = connection.prepare("UPDATE ticket_attempts SET state = 'preparing', started_at = COALESCE(started_at, ?), unreachable_since = NULL, reason = NULL WHERE ticket_id = ? AND attempt = ?");
   const updateQueueReason = connection.prepare("UPDATE ticket_attempts SET reason = ? WHERE ticket_id = ? AND attempt = ?");
+  const moveQueued = connection.prepare("UPDATE ticket_attempts SET machine = ?, reason = NULL WHERE ticket_id = ? AND attempt = ?");
   const updateEnded = connection.prepare("UPDATE ticket_attempts SET state = ?, ended_at = ?, failure = ?, reason = ? WHERE ticket_id = ? AND attempt = ?");
   const updateSession = connection.prepare("UPDATE ticket_attempts SET session = ? WHERE ticket_id = ? AND attempt = ?");
   const clearResumeSession = connection.prepare("UPDATE ticket_attempts SET session = NULL, resume_session = NULL WHERE ticket_id = ? AND attempt = ?");
@@ -546,13 +549,27 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
   };
 
+  const activeOn = (machine: string): number => CountRow.parse(countActiveOn.get(machine)).count;
+
+  const alternateForDeployment = (ticket: Ticket, attempt: Attempt): string | null => {
+    const defaults = options.defaults;
+    if (defaults === undefined || ticket.ownerChoice.machine !== null
+      || requiredMachineFor(ticket) !== null || attempt.attempt !== 1 || attempt.started_at !== null || attempt.takeover === 1) return null;
+    const available = defaults.machinesFor(ticket).filter((machine) => {
+      const report = runners.report(machine.name);
+      return machine.name !== attempt.machine && machine.free > 0 && report !== undefined
+        && report.load?.high !== true && activeOn(machine.name) < report.slots.total;
+    });
+    return defaultMachine(ticket.platform ?? "any", attempt.engine, available, attempt.model, attempt.effort);
+  };
+
   const dispatchOnce = () => {
     for (const row of selectWaitingForProvider.all()) {
       const waiting = Attempt.parse(row);
       switchAway(waiting.ticket_id, waiting);
     }
     for (const row of selectQueued.all()) {
-      const attempt = Attempt.parse(row);
+      let attempt = Attempt.parse(row);
       if (attempt.handover === 1) {
         continue;
       }
@@ -560,7 +577,19 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (ticket === undefined || ticket.state !== "working") {
         continue;
       }
-      const report = runners.report(attempt.machine);
+      let report = runners.report(attempt.machine);
+      if (ticket.deploymentTargets !== undefined && (report === undefined || report.load?.high === true || activeOn(attempt.machine) >= report.slots.total)) {
+        const alternate = alternateForDeployment(ticket, attempt);
+        const by = ticket.chosenBy;
+        if (alternate !== null && by !== null) {
+          tickets.change((writes) => {
+            moveQueued.run(alternate, ticket.id, attempt.attempt);
+            writes.choose(ticket.id, { machine: alternate, engine: attempt.engine, model: attempt.model, effort: attempt.effort, by });
+          });
+          attempt = { ...attempt, machine: alternate, reason: null };
+          report = runners.report(alternate);
+        }
+      }
       const loaded = report?.load?.high === true;
       const reason = loaded ? `${attempt.machine} is under high load. Work starts when its load falls.` : null;
       if (attempt.reason !== reason) {
@@ -587,8 +616,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         }
         continue;
       }
-      const busy = CountRow.parse(countActiveOn.get(attempt.machine)).count;
-      if (busy >= report.slots.total) {
+      if (activeOn(attempt.machine) >= report.slots.total) {
         continue;
       }
       const message = startOf(ticket, attempt);
@@ -597,8 +625,10 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         failed(ticket, attempt, "prepare", message);
         continue;
       }
+      const multiTarget = ticket.deploymentTargets !== undefined;
+      if (multiTarget) touch(ticket.id, () => updateStarted.run(clock.now(), ticket.id, attempt.attempt));
       if (send(attempt.machine, message)) {
-        touch(ticket.id, () => updateStarted.run(clock.now(), ticket.id, attempt.attempt));
+        if (!multiTarget) touch(ticket.id, () => updateStarted.run(clock.now(), ticket.id, attempt.attempt));
         sendWaiting(attempt.machine, ticket.id, attempt.attempt);
       }
     }
@@ -1696,7 +1726,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     if (ticket === undefined || ticket.state !== "working" || latestOf(id)?.attempt !== previous.attempt) {
       return;
     }
-    const machines = defaults.machines();
+    const machines = deploymentMachinesFor(ticket, defaults.machines());
     const online = machines.some((machine) => machine.name === previous.machine);
     const pinnedEngine = ticket.enginePin === undefined ? undefined : ticket.ownerChoice.engine ?? ticket.enginePin;
     const out = defaults.out();

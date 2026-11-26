@@ -199,11 +199,20 @@ describe("a deployment file", () => {
   const file = { target: "pc", deploy: "./deploy.sh", health: { command: "curl -fsS http://127.0.0.1:8080/health" }, rollback: "./rollback.sh" };
 
   it("names the work machine its worker runs on", () => {
-    expect(readDeploymentFile(JSON.stringify(file))).toMatchObject({ ok: true, file: { target: "pc", health: { everySeconds: 5, withinSeconds: 120 } } });
+    expect(readDeploymentFile(JSON.stringify(file))).toMatchObject({ ok: true, file: { target: ["pc"], health: { everySeconds: 5, withinSeconds: 120 } } });
+  });
+
+  it("accepts one or several distinct machine names in a list", () => {
+    for (const target of [["pc"], ["mac-mini", "macbook-air", "pc"]]) {
+      expect(readDeploymentFile(JSON.stringify({ ...file, target }))).toMatchObject({ ok: true, file: { target } });
+    }
+    for (const target of [[], ["pc", "pc"], ["pc", "bad name"], ["pc", null]]) {
+      expect(readDeploymentFile(JSON.stringify({ ...file, target })).ok).toBe(false);
+    }
   });
 
   it("is refused when it names the hub's container or the NAS host, or a key it does not know", () => {
-    for (const target of ["hub", "nas"]) {
+    for (const target of ["hub", "nas", ["pc", "hub"], ["nas", "pc"]]) {
       const reading = readDeploymentFile(JSON.stringify({ ...file, target }));
       expect(reading.ok).toBe(false);
       expect(reading.ok ? "" : reading.reason).toContain("names no work machine");

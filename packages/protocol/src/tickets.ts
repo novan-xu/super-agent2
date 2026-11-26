@@ -220,6 +220,7 @@ export const Ticket = z.object({
   difficultyReason: GeneratedText.nullable(),
   platform: Platform.nullable(),
   requiredMachine: z.string().nullable().default(null),
+  deploymentTargets: z.array(z.string()).min(2).optional(),
   machinePinned: z.boolean().optional(),
   enginePin: ProgramId.optional(),
   commitRef: z.string().nullable().default(null),

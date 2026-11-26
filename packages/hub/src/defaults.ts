@@ -2,6 +2,7 @@ import {
   activeMarks,
   currentBalance,
   defaultMachine,
+  deploymentMachinesFor,
   type Balance,
   EngineTable,
   engineOrder,
@@ -211,7 +212,7 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
       return true;
     },
     machines,
-    machinesFor: (ticket) => machinesFor(ticket.platform, machines(), ticket.machinePinned === true ? null : ticket.requiredMachine),
+    machinesFor: (ticket) => machinesFor(ticket.platform, deploymentMachinesFor(ticket, machines()), ticket.machinePinned === true ? null : ticket.requiredMachine),
     resolve: (ticket, owner = ticket.ownerChoice) => {
       const input = {
         kind: ticket.kind,
@@ -224,7 +225,8 @@ export function createStartDefaults(options: StartDefaultsOptions): StartDefault
         owner,
       };
       const choices = table();
-      const online = ticket.machinePinned === true ? machinesFor(ticket.platform, machines()) : machines();
+      const eligible = deploymentMachinesFor(ticket, machines());
+      const online = ticket.machinePinned === true ? machinesFor(ticket.platform, eligible) : eligible;
       const context = contextOf();
       const ordinary = resolveStart(input, choices, online, context);
       const link = followUps.get(ticket.id);

@@ -85,6 +85,7 @@ export interface TicketToOpen {
   readonly light?: Ticket["light"];
   readonly task?: TaskToOpen | undefined;
   readonly requiredMachine?: string | null | undefined;
+  readonly deploymentTargets?: readonly string[] | undefined;
   readonly repository: string | null;
   readonly project?: string | undefined;
   readonly issues: readonly TicketIssue[];
@@ -288,6 +289,7 @@ const TicketRow = z.object({
   code_date: TicketCodeDate,
   form: z.string(),
   required_machine: z.string().nullable(),
+  deployment_targets: z.string().nullable(),
   machine_pinned: z.union([z.literal(0), z.literal(1)]),
   engine_pin: z.string().nullable(),
   repository: z.string().nullable(),
@@ -695,8 +697,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const selectByIssue = connection.prepare("SELECT DISTINCT ticket_id FROM ticket_issues WHERE repository = ? AND number = ? ORDER BY ticket_id");
   const selectWaitingFor = connection.prepare("SELECT ticket_id FROM ticket_waits WHERE waits_for = ? ORDER BY ticket_id");
   const insertTicket = connection.prepare(
-    `INSERT INTO tickets (form, light, required_machine, repository, project, schedule_run, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    `INSERT INTO tickets (form, light, required_machine, deployment_targets, repository, project, schedule_run, kind, title_en, title_zh, summary_en, summary_zh, difficulty, platform, state, conversation_id, created_at, updated_at, code, code_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   );
   const insertIssue = connection.prepare(
     "INSERT INTO ticket_issues (ticket_id, position, repository, number, url, title_en, title_zh, summary_en, summary_zh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -800,6 +802,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       difficultyReason: pair(value.difficulty_reason_en, value.difficulty_reason_zh),
       platform: value.platform,
       requiredMachine: value.required_machine,
+      ...(value.deployment_targets === null ? {} : { deploymentTargets: parsedJson(value.deployment_targets) }),
       machinePinned: value.machine_pinned === 1,
       enginePin: ProgramId.optional().parse(value.engine_pin ?? undefined),
       commitRef: task?.commitRef ?? null,
@@ -906,6 +909,18 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   };
 
   const formOf = (request: TicketToOpen): TicketForm => request.form ?? (request.task !== undefined || request.kind === "writing" ? "task" : "code");
+
+  const deploymentPlatform = (targets: readonly string[]): Platform => {
+    const machines = options.machines?.() ?? [];
+    const systems = new Set(targets.map((name) => {
+      const machine = machines.find((entry) => entry.name === name);
+      const system = machine?.report?.platform ?? machine?.system;
+      return system === "darwin" ? "macos" : system === "win32" ? "windows" : system;
+    }));
+    if (systems.size === 1 && systems.has("macos")) return "macos";
+    if (systems.size === 1 && systems.has("windows")) return "windows";
+    return "any";
+  };
 
   const check = (request: TicketToOpen) => {
     const form = formOf(request);
@@ -1043,6 +1058,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         formOf(request),
         request.light ?? null,
         request.requiredMachine ?? (request.task?.deploys === true ? null : run?.machine ?? null),
+        request.deploymentTargets === undefined ? null : JSON.stringify(request.deploymentTargets),
         request.repository,
         request.project ?? null,
         run?.id ?? null,
@@ -1052,7 +1068,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         request.summary.en.trim(),
         request.summary.zh.trim(),
         request.difficulty ?? null,
-        request.platform ?? null,
+        request.deploymentTargets === undefined ? request.platform ?? null : deploymentPlatform(request.deploymentTargets),
         topic,
         now,
         now,
@@ -1110,10 +1126,10 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         touch(id);
       },
       describe: (id, description) => {
-        existing(id);
+        const current = existing(id);
         const title = GeneratedText.parse(description.title);
         const summary = GeneratedText.parse(description.summary);
-        updateDescription.run(title.en, title.zh, summary.en, summary.zh, description.kind, description.difficulty, description.platform, id);
+        updateDescription.run(title.en, title.zh, summary.en, summary.zh, description.kind, description.difficulty, current.deploymentTargets === undefined ? description.platform : current.platform, id);
         touch(id);
       },
       setWaits: (id, waits) => {
@@ -1177,6 +1193,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           difficulty: old.difficulty ?? undefined,
           platform: old.platform ?? undefined,
           requiredMachine: old.machinePinned === true ? undefined : old.requiredMachine,
+          deploymentTargets: old.deploymentTargets,
           ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys } }),
         }, writes.topic(id));
         writes.inheritPins(repair, old);
@@ -1272,7 +1289,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (!fitsForm(current.form, statement.kind)) {
           throw new TicketError(`Ticket ${ticketReference(current)} is a ${current.form} ticket and cannot be of kind ${statement.kind}`);
         }
-        updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, statement.platform, id);
+        updateStatement.run(statement.kind, statement.difficulty, reason.en, reason.zh, current.deploymentTargets === undefined ? statement.platform : current.platform, id);
         touch(id);
       },
       forgetDefaults: (id) => {
@@ -1291,14 +1308,18 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         if (settings.machine !== undefined && !pinned && settings.machine !== ticket.requiredMachine) {
           throw new TicketError(`This ticket requires machine ${ticket.requiredMachine}.`);
         }
+        if (required !== null && ticket.deploymentTargets !== undefined && !ticket.deploymentTargets.includes(required)) {
+          throw new TicketError(`This deployment can run only on ${ticket.deploymentTargets.join(", ")}.`);
+        }
         if (settings.machine !== undefined || pinned) {
           const machine = options.machines?.().find((entry) => entry.name === required);
           if (machine === undefined && settings.machine !== undefined) {
             throw new TicketError(`Machine ${required} is not registered.`);
           }
           const platform = machine?.report?.platform ?? (machine?.system === "macos" ? "darwin" : machine?.system === "windows" ? "win32" : undefined);
-          if (platform !== undefined && settings.platform !== null && !fitsPlatform(settings.platform, platform)) {
-            throw new TicketError(`Machine ${required} does not match platform ${settings.platform}.`);
+          const wanted = ticket.deploymentTargets === undefined ? settings.platform : ticket.platform;
+          if (platform !== undefined && wanted !== null && !fitsPlatform(wanted, platform)) {
+            throw new TicketError(`Machine ${required} does not match platform ${wanted}.`);
           }
         }
         if (required !== ticket.requiredMachine || pinned !== (ticket.machinePinned === true) || engine !== ticket.enginePin) {

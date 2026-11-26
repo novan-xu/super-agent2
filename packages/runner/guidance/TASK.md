@@ -69,10 +69,12 @@ For other tasks, make the best decision within the assignment and hand back a cl
 
 ### A deployment
 
-When the task is to deploy the repository, its checkout holds the recipe: `.superagent2/deployment.json`, with `target` (the machine it runs on, which is this one), `folder` (where its commands run, when given), `deploy`, `health` (a command, how often to try it and for how long) and `rollback`.
-The hub only starts a deployment on the machine the file names, and the runner refuses one whose file names another machine.
+When the task is to deploy the repository, its checkout holds the recipe in `.superagent2/deployment.json`.
+Its `target` names one or more eligible machines, its optional `folder` is where to run commands, and `deploy`, `health` and `rollback` give the commands and health timings.
+The runner checks that this machine is listed and fills in `{commit}` in any command that uses it with the checkout's full commit hash.
 
-- Usually deploy the commit of your checkout: run the deploy command as the file says, then run the health check until it passes or its period is over.
+- Deploy the commit of your checkout using the recipe's deploy command, and use the filled-in command from the task brief when one is given.
+  Run the health check until it passes or its period is over.
 - When the new version does not come up, roll back with the rollback command, check health again, and hand back failed with what went wrong and whether the previous version answers again.
   Do not try the same broken version over and over.
 - A deployment may restart the hub this machine's runner talks to, and the brain with it.

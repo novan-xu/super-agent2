@@ -17,13 +17,18 @@ export const DeploymentTarget = TargetName.max(63).refine((name) => !reservedTar
 });
 
 export const DeploymentFile = z.strictObject({
-  target: DeploymentTarget,
+  target: z.preprocess(
+    (value) => typeof value === "string" ? [value] : value,
+    z.array(DeploymentTarget).min(1).refine((names) => new Set(names).size === names.length, { error: "machine names must be distinct" }),
+  ),
   folder: z.string().trim().min(1).max(1_000).optional(),
   deploy: z.string().trim().min(1),
   health: DeploymentHealth,
   rollback: z.string().trim().min(1),
 });
 export type DeploymentFile = z.infer<typeof DeploymentFile>;
+
+export const deploymentCommitPlaceholder = "{commit}";
 
 export type DeploymentFileReading = { readonly ok: true; readonly file: DeploymentFile } | { readonly ok: false; readonly reason: string };
 

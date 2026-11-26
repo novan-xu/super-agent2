@@ -1,4 +1,4 @@
-import { type ChoiceChange, engineOn, type MachineChoice, machinesFor, offers, type ProgramId, type Ticket } from "@super-agent2/protocol";
+import { type ChoiceChange, deploymentMachinesFor, engineOn, type MachineChoice, machinesFor, offers, type ProgramId, type Ticket } from "@super-agent2/protocol";
 import { type ChoiceOptions, choiceOptions } from "./choice.js";
 
 export interface ReassignDraft {
@@ -13,7 +13,7 @@ export function initialDraft(ticket: Ticket): ReassignDraft {
 }
 
 export function reassignMachines(ticket: Ticket, machines: readonly MachineChoice[]): MachineChoice[] {
-  return machinesFor(ticket.platform, machines).map((machine) => ({
+  return machinesFor(ticket.platform, deploymentMachinesFor(ticket, machines)).map((machine) => ({
     ...machine,
     engines: ticket.kind === "writing" ? machine.engines : machine.engines.filter((offer) => offer.engine !== "antigravity"),
   }));

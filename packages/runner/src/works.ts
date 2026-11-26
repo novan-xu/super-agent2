@@ -17,6 +17,7 @@ import {
   type Attachment,
   attachmentPartBytes,
   type AttachmentPart,
+  type DeploymentFile,
   type FetchFile,
   isNativeImage,
   type MessageWork,
@@ -207,6 +208,7 @@ interface Work {
   live: boolean;
   task: WorkTask | undefined;
   assignment: TaskAssignment | undefined;
+  deployment?: DeploymentFile;
   handle: ProgramHandle | undefined;
   turn: boolean;
   queue: Prompt[];
@@ -388,7 +390,7 @@ export function createWorks(options: WorksOptions): Works {
 
   const gitFor = (task: Credentialed, shared = false): Git => createGit(run, environmentOf(task, shared), find("git") ?? "git");
 
-  const placeOf = (work: Work, assignment: TaskAssignment) => taskPlace(work.paths, assignment.checkout, work.record.commit, options.machine);
+  const placeOf = (work: Work, assignment: TaskAssignment) => taskPlace(work.paths, assignment.checkout, work.record.commit, options.machine, work.deployment);
 
   const place = (work: Work): BriefPlace => ({
     worktree: work.paths.worktree,
@@ -871,11 +873,13 @@ export function createWorks(options: WorksOptions): Works {
         if (matchNote !== "") details.push(matchNote);
         details.push(`${checkout.created ? "Checked out" : "Kept the checkout of"} ${task.checkout.repository} at ${checkout.commit} in ${work.paths.worktree}`);
         if (task.deploys) {
-          const problem = deploymentProblem(readDeploymentAt(work.paths.worktree), options.machine, checkout.commit);
+          const reading = readDeploymentAt(work.paths.worktree);
+          const problem = deploymentProblem(reading, options.machine, checkout.commit);
           if (problem !== undefined) {
             await end(work, { kind: "failed", failure: "prepare", reason: problem });
             return;
           }
+          if (reading?.ok) work.deployment = reading.file;
         }
       }
     } catch (error) {

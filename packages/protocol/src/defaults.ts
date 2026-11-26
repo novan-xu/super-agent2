@@ -125,6 +125,11 @@ export function machinesFor(platform: Platform | null, machines: readonly Machin
   return platform === null ? [...machines] : machines.filter((machine) => fitsPlatform(platform, machine.platform));
 }
 
+export function deploymentMachinesFor(ticket: Pick<Ticket, "deploymentTargets">, machines: readonly MachineChoice[]): readonly MachineChoice[] {
+  const targets = ticket.deploymentTargets;
+  return targets === undefined ? machines : machines.filter((machine) => targets.includes(machine.name));
+}
+
 export function engineOn(machine: MachineChoice | undefined, engine: ProgramId): EngineOffer | undefined {
   return machine?.engines.find((offer) => offer.engine === engine);
 }

@@ -4,6 +4,8 @@ import {
   type Decision,
   type DeliveredFile,
   DeliveryFileName,
+  deploymentCommitPlaceholder,
+  type DeploymentFile,
   type DeploymentFileReading,
   deploymentFile,
   type GeneratedText,
@@ -95,8 +97,10 @@ export function deploymentProblem(reading: DeploymentFileReading | undefined, ma
   if (!reading.ok) {
     return `${deploymentFile} at ${commit} is not a valid deployment file: ${reading.reason}`;
   }
-  if (machine !== undefined && reading.file.target !== machine) {
-    return `${deploymentFile} at ${commit} names the machine ${reading.file.target}, and this machine is ${machine}; the deployment runs only where the file says`;
+  const targets = reading.file.target;
+  if (machine !== undefined && !targets.includes(machine)) {
+    const named = targets.length === 1 ? `the machine ${targets[0]}` : `these machines: ${targets.join(", ")}`;
+    return `${deploymentFile} at ${commit} names ${named}, and this machine is ${machine}; the deployment runs only where the file says`;
   }
   return undefined;
 }
@@ -107,6 +111,10 @@ export function readDeploymentAt(checkout: string): DeploymentFileReading | unde
     return undefined;
   }
   return readDeploymentFile(readFileSync(path, "utf8"));
+}
+
+export function deploymentCommand(command: string, commit: string): string {
+  return command.replaceAll(deploymentCommitPlaceholder, commit);
 }
 
 export function prepareScratch(paths: WorkPaths, materials: readonly TaskMaterial[], files: ReadonlyMap<string, string> = new Map()): void {
@@ -313,10 +321,11 @@ export interface TaskPlace {
   readonly checkout: string | null;
   readonly commit: string | null;
   readonly machine: string | undefined;
+  readonly deployment?: DeploymentFile | undefined;
   readonly artifacts?: ArtifactFolder;
 }
 
-export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"], commit: string | null, machine: string | undefined): TaskPlace {
+export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"], commit: string | null, machine: string | undefined, deployment?: DeploymentFile): TaskPlace {
   return {
     scratch: scratchFolder(paths),
     input: inputFolder(paths),
@@ -326,8 +335,22 @@ export function taskPlace(paths: WorkPaths, checkout: TaskAssignment["checkout"]
     checkout: checkout === null ? null : paths.worktree,
     commit,
     machine,
+    deployment,
     ...(paths.artifacts === undefined ? {} : { artifacts: paths.artifacts }),
   };
+}
+
+export function deploymentInstructions(task: TaskAssignment, place: TaskPlace): string[] {
+  if (!task.deploys || place.checkout === null) return [];
+  const lines = [`Deployment recipe: ${join(place.checkout, deploymentFile)}`];
+  const { commit, deployment } = place;
+  if (deployment === undefined || commit === null) return lines;
+  const { deploy, health, rollback } = deployment;
+  if ([deploy, health.command, rollback].some((command) => command.includes(deploymentCommitPlaceholder))) {
+    lines.push("Use these commands with the checkout commit filled in. Follow the recipe's folder and health timings.",
+      `Deploy: ${deploymentCommand(deploy, commit)}`, `Health: ${deploymentCommand(health.command, commit)}`, `Rollback: ${deploymentCommand(rollback, commit)}`);
+  }
+  return lines;
 }
 
 export function assignmentText(task: TaskAssignment, place: TaskPlace): string {
@@ -344,7 +367,7 @@ export function assignmentText(task: TaskAssignment, place: TaskPlace): string {
     ...(repository === undefined || place.checkout === null
       ? []
       : [`Checkout of ${repository}: ${place.checkout}, at commit ${place.commit ?? "unknown"} (detached; you start there)`]),
-    ...(task.deploys && place.checkout !== null ? [`Deployment recipe: ${join(place.checkout, deploymentFile)}`] : []),
+    ...deploymentInstructions(task, place),
     `Hand back by writing the JSON file at: ${place.handback}`,
     ...(task.light === true && place.question !== undefined ? [
       `If only the owner can resolve a blocker, ask one short question in Simplified Chinese by writing {"question":"..."} to ${place.question}, then end your turn without a hand-back. The runner sends it to the conversation and resumes you when the owner replies.`,

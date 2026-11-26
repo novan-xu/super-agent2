@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { largestMessageBytes } from "@super-agent2/protocol";
+import { delimiter, join } from "node:path";
+import { largestMessageBytes, readDeploymentFile } from "@super-agent2/protocol";
+import { shellInvocation, windowsPowerShell } from "@super-agent2/programs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkTaskHandback, deploymentProblem, outputFolder, readDeploymentAt, travelsInline, taskPaths } from "./task.js";
+import { checkTaskHandback, deploymentCommand, deploymentProblem, outputFolder, readDeploymentAt, travelsInline, taskPaths } from "./task.js";
 
 let home: string;
 
@@ -112,5 +114,28 @@ describe("a deployment's recipe in the checkout", () => {
   it("is refused when it is missing or not valid", () => {
     expect(deploymentProblem(readDeploymentAt(checkout(undefined)), "pc", "abc1234")).toContain("There is no .superagent2/deployment.json at abc1234");
     expect(deploymentProblem(readDeploymentAt(checkout({ ...recipe, target: "nas" })), "pc", "abc1234")).toContain("not a valid deployment file");
+  });
+
+  it("passes the Super Agent deployment commands to SSH on the platform shell", () => {
+    const reading = readDeploymentFile(readFileSync(new URL("../../../.superagent2/deployment.json", import.meta.url), "utf8"));
+    if (!reading.ok) throw new Error(reading.reason);
+    const windows = process.platform === "win32";
+    writeFileSync(join(home, "record.cjs"), "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    writeFileSync(join(home, windows ? "ssh.cmd" : "ssh"), windows
+      ? `@echo off\r\n"${process.execPath}" "%~dp0record.cjs" %*\r\n`
+      : '#!/bin/sh\nexec node "$(dirname "$0")/record.cjs" "$@"\n', { mode: 0o755 });
+    const env = { ...process.env };
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+    env[pathKey] = [home, env[pathKey]].join(delimiter);
+    const commit = "abc1234".padEnd(40, "0");
+    const { deploy, health, rollback } = reading.file;
+    for (const shell of windows ? [undefined, windowsPowerShell(env)] : [undefined]) {
+      for (const [template, operation] of [[deploy, `release ${commit}`], [health.command, "health"], [rollback, "rollback"]] as const) {
+        const command = shellInvocation(deploymentCommand(template, commit), shell);
+        const result = spawnSync(command.file, command.args, { shell: command.shell, env, encoding: "utf8", windowsHide: true });
+        expect(result.status, result.stderr || result.error?.message).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual(["novan-nas-maintenance", `bash /share/Container/superagent2/deploy.sh ${operation}`]);
+      }
+    }
   });
 });
