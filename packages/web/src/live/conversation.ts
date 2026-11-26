@@ -143,6 +143,7 @@ export function unsettled(entry: ConversationEntry, finished: ReadonlySet<string
       return entry.answer === null;
     case "notice":
     case "delivery":
+    case "chains":
       return false;
   }
 }

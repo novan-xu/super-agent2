@@ -168,6 +168,13 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string): Promis
   hub.tickets.move(forkThenMerge[1]!, "waiting");
   const startCard = open(repositories[0], { en: "Review the greenhouse checklist", zh: "复核温室巡检表" });
   pin(startCard, number);
+  const card = hub.chains.cards().find((entry) => entry.ticket.id === startCard);
+  if (card === undefined) throw new Error("Could not seed the conversation chain");
+  for (const topic of [code, daily]) {
+    hub.database.connection.prepare(`INSERT INTO conversation_entries (id, conversation_id, seq, kind, turn_id, body, created_at, stream_seq)
+      VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM conversation_entries WHERE conversation_id = ?), 'chains', ?, ?, ?, (SELECT COALESCE(MAX(stream_seq), 0) + 1 FROM conversation_entries))`)
+      .run(randomUUID(), topic, topic, randomUUID(), JSON.stringify({ chains: [{ ticket: startCard, fingerprint: card.fingerprint }] }), now);
+  }
   for (const repository of repositories) hub.repositories.setPinned(repository, true);
 
   await seedTransfer(url, icon);

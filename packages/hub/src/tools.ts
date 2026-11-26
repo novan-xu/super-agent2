@@ -1141,6 +1141,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return { text: opened.reason, isError: true };
         }
         const ticket = opened.ticket;
+        tools.tickets.versions.trackStart(turn, [ticket.id]);
         const pendingBefore = ticket.waits.some((wait) => tools.tickets.get(wait.ticket)?.state === "pending");
         return {
           text: [
@@ -1394,7 +1395,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const turn = writeTurn();
         const scheduled = tools.tickets.scheduleForTurn(turn) !== undefined;
-        return statedText(tools.chains.state(parsed.data.chains.map((chain) => ({ ...chain, ticket: resolve(chain.ticket) })), turn), tools.defaults, scheduled);
+        const outcome = tools.chains.state(parsed.data.chains.map((chain) => ({ ...chain, ticket: resolve(chain.ticket) })), turn);
+        if (outcome.ok) tools.tickets.versions.trackStart(turn, outcome.tickets.map((ticket) => ticket.id));
+        return statedText(outcome, tools.defaults, scheduled);
       }
       case "guide_ticket": {
         if (tools.loop === undefined) {
@@ -1450,8 +1453,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         }
         const names = new Set(parsed.data.chains.map((chain) => chain.name));
         const turn = writeTurn();
-        return arrangedText(
-          chains.arrange(
+        const outcome = chains.arrange(
             parsed.data.chains.map((chain) => ({
               name: chain.name,
               repository: chain.repository,
@@ -1465,10 +1467,9 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
               platform: chain.platform,
             })),
             turn,
-          ),
-          tickets.reference,
-          tickets.scheduleForTurn(turn) !== undefined,
-        );
+          );
+        if (outcome.ok) tickets.versions.trackStart(turn, outcome.chains.map(({ ticket }) => ticket.id));
+        return arrangedText(outcome, tickets.reference, tickets.scheduleForTurn(turn) !== undefined);
       }
       case "report_deployment": {
         const parsed = TicketArgument.safeParse(raw);

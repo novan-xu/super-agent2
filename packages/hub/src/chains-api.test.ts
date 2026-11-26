@@ -18,7 +18,7 @@ import {
   WaitingList,
 } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { callBrainTool } from "./testing/brain-tools.js";
+import { attachBrain, callBrainTool, requestBrainTool, startToolTurn } from "./testing/brain-tools.js";
 import WebSocket from "ws";
 import type { Hub } from "./hub.js";
 import { createPushDevice, receivePush } from "./push-device.js";
@@ -273,6 +273,32 @@ async function page(running: Hub): Promise<Inbox> {
   await inbox.until(() => inbox.messages.some((message) => message.type === "tickets"));
   return inbox;
 }
+
+describe("conversation chain cards", () => {
+  it("writes one card for a turn and starts its recorded arrangement", async () => {
+    const running = await start();
+    const topic = running.conversations.create().id;
+    const brain = attachBrain(running);
+    const turn = startToolTurn(brain, topic);
+    const filed = await requestBrainTool(running, "file_issue", {
+      repository: sandbox, title: { en: "Update parser", zh: "更新解析器" },
+      summary: { en: "Update the parser", zh: "更新解析器" }, body: "## Goal\n\nUpdate the parser.", kind: "feature",
+    }, turn);
+    expect(filed.isError, filed.text).toBe(false);
+    const arranged = await requestBrainTool(running, "arrange_chains", { chains: [{ name: "one", repository: sandbox, issues: [1] }] }, turn);
+    expect(arranged.isError, arranged.text).toBe(false);
+    const ticket = running.tickets.list({ open: true })[0]!;
+    const defaults = { chains: [{ ticket: ticket.code, kind: "feature", issues: [{ number: 1, difficulty: "standard" }], reason: { en: "A small change", zh: "小改动" }, platform: "windows" }] };
+    expect((await requestBrainTool(running, "choose_defaults", defaults, turn)).isError).toBe(false);
+    brain.receive({ type: "turn.finished", ...turn, outcome: "completed", reason: null });
+    const entries = running.conversations.detail(topic)?.entries.filter((entry) => entry.kind === "chains") ?? [];
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (entry?.kind !== "chains") throw new Error("missing chains entry");
+    expect(entry.chains).toEqual([{ ticket: ticket.id, fingerprint: (await cardOf(running, ticket.id)).fingerprint }]);
+    expect((await startCall(running, { body: JSON.stringify({ chains: entry.chains }) })).status).toBe(202);
+  });
+});
 
 describe("chains from filing to start", () => {
   it("makes three issues two chains, shows them as start cards, and one start begins both", async () => {

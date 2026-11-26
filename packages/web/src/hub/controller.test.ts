@@ -312,6 +312,15 @@ describe("PageController", () => {
       expect(page.store.getState().waiting.cards.map((card) => card.key)).not.toContain("start:1");
     });
 
+    it("rejects a stale conversation fingerprint before sending", async () => {
+      const hub = api();
+      const page = shown(hub);
+      expect(await page.startChains(["start:1"], { "start:1": "f".repeat(64) })).toBe(false);
+      expect(hub.calls).toEqual([]);
+      expect(await page.startChains(["start:1"], { "start:1": "1".repeat(64) })).toBe(true);
+      expect(hub.calls).toEqual(["start 1:1"]);
+    });
+
     it("starts everything shown with one request", async () => {
       const hub = api();
       const page = shown(hub);

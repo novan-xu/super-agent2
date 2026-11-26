@@ -185,6 +185,7 @@ export interface ConversationServiceOptions {
   readonly clock: Clock;
   readonly commands: CommandService;
   readonly tickets: TicketService;
+  readonly startCards?: () => import("@super-agent2/protocol").StartCard[];
   readonly memory?: MemoryBriefing;
   readonly archiveMilliseconds?: number | undefined;
   readonly order?: () => readonly Provider[] | undefined;
@@ -346,6 +347,8 @@ function toEntry(row: EntryRow): ConversationEntry {
         ...(row.quote_id === null ? {} : { quotedMessage: row.quote_id }),
         ...(body.possibleMatch === undefined ? {} : { possibleMatch: body.possibleMatch }),
       });
+    case "chains":
+      return ConversationEntry.parse({ ...base, kind: "chains", turn: row.turn_id, chains: body.chains });
     case "question":
       return ConversationEntry.parse({ ...base, kind: "question", turn: row.turn_id, questions: body.questions, answer: body.answer ?? null });
     case "notice":
@@ -410,6 +413,8 @@ function historyItem(raw: unknown, reference: (id: number) => string | undefined
   switch (entry.kind) {
     case "owner":
       return { kind: "owner", text: ownerPrompt(entry.text, entry.voiceTranscript), attachments: forBrain(entry.attachments) };
+    case "chains":
+      return { kind: "notice", text: "[hub] Start cards were shown to the owner." };
     case "question":
       return { kind: "notice", text: JSON.stringify({ questions: entry.questions, answer: entry.answer }) };
     case "notice":
@@ -681,6 +686,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     switch (entry.kind) {
       case "tool":
       case "question":
+      case "chains":
         return undefined;
       case "owner":
         item = { kind: "owner", text: entry.text, attachments: forBrain(entry.attachments) };
@@ -916,6 +922,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     const turn = toTurn(row);
     let continuation: string | undefined;
+    let chainEntry: string | undefined;
     connection.exec("BEGIN IMMEDIATE");
     try {
       if (restarting && row.ticket_writes_revoked === 0) {
@@ -924,6 +931,16 @@ export function createConversationService(options: ConversationServiceOptions): 
       if (outcome === "completed") {
         applyTitle.run(id);
       }
+      const changed = new Set(connection.prepare("SELECT ticket_id FROM turn_start_tickets WHERE turn_id = ?").all(id).map((row) => Number(row["ticket_id"])));
+      const cards = changed.size === 0 ? [] : options.startCards?.() ?? [];
+      const dependsOn = (ticket: number, root: number, seen = new Set<number>()): boolean => {
+        if (ticket === root) return true;
+        if (seen.has(ticket)) return false;
+        seen.add(ticket);
+        return cards.find((card) => card.ticket.id === ticket)?.ticket.waits.some((wait) => !wait.waived && dependsOn(wait.ticket, root, seen)) ?? false;
+      };
+      const selected = cards.filter((card) => card.startable && [...changed].some((ticket) => dependsOn(ticket, card.ticket.id)));
+      if (selected.length > 0) chainEntry = writeEntry({ conversation: turn.conversation, kind: "chains", turn: id, body: { chains: selected.map((card) => ({ ticket: card.ticket.id, fingerprint: card.fingerprint })) } });
       finishTurn.run(outcome, reason, clock.now(), id);
       topics.finish(turn.conversation, id, outcome);
       if (applied && mailReviewOf(turn.conversation, id) === undefined) {
@@ -938,6 +955,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     }
     emitTurn(id);
     if (continuation !== undefined) emitEntry(continuation);
+    if (chainEntry !== undefined) emitEntry(chainEntry);
     announce(turn.conversation);
     corrections.finishOfflineMerges();
   };

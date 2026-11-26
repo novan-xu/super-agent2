@@ -593,3 +593,9 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
   .chat-message .msg-text { max-width: 85%; }
   .chat-actions { left: 85%; }
 }
+
+.conversation-chains { max-width: 100%; gap: var(--space-3); overflow-wrap: anywhere; }
+.conversation-chains h3, .conversation-chains p { margin: 0; }
+.conversation-chains .chain-block { gap: var(--space-2); }
+.conversation-chains .chain-block + .chain-block { border-top: 1px solid var(--border-soft); padding-top: var(--space-3); }
+.conversation-chains button, .conversation-chains a { justify-self: start; }
