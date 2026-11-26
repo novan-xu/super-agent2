@@ -36,10 +36,10 @@ const credentials: CredentialSource = (account) => ({
   credentials: { GH_TOKEN: `token-of-${account}`, GITHUB_TOKEN: `token-of-${account}`, WOODPECKER_SERVER: fakeWoodpeckerServer, WOODPECKER_TOKEN: "woodpecker-token" },
 });
 
-function machine(hostname: string): MachineReport {
+function machine(hostname: string, platform: MachineReport["platform"] = "win32"): MachineReport {
   return {
     hostname,
-    platform: "win32",
+    platform,
     release: "1",
     arch: "x64",
     user: "owner",
@@ -82,7 +82,18 @@ interface Started {
   readonly conversation: string;
 }
 
-async function start(): Promise<Started> {
+function connect(running: Hub, report: MachineReport): { readonly link: RunnerLink; readonly sent: HubToRunner[] } {
+  const name = report.hostname;
+  if (running.machines.get(name) === undefined) running.machines.add({ name, accessClientId: `${name}.access` });
+  const found = running.machines.get(name);
+  if (found === undefined) throw new Error(`Missing machine ${name}`);
+  const sent: HubToRunner[] = [];
+  const link = running.runners.attach(found, { send: (message) => void sent.push(message), close: () => undefined });
+  link.receive({ type: "hello", protocol: protocolVersion, machine: report, works: [] });
+  return { link, sent };
+}
+
+async function start(reports = [machine("pc"), machine("mac")]): Promise<Started> {
   const running = await startTestHub({
     config: testConfig(dataDir),
     keySource: staticKeySource(keySet(key)),
@@ -93,16 +104,8 @@ async function start(): Promise<Started> {
   });
   hub = running;
   const runners = new Map<string, { readonly link: RunnerLink; readonly sent: HubToRunner[] }>();
-  for (const name of ["pc", "mac"]) {
-    running.machines.add({ name, accessClientId: `${name}.access` });
-    const found = running.machines.get(name);
-    if (found === undefined) {
-      throw new Error("machine missing");
-    }
-    const sent: HubToRunner[] = [];
-    const link = running.runners.attach(found, { send: (message) => void sent.push(message), close: () => undefined });
-    link.receive({ type: "hello", protocol: protocolVersion, machine: machine(name), works: [] });
-    runners.set(name, { link, sent });
+  for (const report of reports) {
+    runners.set(report.hostname, connect(running, report));
   }
   return { running, runners, conversation: running.conversations.create().id };
 }
@@ -317,6 +320,96 @@ describe("a deployment arranged with the work it deploys", () => {
     expect(current(running, ticket.id)).toMatchObject({ state: "working", round: 1, work: { attempt: 2 } });
     expect(tasksSent(pc.sent, ticket.id)[1]?.task).toMatchObject({ attempt: 2, checkout: { commit: "head1" } });
     expect(tasksSent(pc.sent, ticket.id)[1]?.task.note).toContain("Check the port before deploying.");
+  });
+});
+
+describe("a deployment with several eligible machines", () => {
+  const targets = ["mac-mini", "macbook-air", "pc"];
+  const pc = { ...machine("pc"), slots: { total: 8, free: 8 } };
+  const mini = machine("mac-mini", "darwin");
+  const air = machine("macbook-air", "darwin");
+  const outside = { ...machine("outside"), slots: { total: 16, free: 16 } };
+
+  async function open({ running, conversation }: Started): Promise<Ticket> {
+    forge.file(repository, "head1", deploymentFile, JSON.stringify({ ...recipe, target: targets }));
+    const opened = await callBrainTool(running, "open_task_ticket", {
+      title: { en: "Deploy main", zh: "部署主分支" }, summary: { en: "Deploy it", zh: "部署" },
+      task: "Deploy using the recipe.", kind: "operation", platform: "macos", repository, deploy: true,
+    }, conversation);
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain("allows this deployment on mac-mini, macbook-air, pc");
+    const ticket = running.tickets.list({ open: true })[0]!;
+    expect(ticket).toMatchObject({ requiredMachine: null, deploymentTargets: targets, platform: "any" });
+    return ticket;
+  }
+
+  async function state(running: Hub, ticket: Ticket, machine?: string) {
+    return callBrainTool(running, "choose_defaults", { chains: [{
+      ticket: ticket.code, kind: "operation", difficulty: "standard", reason: { en: "A known procedure", zh: "已知的步骤" },
+      platform: "macos", ...(machine === undefined ? {} : { machine }),
+    }] });
+  }
+
+  async function approve(running: Hub, ticket: Ticket): Promise<void> {
+    const card = (await cards(running)).find((entry) => entry.ticket.id === ticket.id);
+    expect((await ownerPost(running, chainStartPath, { chains: [{ ticket: ticket.id, fingerprint: card?.fingerprint }] })).status).toBe(202);
+    await running.chains.idle();
+  }
+
+  function loadPc(link: RunnerLink): void {
+    for (let index = 0; index < 9; index++) {
+      link.receive({ type: "report", machine: { ...pc, load: { cpuPercent: 85, ownCpuPercent: 36, gpuPercent: 97, sampledAt: clock.now() } } });
+      clock.advance(15_000);
+    }
+  }
+
+  it.each(targets)("lets the owner choose %s from the card and excludes unlisted machines", async (name) => {
+    const started = await start([pc, mini, air, outside]);
+    const { running, runners } = started;
+    const ticket = await open(started);
+    expect(await state(running, ticket, outside.hostname)).toMatchObject({ isError: true, text: expect.stringContaining("mac-mini, macbook-air, pc") });
+    expect((await state(running, ticket)).isError).toBe(false);
+    const card = (await cards(running)).find((entry) => entry.ticket.id === ticket.id);
+    expect(card?.ticket.platform).toBe("any");
+    expect(card?.machines.map((entry) => entry.name).sort()).toEqual([...targets].sort());
+    expect((await ownerPost(running, chainChoicePath, { ticket: ticket.id, machine: outside.hostname })).status).toBe(422);
+    expect((await ownerPost(running, chainChoicePath, { ticket: ticket.id, machine: name })).status).toBe(202);
+    await approve(running, ticket);
+    expect(tasksSent(runners.get(name)!.sent, ticket.id)).toHaveLength(1);
+  });
+
+  it("prefers a listed, normal-load machine that offers the requested engine and model", async () => {
+    const started = await start([pc, mini, { ...air, programs: [] }, outside]);
+    const { running, runners } = started;
+    const ticket = await open(started);
+    expect((await state(running, ticket)).isError).toBe(false);
+    expect((await cards(running)).find((entry) => entry.ticket.id === ticket.id)?.choice.machine).toBe("pc");
+    loadPc(runners.get("pc")!.link);
+    expect((await cards(running)).find((entry) => entry.ticket.id === ticket.id)?.choice.machine).toBe("mac-mini");
+    await approve(running, ticket);
+    expect(tasksSent(runners.get("mac-mini")!.sent, ticket.id)).toHaveLength(1);
+  });
+
+  it("moves a queued automatic choice to a free listed machine and keeps an owner choice", async () => {
+    const started = await start([pc, { ...air, programs: [] }, outside]);
+    const { running, runners } = started;
+    const pcRunner = runners.get("pc")!;
+    loadPc(pcRunner.link);
+    const automatic = await open(started);
+    expect((await state(running, automatic)).isError).toBe(false);
+    await approve(running, automatic);
+    expect(current(running, automatic.id).work).toMatchObject({ machine: "pc", state: "queued", reason: expect.stringContaining("under high load") });
+    const manual = await open(started);
+    expect((await state(running, manual)).isError).toBe(false);
+    expect((await ownerPost(running, chainChoicePath, { ticket: manual.id, machine: "pc" })).status).toBe(202);
+    await approve(running, manual);
+    const airRunner = runners.get("macbook-air")!;
+    airRunner.link.receive({ type: "report", machine: air });
+    expect(current(running, automatic.id)).toMatchObject({ machine: "macbook-air", work: { machine: "macbook-air", state: "preparing", attempt: 1, reason: null } });
+    expect(tasksSent(airRunner.sent, automatic.id)).toHaveLength(1);
+    expect(tasksSent(airRunner.sent, manual.id)).toHaveLength(0);
+    expect(tasksSent(pcRunner.sent, automatic.id)).toHaveLength(0);
+    expect(current(running, manual.id).work).toMatchObject({ machine: "pc", state: "queued" });
   });
 });
 

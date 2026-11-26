@@ -23,6 +23,11 @@ describe("改派", () => {
     expect(writing?.engines.map((offer) => offer.engine)).toEqual(["antigravity", "claude"]);
   });
 
+  it("offers only listed deployment machines", () => {
+    const deployment = { ...working, kind: "operation" as const, deploys: true, deploymentTargets: ["pc", "mini"] };
+    expect(reassignMachines(deployment, withAntigravity).map((machine) => machine.name)).toEqual(["pc", "mini"]);
+  });
+
   it("lists the same choices a start card does", () => {
     const options = draftOptions(initialDraft(working), fixtureMachines);
     expect(options.machines).toEqual(["pc", "mini"]);

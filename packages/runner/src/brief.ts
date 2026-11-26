@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Attachment, attachmentLine, type TaskAssignment, type WorkSender, type WorkTask } from "@super-agent2/protocol";
-import { assignmentText, type TaskPlace } from "./task.js";
+import { assignmentText, deploymentInstructions, type TaskPlace } from "./task.js";
 import type { FolderState } from "./workplace.js";
 import type { ArtifactFolder } from "./storage.js";
 import { screenshotFolder } from "./screenshots.js";
@@ -192,6 +192,7 @@ export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
     `[hub] Your previous turn was cut off because the machine's runner restarted. Continue ${task.ticketReference === undefined ? "the task" : `ticket ${task.ticketReference}`} from where you left off.`,
     `Look at what is already in your output folder ${place.output}${place.checkout === null ? "" : ` and in the checkout ${place.checkout}`} first, and check the state of anything you were changing on this machine before you do it again.`,
     `Hand back by writing the JSON file at ${place.handback} when you are done or know the task failed, as described at the start.`,
+    ...deploymentInstructions(task, place),
     ...artifactLines(place.artifacts),
     task.note === null ? "" : `\n${task.note}`,
   ]
@@ -200,7 +201,7 @@ export function taskResumeText(task: TaskAssignment, place: TaskPlace): string {
 }
 
 export function taskContinueText(task: TaskAssignment, place: TaskPlace, note: string): string {
-  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`, ...artifactLines(place.artifacts)].join("\n");
+  return [`[hub] ${task.ticketReference === undefined ? "" : `Continue ticket ${task.ticketReference}. `}${note}`, "", `When you are done, hand back again by writing the JSON file at ${place.handback}.`, ...deploymentInstructions(task, place), ...artifactLines(place.artifacts)].join("\n");
 }
 
 export function taskLostSessionNote(): string {

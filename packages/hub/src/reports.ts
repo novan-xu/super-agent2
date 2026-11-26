@@ -229,6 +229,7 @@ export function ticketReport(ticket: Ticket, moves: readonly TicketMove[] = []):
   }
   lines.push(
     `Difficulty: ${chosen(ticket.difficulty)}; platform: ${chosen(ticket.platform)}${ticket.requiredMachine === null || ticket.machinePinned === true ? "" : `; it runs only on ${ticket.requiredMachine}, the machine required for this ticket`}`,
+    ...(ticket.deploymentTargets === undefined ? [] : [`Deployment machines: ${ticket.deploymentTargets.join(", ")}`]),
     ...(pinText(ticket) === "" ? [] : [pinText(ticket).trimEnd()]),
     `Difficulty reason: ${ticket.difficultyReason === null ? "not stated" : ticket.difficultyReason.en}`,
     `Machine: ${chosen(ticket.machine)}; engine: ${chosen(ticket.engine)}; model: ${chosen(ticket.model)}; effort: ${chosen(ticket.effort)}${

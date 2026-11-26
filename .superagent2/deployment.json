@@ -1,6 +1,6 @@
 {
-  "target": "mac-mini",
-  "deploy": "ssh novan-nas-maintenance \"bash /share/Container/superagent2/deploy.sh release $(git rev-parse HEAD)\"",
+  "target": ["mac-mini", "macbook-air", "pc"],
+  "deploy": "ssh novan-nas-maintenance \"bash /share/Container/superagent2/deploy.sh release {commit}\"",
   "health": {
     "command": "ssh novan-nas-maintenance \"bash /share/Container/superagent2/deploy.sh health\"",
     "everySeconds": 10,

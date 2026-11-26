@@ -45,15 +45,25 @@ It lists the containers, the running and previous commits and the latest release
 ## How Super Agent is deployed
 
 Super Agent is deployed like any repository: by a worker, through a task ticket the brain arranges after the chain that changes it, started with that chain's 开始.
-Its recipe is `.superagent2/deployment.json`:
+Its recipe in `.superagent2/deployment.json` lists `mac-mini`, `macbook-air` and `pc`, each of which needs SSH access to the NAS as `novan-nas-maintenance`.
+The hub prefers a listed machine under normal load that offers the selected engine, model and effort.
+The owner can choose an eligible machine on the card.
+Before the first dispatch, a deployment with an automatic machine choice can move to another available listed machine when the chosen machine is offline, under high load or out of slots.
+The runner verifies that the recipe at the deployment commit includes its machine.
 
-- `target` is `mac-mini`, the owner's Mac mini, whose own SSH access reaches the NAS as `novan-nas-maintenance`.
-  The hub runs the ticket only on the runner of that name, and the runner refuses to deploy anywhere else.
-  If the machine that should deploy has another name, change `target` (through a code ticket) or name the runner `mac-mini`.
-- `deploy` runs `deploy.sh release` of the checkout's commit on the NAS over that SSH alias; `health` runs `deploy.sh health`; `rollback` runs `deploy.sh rollback`.
+For a service that can only be deployed from one machine, keep `target` as a single machine name.
+For a recipe that works from several machines, use a non-empty array of distinct names and make sure every listed machine can execute it.
+The hub uses the shared platform when all listed machines are known to run macOS or all are known to run Windows, and `any` otherwise.
+The runner substitutes the verified checkout's full Git commit hash for `{commit}` in the deploy, health and rollback commands it gives the worker.
+Super Agent's three commands all use `ssh` to run `deploy.sh` on the NAS, and the `release` command passes the substituted commit.
+
+A runner from before multi-machine support rejects a recipe with an array in `target`.
+To install the first release with an array on an older instance, use the NAS release command below so the hub and its runners can update.
 
 While the release runs, the hub and the brain stop and start again under the ticket.
-The runner's link drops and comes back; the worker keeps running on the Mac mini, its events are kept on disk and synced to the new hub, its hand-back is delivered there, and only once no worker runs does the runner move to the new hub's version.
+The runner's link drops and comes back while the worker keeps running on its selected machine.
+Its events are kept on disk and synced to the new hub, which receives its hand-back.
+The runner moves to the new hub's version once no worker runs.
 A runner never switches to a version the hub no longer announces, so if the release goes back, the runner stays where it is.
 A worker that finds the new version does not come up hands back failed, and the brain guides it like any failure.
 

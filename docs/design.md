@@ -593,7 +593,7 @@ A code or operation ticket started with every worker provider unavailable waits 
 Writing tries Antigravity first and uses the worker order for fallback.
 
 What the brain can do in the hub's container needs no ticket; anything on a work machine is a task ticket.
-A deployment's machine is the one its deployment file names, and the owner cannot choose another.
+A deployment runs on a machine its deployment file names, and the owner can choose among the eligible machines it lists.
 
 Model and effort by engine and difficulty.
 These are the starting values, taken from the first Super-agent's settings; the owner edits them in 设置.
@@ -644,15 +644,17 @@ It belongs to the owner.
 ## Deployment
 
 A deployment is done by a worker, through a task ticket, as the owner would tell Codex or Claude Code at the machine to deploy the project.
-A repository declares its deployment in `.superagent2/deployment.json`: the machine it runs on (`target`, a runner's name, never the hub's container or the NAS host), the folder, and the deploy, health and rollback commands.
+A repository declares its deployment in `.superagent2/deployment.json` with `target`, the optional folder, and the deploy, health and rollback commands.
+The `target` is one runner name or a non-empty array of distinct runner names, excluding the hub's container and the NAS host.
 It is the worker's recipe.
-The hub reads it when the ticket is opened and runs the ticket only on that machine; the runner refuses to deploy where the file at the deployed commit does not point.
+The hub reads it when the ticket is opened and limits the ticket to the named machines, and the runner checks the list again at the deployed commit.
+For a multi-machine recipe the hub prefers normal load and can move the first queued attempt before dispatch when the machine was chosen automatically and another listed machine is available.
 
 When the brain files work that will need deploying, it arranges the deployment's task ticket after the chain at filing time, so the owner's one 开始 starts both; the deployment begins by itself when the chain has merged, at the chain's final merge commit.
 The worker deploys, checks health, rolls back when the new version does not come up, and reports.
 Done, the merged tickets it contains are marked deployed and what waits for that deployment begins; failed, it is a failed ticket like any other.
 
-Super Agent deploys itself the same way: its file names a machine of the owner's that can sign in to the NAS, whose worker runs `deploy/deploy.sh release` there.
+Super Agent lists `mac-mini`, `macbook-air` and `pc`, whose workers run `deploy/deploy.sh release` on the NAS over SSH.
 The hub and the brain restart underneath the ticket; the worker goes on, its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 
 ## Worker silence

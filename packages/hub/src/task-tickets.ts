@@ -134,17 +134,17 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     return createGitHubApi({ fetch: doFetch, token, ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }) });
   };
 
-  const readTarget = async (repository: string): Promise<{ readonly target: string | null; readonly notes: string[] } | { readonly refused: string }> => {
+  const readTargets = async (repository: string): Promise<{ readonly targets: readonly string[]; readonly notes: string[] } | { readonly refused: string }> => {
     const gitHub = gitHubFor(repository);
     if (typeof gitHub === "string") {
-      return { target: null, notes: [`The deployment file could not be read (${gitHub}), so the ticket's machine follows its platform; its worker reads the file in its checkout and refuses to deploy on a machine the file does not name.`] };
+      return { targets: [], notes: [`The deployment file could not be read (${gitHub}), so the ticket's machine follows its platform; its worker reads the file in its checkout and refuses to deploy on a machine the file does not name.`] };
     }
     try {
       const head = await gitHub.commit(repository, "HEAD");
       const source = head === null ? null : await gitHub.fileText(repository, deploymentFile, head);
       if (source === null) {
         return {
-          target: null,
+          targets: [],
           notes: [
             `${repository} has no ${deploymentFile} on its default branch yet, so the ticket's machine follows its platform. Its worker reads the file at the commit it deploys and refuses to deploy on a machine the file does not name; if work arranged before it adds the file, that is the file it reads.`,
           ],
@@ -154,9 +154,12 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       if (!reading.ok) {
         return { refused: `${deploymentFile} on the default branch of ${repository} is not a valid deployment file: ${reading.reason}. Have it corrected first, as ordinary work through a code ticket.` };
       }
-      return { target: reading.file.target, notes: [`${deploymentFile} names the machine ${reading.file.target}: the ticket runs there, and only there.`] };
+      const targets = reading.file.target;
+      return { targets, notes: [targets.length === 1
+        ? `${deploymentFile} names the machine ${targets[0]} for this deployment.`
+        : `${deploymentFile} allows this deployment on ${targets.join(", ")}. The hub chooses an available machine from that list, and the owner can choose one on the card.`] };
     } catch (error) {
-      return { target: null, notes: [`GitHub could not be read (${reasonOf(error)}), so the ticket's machine follows its platform; its worker reads the file in its checkout and refuses to deploy on a machine the file does not name.`] };
+      return { targets: [], notes: [`GitHub could not be read (${reasonOf(error)}), so the ticket's machine follows its platform; its worker reads the file in its checkout and refuses to deploy on a machine the file does not name.`] };
     }
   };
 
@@ -201,13 +204,13 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       commitRef = mergedCommit;
     }
     const notes: string[] = [];
-    let requiredMachine: string | null = null;
+    let targets: readonly string[] = [];
     if (request.deploy === true && repository !== null) {
-      const read = await readTarget(repository);
+      const read = await readTargets(repository);
       if ("refused" in read) {
         return refuse(read.refused);
       }
-      requiredMachine = read.target;
+      targets = read.targets;
       notes.push(...read.notes);
     }
     if (closed) {
@@ -228,7 +231,8 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
           kind: request.kind,
           difficulty: request.difficulty,
           platform: request.platform,
-          requiredMachine,
+          requiredMachine: targets.length === 1 ? targets[0] : undefined,
+          deploymentTargets: targets.length > 1 ? targets : undefined,
           conversation: request.conversation,
           waitsFor: after,
           task: { task: request.task, materials: request.materials, commitRef, deploys: request.deploy === true },

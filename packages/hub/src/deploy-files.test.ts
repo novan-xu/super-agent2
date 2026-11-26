@@ -22,9 +22,9 @@ describe("Super Agent's own repository", () => {
     if (!reading.ok) {
       throw new Error(reading.reason);
     }
-    expect(reading.file.target).toBe("mac-mini");
+    expect(reading.file.target).toEqual(["mac-mini", "macbook-air", "pc"]);
     expect(reading.file.deploy).toContain("ssh novan-nas-maintenance");
-    expect(reading.file.deploy).toContain("deploy.sh release $(git rev-parse HEAD)");
+    expect(reading.file.deploy).toContain("deploy.sh release {commit}");
     expect(reading.file.health.command).toContain("deploy.sh health");
     expect(reading.file.rollback).toContain("deploy.sh rollback");
   });

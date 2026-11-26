@@ -6,9 +6,9 @@ import { taskPaths } from "./task.js";
 import { repository, token, scratch, home, programs, carried, git, start, ended, writingTask, writeOutput } from "./testing/works.js";
 
 describe("a task worker with a repository", () => {
-  const recipe =(target: string) => JSON.stringify({ target, deploy: "node deploy.mjs", health: { command: "node health.mjs" }, rollback: "node rollback.mjs" });
+  const recipe = (target: string | string[]) => JSON.stringify({ target, deploy: "node deploy.mjs {commit}", health: { command: "node health.mjs {commit}" }, rollback: "node rollback.mjs {commit}" });
 
-  async function commitDeploymentFile(target: string): Promise<string> {
+  async function commitDeploymentFile(target: string | string[]): Promise<string> {
     const seed = join(scratch, "seed");
     const repo = git(seed);
     mkdirSync(join(seed, ".superagent2"), { recursive: true });
@@ -59,18 +59,19 @@ describe("a task worker with a repository", () => {
   });
 
   it("deploys only on the machine its deployment file names, and refuses another before any program starts", async () => {
-    await commitDeploymentFile("mini");
+    await commitDeploymentFile(["mini", "air"]);
     const elsewhere = start({ machine: "pc" });
     elsewhere.receive({ type: "work.task", task: writingTask(42, { deploys: true, checkout: { repository, account: "novan-xu", commit: null, ref: "main" }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }) });
     const refused = await ended(42);
     expect(refused).toMatchObject({ kind: "failed", failure: "prepare" });
-    expect(refused.kind === "failed" ? refused.reason : "").toContain("names the machine mini, and this machine is pc");
+    expect(refused.kind === "failed" ? refused.reason : "").toContain("names these machines: mini, air, and this machine is pc");
     expect(programs.handles).toHaveLength(0);
-    const commit = await commitDeploymentFile("pc");
+    const commit = await commitDeploymentFile(["mini", "pc"]);
     const here = start({ machine: "pc" });
     here.receive({ type: "work.task", task: writingTask(43, { deploys: true, checkout: { repository, account: "novan-xu", commit: null, ref: "main" }, environment: { GH_TOKEN: token, GITHUB_TOKEN: token } }) });
     const handle = await programs.prompted(1);
     expect(handle.prompts[0]).toContain(`at commit ${commit}`);
     expect(handle.prompts[0]).toContain(`Deployment recipe: ${join(taskPaths(home, 43, repository).worktree, ".superagent2", "deployment.json")}`);
+    expect(handle.prompts[0]).toContain(`Deploy: node deploy.mjs ${commit}\nHealth: node health.mjs ${commit}\nRollback: node rollback.mjs ${commit}`);
   });
 });

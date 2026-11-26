@@ -164,6 +164,7 @@ export function chainFingerprint(shown: readonly ShownChain[]): string {
     ticket.form,
     ticket.repository,
     ticket.requiredMachine,
+    ...(ticket.deploymentTargets === undefined ? [] : [ticket.deploymentTargets]),
     ticket.machinePinned,
     ticket.enginePin,
     ticket.commitRef,
@@ -568,7 +569,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(ticket.ownerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    const machines = ticket.machinePinned === true ? defaults.machinesFor(ticket) : defaults.machines();
+    const machines = ticket.machinePinned === true || ticket.deploymentTargets !== undefined ? defaults.machinesFor(ticket) : defaults.machines();
     if (ownerGivesUnoffered(owner, choice, machines, requiredMachineFor(ticket, owner)) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }
@@ -602,7 +603,7 @@ export function createChains(options: ChainsOptions): Chains {
     }
     const owner = applyChange(hasStartPins(ticket) ? ticket.ownerChoice : noOwnerChoice, given.change);
     const choice = defaults.resolve(ticket, owner);
-    const machines = ticket.machinePinned === true ? defaults.machinesFor(ticket) : defaults.machines();
+    const machines = ticket.machinePinned === true || ticket.deploymentTargets !== undefined ? defaults.machinesFor(ticket) : defaults.machines();
     if (ownerGivesUnoffered(owner, choice, machines, requiredMachineFor(ticket, owner)) || antigravityForCode(ticket, owner)) {
       return { ok: false, error: "unsupported" };
     }

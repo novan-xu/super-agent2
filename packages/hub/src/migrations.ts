@@ -1358,6 +1358,10 @@ export const migrations: readonly Migration[] = [
       CREATE UNIQUE INDEX active_repository_check ON repository_checks(repository) WHERE result IS NULL;
     `,
   },
+  {
+    version: 72,
+    sql: `ALTER TABLE tickets ADD COLUMN deployment_targets TEXT;`,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
