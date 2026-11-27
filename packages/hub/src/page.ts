@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { manifestPath, pageAssetsPath, pageIconsPath, pageRoute, serviceWorkerPath, themeScriptPath } from "@super-agent2/protocol";
 import { webManifest } from "./manifest.js";
@@ -52,7 +53,7 @@ export function pageFiles(directory: string): PageFiles {
       return body === undefined ? undefined : { body, type: "text/html; charset=utf-8", immutable: false };
     }
     if (path === manifestPath) {
-      return { body: Buffer.from(webManifest()), type: "application/manifest+json; charset=utf-8", immutable: false };
+      return { body: Buffer.from(await webManifest(join(directory, "icons"))), type: "application/manifest+json; charset=utf-8", immutable: false };
     }
     if (path === serviceWorkerPath || path === themeScriptPath) {
       const body = await readOrNothing(join(directory, path === serviceWorkerPath ? "sw.js" : "theme.js"));
@@ -70,10 +71,13 @@ export function pageFiles(directory: string): PageFiles {
     const name = path.slice(folder === "assets" ? pageAssetsPath.length : pageIconsPath.length);
     const extension = name.split(".").pop() ?? "";
     const type = types[extension];
+    const versionedIcon = folder === "icons" ? /^(.+)\.([a-f0-9]{64})\.(png|svg|ico|webp)$/.exec(name) : null;
+    const sourceName = versionedIcon?.[1] === undefined ? name : `${versionedIcon[1]}.${versionedIcon[3]}`;
     if (!assetName.test(name) || type === undefined || (folder === "icons" && !iconExtensions.has(extension))) {
       return undefined;
     }
-    const body = await readOrNothing(join(directory, folder, name));
-    return body === undefined ? undefined : { body, type, immutable: folder === "assets" };
+    const body = await readOrNothing(join(directory, folder, sourceName));
+    if (body === undefined || (versionedIcon !== null && createHash("sha256").update(body).digest("hex") !== versionedIcon[2])) return undefined;
+    return { body, type, immutable: folder === "assets" || versionedIcon !== null };
   };
 }
