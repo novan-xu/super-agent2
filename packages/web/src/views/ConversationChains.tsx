@@ -35,7 +35,7 @@ export function ConversationChains({ entry, waiting, tickets, start }: { readonl
   const identity = (item: Ticket, choice?: typeof cards[number]["choice"]) => <div className="conversation-chain-identity">
     <a href={cardAddress(`start:${item.id}`)}><TicketCodeLabel code={item.code} /></a>
     <span className="conversation-chain-title" title={chineseOf(item.title)}>{chineseOf(item.title)}</span>
-    {choice === undefined ? null : <span className="conversation-chain-choice" title={[choice.machine, choice.engine].map((value) => value ?? "—").join(" · ")}>{[choice.machine, choice.engine].map((value) => value ?? "—").join(" · ")}</span>}
+    {choice === undefined ? null : <><span className="conversation-chain-choice" title={choice.machine ?? "—"}>{choice.machine ?? "—"}</span><span className="conversation-chain-engine">{choice.engine ?? "—"}</span></>}
   </div>;
   return <section className="wcard conversation-chains" aria-label={text("conversation.chains.title")}>
     {rows.map(({ snapshot, card, ticket, valid }) => <div key={snapshot.ticket} className="chain-block">
