@@ -143,16 +143,19 @@ describe("a runner's link", () => {
     expect(running.runners.statuses()).toEqual([expect.objectContaining({ name: "pc", online: true, report })]);
   });
 
-  it("requests allowance readings only from connected non-Windows runners", async () => {
+  it("requests allowance readings from Windows runners only while no non-Windows runner is connected", async () => {
     const running = await start();
     running.machines.add({ name: "pc", accessClientId: clientId });
     running.machines.add({ name: "mac", accessClientId: clientId });
     const pc = new FakeRunner().connect(running, "pc");
-    expect(running.runners.refreshAllowance()).toBe(0);
+    expect(pc.sent.at(-1)).toEqual({ type: "allowance.mode", read: true });
+    expect(running.runners.refreshAllowance()).toBe(1);
+    expect(pc.sent.at(-1)).toEqual({ type: "allowance.refresh" });
     const mac = new FakeRunner().connect(running, "mac", { ...report, platform: "darwin" });
+    expect(pc.sent.at(-1)).toEqual({ type: "allowance.mode", read: false });
     expect(running.runners.refreshAllowance()).toBe(1);
     expect(mac.sent.at(-1)).toEqual({ type: "allowance.refresh" });
-    expect(pc.sent.some((message) => message.type === "allowance.refresh")).toBe(false);
+    expect(pc.sent.filter((message) => message.type === "allowance.refresh")).toHaveLength(1);
   });
 
   it("waits for the matching refresh report, rather than an unrelated report, and times out older runners", async () => {
@@ -187,7 +190,7 @@ describe("a runner's link", () => {
     await waitForState(running.commands, held.id, "held");
     running.commands.stop(held.id);
     await running.commands.finished(held.id);
-    expect(runner.sent.map((message) => message.type)).toEqual(["welcome"]);
+    expect(runner.sent.map((message) => message.type)).toEqual(["welcome", "allowance.mode"]);
   });
 
   it("closes a revoked runner's connection, also when another process revokes it", async () => {

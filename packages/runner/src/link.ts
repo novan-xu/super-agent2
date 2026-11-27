@@ -50,6 +50,7 @@ export interface RunnerLinkOptions {
   readonly onEvent?: (event: LinkEvent) => void;
   readonly works?: () => Works | undefined;
   readonly refreshAllowance?: () => void;
+  readonly allowanceMode?: (read: boolean) => void;
   readonly refreshPrograms?: (id: string) => void;
   readonly setStorage?: (settings: StorageSettings) => void;
 }
@@ -196,6 +197,7 @@ export function createRunnerLink(options: RunnerLinkOptions): RunnerLink {
         }
         if (message.type === "programs.refresh") { options.refreshPrograms?.(message.id); return; }
         if (message.type === "allowance.refresh") { options.refreshAllowance?.(); return; }
+        if (message.type === "allowance.mode") { options.allowanceMode?.(message.read); return; }
         if (message.type === "storage.set") { options.setStorage?.(message.settings); return; }
         if (message.type === "check.run" || message.type === "check.cancel") { options.check?.(message); return; }
         options.works?.()?.receive(message);

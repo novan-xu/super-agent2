@@ -4010,3 +4010,18 @@ All accents use the same contrast-based derivation for text and focus colours, a
 This keeps custom colours readable in both themes and preserves explicit choices from earlier versions.
 Installed icons remain orange because operating systems capture static icons at installation; replacing them dynamically would not reliably update existing installations.
 Other options were to keep separate hand-written preset styles or attempt to update installed icons dynamically.
+
+## 2026-11-27 — Windows runners read allowances only as a fallback (#388)
+
+- **Chosen:** The hub tells each Windows runner whether to read allowances with an `allowance.mode` message, sent after the welcome and whenever the answer changes.
+  A Windows runner reads (at once, every ten minutes and on a hub refresh) only while no macOS or Linux runner is online, and the hub sends its allowance refreshes to Windows runners only then.
+  The hub switches the reads on only once no macOS or Linux runner has been online for two minutes, counted from the last one that went away, or from its last report before a hub restart; it switches them off as soon as one is online again.
+  A Windows runner that is told to read again within ten minutes of its last reading waits for its timer instead of reading at once.
+  A runner on another system ignores the message, and a Windows runner whose hub never sends it does not read, as before.
+- **Why:** The local edition has only a Windows runner, which read nothing after #339; the console windows that the allowance programs open on the Windows desktop remain the reason not to read there while a Mac reads the same accounts.
+  The grace period keeps a brief reconnect or a hub restart from starting those programs on the Windows PC.
+  The freshest reading of each subscription wins whichever machine took it, so readings taken during the fallback simply age out.
+- **Other options:** The hub driving Windows reads with its own refresh timer; switching at once without a grace period; a setting on each runner.
+- **Console windows:** `windowsHide` already hides the program and the `cmd.exe` that starts a `.cmd` shim (Node then creates them with `CREATE_NO_WINDOW`, and their console children inherit the hidden console).
+  A window still opens when a descendant starts a console program from a process without a console: a child the program starts detached, or the console children of a GUI-subsystem process.
+  The runner cannot pass flags to its grandchildren, so there is no fix in the prober; running the programs on a hidden desktop would hide them but needs native code, and was not done.
