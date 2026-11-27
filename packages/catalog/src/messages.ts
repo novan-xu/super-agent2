@@ -613,7 +613,7 @@ export const messages = {
   "memory.origin": "来自 {peer}",
   "memory.principle": "工程原则提案",
   "memory.confirmShare": "确认并共享",
-  "memory.confirmSend": "确认发送至 NAS",
+  "memory.confirmSend": "确认发送至主站",
   "memory.confirm": "确认",
   "memory.decline": "不要",
   "memory.replaces": "确认后替换：",
