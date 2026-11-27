@@ -600,6 +600,7 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
 .conversation-chains .chain-block + .chain-block { border-top: 1px solid var(--border-soft); padding-top: var(--space-2); }
 .conversation-chain-row, .conversation-chain-identity { display: flex; align-items: center; min-width: 0; gap: var(--space-2); }
 .conversation-chain-identity { flex: 1; overflow: hidden; }
+.start-actions { display: inline-flex; flex: none; align-items: center; gap: var(--space-2); white-space: nowrap; }
 .conversation-chain-identity a, .conversation-chain-engine, .conversation-chain-row button, .conversation-chain-state { flex: none; }
 .conversation-chain-title, .conversation-chain-choice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-chain-title { flex: 1 1 0; min-width: 0; }

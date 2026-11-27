@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { text } from "@super-agent2/catalog";
 import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card, ticketProject } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
@@ -9,14 +9,15 @@ import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
 import { RepairChip, TicketCodeLabel } from "./TicketParts.js";
 
-export function AbandonButton({ ticket, stop }: { readonly ticket: number; readonly stop: (ticket: number) => Promise<boolean> }) {
+export function AbandonButton({ ticket, stop, children }: { readonly ticket: number; readonly stop: (ticket: number) => Promise<boolean>; readonly children?: ReactNode }) {
   const [step, setStep] = useState<"idle" | "armed" | "sending">("idle");
-  return <span className="card-actions">
+  return <span className="start-actions">
     <button type="button" className={step === "armed" ? "btn btn-danger-solid btn-sm" : "btn btn-danger btn-sm"} disabled={step === "sending"} onClick={() => {
       if (step === "idle") setStep("armed");
       else { setStep("sending"); void stop(ticket).then(() => setStep("idle")); }
     }}>{text("ticket.abandon")}</button>
     {step === "armed" ? <button type="button" className="btn btn-sm" onClick={() => setStep("idle")}>{text("ticket.cancel")}</button> : null}
+    {step === "idle" ? children : null}
   </span>;
 }
 
@@ -139,6 +140,7 @@ export function StartCard({ card, use, focused, start, choose, stop }: StartCard
   const { ticket } = card;
   const repository = ticketProject(ticket);
   const sending = use.step === "sending";
+  const startButton = canStartCard(card) ? <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="button" disabled={sending} aria-busy={sending} onClick={start}><Icon name="check" />{text("chains.start")}</button> : null;
   return (
     <article className={focused ? "wcard wcard--focus" : "wcard"} id={`card-${card.key}`} data-card={card.key} aria-label={`${chineseOf(ticket.title)} ${ticket.code.toUpperCase()}`}>
       <div className="wcard-kind">
@@ -175,15 +177,9 @@ export function StartCard({ card, use, focused, start, choose, stop }: StartCard
           {failureText(use.failure)}
         </p>
       )}
-      {stop === undefined ? null : <AbandonButton ticket={ticket.id} stop={stop} />}
-      {canStartCard(card) ? (
-        <div className="card-actions">
-          <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="button" disabled={sending} aria-busy={sending} onClick={start}>
-            <Icon name="check" />
-            {text("chains.start")}
-          </button>
-        </div>
-      ) : null}
+      <div className="card-actions start-card-actions">
+        {stop === undefined ? startButton : <AbandonButton ticket={ticket.id} stop={stop}>{startButton}</AbandonButton>}
+      </div>
     </article>
   );
 }
