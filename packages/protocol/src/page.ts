@@ -3,7 +3,7 @@ import { RepositoryName } from "./repositories.js";
 import { ScheduleId } from "./schedules.js";
 import { SettingsSection } from "./settings.js";
 
-export const pageViews = ["workbench", "conversations", "history", "memory", "schedules", "settings"] as const;
+export const pageViews = ["workbench", "conversations", "history", "memory", "schedules", "remote", "settings"] as const;
 export type PageView = (typeof pageViews)[number];
 
 export type PageRoute =

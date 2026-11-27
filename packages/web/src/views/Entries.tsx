@@ -2,7 +2,8 @@ import { QuestionCard } from "./QuestionCard.js";
 import { UiScreenshots } from "./UiScreenshots.js";
 import { FileViewer } from "../parts/FileViewer.js";
 import { text } from "@super-agent2/catalog";
-import { cardAddress, pagePath, ticketAddress, type ConversationEntry, type DeliveryEntry, type NoticeEntry, type OwnerEntry, type TextEntry, type Turn } from "@super-agent2/protocol";
+import { type ConversationEntry, type DeliveryEntry, type NoticeEntry, type OwnerEntry, type TextEntry, type Turn } from "@super-agent2/protocol";
+import { cardAddress, pagePath, ticketAddress } from "../parts/app-path.js";
 import { memo, useCallback, useState, type ReactNode } from "react";
 import { ticketFilePath } from "../hub/api.js";
 import { sizeOf } from "../live/size.js";
@@ -168,7 +169,7 @@ function Notice({ entry, topic, action }: { readonly entry: NoticeEntry; readonl
       {entry.destination === undefined ? <span>{entry.text}</span> : <a href={pagePath({ view: "conversations", conversation: entry.destination, scope: { kind: "daily" } })}>{entry.text}</a>}
       {entry.ticket === undefined || entry.start !== true ? null : <a href={ticketAddress(entry.ticket)}>{text("notice.taskOpen")}</a>}
       {entry.ticket === undefined || entry.start !== true ? null : <a href={cardAddress(`start:${entry.ticket}`)}>{text("notice.taskStart")}</a>}
-      {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href="/settings/models">{text("notice.newModelsLink")}</a> : null}
+      {entry.text.startsWith(text("notice.newModelsPrefix")) ? <a href={pagePath({ view: "settings", section: "models" })}>{text("notice.newModelsLink")}</a> : null}
       {topic}
       {action}
     </div>

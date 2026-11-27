@@ -36,7 +36,7 @@ Write document prose one sentence per line without wrapping sentences, so edits 
 
 ### Front door
 
-With Access audiences configured, the front door is Cloudflare Access on the existing host name, with four applications and no Bypass rule anywhere.
+With Access audiences configured, the front door is Cloudflare Access on the existing host name, with separate path applications for service integrations and no Bypass rule anywhere.
 The host's own application admits only the owner, signed in with Google.
 A second application for the path `runner` admits only service tokens the hub made for machines, through one Service Auth policy, so a machine's token never reaches the owner's pages and the owner's sign-in never reaches the runners' paths.
 A third application for the path `inbox` admits only service tokens tagged for inbox sources, and the hub checks the source identity and its separate audience on that path.
@@ -44,6 +44,8 @@ The same application protects `/inbox/message` for text notices and `/inbox/mcp`
 A fourth application for `/mcp` uses Cloudflare Managed OAuth and admits only the owner's email.
 The hub requires that application's own signed Access assertion and the owner identity on `/mcp`, and the endpoint is disabled when its audience is unset.
 Cloudflare handles OAuth discovery, client registration, authorization and token issuance.
+An optional application for `/peer` admits only service tokens tagged for peer links.
+The hub verifies the peer audience, service client ID and the separately issued peer token before accepting the link.
 The hub verifies each application's own assertion where it belongs and answers nothing without one: the only exceptions are `/health` (status and version, for the NAS's own checks, and behind the owner's sign-in through the host name like everything else) and the brain's routes, which the brain reaches on the NAS's internal network with its own token.
 A work machine is added from 设置, or by the same steps with the hub's command line in its container on the NAS: the hub makes its service token and runner token at once and shows, once, a one-line install command that carries them to the machine.
 The new system took over the existing host name at its first deployment, and the first Super-agent was stopped then.
@@ -69,6 +71,23 @@ The same confirmation lock checks Windows cmdlets and native commands that remov
 For each GitHub account the launcher uses its configured token or the token fetched from the local `gh` sign-in for that account.
 The local edition can use Cloudflare Access with the same audience and service authentication as the NAS edition.
 See the [local installation checklist](local.md) for setup and configuration.
+
+### Remote control
+
+A loopback local edition can open an outbound WebSocket to the NAS peer endpoint.
+It reconnects with bounded backoff and makes no change to the local listener or direct request admission.
+The NAS serves the remote page at `/remote/<peer>/` only after verifying the owner's front-door assertion.
+An authenticated link multiplexes requests and the page's WebSocket over HTTP/2 streams to the existing local loopback listener.
+The link carries only the local owner page, its assets and its owner API.
+Peer enrollment, runner links and brain tools use separate routes and credentials.
+The NAS brain has no tools for the local edition.
+
+The NAS relays remote page traffic without retaining it.
+It never writes relayed request or response bodies or WebSocket messages to SQLite, logs, files, attachments, notices or caches.
+It keeps only the peer identity and token hash, with connection status held in memory.
+The relay forces no-store responses and sends neither browser credentials nor Access credentials to the local web handlers.
+The remote page uses its own URL prefix for navigation, assets and live updates.
+Its composer drafts stay in memory and push subscriptions remain available from each installation's direct page.
 
 ### Optional integrations
 

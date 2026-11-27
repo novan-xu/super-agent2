@@ -46,10 +46,11 @@ The check opens the built page in the page development harness with sample data 
 Long code blocks, tables and repository tabs may scroll inside their own bounded containers.
 
 After `pnpm build`, use `pnpm screenshot --view transfer --width phone --out <dir>` to capture the transfer view with its HTML preview open.
-The view names are `code`, `daily`, `workbench-canvas`, `workbench-conversation`, `ticket`, `transfer`, `settings`, `machines`, `models`, `memory`, `schedules` and `history`.
+The view names are `code`, `daily`, `workbench-canvas`, `workbench-conversation`, `ticket`, `transfer`, `settings`, `machines`, `models`, `memory`, `schedules`, `history`, `remote` and `remote-conversation`.
 Omit `--width` to capture both widths, or use `--width desktop` for the desktop width alone.
 The command writes PNGs named `<view>-<width>.png` to `--out`, then falls back to `SUPERAGENT2_ARTIFACTS_DIR` if set, or the current directory.
 Use `--page-dir <built page dir>` with `pnpm layout` or `pnpm screenshot` to use a compatible build from another revision with the same sample data and viewport.
+Use `--remote-fixture` with `pnpm screenshot` to show the remote-control entry in other views.
 Use `--minimal-integrations` with `pnpm screenshot` to capture the sample views with optional integrations off and one signed-in worker provider.
 
 ## Verification and merge

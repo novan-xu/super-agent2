@@ -13,6 +13,7 @@ interface ClickWorkerEvent extends WorkerEvent {
 }
 
 interface WorkerPage {
+  readonly url: string;
   readonly focused: boolean;
   readonly visibilityState: string;
   focus(): Promise<unknown>;
@@ -38,7 +39,8 @@ type ShownOptions = NonNullable<ReturnType<typeof readPush>>["options"];
 const scope = self as unknown as WorkerScope;
 
 async function openAddress(url: string): Promise<void> {
-  const page = pickWindow(await scope.clients.matchAll({ type: "window", includeUncontrolled: true }));
+  const pages = await scope.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const page = pickWindow(pages.filter((client) => !/^\/remote\/[^/]/.test(new URL(client.url).pathname)));
   if (page === undefined) {
     await scope.clients.openWindow(url);
     return;

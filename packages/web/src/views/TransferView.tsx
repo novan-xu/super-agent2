@@ -1,3 +1,4 @@
+import { appPath, remoteName } from "../parts/app-path.js";
 import { text as t } from "@super-agent2/catalog";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import type { UploadApi } from "../live/upload.js";
 const itemSchema = z.object({ seq: z.number(), text: z.string(), device: z.enum(["phone", "desktop"]), at: z.number(), title: z.string().optional(), files: z.array(Attachment) });
 type Item = z.infer<typeof itemSchema>;
 const pageSchema = z.object({ items: z.array(itemSchema), more: z.boolean() });
-const filePath = (id: string) => `/api/transfer/files/${encodeURIComponent(id)}`;
+const filePath = (id: string) => appPath(`/api/transfer/files/${encodeURIComponent(id)}`);
 async function uploadRequest(path: string, init?: RequestInit): Promise<Answer<AttachmentUpload>> {
   try {
     const response = await fetch(path, init);
@@ -54,7 +55,7 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
   const deviceTransfer = useFeature("deviceTransfer");
   const [items, setItems] = useState<Item[]>([]);
   const [more, setMore] = useState(false);
-  const [draft, setDraft] = useState(() => { try { return localStorage.getItem("transfer.draft") ?? ""; } catch { return ""; } });
+  const [draft, setDraft] = useState(() => { try { return remoteName() === undefined ? localStorage.getItem("transfer.draft") ?? "" : ""; } catch { return ""; } });
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -84,7 +85,7 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
   const attaching = useAttachments("transfer", uploadApi);
   const load = useCallback(async (before?: number) => {
     try {
-      const response = await fetch(`/api/transfer${before === undefined ? "" : `?before=${before}`}`, { cache: "no-store" });
+      const response = await fetch(appPath(`/api/transfer${before === undefined ? "" : `?before=${before}`}`), { cache: "no-store" });
       const parsed = pageSchema.safeParse(await response.json());
       if (!response.ok || !parsed.success) throw new Error();
       setItems((previous) => before === undefined ? parsed.data.items : [...parsed.data.items, ...previous.filter((item) => item.seq >= before)]);
@@ -98,16 +99,16 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
     try {
       const files = await attaching.settle();
       if (files === undefined) throw new Error();
-      const response = await fetch("/api/transfer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: draft, files, device: matchMedia("(pointer: coarse)").matches ? "phone" : "desktop" }) });
+      const response = await fetch(appPath("/api/transfer"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: draft, files, device: matchMedia("(pointer: coarse)").matches ? "phone" : "desktop" }) });
       if (!response.ok) throw new Error();
-      setDraft(""); try { localStorage.removeItem("transfer.draft"); } catch {}
+      setDraft(""); try { if (remoteName() === undefined) localStorage.removeItem("transfer.draft"); } catch {}
       attaching.clear(); following.current = true; await load();
     } catch { setError(t("transfer.sendFailed")); }
     finally { setSending(false); }
   };
   const remove = async (seq: number) => {
     if (!window.confirm(t("transfer.deleteConfirm"))) return;
-    try { const response = await fetch(`/api/transfer/${seq}`, { method: "DELETE" }); if (!response.ok) throw new Error(); await load(); } catch { setError(t("transfer.deleteFailed")); }
+    try { const response = await fetch(appPath(`/api/transfer/${seq}`), { method: "DELETE" }); if (!response.ok) throw new Error(); await load(); } catch { setError(t("transfer.deleteFailed")); }
   };
   return <div className="conv"><div className="conv-main"><div className="conv-bar">{navigation}
     <div className="conv-toolbar"><button className="conv-pick" type="button" aria-haspopup="dialog" onClick={() => picker.current?.showModal()}>{t("transfer.recentFiles")}<Icon name="down" size={16} /></button></div>
@@ -128,7 +129,7 @@ export function TransferView({ navigation }: { readonly navigation: ReactNode })
     {error ? <p role="alert">{error}</p> : null}
     {deviceTransfer ? <div className="composer-wrap"><form className="composer" onSubmit={(event) => void send(event)} onDragOver={attaching.over} onDrop={attaching.drop}>
       <PendingList attaching={attaching} />
-      <textarea ref={field} rows={1} aria-label={t("transfer.content")} value={draft} onPaste={attaching.paste} onChange={(event) => { setDraft(event.target.value); try { localStorage.setItem("transfer.draft", event.target.value); } catch {} }} />
+      <textarea ref={field} rows={1} aria-label={t("transfer.content")} value={draft} onPaste={attaching.paste} onChange={(event) => { setDraft(event.target.value); try { if (remoteName() === undefined) localStorage.setItem("transfer.draft", event.target.value); } catch {} }} />
       <div className="composer-foot"><AttachButton add={attaching.add} /><span className="od-fill" /><button className="btn btn-primary btn-sm" type="submit" disabled={sending}><Icon name="send" />{t("transfer.send")}</button></div>
     </form></div> : null}
   </div>

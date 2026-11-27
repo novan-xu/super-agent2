@@ -55,6 +55,7 @@ import {
   StorageSettings,
 } from "@super-agent2/protocol";
 import { z } from "zod";
+import { appPath } from "../parts/app-path.js";
 
 export type Failure = Refusal["error"] | "network" | "timeout";
 
@@ -69,7 +70,7 @@ async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, metho
   let response: Response;
   try {
     response = await fetch(
-      path,
+      appPath(path),
       body === undefined
         ? { headers: { accept: "application/json" }, cache: "no-store" }
         : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body), ...(signal === undefined ? {} : { signal }) },
@@ -146,7 +147,7 @@ export const hubApi = {
   work: (id: number, after: number) => call(`/api/tickets/${id}/work?after=${after}`, WorkEventList),
   messageWorker: (id: number, text: string, attachments: readonly string[] = []) => call(`/api/tickets/${id}/messages`, WorkerMessageResponse, { text, attachments }),
   createAttachment: (name: string, size: number, mediaType: string) => call(attachmentsPath, AttachmentUpload, { name, size, mediaType }),
-  uploadState: (id: string) => call(`${attachmentPath(id)}/upload`, AttachmentUpload),
+  uploadState: (id: string) => call(`${attachmentResource(id)}/upload`, AttachmentUpload),
   uploadPart: (id: string, offset: number, part: Blob) => uploadPart(id, offset, part),
   stopTicket: (id: number) => call(`/api/tickets/${id}/stop`, TicketResponse, {}),
   answerStuck: (id: number, request: StuckAnswerRequest) => call(`/api/tickets/${id}/answer`, TicketResponse, request),
@@ -190,8 +191,12 @@ export const scheduleApi = {
   discardProposal: (id: string) => call(`/api/schedules/proposals/${encodeURIComponent(id)}/discard`, ScheduleList, {}),
 };
 
-export function attachmentPath(id: string): string {
+function attachmentResource(id: string): string {
   return `${attachmentsPath}/${encodeURIComponent(id)}`;
+}
+
+export function attachmentPath(id: string): string {
+  return appPath(attachmentResource(id));
 }
 
 async function uploadPart(id: string, offset: number, part: Blob): Promise<Answer<AttachmentUpload>> {
@@ -220,5 +225,5 @@ async function uploadPart(id: string, offset: number, part: Blob): Promise<Answe
 }
 
 export function ticketFilePath(ticket: number, name: string): string {
-  return `/api/tickets/${ticket}/files/${encodeURIComponent(name)}`;
+  return appPath(`/api/tickets/${ticket}/files/${encodeURIComponent(name)}`);
 }

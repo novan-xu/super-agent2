@@ -22,6 +22,18 @@ For additional runners, use the usual Access service and runner tokens.
 
 See the [front-door design](design.md#front-door) for the admission rules.
 
+## Remote control through the NAS
+
+Keep the local installation in loopback mode and set up [a peer on the NAS](deploy.md#remote-control-peers).
+Paste the four `PEER_*` settings printed by the NAS command into the local `local.env` and restart with `corepack pnpm local`.
+The local edition opens an outbound secure WebSocket and needs no tunnel, additional install or inbound port on this computer.
+Open 远程控制 on the signed-in NAS page and choose the local edition when it is online.
+Topics, tickets, attachments and commands opened there belong to the local installation.
+Use 返回主站 to return to the NAS page.
+Use the local installation's direct URL to subscribe to its push notifications.
+The connection retries automatically after a network interruption or restart.
+Delete the four settings and restart to turn off the outbound link.
+
 ## Optional integrations
 
 An installation can start with only `PROJECTS_DIR`.

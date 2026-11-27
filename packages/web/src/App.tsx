@@ -1,5 +1,6 @@
 import { text } from "@super-agent2/catalog";
-import { cardParameter, type ChoiceChange, type PageRoute, type PageView, pagePath, type ReviewedStreamDestination, type StreamPreviewRequest, type StuckAnswer } from "@super-agent2/protocol";
+import { cardParameter, type ChoiceChange, type PageRoute, type PageView, type ReviewedStreamDestination, type StreamPreviewRequest, type StuckAnswer } from "@super-agent2/protocol";
+import { appPath, pagePath, remoteName } from "./parts/app-path.js";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type Failure, hubApi } from "./hub/api.js";
 import { PageController } from "./hub/controller.js";
@@ -27,6 +28,7 @@ import { type TicketActions, type TicketOrigin, TicketView } from "./views/Ticke
 import { RepositoryTabs } from "./views/RepositoryTabs.js";
 import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
 import { type SettingsActions, settingsSectionEnabled, SettingsView } from "./views/SettingsView.js";
+import { RemoteView } from "./views/RemoteView.js";
 import { SchedulesView } from "./views/SchedulesView.js";
 import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
@@ -36,7 +38,7 @@ const workFlushDelay = 40;
 
 function socketUrl(): string {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${window.location.host}/ws`;
+  return `${scheme}//${window.location.host}${appPath("/ws")}`;
 }
 
 function useNow(): number {
@@ -91,7 +93,10 @@ export function App() {
   );
 
   const page = useSyncExternalStore(controller.store.subscribe, controller.store.getState, () => initialPage);
-  const features = page.settings === null ? emptyFeatures : page.settings.features;
+  const peer = remoteName();
+  const reportedFeatures = page.settings === null ? emptyFeatures : page.settings.features;
+  const features = peer === undefined || reportedFeatures === undefined ? reportedFeatures
+    : { ...reportedFeatures, enabled: reportedFeatures.enabled.filter((feature) => feature !== "push") };
   const pushEnabled = featureEnabled(features, "push");
   const canTransfer = transferEnabled(features);
 
@@ -107,7 +112,7 @@ export function App() {
   }, [page.status, pushController, pushEnabled]);
 
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) {
+    if (peer !== undefined || !("serviceWorker" in navigator)) {
       return;
     }
     const received = (event: MessageEvent) => {
@@ -120,7 +125,7 @@ export function App() {
     };
     navigator.serviceWorker.addEventListener("message", received);
     return () => navigator.serviceWorker.removeEventListener("message", received);
-  }, [navigate]);
+  }, [navigate, peer]);
 
   useEffect(() => {
     controller.start();
@@ -363,17 +368,19 @@ export function App() {
       waiting={page.waiting.cards.length}
       suggestions={page.memory.suggestions.length}
       pendingSchedules={page.schedules?.pending ?? 0}
+      hasPeers={Boolean(page.peers?.length)}
       allowance={<AllowanceSidebar report={page.allowance} now={now} />}
       collapsedAllowance={<AllowanceRings report={page.allowance} now={now} />}
       headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} order={(repositories) => controller.setRepositoryOrder(repositories)} /> : undefined}
-      actions={
-        route.view === "memory" ? (
+      actions={<>
+        {peer === undefined ? null : <a className="btn btn-sm remote-return" href="/remote" aria-label={text("remote.back")}><Icon name="screen" /><span className="od-truncate">{peer}</span><span>{text("remote.back")}</span></a>}
+        {route.view === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>
             <Icon name="plus" />
             {text("memory.new")}
           </button>
-        ) : null
-      }
+        ) : null}
+      </>}
     >
       {inConversation ? (
         <ConversationView
@@ -433,6 +440,8 @@ export function App() {
         />
       ) : route.view === "memory" ? (
         <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
+      ) : route.view === "remote" ? (
+        <RemoteView peers={page.peers ?? []} online={page.status === "open"} />
       ) : route.view === "schedules" ? (
         <SchedulesView navigate={fromSchedules} update={page.schedules} focusedProposal={"proposal" in route ? route.proposal : undefined} />
       ) : route.view === "ticket" ? (

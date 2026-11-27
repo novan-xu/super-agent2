@@ -18,6 +18,7 @@ const main: readonly Destination[] = [
   { view: "schedules", icon: "calendar", label: text("navigation.schedules") },
 ];
 
+const remote: Destination = { view: "remote", icon: "screen", label: text("navigation.remote") };
 const foot: readonly Destination[] = [{ view: "settings", icon: "gear", label: text("navigation.settings") }];
 
 export function viewOf(route: PageRoute, ticketFrom: PageView = "workbench"): PageView {
@@ -28,7 +29,7 @@ export function viewOf(route: PageRoute, ticketFrom: PageView = "workbench"): Pa
 }
 
 export function titleOf(view: PageView): string {
-  return [...main, ...foot].find((destination) => destination.view === view)?.label ?? "";
+  return (view === "remote" ? remote : [...main, ...foot].find((destination) => destination.view === view))?.label ?? "";
 }
 
 export function followLink(event: MouseEvent, go: () => void): void {
@@ -56,6 +57,7 @@ export interface ShellProps {
   readonly waiting: number;
   readonly suggestions?: number;
   readonly pendingSchedules?: number;
+  readonly hasPeers?: boolean;
   readonly allowance?: ReactNode;
   readonly collapsedAllowance?: ReactNode;
   readonly children?: ReactNode;
@@ -78,6 +80,7 @@ export function Shell(props: ShellProps) {
     setCollapsed(next);
     try { localStorage.setItem(sidebarKey, String(next)); } catch {}
   };
+  const destinations = props.hasPeers ? [...main, remote] : main;
   const current = viewOf(props.route, props.ticketFrom);
   const count = (view: PageView) => countOf(view, props.waiting, props.suggestions, props.pendingSchedules);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
@@ -116,7 +119,7 @@ export function Shell(props: ShellProps) {
             <button className="side-toggle brand-toggle" type="button" aria-label={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} title={text(collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar")} aria-expanded={!collapsed} onClick={toggleSidebar}><Logo size={48} /></button>
             <span>{text("app.name")}</span>
           </div></div>
-          <ul className="nav">{main.map(navItem)}</ul>
+          <ul className="nav">{destinations.map(navItem)}</ul>
           <div className="side-allowance-full">{props.allowance}</div>
           <div className="side-allowance-rings">{props.collapsedAllowance}</div>
           <div className="side-foot">
@@ -154,7 +157,7 @@ export function Shell(props: ShellProps) {
           </main>
         </div>
         <nav className="tabbar" aria-label={text("navigation.main")}>
-          {[...main, ...foot].map((destination) =>
+          {[...destinations, ...foot].map((destination) =>
             link(
               destination,
               "tab",

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { hubApi } from "../hub/api.js";
 import { text } from "@super-agent2/catalog";
-import { arrangedAfter, cardAddress, chineseOf, type ChainsEntry, type Ticket } from "@super-agent2/protocol";
+import { arrangedAfter, chineseOf, type ChainsEntry, type Ticket } from "@super-agent2/protocol";
+import { cardAddress } from "../parts/app-path.js";
 import { startCards } from "../live/chains.js";
 import { canStartCard } from "../live/choice.js";
 import { type WaitingState, useOf } from "../live/waiting.js";

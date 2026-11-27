@@ -1,5 +1,6 @@
 import { text } from "@super-agent2/catalog";
-import { pagePath, ScheduleFields, type PageRoute, type Schedule, type ScheduleAction, type ScheduleList, type ScheduleProposal, type ScheduleRecurrence, type ScheduleRun, type SchedulesUpdate } from "@super-agent2/protocol";
+import { ScheduleFields, type PageRoute, type Schedule, type ScheduleAction, type ScheduleList, type ScheduleProposal, type ScheduleRecurrence, type ScheduleRun, type SchedulesUpdate } from "@super-agent2/protocol";
+import { pagePath } from "../parts/app-path.js";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { scheduleApi } from "../hub/api.js";
 import { Icon } from "../parts/icons.js";

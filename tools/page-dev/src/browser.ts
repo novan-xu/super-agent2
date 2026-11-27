@@ -186,6 +186,20 @@ const views = {
     phone: { "pending count": ".tab[href='/schedules'] .tab-badge" },
     desktop: { "pending count": ".nav-btn[href='/schedules'] .count" },
   },
+  remote: {
+    route: { view: "remote" },
+    ready: ".remote-peer a",
+    targets: { "peer cards": ".remote-peer", "connection status": ".remote-state", "open peer": ".remote-peer a" },
+  },
+  "remote-conversation": {
+    route: { view: "remote" },
+    ready: ".msg-text table",
+    targets: { ...conversation, "return to NAS": ".remote-return" },
+    prepare: async (page) => {
+      await page.locator(".remote-peer a").click();
+      await page.waitForURL("**/remote/studio-laptop/");
+    },
+  },
   history: {
     route: { view: "settings", section: "history" },
     ready: ".lrow",
@@ -326,7 +340,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
   }
 }
 
-async function run(names: readonly ViewName[], widths: readonly Width[], mode: Mode, pageDir?: string, minimalIntegrations = false): Promise<void> {
+async function run(names: readonly ViewName[], widths: readonly Width[], mode: Mode, pageDir?: string, minimalIntegrations = false, remoteFixture = false): Promise<void> {
   const executablePath = chromiumExecutable();
   const scratch = resolve(process.env.SUPERAGENT2_ARTIFACTS_DIR || tmpdir());
   await mkdir(scratch, { recursive: true });
@@ -334,6 +348,7 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
   const child = fork(fileURLToPath(new URL("cli.js", import.meta.url)), [
     "--port", "0", "--data", data, "--brain", "none", "--push", "none", "--layout-fixture",
     ...(minimalIntegrations ? ["--minimal-integrations", "--cloudflare", "none"] : []),
+    ...(remoteFixture || names.some((name) => name === "remote" || name === "remote-conversation") ? ["--remote-fixture"] : []),
     ...(pageDir === undefined ? [] : ["--page-dir", resolve(pageDir)]),
   ], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
   const exited = once(child, "exit");
@@ -369,13 +384,13 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, theme: { type: "string" }, "page-dir": { type: "string" }, "minimal-integrations": { type: "boolean" }, help: { type: "boolean" } },
+  options: { view: { type: "string" }, width: { type: "string" }, out: { type: "string" }, theme: { type: "string" }, "page-dir": { type: "string" }, "minimal-integrations": { type: "boolean" }, "remote-fixture": { type: "boolean" }, help: { type: "boolean" } },
 });
 const names = Object.keys(views) as ViewName[];
 const widths = Object.keys(viewports) as Width[];
 const usage = [
   "pnpm layout [--page-dir <built page dir>]",
-  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--theme light|dark] [--page-dir <built page dir>] [--minimal-integrations]`,
+  `pnpm screenshot --view <${names.join("|")}> [--width phone|desktop] [--out <dir>] [--theme light|dark] [--page-dir <built page dir>] [--minimal-integrations] [--remote-fixture]`,
 ].join("\n");
 const [command] = positionals;
 if (values.help) {
@@ -385,7 +400,7 @@ if (values.help) {
 } else if (command === "screenshot" && positionals.length === 1 && names.includes(values.view as ViewName) && (values.width === undefined || widths.includes(values.width as Width)) && (values.theme === undefined || values.theme === "light" || values.theme === "dark")) {
   const out = resolve(values.out || process.env.SUPERAGENT2_ARTIFACTS_DIR || ".");
   await mkdir(out, { recursive: true });
-  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out, theme: values.theme === "dark" ? "dark" : "light" }, values["page-dir"], values["minimal-integrations"]);
+  await run([values.view as ViewName], values.width === undefined ? widths : [values.width as Width], { kind: "screenshot", out, theme: values.theme === "dark" ? "dark" : "light" }, values["page-dir"], values["minimal-integrations"], values["remote-fixture"]);
 } else {
   process.stderr.write(`${usage}\n`);
   process.exitCode = 1;
