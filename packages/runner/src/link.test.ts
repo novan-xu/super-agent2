@@ -102,16 +102,20 @@ describe("the runner's link", () => {
     expect(events.map((event) => event.type)).toEqual(["connecting", "connected"]);
   });
 
-  it("dispatches an allowance refresh request", async () => {
+  it("dispatches an allowance refresh request and the allowance mode", async () => {
     const hub = fakeHub();
     let calls = 0;
-    const link = createRunnerLink({ config, report: () => report, connect: hub.connect, refreshAllowance: () => { calls++; } });
+    const modes: boolean[] = [];
+    const link = createRunnerLink({ config, report: () => report, connect: hub.connect, refreshAllowance: () => { calls++; }, allowanceMode: (read) => { modes.push(read); } });
     link.start();
     const socket = await hub.until(() => hub.sockets[0]);
     socket.events.open();
     socket.events.message(JSON.stringify({ type: "welcome", protocol: protocolVersion, name: "pc" }));
     socket.events.message(JSON.stringify({ type: "allowance.refresh" }));
+    socket.events.message(JSON.stringify({ type: "allowance.mode", read: true }));
+    socket.events.message(JSON.stringify({ type: "allowance.mode", read: false }));
     expect(calls).toBe(1);
+    expect(modes).toEqual([true, false]);
     await link.close();
   });
 

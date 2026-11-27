@@ -146,6 +146,9 @@ export type RunnerWelcome = z.infer<typeof RunnerWelcome>;
 
 export const RefreshAllowance = z.object({ type: z.literal("allowance.refresh") });
 
+export const AllowanceMode = z.object({ type: z.literal("allowance.mode"), read: z.boolean() });
+export type AllowanceMode = z.infer<typeof AllowanceMode>;
+
 export const RefreshPrograms = z.object({ type: z.literal("programs.refresh"), id: z.string().uuid() });
 
 export const RunCheck = z.object({
@@ -156,7 +159,7 @@ export type RunCheck = z.infer<typeof RunCheck>;
 export const CancelCheck = z.object({ type: z.literal("check.cancel"), id: z.string().uuid() });
 export type CancelCheck = z.infer<typeof CancelCheck>;
 
-export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, RefreshPrograms, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart, RunCheck, CancelCheck]);
+export const HubToRunner = z.discriminatedUnion("type", [RunnerWelcome, RefreshAllowance, AllowanceMode, RefreshPrograms, SetRunnerStorage, StartWork, StartTask, SyncWork, MessageWork, StopWork, FetchFile, AttachmentPart, RunCheck, CancelCheck]);
 export type HubToRunner = z.infer<typeof HubToRunner>;
 
 export const runnerCloseCodes = {
