@@ -7,7 +7,7 @@ import { type WaitingState, waitingReducer, initialWaiting } from "../live/waiti
 import type { PushPhase } from "../live/push.js";
 import { type CardActions, WorkbenchView } from "./WorkbenchView.js";
 
-const actions: CardActions = { answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
+const actions: CardActions = { stop: async () => true, answer: () => undefined, start: () => undefined, choose: () => undefined, answerStuck: () => undefined };
 
 function state(...cards: WaitingCard[]): WaitingState {
   return waitingReducer(initialWaiting, { type: "snapshot", cards });

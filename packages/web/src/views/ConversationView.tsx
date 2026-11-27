@@ -273,6 +273,7 @@ export function TopicComposer({ working, canStop, voiceScope, send, stop, draftK
 export interface ConversationViewProps {
   readonly waiting?: WaitingState;
   readonly tickets?: readonly Ticket[];
+  readonly stopTicket?: (ticket: number) => Promise<boolean>;
   readonly startChains?: (keys: readonly string[], fingerprints: Readonly<Record<string, string>>) => void;
   readonly conversation: string | null;
   readonly focusEntry?: string | undefined;
@@ -385,7 +386,7 @@ export function ConversationView(props: ConversationViewProps) {
         </div>
         <TopicStream streamKey={draftKey} state={state} stream={stream} scope={scope} list={list} online={online} now={now} focusEntry={props.focusEntry}
           following={following} hrefOf={hrefOf} open={open} loadOlder={props.loadOlder} selectQuote={selectQuote}
-          move={props.topicActions.move} openEdit={openEdit} waiting={props.waiting} tickets={props.tickets} startChains={props.startChains} />
+          move={props.topicActions.move} openEdit={openEdit} waiting={props.waiting} tickets={props.tickets} startChains={props.startChains} stopTicket={props.stopTicket} />
         <TopicComposer key={draftKey} working={working} canStop={conversation !== null} send={send} stop={props.stop} draftKey={draftKey}
           quote={quotes[draftKey]} clearQuote={clearQuote} voiceScope={voiceEnabled ? scope : undefined}
           routing={conversation === null && props.previewStream !== undefined ? {
@@ -431,6 +432,7 @@ function toneOf(id: string): number {
 interface TopicStreamProps {
   readonly waiting?: WaitingState | undefined;
   readonly tickets?: readonly Ticket[] | undefined;
+  readonly stopTicket?: (ticket: number) => Promise<boolean>;
   readonly startChains?: ((keys: readonly string[], fingerprints: Readonly<Record<string, string>>) => void) | undefined;
   readonly streamKey: string;
   readonly focusEntry?: string | undefined;
@@ -449,7 +451,7 @@ interface TopicStreamProps {
   readonly openEdit: (topic: TopicEdit) => void;
 }
 
-export function TopicStream({ streamKey, focusEntry, state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit, waiting, tickets, startChains }: TopicStreamProps) {
+export function TopicStream({ streamKey, focusEntry, state, stream, scope, list, online, now, following, hrefOf, open, loadOlder, selectQuote, move, openEdit, waiting, tickets, startChains, stopTicket }: TopicStreamProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const older = useRef<{ readonly height: number; readonly top: number } | null>(null);
   const focused = useRef<string | undefined>(undefined);
@@ -561,7 +563,7 @@ export function TopicStream({ streamKey, focusEntry, state, stream, scope, list,
           const canSplit = joined && entry.seq === latestOwner.get(entry.conversation) && !olderOwners.has(entry.id);
           const match = entry?.kind === "owner" ? entry.possibleMatch : undefined;
           const source = entry?.kind === "owner" && entry.quotedMessage !== undefined ? previews.get(entry.quotedMessage) : undefined;
-          if (entry?.kind === "chains" && waiting !== undefined && startChains !== undefined) return <div key={item.key} className="stream-item"><ConversationChains entry={entry} waiting={waiting} tickets={tickets ?? []} start={startChains} /></div>;
+          if (entry?.kind === "chains" && waiting !== undefined && startChains !== undefined) return <div key={item.key} className="stream-item"><ConversationChains entry={entry} waiting={waiting} tickets={tickets ?? []} start={startChains} stop={stopTicket} /></div>;
           return <div key={item.key} id={entry === undefined ? undefined : `entry-${entry.id}`} className="stream-item"><StreamEntry item={item} thisYear={thisYear} topic={id === undefined ? undefined : topicLabel(id)}
             onQuestionSubmitted={(id) => setSubmittedQuestions((current) => new Set(current).add(id))}
             quote={entry === undefined || entry.kind === "question" || entry.kind === "chains" ? undefined : () => selectQuote(entry)}

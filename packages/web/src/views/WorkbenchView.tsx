@@ -15,6 +15,7 @@ import { StuckCard } from "./StuckCard.js";
 import { ChainNumbers, engineName, momentOf, PhaseStatus, problemLines, problemTone, PullRequestNumbers, RepairChip, TicketCodeLabel } from "./TicketParts.js";
 
 export interface CardActions {
+  stop(ticket: number): Promise<boolean>;
   answer(key: string, verdict: Verdict): void;
   start(keys: readonly string[]): void;
   choose(key: string, change: ChoiceChange): void;

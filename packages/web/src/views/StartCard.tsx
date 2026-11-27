@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { text } from "@super-agent2/catalog";
 import { chineseOf, type ChainBefore, type ChoiceChange, type StartCard as Card, ticketProject } from "@super-agent2/protocol";
 import type { StartView } from "../live/chains.js";
@@ -8,12 +9,24 @@ import { Icon } from "../parts/icons.js";
 import { failureText } from "./HoldCard.js";
 import { RepairChip, TicketCodeLabel } from "./TicketParts.js";
 
+export function AbandonButton({ ticket, stop }: { readonly ticket: number; readonly stop: (ticket: number) => Promise<boolean> }) {
+  const [step, setStep] = useState<"idle" | "armed" | "sending">("idle");
+  return <span className="card-actions">
+    <button type="button" className={step === "armed" ? "btn btn-danger-solid btn-sm" : "btn btn-danger btn-sm"} disabled={step === "sending"} onClick={() => {
+      if (step === "idle") setStep("armed");
+      else { setStep("sending"); void stop(ticket).then(() => setStep("idle")); }
+    }}>{text("ticket.abandon")}</button>
+    {step === "armed" ? <button type="button" className="btn btn-sm" onClick={() => setStep("idle")}>{text("ticket.cancel")}</button> : null}
+  </span>;
+}
+
 export interface StartCardProps {
   readonly card: Card;
   readonly use: CardUse;
   readonly focused: boolean;
   readonly start: () => void;
   readonly choose: (change: ChoiceChange) => void;
+  readonly stop?: (ticket: number) => Promise<boolean>;
 }
 
 function Choice({ card, busy, choose }: { readonly card: Card; readonly busy: boolean; readonly choose: (change: ChoiceChange) => void }) {
@@ -122,7 +135,7 @@ export function MissingChoices({ card }: { readonly card: Card }) {
   );
 }
 
-export function StartCard({ card, use, focused, start, choose }: StartCardProps) {
+export function StartCard({ card, use, focused, start, choose, stop }: StartCardProps) {
   const { ticket } = card;
   const repository = ticketProject(ticket);
   const sending = use.step === "sending";
@@ -162,6 +175,7 @@ export function StartCard({ card, use, focused, start, choose }: StartCardProps)
           {failureText(use.failure)}
         </p>
       )}
+      {stop === undefined ? null : <AbandonButton ticket={ticket.id} stop={stop} />}
       {canStartCard(card) ? (
         <div className="card-actions">
           <button className={`btn btn-primary${sending ? " is-busy" : ""}`} type="button" disabled={sending} aria-busy={sending} onClick={start}>

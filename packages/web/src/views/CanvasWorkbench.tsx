@@ -177,7 +177,7 @@ export function CanvasWorkbench(props: CanvasWorkbenchProps) {
     <aside className={`wb-panel ${pane === "canvas" ? "wb-mobile-hidden" : ""}`}>{props.panel}</aside>
     <dialog ref={dialog} className="dlg wb-dialog" aria-label={text("chains.start")} onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <div className="dlg-in"><button className="icon-btn wb-close" type="button" aria-label={text("conversation.close")} onClick={close}><Icon name="x" /></button>
-        {activeStart === undefined ? null : <><h2>{chineseOf(activeStart.ticket.title)}</h2><p>{chineseOf(activeStart.ticket.summary)}</p><StartCard card={activeStart} use={useOf(waiting, activeStart.key)} focused={false} start={() => actions.start([activeStart.key])} choose={(change) => actions.choose(activeStart.key, change)} /></>}
+        {activeStart === undefined ? null : <><h2>{chineseOf(activeStart.ticket.title)}</h2><p>{chineseOf(activeStart.ticket.summary)}</p><StartCard card={activeStart} use={useOf(waiting, activeStart.key)} focused={false} start={() => actions.start([activeStart.key])} choose={(change) => actions.choose(activeStart.key, change)} stop={actions.stop} /></>}
       </div>
     </dialog>
   </div>;

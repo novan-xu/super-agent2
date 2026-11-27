@@ -36,3 +36,25 @@ it("starts the shown fingerprint and disables a rearranged card", async () => {
   host.remove();
   vi.unstubAllGlobals();
 });
+
+
+it("confirms abandoning the pending conversation card", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const card = startCard(1);
+  if (card.kind !== "start") throw new Error("missing start card");
+  const stop = vi.fn().mockResolvedValue(true);
+  const entry = { kind: "chains" as const, id: "e", conversation: "c", seq: 1, at: 1, turn: "t", chains: [{ ticket: 1, fingerprint: card.fingerprint }] };
+  await act(async () => root.render(<ConversationChains entry={entry} tickets={[]} waiting={{ ...initialWaiting, known: true, cards: [card] }} start={() => undefined} stop={stop} />));
+  const abandon = () => [...host.querySelectorAll("button")].find((button) => button.textContent === "放弃")!;
+  await act(async () => abandon().click());
+  expect(stop).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("取消");
+  await act(async () => abandon().click());
+  expect(stop).toHaveBeenCalledWith(1);
+  await act(async () => root.unmount());
+  host.remove();
+  vi.unstubAllGlobals();
+});

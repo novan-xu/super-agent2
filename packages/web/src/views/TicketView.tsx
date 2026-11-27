@@ -387,7 +387,7 @@ function Actions({ ticket, actions }: { readonly ticket: Ticket; readonly action
           }}
         >
           <Icon name="stop" />
-          {text("ticket.stop")}
+          {text(ticket.state === "pending" ? "ticket.abandon" : "ticket.stop")}
         </button>
         <button key="cancel" className="btn btn-sm" type="button" autoFocus onClick={() => setStop("idle")}>
           {text("ticket.cancel")}
@@ -406,7 +406,7 @@ function Actions({ ticket, actions }: { readonly ticket: Ticket; readonly action
       {offers.stop ? (
         <button className={`btn btn-danger btn-sm${stop === "sending" ? " is-busy" : ""}`} type="button" disabled={stop === "sending"} aria-busy={stop === "sending"} onClick={() => setStop("armed")}>
           <Icon name="stop" />
-          {text("ticket.stop")}
+          {text(ticket.state === "pending" ? "ticket.abandon" : "ticket.stop")}
         </button>
       ) : null}
     </div>

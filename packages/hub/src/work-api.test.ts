@@ -283,6 +283,18 @@ describe("a ticket's worker for the page and the brain", () => {
     expect(running.conversations.entries(topic)).toEqual(before);
   });
 
+  it("stops a pending ticket for the owner and removes its start card", async () => {
+    const running = await startTestHub({ config: testConfig(dataDir), keySource: staticKeySource(keySet(key)), clock, credentials: testCredentials });
+    hub = running;
+    const summary = { en: "Pending work", zh: "待办工作" };
+    const pending = running.tickets.open({ repository: sandbox, issues: [{ repository: sandbox, number: 3, url: `https://github.com/${sandbox}/issues/3`, title: summary, summary }], title: summary, summary, kind: "feature" });
+    expect(running.waiting.cards().some((card) => card.kind === "start" && card.ticket.id === pending.id)).toBe(true);
+    const response = await post(running, `/api/tickets/${pending.id}/stop`, {});
+    expect(response.status).toBe(202);
+    expect(TicketResponse.parse(await response.json()).ticket.state).toBe("stopped");
+    expect(running.waiting.cards().some((card) => card.kind === "start" && card.ticket.id === pending.id)).toBe(false);
+  });
+
   it("stops the ticket for the owner, which stops the worker and removes its worktree", async () => {
     const { running, ticket, sent } = await start();
     const answer = await post(running, `/api/tickets/${ticket.id}/stop`, {});

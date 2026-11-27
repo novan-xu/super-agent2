@@ -7,10 +7,10 @@ import { startCards } from "../live/chains.js";
 import { canStartCard } from "../live/choice.js";
 import { type WaitingState, useOf } from "../live/waiting.js";
 import { failureText } from "./HoldCard.js";
-import { MissingChoices } from "./StartCard.js";
+import { AbandonButton, MissingChoices } from "./StartCard.js";
 import { TicketCodeLabel } from "./TicketParts.js";
 
-export function ConversationChains({ entry, waiting, tickets, start }: { readonly entry: ChainsEntry; readonly waiting: WaitingState; readonly tickets: readonly Ticket[]; readonly start: (keys: readonly string[], fingerprints: Readonly<Record<string, string>>) => void }) {
+export function ConversationChains({ entry, waiting, tickets, start, stop }: { readonly stop?: ((ticket: number) => Promise<boolean>) | undefined; readonly entry: ChainsEntry; readonly waiting: WaitingState; readonly tickets: readonly Ticket[]; readonly start: (keys: readonly string[], fingerprints: Readonly<Record<string, string>>) => void }) {
   const [loaded, setLoaded] = useState<Readonly<Record<number, Ticket>>>({});
   const cards = startCards(waiting.cards);
   const missing = entry.chains.filter(({ ticket }) => !cards.some((card) => card.ticket.id === ticket) && !tickets.some((item) => item.id === ticket)).map(({ ticket }) => ticket).join(",");
@@ -46,6 +46,7 @@ export function ConversationChains({ entry, waiting, tickets, start }: { readonl
           : card.fingerprint !== snapshot.fingerprint ? <span className="conversation-chain-state">{text("conversation.chains.changed")}</span>
             : <button className="btn btn-primary btn-sm" type="button" disabled={!valid} onClick={() => begin(rows.filter((row) => row.snapshot.ticket === snapshot.ticket && row.valid && row.card !== undefined))}>{text("chains.start")}</button>}
       </div>
+      {card === undefined || stop === undefined ? null : <AbandonButton ticket={card.ticket.id} stop={stop} />}
       {card === undefined ? null : <>
         <div className="conversation-chain-details">{details(card)}{useOf(waiting, card.key).failure === null ? null : <p role="alert">{failureText(useOf(waiting, card.key).failure!)}</p>}</div>
         {arrangedAfter([card.ticket.id], cards.map((item) => item.ticket)).filter((id) => id !== card.ticket.id).map((id) => {
