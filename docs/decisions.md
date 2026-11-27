@@ -3990,3 +3990,9 @@ The previous shared full-bleed icon could not give desktop apps rounded corners 
 The logo retains its white tile, near-black glyph and red dot, while the Apple touch icon uses a full-bleed near-black background with a white glyph and the same red dot.
 This separate icon keeps the glyph visible when iOS dark mode changes a light home screen icon background, since a web app cannot reliably supply a separate dark-mode Apple touch icon.
 The alternative was to use the white logo for every icon or invert the logo on every platform.
+
+## 2026-11-26 — Orange logo dot (#361)
+
+The upper-right logo dot is orange across the white logo and the dark Apple touch icon.
+The saturated orange distinguishes it from the interface's amber accent while remaining visible against both backgrounds.
+The previous dot was red.
