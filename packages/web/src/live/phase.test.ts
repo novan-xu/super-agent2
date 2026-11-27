@@ -92,7 +92,8 @@ describe("what a ticket's row and panel say", () => {
     expect(panelOffers(ticket(1, { state: "working", work: workStatus({ unreachableSince: 3 }) }))).toEqual({ stop: true, reassign: true, reply: false });
     expect(panelOffers(ticket(1, { state: "working", work: workStatus({ state: "failed" }) }))).toEqual({ stop: true, reassign: true, reply: false });
     expect(panelOffers(ticket(1, { state: "waiting" }))).toEqual({ stop: true, reassign: true, reply: false });
-    for (const state of ["pending", "merged", "delivered", "stopped"] as const) {
+    expect(panelOffers(ticket(1, { state: "pending" }))).toEqual({ stop: true, reassign: false, reply: false });
+    for (const state of ["merged", "delivered", "stopped"] as const) {
       expect(panelOffers(ticket(1, { state, work: workStatus() }))).toEqual({ stop: false, reassign: false, reply: false });
     }
   });

@@ -462,6 +462,7 @@ export const messages = {
   "ticket.roundValue": "第 {round} 轮",
   "ticket.ownerChose": "你选的",
   "ticket.stop": "停止",
+  "ticket.abandon": "放弃",
   "ticket.reassign": "改派",
   "ticket.cancel": "取消",
   "ticket.defaultModel": "按默认",

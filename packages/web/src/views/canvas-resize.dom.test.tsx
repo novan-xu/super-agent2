@@ -10,7 +10,7 @@ const first = ticket(1, { repository: "org/one", state: "working", work: workSta
 const second = ticket(2, { repository: "org/one", waits: [{ ticket: 1, deployment: false, waived: false }], waitsFor: [1] });
 const props: CanvasWorkbenchProps = {
   tickets: [first, second], pinnedRepositories: [{ repository: "org/one" }], waiting: { ...initialWaiting, known: true },
-  actions: { answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
+  actions: { stop: async () => true, answer: noop, start: noop, choose: noop, answerStuck: noop }, repository: undefined,
   selectRepository: noop, selected: null, selectTicket: noop, ticketHref: (id) => `/tickets/${id}`,
   pane: "canvas", setPane: noop, panel: <div>Conversation</div>, focus: null, focused: noop, push: "hidden", togglePush: noop, rearrange: async () => true, rearranging: false,
 };

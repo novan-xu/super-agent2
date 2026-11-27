@@ -158,7 +158,7 @@ export function panelOffers(ticket: Ticket): PanelOffers {
   const open = ticket.state === "waiting" || ticket.state === "working" || ticket.state === "verifying";
   const work = ticket.work;
   const reachable = work !== null && ((activeWorkStates.includes(work.state) && work.unreachableSince === null) || work.state === "unavailable");
-  return { stop: open, reassign: open, reply: (ticket.state === "working" || ticket.state === "verifying") && reachable };
+  return { stop: open || ticket.state === "pending", reassign: open, reply: (ticket.state === "working" || ticket.state === "verifying") && reachable };
 }
 
 export interface TicketGroup {
