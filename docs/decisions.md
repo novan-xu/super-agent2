@@ -4023,5 +4023,5 @@ Other options were to keep separate hand-written preset styles or attempt to upd
   The freshest reading of each subscription wins whichever machine took it, so readings taken during the fallback simply age out.
 - **Other options:** The hub driving Windows reads with its own refresh timer; switching at once without a grace period; a setting on each runner.
 - **Console windows:** `windowsHide` already hides the program and the `cmd.exe` that starts a `.cmd` shim (Node then creates them with `CREATE_NO_WINDOW`, and their console children inherit the hidden console).
-  A window still opens when a descendant starts a console program from a process without a console: a child the program starts detached, or the console children of a GUI process such as Antigravity's Electron executable.
+  A window still opens when a descendant starts a console program from a process without a console: a child the program starts detached, or the console children of a GUI-subsystem process.
   The runner cannot pass flags to its grandchildren, so there is no fix in the prober; running the programs on a hidden desktop would hide them but needs native code, and was not done.
