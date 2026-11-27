@@ -758,9 +758,9 @@ describe("after the merge", () => {
     expect(plainReport?.notice).toBe(`工单 ${plain.code.toUpperCase()} 已合并`);
     expect(plainReport?.prompt).toContain("the repository has no deployment");
     expect(deployedReport?.notice).toBe(`工单 ${deployed.code.toUpperCase()} 已合并，这次改动需要部署`);
-    expect(deployedReport?.prompt).toContain("so this change needs deploying");
     expect(deployedReport?.prompt).toContain("no task ticket is arranged to deploy it");
-    expect(deployedReport?.prompt).toContain("read deployment.md");
+    expect(deployedReport?.prompt).toContain("Read deployment.md");
+    expect(deployedReport?.prompt).toContain("check whether this installation has a registered machine named in the recipe");
     expect(deployedReport?.prompt).toContain(`open_task_ticket (deploy true, after ["${ticketReference(deployed)}"]`);
     expect(deployedReport?.prompt).not.toContain("deploy_repository");
   });

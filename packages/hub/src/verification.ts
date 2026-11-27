@@ -583,7 +583,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       deployed
         ? deploying.length > 0
           ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${ticketReference(after)}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
-          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), so this change needs deploying, and no task ticket is arranged to deploy it. Unless the owner deferred, grouped or declined deployment, read deployment.md and open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}). State its defaults. The owner starts it.`
+          : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and no task ticket is arranged to deploy it. Read deployment.md and check whether this installation has a registered machine named in the recipe. If it does and the owner has not deferred, grouped or declined deployment, open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}). State its defaults. The owner starts it.`
         : `Deployment: the repository has no deployment (no ${deploymentFile} at the merged commit), so nothing needs deploying.`,
       ...(deployed && waitingForDeployment.length > 0
         ? [`Waiting for this deployment: ${waitingForDeployment.map((after) => `ticket ${ticketReference(after)}`).join(", ")}; they begin once a task ticket that deploys this commit is done.`]

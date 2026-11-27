@@ -1,6 +1,10 @@
 # Deployment
 
-- Use a deployment task ticket so a worker deploys from an eligible work machine.
+- Arrange a deployment task ticket only when the recipe names a machine registered with this installation, even if that machine is offline.
+  Use `recheck_machines` to identify this installation's machines when needed.
+  If the recipe belongs to another installation, tell the owner and leave the deployment to that installation's brain.
+- On the local edition, tell the owner that Super Agent changes take effect there by pulling, rebuilding and restarting as described in `docs/local.md`.
+  The Super Agent deployment manifest updates the NAS edition.
 - When filing work that needs deployment, arrange one `open_task_ticket` with `kind: "operation"`, `repository`, `deploy: true` and `after` set to the repository's last chain for the need.
   Set defaults right away.
   The owner's single start on that chain authorizes both, and the deployment uses its final merge commit.

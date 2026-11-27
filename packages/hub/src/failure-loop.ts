@@ -305,7 +305,7 @@ export function createFailureLoop(options: FailureLoopOptions): FailureLoop {
           : `[hub] The owner stopped ${described(ticket)}. Its worker's folder is removed, and nothing more of it is done.`,
         ...chainProgress(ticket),
         merged
-          ? "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying, and no task ticket that deploys it is arranged, open one at the last merge commit with open_task_ticket, unless the owner said otherwise; the owner starts it."
+          ? "Tell the owner in Chinese, in a line or two, what is merged and what is not. If what is merged needs deploying and no deployment ticket is arranged, read deployment.md. If a registered machine of this installation can run the deployment and the owner has not deferred, grouped or declined it, open a task ticket at the last merge commit with open_task_ticket. The owner starts it."
           : "Acknowledge it to the owner in Chinese in a line.",
         ...decisionReport(ticket),
       ].join("\n"),
