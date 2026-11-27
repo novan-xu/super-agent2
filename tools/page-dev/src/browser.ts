@@ -255,6 +255,27 @@ function checkLayout(page: Page, width: Width, targets: LayoutTargets): Promise<
   return page.evaluate(layoutProblems, { width: viewports[width].width, targets });
 }
 
+async function checkStartActions(page: Page, selector: string): Promise<void> {
+  const row = page.locator(selector).first();
+  const check = async (labels: readonly string[]) => {
+    const result = await row.evaluate((element, expected) => {
+      const buttons = [...element.querySelectorAll("button")];
+      if (buttons.map((button) => button.textContent?.trim()).join("|") !== expected.join("|")) return "Unexpected start action buttons";
+      const bounds = element.getBoundingClientRect();
+      const rects = buttons.map((button) => button.getBoundingClientRect());
+      if (rects.some((rect) => rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.left < 0 || rect.right > innerWidth)) return "Start actions overflow their row or viewport";
+      if (rects.some((rect) => Math.abs((rect.top + rect.bottom) / 2 - (rects[0]!.top + rects[0]!.bottom) / 2) > 1)) return "Start actions are not on one line";
+      return "";
+    }, labels);
+    if (result !== "") throw new Error(result);
+  };
+  await check(["放弃", "开始"]);
+  await row.getByRole("button", { name: "放弃", exact: true }).click();
+  await check(["放弃", "取消"]);
+  await row.getByRole("button", { name: "取消", exact: true }).click();
+  await check(["放弃", "开始"]);
+}
+
 async function checkLoadSettings(page: Page): Promise<void> {
   const form = page.locator(".load-settings");
   const cpu = form.locator('input[type="number"]').first();
@@ -323,6 +344,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
       const dialog = page.locator(".wb-dialog[open]");
       await dialog.locator(".wcard-where").waitFor();
       if (mode.kind === "check") {
+        await checkStartActions(page, ".wb-dialog[open] .start-actions");
         const options = await dialog.locator("select option:checked").allTextContents();
         if (!options.includes("指定 mac-mini") || !options.includes("指定 Claude Code")) {
           issues.push("Start card is missing the pinned machine or engine label");
@@ -333,6 +355,11 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
           "start button": ".wb-dialog .card-actions button",
         }));
       }
+    }
+    if (mode.kind === "check" && name === "workbench-conversation") {
+      const chain = page.locator(".conversation-chains").first();
+      await chain.scrollIntoViewIfNeeded();
+      await checkStartActions(page, ".conversation-chains .conversation-chain-row .start-actions");
     }
     if (mode.kind === "check") {
       if (issues.length > 0) throw new Error(issues.join("\n"));

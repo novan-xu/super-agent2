@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { hubApi } from "../hub/api.js";
 import { text } from "@super-agent2/catalog";
 import { arrangedAfter, chineseOf, type ChainsEntry, type Ticket } from "@super-agent2/protocol";
@@ -43,10 +43,9 @@ export function ConversationChains({ entry, waiting, tickets, start, stop }: { r
       <div className="conversation-chain-row">
         {ticket === undefined ? <span>{text("conversation.chains.unavailable")}</span> : identity(ticket, card?.choice)}
         {card === undefined ? <span className="conversation-chain-state">{ticket?.joinedInto != null ? text("conversation.chains.joined") : ticket?.state === "stopped" ? text("conversation.chains.stopped") : ticket === undefined ? null : text("conversation.chains.started")}</span>
-          : card.fingerprint !== snapshot.fingerprint ? <span className="conversation-chain-state">{text("conversation.chains.changed")}</span>
-            : <button className="btn btn-primary btn-sm" type="button" disabled={!valid} onClick={() => begin(rows.filter((row) => row.snapshot.ticket === snapshot.ticket && row.valid && row.card !== undefined))}>{text("chains.start")}</button>}
+          : <ChainActions ticket={card.ticket.id} stop={stop}>{card.fingerprint !== snapshot.fingerprint ? <span className="conversation-chain-state">{text("conversation.chains.changed")}</span>
+            : <button className="btn btn-primary btn-sm" type="button" disabled={!valid} onClick={() => begin(rows.filter((row) => row.snapshot.ticket === snapshot.ticket && row.valid && row.card !== undefined))}>{text("chains.start")}</button>}</ChainActions>}
       </div>
-      {card === undefined || stop === undefined ? null : <AbandonButton ticket={card.ticket.id} stop={stop} />}
       {card === undefined ? null : <>
         <div className="conversation-chain-details">{details(card)}{useOf(waiting, card.key).failure === null ? null : <p role="alert">{failureText(useOf(waiting, card.key).failure!)}</p>}</div>
         {arrangedAfter([card.ticket.id], cards.map((item) => item.ticket)).filter((id) => id !== card.ticket.id).map((id) => {
@@ -60,4 +59,8 @@ export function ConversationChains({ entry, waiting, tickets, start, stop }: { r
     </div>)}
     {ready.length > 1 ? <button className="btn btn-sm" type="button" onClick={() => begin(ready)}>{text("chains.startAll")}</button> : null}
   </section>;
+}
+
+function ChainActions({ ticket, stop, children }: { readonly ticket: number; readonly stop: ((ticket: number) => Promise<boolean>) | undefined; readonly children: ReactNode }) {
+  return stop === undefined ? children : <AbandonButton ticket={ticket} stop={stop}>{children}</AbandonButton>;
 }
