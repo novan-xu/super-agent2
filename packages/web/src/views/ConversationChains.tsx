@@ -28,31 +28,33 @@ export function ConversationChains({ entry, waiting, tickets, start }: { readonl
   });
   const ready = rows.filter((row) => row.valid && row.card !== undefined);
   const begin = (items: typeof ready) => start(items.map((row) => row.card!.key), Object.fromEntries(items.map((row) => [row.card!.key, row.snapshot.fingerprint])));
+  const details = (item: typeof cards[number]) => <>
+    {item.before.map((before) => <p key={before.id}>{text("conversation.chains.waits", { title: chineseOf(before.title) })}</p>)}
+    <MissingChoices card={item} />
+  </>;
+  const identity = (item: Ticket, choice?: typeof cards[number]["choice"]) => <div className="conversation-chain-identity">
+    <a href={cardAddress(`start:${item.id}`)}><TicketCodeLabel code={item.code} /></a>
+    <span className="conversation-chain-title" title={chineseOf(item.title)}>{chineseOf(item.title)}</span>
+    {choice === undefined ? null : <><span className="conversation-chain-choice" title={choice.machine ?? "—"}>{choice.machine ?? "—"}</span><span className="conversation-chain-engine">{choice.engine ?? "—"}</span></>}
+  </div>;
   return <section className="wcard conversation-chains" aria-label={text("conversation.chains.title")}>
-    <h3>{text("conversation.chains.title")}</h3>
     {rows.map(({ snapshot, card, ticket, valid }) => <div key={snapshot.ticket} className="chain-block">
-      {ticket === undefined ? <p>{text("conversation.chains.unavailable")}</p> : <>
-        <p className="card-title"><TicketCodeLabel code={ticket.code} /> {chineseOf(ticket.title)}</p>
-        <p>{ticket.issues.map((issue) => `#${issue.number}`).join(" → ")}</p>
-      </>}
-      {card === undefined ? <p>{ticket?.joinedInto != null ? text("conversation.chains.joined") : ticket?.state === "stopped" ? text("conversation.chains.stopped") : ticket === undefined ? text("conversation.chains.unavailable") : text("conversation.chains.started")}</p> : <>
-        <p>{[card.choice.machine, card.choice.engine, card.choice.model, card.choice.effort].map((value) => value ?? "—").join(" · ")}</p>
-        {card.before.map((before) => <p key={before.id}>{text("conversation.chains.waits", { title: chineseOf(before.title) })}</p>)}
+      <div className="conversation-chain-row">
+        {ticket === undefined ? <span>{text("conversation.chains.unavailable")}</span> : identity(ticket, card?.choice)}
+        {card === undefined ? <span className="conversation-chain-state">{ticket?.joinedInto != null ? text("conversation.chains.joined") : ticket?.state === "stopped" ? text("conversation.chains.stopped") : ticket === undefined ? null : text("conversation.chains.started")}</span>
+          : card.fingerprint !== snapshot.fingerprint ? <span className="conversation-chain-state">{text("conversation.chains.changed")}</span>
+            : <button className="btn btn-primary btn-sm" type="button" disabled={!valid} onClick={() => begin(rows.filter((row) => row.snapshot.ticket === snapshot.ticket && row.valid && row.card !== undefined))}>{text("chains.start")}</button>}
+      </div>
+      {card === undefined ? null : <>
+        <div className="conversation-chain-details">{details(card)}{useOf(waiting, card.key).failure === null ? null : <p role="alert">{failureText(useOf(waiting, card.key).failure!)}</p>}</div>
         {arrangedAfter([card.ticket.id], cards.map((item) => item.ticket)).filter((id) => id !== card.ticket.id).map((id) => {
           const follower = cards.find((item) => item.ticket.id === id);
-          return follower === undefined ? null : <div key={id}>
-            <p>{text("conversation.chains.with", { title: chineseOf(follower.ticket.title) })} <TicketCodeLabel code={follower.ticket.code} /></p>
-            <p>{follower.ticket.issues.map((issue) => `#${issue.number}`).join(" → ")}</p>
-            {follower.before.map((before) => <p key={before.id}>{text("conversation.chains.waits", { title: chineseOf(before.title) })}</p>)}
-            <p>{[follower.choice.machine, follower.choice.engine, follower.choice.model, follower.choice.effort].map((value) => value ?? "—").join(" · ")}</p>
-            <MissingChoices card={follower} />
+          return follower === undefined ? null : <div key={id} className="conversation-chain-follower" aria-label={text("conversation.chains.with", { title: chineseOf(follower.ticket.title) })}>
+            <div className="conversation-chain-row">{identity(follower.ticket, follower.choice)}</div>
+            <div className="conversation-chain-details">{details(follower)}</div>
           </div>;
         })}
-        {card.fingerprint !== snapshot.fingerprint ? <p>{text("conversation.chains.changed")}</p> : <MissingChoices card={card} />}
-        {useOf(waiting, card.key).failure === null ? null : <p role="alert">{failureText(useOf(waiting, card.key).failure!)}</p>}
-        <button className="btn btn-primary" type="button" disabled={!valid} onClick={() => begin(rows.filter((row) => row.snapshot.ticket === snapshot.ticket && row.valid && row.card !== undefined))}>{text("chains.start")}</button>
       </>}
-      <a href={cardAddress(`start:${snapshot.ticket}`)}>{text("conversation.chains.workbench")}</a>
     </div>)}
     {ready.length > 1 ? <button className="btn btn-sm" type="button" onClick={() => begin(ready)}>{text("chains.startAll")}</button> : null}
   </section>;
