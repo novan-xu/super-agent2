@@ -174,6 +174,8 @@ function TodoRows({ rows, lists, today, groupDate, busy, editing, setEditing, ap
           {todo.topic === null
             ? <button className="btn btn-sm" type="button" disabled={busy} onClick={() => void openTopic()}><Icon name="hub" size={15} />{text("todo.handoff")}</button>
             : <a className="btn btn-sm" href={pagePath(topicRoute(todo.topic))} onClick={(event) => followLink(event, () => navigate(topicRoute(todo.topic!)))}><Icon name="chat" size={15} />{text("todo.openTopic")}</a>}
+          {todo.sourceTopic == null ? null : <a className="btn btn-sm todo-source-topic" href={pagePath(topicRoute(todo.sourceTopic))}
+            onClick={(event) => followLink(event, () => navigate(topicRoute(todo.sourceTopic!)))}><Icon name="chat" size={15} />{text("todo.sourceTopic")}</a>}
         </div>
         {editing !== todo.id ? null : <TodoEditor todo={todo} lists={lists} today={today} busy={busy}
           before={done ? undefined : rows[index - 1]?.id} after={done ? undefined : rows[index + 1]?.id}

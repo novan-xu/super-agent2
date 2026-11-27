@@ -12,10 +12,11 @@ export class TodoRefused extends Error {
   }
 }
 
-const todoColumns = "id, title, notes, list, date, time, done_at AS doneAt, position, created_at AS createdAt, updated_at AS updatedAt, topic";
+const todoColumns = "id, title, notes, list, date, time, done_at AS doneAt, position, created_at AS createdAt, updated_at AS updatedAt, topic, source_topic AS sourceTopic";
 const listColumns = "id, name, position, archived, updated_at AS updatedAt";
 const ListRow = TodoList.extend({ archived: z.union([z.literal(0), z.literal(1)]).transform(Boolean) });
 const Position = z.object({ id: z.string(), position: z.number().int() });
+const BrainCreation = z.object({ id: z.string(), deleted: z.union([z.literal(0), z.literal(1)]).transform(Boolean) });
 const recentCompletions = 100;
 
 export type Todos = ReturnType<typeof createTodos>;
@@ -31,8 +32,13 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
   const getList = connection.prepare(`SELECT ${listColumns} FROM todo_lists WHERE id = ?`);
   const lists = connection.prepare(`SELECT ${listColumns} FROM todo_lists ORDER BY position, id`);
   const byName = connection.prepare("SELECT id FROM todo_lists WHERE name = ?");
-  const addTodo = connection.prepare(`INSERT INTO todos (id, title, notes, list, date, time, position, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(position), 0) - 1 FROM todos), ?, ?)`);
+  const addTodo = connection.prepare(`INSERT INTO todos (id, title, notes, list, date, time, position, created_at, updated_at, source_topic)
+    VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(position), 0) - 1 FROM todos), ?, ?, ?)`);
+  const search = connection.prepare(`SELECT ${todoColumns} FROM todos WHERE deleted = 0
+    AND (instr(lower(title), lower(?)) > 0 OR instr(lower(notes), lower(?)) > 0)
+    ORDER BY done_at IS NOT NULL, updated_at DESC, id LIMIT ? OFFSET ?`);
+  const creation = connection.prepare("SELECT id, deleted FROM todos WHERE id = ? AND source_topic IS NOT NULL");
+  const latestCreation = connection.prepare("SELECT id, deleted FROM todos WHERE source_topic = ? ORDER BY rowid DESC LIMIT 1");
   const editTodo = connection.prepare("UPDATE todos SET title = ?, notes = ?, list = ?, date = ?, time = ?, done_at = ?, updated_at = ? WHERE id = ?");
   const deleteTodo = connection.prepare("UPDATE todos SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0");
   const linkTodo = connection.prepare("UPDATE todos SET topic = ?, updated_at = ? WHERE id = ?");
@@ -54,6 +60,7 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
     if (row === undefined) throw new TodoRefused("not_found");
     return ListRow.parse(row);
   };
+  const listRows = () => lists.all().map((row) => ListRow.parse(row));
   const fields = (input: TodoFields, priorList: string | null): TodoFields => {
     const result = TodoFields.safeParse(input);
     if (!result.success || (result.data.date === null && result.data.time !== null)) throw new TodoRefused("bad_request");
@@ -100,18 +107,21 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
       return {
         timeZone,
         todos: [...open.all(), ...completed.all(recentCompletions)].map((row) => Todo.parse(row)),
-        lists: lists.all().map((row) => ListRow.parse(row)),
+        lists: listRows(),
         ...(selected === undefined ? {} : { selected }),
       };
     },
     get,
-    add({ id = randomUUID(), ...provided }: TodoCreate): Todo {
+    lists: listRows,
+    search: (query: string, limit: number, offset: number): Todo[] => search.all(query, query, limit, offset).map((row) => Todo.parse(row)),
+    brainCreation: (sourceTopic: string, receipt?: string) => BrainCreation.optional().parse(receipt === undefined ? latestCreation.get(sourceTopic) : creation.get(receipt)),
+    add({ id = randomUUID(), ...provided }: TodoCreate, sourceTopic: string | null = null): Todo {
       const existing = get(id);
       const input = fields(provided, existing?.list ?? null);
       if (existing !== undefined && Object.entries(input).every(([key, value]) => existing[key as keyof TodoFields] === value)) return existing;
       if (hasTodo.get(id) !== undefined) throw new TodoRefused("conflict");
       const at = clock.now();
-      addTodo.run(id, input.title, input.notes, input.list, input.date, input.time, at, at);
+      addTodo.run(id, input.title, input.notes, input.list, input.date, input.time, at, at, sourceTopic);
       changed();
       return item(id);
     },

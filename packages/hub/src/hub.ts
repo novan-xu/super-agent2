@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { AppGateway } from "./app-gateway.js";
-import { createAppTodos } from "./app-todos.js";
+import { createTodoTools } from "./todo-tools.js";
 import { createMailIntake } from "./mail-intake.js";
 import { createMailTriage, type MailTriage } from "./mail-triage.js";
 import { brainTokenCheck, ensureBrainToken } from "./brain-token.js";
@@ -529,7 +529,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         attachments,
         ...(hasTransfer(enabled) ? { transferTools: createTransferTools(database, attachments) } : {}),
         features: enabled,
-        ...(appGateway === undefined ? {} : { appGateway, appTodos: createAppTodos(database, clock) }),
+        todoTools: createTodoTools(database, todos),
+        ...(appGateway === undefined ? {} : { appGateway }),
         ...(mailTriage === undefined ? {} : { mailTriage }),
         tickets: {
           tickets,

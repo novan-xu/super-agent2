@@ -25,8 +25,13 @@ export const HistoryItem = z.discriminatedUnion("kind", [
 ]);
 export type HistoryItem = z.infer<typeof HistoryItem>;
 
-export const appWriteTools = ["mail_draft", "add_todo", "undo_created"] as const;
-export const privateAppTools = ["mail_mailboxes", "mail_search", "mail_read", "teams_chats", "teams_messages", "teams_search", "todo_lookup", ...appWriteTools] as const;
+export const appWriteTools = ["mail_draft"] as const;
+export const privateAppTools = ["mail_mailboxes", "mail_search", "mail_read", "teams_chats", "teams_messages", "teams_search", ...appWriteTools] as const;
+export const todoTools = ["todo_lookup", "add_todo", "update_todo", "undo_created"] as const;
+
+export function isTodoTool(name: string): name is (typeof todoTools)[number] {
+  return todoTools.some((tool) => name === tool);
+}
 
 export function isAppWriteTool(name: string): name is (typeof appWriteTools)[number] {
   return appWriteTools.some((tool) => name === tool);
@@ -38,7 +43,7 @@ export function isPrivateAppTool(name: string): name is (typeof privateAppTools)
 
 export function isPrivateAppToolEvent(name: string): boolean {
   const tool = name.replace(/^(?:mcp__hub__|hub\.)/, "");
-  return tool === "report_mail_triage" || isPrivateAppTool(tool);
+  return tool === "report_mail_triage" || isPrivateAppTool(tool) || isTodoTool(tool);
 }
 
 const BrainQuote = z.object({

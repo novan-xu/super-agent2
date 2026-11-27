@@ -34,6 +34,7 @@
 .todo-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; color: var(--muted); font-size: var(--text-xs); }
 .todo-meta:empty { display: none; }
 .todo-list-label { display: inline-flex; align-items: center; gap: var(--space-1); overflow-wrap: anywhere; min-width: 0; }
+.todo-topic { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .todo-topic .btn { white-space: nowrap; }
 .todo-editor { grid-column: 1 / -1; display: grid; gap: var(--space-3); min-width: 0; border-top: 1px solid var(--border-soft); padding-top: var(--space-3); }
 .todo-editor label { display: grid; gap: var(--space-1); color: var(--fg-2); font-size: var(--text-sm); min-width: 0; }
