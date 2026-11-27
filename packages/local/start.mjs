@@ -63,7 +63,7 @@ async function launch() {
         process.stderr.write(`The local edition could not start build ${next}${problem instanceof Error ? `: ${problem.message}` : ""}. Starting the previous build.\n`);
         continue;
       }
-      if (code === 75) continue;
+      if (code === 75 || readCommit(pending) !== undefined) continue;
       process.exitCode = code ?? 1;
       return;
     }

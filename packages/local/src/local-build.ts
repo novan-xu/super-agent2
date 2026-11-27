@@ -127,12 +127,22 @@ export function stageRestart(home: string, checkout: string, commit: string): vo
   }
 }
 
-export async function fastForwardCheckout(source: LocalSource, home: string, expected: string, environment: Environment): Promise<void> {
+async function verifyActivation(git: Git, source: LocalSource, home: string, expected: string): Promise<void> {
   if (source.commit !== expected) throw new Error(`The local edition started ${source.commit} instead of ${expected}`);
-  const git = gitFor(environment, runProcess);
   await verifyRuntime(git, home, source.checkout, expected);
   await cleanCheckout(git, source.checkout);
+  await descendant(git, source.checkout, expected);
+}
+
+export async function verifyPendingBuild(source: LocalSource, home: string, expected: string, environment: Environment): Promise<void> {
+  await verifyActivation(gitFor(environment, runProcess), source, home, expected);
+}
+
+export async function fastForwardCheckout(source: LocalSource, home: string, expected: string, environment: Environment): Promise<void> {
+  const git = gitFor(environment, runProcess);
+  await verifyActivation(git, source, home, expected);
   await git.must(["merge", "--ff-only", "--", expected], source.checkout);
+  if (await head(git, source.checkout) !== expected) throw new Error(`The checkout did not fast-forward to ${expected}`);
 }
 
 

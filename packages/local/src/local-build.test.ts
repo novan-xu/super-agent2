@@ -70,6 +70,10 @@ it("builds a fetched commit in isolation, keeps the old checkout after failure, 
     await fastForwardCheckout({ repository: "owner/super-agent2", checkout, commit: target }, home, target, environment);
     expect((await git.must(["rev-parse", "HEAD"], checkout)).trim()).toBe(target);
     expect(readFileSync(join(checkout, "updated.txt"), "utf8")).toBe("New version");
+    await git.must(["commit", "--allow-empty", "-m", "Moved on"], checkout);
+    const newer = (await git.must(["rev-parse", "HEAD"], checkout)).trim();
+    await expect(fastForwardCheckout({ repository: "owner/super-agent2", checkout, commit: target }, home, target, environment)).rejects.toThrow("cannot fast-forward");
+    expect((await git.must(["rev-parse", "HEAD"], checkout)).trim()).toBe(newer);
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { startFromEnvironment as startBrain } from "@super-agent2/brain";
 import { loadConfig, startFromEnvironment as startHub } from "@super-agent2/hub";
 import { systemClock } from "@super-agent2/programs";
-import { discardBuild, fastForwardCheckout, readLocalSource, stageRestart } from "./local-build.js";
+import { discardBuild, fastForwardCheckout, readLocalSource, stageRestart, verifyPendingBuild } from "./local-build.js";
 import { localCredentials } from "./credentials.js";
 import { commandShell, preflight } from "./preflight.js";
 import { prepareRunner, runnerSettings, superviseRunner } from "./runner.js";
@@ -30,8 +30,9 @@ async function main(): Promise<void> {
   const checkout = process.argv[2] ?? running;
   const pending = process.argv[3];
   const source = await readLocalSource(checkout, running, environment);
-  if (pending !== undefined && source?.commit !== pending) {
-    throw new Error(`The local edition started ${source?.commit ?? "an unknown commit"} instead of ${pending}`);
+  if (pending !== undefined) {
+    if (source === undefined) throw new Error(`The local edition could not identify its checkout for ${pending}`);
+    await verifyPendingBuild(source, home, pending, environment);
   }
   const restart = (commit: string) => {
     if (shutdown.signal.aborted || !process.connected) throw new Error("The local launcher is stopping");
