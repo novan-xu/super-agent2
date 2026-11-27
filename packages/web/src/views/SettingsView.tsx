@@ -603,9 +603,11 @@ function ModelsSection({ settings, actions }: { readonly settings: SettingsSnaps
 function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repositories"][number]; readonly actions: SettingsActions }) {
   const [sending, setSending] = useState(false);
   const [alias, setAlias] = useState(row.alias ?? "");
+  const [editing, setEditing] = useState(false);
   const cancelled = useRef(false);
   useEffect(() => setAlias(row.alias ?? ""), [row.alias]);
   const saveAlias = () => {
+    setEditing(false);
     if (cancelled.current) { cancelled.current = false; return; }
     const value = alias.trim();
     setAlias(value);
@@ -618,25 +620,22 @@ function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repos
     void update().finally(() => setSending(false));
   };
   return (
-    <div className="srow">
-      <div className="srow-text">
-        <span className="srow-title mono od-truncate" title={row.repository}>{row.repository}</span>
-        <input className="field repository-alias" aria-label={text("repositories.alias", { repository: row.repository })} placeholder={row.repository.split("/").at(-1)} value={alias} maxLength={40} disabled={sending} onChange={(event) => setAlias(event.target.value)} onBlur={saveAlias} onKeyDown={(event) => {
+    <div className="srow repository-card">
+      <div className="repository-heading">
+        {editing ? <input autoFocus className="field repository-alias" aria-label={text("repositories.alias", { repository: row.repository })} placeholder={row.repository.split("/").at(-1)} value={alias} maxLength={40} disabled={sending} onChange={(event) => setAlias(event.target.value)} onBlur={saveAlias} onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") { cancelled.current = true; setAlias(row.alias ?? ""); event.currentTarget.blur(); }
-        }} />
+        }} /> : <button type="button" className="repository-name" title={text("repositories.alias", { repository: row.repository })} aria-label={text("repositories.alias", { repository: row.repository })} disabled={sending} onClick={() => setEditing(true)}>{row.alias || row.repository.split("/").at(-1)}</button>}
+        <span className="repository-path mono od-truncate" title={row.repository}>{row.repository}</span>
       </div>
-      <div className="srow-ctl repository-actions">
-        <div className="seg" role="group" aria-label={text("repositories.account", { repository: row.repository })}>
-          {gitHubAccounts.map((account) => (
-            <button key={account} type="button" className="mono" aria-pressed={row.account === account} disabled={sending} onClick={() => {
-              if (row.account !== account) save(() => actions.setAccount(row.repository, account));
-            }}>
-              {account}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="btn" disabled={sending}
+      <div className="repository-actions">
+        <select className="field field--sm mono" aria-label={text("repositories.account", { repository: row.repository })} value={row.account} disabled={sending} onChange={(event) => {
+          const account = gitHubAccounts.find((item) => item === event.target.value);
+          if (account !== undefined && account !== row.account) save(() => actions.setAccount(row.repository, account));
+        }}>
+          {gitHubAccounts.map((account) => <option key={account} value={account}>{account}</option>)}
+        </select>
+        <button type="button" className="btn btn-sm" disabled={sending}
           aria-label={text(row.pinned ? "repositories.unpinLabel" : "repositories.pinLabel", { repository: row.repository })}
           onClick={() => save(() => actions.setPinned(row.repository, !row.pinned))}>
           {text(row.pinned ? "repositories.unpin" : "repositories.pin")}
@@ -647,24 +646,24 @@ function RepositoryRow({ row, actions }: { readonly row: SettingsSnapshot["repos
 }
 
 function RepositoriesSection({ settings, actions }: { readonly settings: SettingsSnapshot; readonly actions: SettingsActions }) {
-  const [pinned, setPinned] = useState(false);
-  const rows = settings.repositories.filter((row) => row.pinned === pinned);
+  const [expanded, setExpanded] = useState(false);
+  const pinned = settings.repositories.filter((row) => row.pinned);
+  const archived = settings.repositories.filter((row) => !row.pinned);
+  const group = (rows: typeof pinned, empty: "repositories.emptyPinned" | "repositories.emptyArchived") => rows.length === 0 ? (
+    <div className="empty"><Icon name="repo" /><strong>{text(empty)}</strong></div>
+  ) : <div className="rows">{rows.map((row) => <RepositoryRow key={row.repository} row={row} actions={actions} />)}</div>;
   return (
     <>
-      <div className="seg repository-tabs" role="group" aria-label={text("settings.section.repositories")}>
-        <button type="button" aria-pressed={pinned} onClick={() => setPinned(true)}>{text("repositories.pinned")}</button>
-        <button type="button" aria-pressed={!pinned} onClick={() => setPinned(false)}>{text("repositories.archived")}</button>
-      </div>
-      {rows.length === 0 ? (
-        <div className="empty">
-          <Icon name="repo" />
-          <strong>{text(pinned ? "repositories.emptyPinned" : "repositories.emptyArchived")}</strong>
-        </div>
-      ) : (
-        <div className="rows">
-          {rows.map((row) => <RepositoryRow key={row.repository} row={row} actions={actions} />)}
-        </div>
-      )}
+      <section className="section">
+        <div className="section-head"><h2>{text("repositories.pinned")}</h2></div>
+        {group(pinned, "repositories.emptyPinned")}
+      </section>
+      <section className="section">
+        <button type="button" className="repository-group-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          <span>{text("repositories.archived")} ({archived.length})</span><span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+        </button>
+        {expanded ? group(archived, "repositories.emptyArchived") : null}
+      </section>
     </>
   );
 }

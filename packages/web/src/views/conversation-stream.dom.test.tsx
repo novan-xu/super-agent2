@@ -218,7 +218,7 @@ describe("switching conversation streams", () => {
   });
 });
 
-it("starts on archived repositories and updates the workbench tabs after pinning and unpinning", async () => {
+it("groups repositories and updates settings and workbench tabs", async () => {
   const archived = "owner/empty";
   let snapshot = settingsSnapshot({
     repositories: [
@@ -230,6 +230,11 @@ it("starts on archived repositories and updates the workbench tabs after pinning
     if (path === "/api/repositories/alias") {
       const { repository, alias } = JSON.parse(String(init?.body));
       snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, alias } : row) };
+      return Response.json(snapshot);
+    }
+    if (path === "/api/repositories/account") {
+      const { repository, account } = JSON.parse(String(init?.body));
+      snapshot = { ...snapshot, repositories: snapshot.repositories.map((row) => row.repository === repository ? { ...row, account } : row) };
       return Response.json(snapshot);
     }
     if (path === "/api/repositories/pin") {
@@ -251,30 +256,42 @@ it("starts on archived repositories and updates the workbench tabs after pinning
 
   const visit = async (path: string) => act(async () => host.querySelector<HTMLAnchorElement>(`a[href="${path}"]`)!.click());
   const toggle = async (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label} ${archived}"]`)!.click());
-  const titles = () => [...host.querySelectorAll(".srow-title")].map((row) => row.textContent);
+  const titles = () => [...host.querySelectorAll(".repository-path")].map((row) => row.textContent);
   const rail = () => [...host.querySelectorAll(".wb-tabs .od-truncate")].map((row) => row.textContent);
-  const archivedTab = () => host.querySelector(".repository-tabs button:last-child");
+  const archive = () => host.querySelector<HTMLButtonElement>(".repository-group-toggle")!;
   expect(fetcher).toHaveBeenCalledWith("/api/repositories/refresh", expect.objectContaining({ method: "POST" }));
-  expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
-  expect(titles()).toEqual([archived]);
-  const input = host.querySelector<HTMLInputElement>(`input[aria-label="${archived} 的别名"]`)!;
-  await act(async () => {
-    input.focus();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Short name");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  expect(archive().getAttribute("aria-expanded")).toBe("false");
+  expect(archive().textContent).toContain("1");
+  expect(titles()).toEqual(["owner/one"]);
+  await act(async () => archive().click());
+  expect(titles()).toEqual(["owner/one", archived]);
+  const select = host.querySelector<HTMLSelectElement>(`select[aria-label="${archived} 的 GitHub 账号"]`)!;
+  await act(async () => { select.value = "novan-xu"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(snapshot.repositories[1]?.account).toBe("novan-xu");
+  const edit = async () => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${archived} 的别名"]`)!.click());
+  const change = async (value: string) => {
+    const input = host.querySelector<HTMLInputElement>(`input[aria-label="${archived} 的别名"]`)!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return input;
+  };
+  await edit();
+  let input = await change("Cancelled");
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(snapshot.repositories[1]?.alias).toBeUndefined();
+  await edit();
+  input = await change("Short name");
   await act(async () => input.blur());
   expect(snapshot.repositories[1]?.alias).toBe("Short name");
   await toggle("置顶");
-  expect(titles()).toEqual([]);
+  expect(titles()).toEqual(["owner/one", archived]);
   await visit("/workbench");
   expect(rail()).toContain("Short name");
-
   await visit("/settings");
   await visit("/settings/repositories");
-  expect(archivedTab()?.getAttribute("aria-pressed")).toBe("true");
-  await act(async () => host.querySelector<HTMLButtonElement>(".repository-tabs button:first-child")!.click());
-  expect(titles()).toEqual(["owner/one", archived]);
+  expect(archive().getAttribute("aria-expanded")).toBe("false");
   await toggle("取消置顶");
   expect(titles()).toEqual(["owner/one"]);
   await visit("/workbench");
