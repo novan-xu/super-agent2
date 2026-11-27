@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { versionThemeScript } from "./theme-version.js";
 
 export default defineConfig({
   plugins: [react(), { name: "versioned-icons", closeBundle() {
@@ -26,6 +27,7 @@ export default defineConfig({
       const htmlReferenceRequired = name === "apple-touch-icon.png" || name === "mark.svg";
       if (createHash("sha256").update(bytes).digest("hex") !== match[2] || (htmlReferenceRequired && !html.includes(url))) throw new Error(`Icon URL does not match its content or HTML reference: ${url}`);
     }
+    html = versionThemeScript(html, readFileSync("dist/theme.js"));
     writeFileSync(htmlPath, html);
     const workerPath = "dist/sw.js";
     writeFileSync(workerPath, readFileSync(workerPath, "utf8").replaceAll("/icons/icon-192.png", urls.get("icon-192.png")!));
