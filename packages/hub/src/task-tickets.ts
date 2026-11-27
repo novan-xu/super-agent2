@@ -17,6 +17,7 @@ import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi } from "./github-api.js";
+import type { MachineStore } from "./machines.js";
 import { TicketError, type TicketService } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -49,6 +50,7 @@ export interface TaskTickets {
 export interface TaskTicketsOptions {
   readonly database: HubDatabase;
   readonly tickets: TicketService;
+  readonly machines: MachineStore;
   readonly attachments?: AttachmentStore;
   readonly credentials: CredentialSource;
   readonly fetch?: Fetch;
@@ -217,6 +219,12 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       return refuse("the hub is stopping.");
     }
     try {
+      if (targets.length > 0) {
+        const registered = options.machines.list().filter((machine) => machine.revokedAt === null).map((machine) => machine.name);
+        if (!targets.some((target) => registered.includes(target))) {
+          return refuse(`${deploymentFile} for ${repository} names these deployment targets: ${targets.join(", ")}. This installation's registered machines: ${registered.join(", ") || "none"}. This deployment belongs to another installation. Tell the owner it must be arranged there.`);
+        }
+      }
       const ticket = tickets.change((writes) => {
         for (const id of after) {
           requirePredecessor(writes.get(id));

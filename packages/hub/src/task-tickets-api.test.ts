@@ -56,6 +56,15 @@ const recipe = {
   rollback: "node scripts/rollback.mjs",
 };
 
+const deploymentRequest = {
+  title: { en: "Deploy", zh: "部署" },
+  summary: { en: "Deploy", zh: "部署" },
+  task: "Deploy using the recipe.",
+  kind: "operation",
+  repository,
+  deploy: true,
+};
+
 const seqs = new Map<string, number>();
 
 beforeEach(async () => {
@@ -521,21 +530,70 @@ describe("opening a task ticket", () => {
     expect(running.tickets.list({})).toEqual([]);
   });
 
-  it("opens a deployment of a repository whose file is not on its default branch yet, with no machine of its own", async () => {
-    const { running } = await start();
-    forge.tree(repository, "head1", ["src/app.ts"]);
-    forge.repository(repository).texts.clear();
-    const answer = await callBrainTool(running, "open_task_ticket", { title: { en: "Deploy", zh: "部署" }, summary: { en: "Deploy", zh: "部署" }, task: "Deploy.", kind: "operation", repository, deploy: true });
-    expect(answer.isError, answer.text).toBe(false);
-    expect(answer.text).toContain("has no .superagent2/deployment.json on its default branch yet");
-    expect(running.tickets.list({})[0]).toMatchObject({ requiredMachine: null, deploys: true, commitRef: null });
-  });
-
   it("keeps the brain's commands in the hub's container", async () => {
     const { running } = await start();
     const answer = await callBrainTool(running, "run_command", { target: "pc", command: "echo hi" });
     expect(answer.isError).toBe(true);
     expect(answer.text).toContain("Nothing was run: pc is not where your commands run");
     expect(running.commands.list()).toEqual([]);
+  });
+});
+
+describe("deployment eligibility in this installation", () => {
+  const superAgent = "novan-xu/super-agent2";
+  const superAgentTargets = ["mac-mini", "macbook-air", "pc"];
+
+  function setRecipe(name: string, target: string | string[]): void {
+    const commit = "deployment-head";
+    forge.repository(name).mainline.push(commit);
+    forge.file(name, commit, deploymentFile, JSON.stringify({ ...recipe, target }));
+  }
+
+  it("refuses Super Agent's NAS deployment when the only registered machine is local", async () => {
+    const { running, conversation } = await start([machine("local")]);
+    setRecipe(superAgent, superAgentTargets);
+    const answer = await callBrainTool(running, "open_task_ticket", { ...deploymentRequest, repository: superAgent }, conversation);
+    expect(answer.isError).toBe(true);
+    expect(answer.text).toContain("deployment targets: mac-mini, macbook-air, pc.");
+    expect(answer.text).toContain("This installation's registered machines: local.");
+    expect(answer.text).toContain("This deployment belongs to another installation. Tell the owner it must be arranged there.");
+    expect(running.tickets.list()).toEqual([]);
+  });
+
+  it.each([
+    { name: superAgent, target: superAgentTargets, constraints: { deploymentTargets: superAgentTargets, requiredMachine: null } },
+    { name: "novan-xu/loom", target: "mac-mini", constraints: { requiredMachine: "mac-mini" } },
+    { name: "novan-xu/Agent_wring", target: "mac-mini", constraints: { requiredMachine: "mac-mini" } },
+  ])("opens the NAS deployment for $name with a registered target offline", async ({ name, target, constraints }) => {
+    const { running, conversation } = await start([machine("outside")]);
+    running.machines.add({ name: "mac-mini", accessClientId: "mac-mini.access", system: "macos" });
+    setRecipe(name, target);
+    const answer = await callBrainTool(running, "open_task_ticket", { ...deploymentRequest, repository: name }, conversation);
+    expect(answer.isError, answer.text).toBe(false);
+    expect(running.tickets.list()).toMatchObject([{ repository: name, deploys: true, ...constraints }]);
+  });
+
+  it("excludes revoked machines and reports an empty installation", async () => {
+    const { running } = await start([]);
+    running.machines.add({ name: "pc", accessClientId: "pc.access" });
+    running.machines.revoke("pc");
+    const answer = await callBrainTool(running, "open_task_ticket", deploymentRequest);
+    expect(answer.isError).toBe(true);
+    expect(answer.text).toContain("deployment targets: pc.");
+    expect(answer.text).toContain("This installation's registered machines: none.");
+    expect(running.tickets.list()).toEqual([]);
+  });
+
+  it.each([
+    { failure: "missing", note: "has no .superagent2/deployment.json on its default branch yet" },
+    { failure: "unreadable", note: "GitHub could not be read" },
+  ])("uses the requested platform when the manifest is $failure", async ({ failure, note }) => {
+    const { running } = await start([machine("local")]);
+    if (failure === "missing") forge.tree(repository, "head1", ["src/app.ts"]);
+    else forge.failing = /\/contents\/\.superagent2\/deployment\.json/;
+    const answer = await callBrainTool(running, "open_task_ticket", { ...deploymentRequest, platform: "macos" });
+    expect(answer.isError, answer.text).toBe(false);
+    expect(answer.text).toContain(note);
+    expect(running.tickets.list()).toMatchObject([{ requiredMachine: null, deploys: true, commitRef: null, platform: "macos" }]);
   });
 });

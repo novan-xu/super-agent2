@@ -684,6 +684,8 @@ A repository declares its deployment in `.superagent2/deployment.json` with `tar
 The `target` is one runner name or a non-empty array of distinct runner names, excluding the hub's container and the NAS host.
 It is the worker's recipe.
 The hub reads it when the ticket is opened and limits the ticket to the named machines, and the runner checks the list again at the deployed commit.
+When the hub can read the recipe, at least one target must be registered with this installation.
+Offline registrations count, and revoked registrations are excluded.
 For a multi-machine recipe the hub prefers normal load and can move the first queued attempt before dispatch when the machine was chosen automatically and another listed machine is available.
 
 When the brain files work that will need deploying, it arranges the deployment's task ticket after the chain at filing time, so the owner's one 开始 starts both; the deployment begins by itself when the chain has merged, at the chain's final merge commit.

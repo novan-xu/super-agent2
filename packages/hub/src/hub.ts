@@ -417,6 +417,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     taskTickets = createTaskTickets({
       database,
       tickets,
+      machines,
       attachments,
       credentials,
       fetch: options.forgeFetch ?? fetch,
