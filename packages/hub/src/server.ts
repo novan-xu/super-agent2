@@ -1,5 +1,5 @@
 import { PeerRelay, type PeerRelayOptions } from "./peer-relay.js";
-import { peerNameHeader } from "./peer-wire.js";
+import { peerSocketPath, remotePageAsset } from "./peer-wire.js";
 import { renderHtml } from "./html-render.js";
 import { Previews, previewFile } from "./previews.js";
 import { join } from "node:path";
@@ -10,7 +10,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
 import {
-  PeerName,
   peerLinkPath,
   remotePath,
   remotePeerRoute,
@@ -141,7 +140,7 @@ import { voiceRequest } from "./voice-api.js";
 import type { VoiceService } from "./voice.js";
 
 export const sessionPath = "/api/session";
-export const socketPath = "/ws";
+export const socketPath = peerSocketPath;
 export const commandsPath = "/api/commands";
 export const holdsPath = "/api/holds";
 export const conversationsPath = "/api/conversations";
@@ -633,6 +632,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       } else if (!["GET", "HEAD"].includes(method) && !isSameOrigin(request)) {
         request.resume();
         sendJson(response, 403, { error: "forbidden" });
+      } else if (["GET", "HEAD"].includes(method) && remotePageAsset(remote.path)) {
+        request.resume();
+        const availability = peerRelay.availability(remote.name);
+        const headOnly = method === "HEAD";
+        if (availability !== 200) sendJson(response, availability, { error: availability === 404 ? "not_found" : "unavailable" }, headOnly);
+        else if (!(await servePage(response, remote.path, headOnly, remotePeerPrefix(remote.name)))) {
+          sendJson(response, 404, { error: "not_found" }, headOnly);
+        }
       } else {
         const { search } = new URL(request.url ?? "/", "http://hub");
         peerRelay.http(remote.name, remote.path + search, request, response);
@@ -848,7 +855,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     if ((path === engineTablePath || path === allowancePath) && options.defaults !== undefined && (await serveDefaults(request, response, path, method, options.defaults))) {
       return;
     }
-    if ((method === "GET" || method === "HEAD") && (await servePage(request, response, path, method === "HEAD"))) {
+    if ((method === "GET" || method === "HEAD") && (await servePage(response, path, method === "HEAD"))) {
       return;
     }
     sendJson(response, 404, { error: "not_found" });
@@ -982,20 +989,21 @@ export function createHubServer(options: HubServerOptions): HubServer {
     sendJson(response, 200, settings.snapshot());
   };
 
-  const servePage = async (request: IncomingMessage, response: ServerResponse, path: string, headOnly: boolean): Promise<boolean> => {
+  const servePage = async (response: ServerResponse, path: string, headOnly: boolean, prefix?: string): Promise<boolean> => {
     const file = await options.page?.(path);
     if (file === undefined) {
       return false;
     }
-    const peer = PeerName.safeParse(options.loopback ? request.headers[peerNameHeader] : undefined);
-    const body = peer.success && file.type.startsWith("text/html")
-      ? Buffer.from(file.body.toString().replace(/<link rel="manifest"[^>]*>/, "").replace(/(href|src)="\/(?!\/)/g, `$1="${remotePeerPrefix(peer.data)}/`))
+    const body = prefix !== undefined && file.type.startsWith("text/html")
+      ? Buffer.from(file.body.toString().replace(/<link rel="manifest"[^>]*>/, "").replace(/(href|src)="\/(?!\/)/g, `$1="${prefix}/`))
       : file.body;
     response.writeHead(200, {
       ...pageSecurityHeaders,
       "content-type": file.type,
       "content-length": body.length,
-      "cache-control": file.immutable ? "public, max-age=31536000, immutable" : "no-cache",
+      ...(prefix === undefined
+        ? { "cache-control": file.immutable ? "public, max-age=31536000, immutable" : "no-cache" }
+        : { "cache-control": "private, no-store", "cdn-cache-control": "no-store" }),
     });
     response.end(headOnly ? undefined : body);
     return true;
@@ -1970,9 +1978,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     const path = pathOf(request);
-    if (path === peerLinkPath) {
-      if (peerRelay === undefined) refuseSocket(socket, 404);
-      else await peerRelay.accept(request, socket, head);
+    if (path === peerLinkPath && peerRelay !== undefined) {
+      await peerRelay.accept(request, socket, head);
       return;
     }
     if (isBrainPath(path)) {

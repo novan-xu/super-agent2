@@ -709,4 +709,4 @@ dialog.dlg.is-leaving { animation: sink var(--motion-exit) var(--ease-in) forwar
 .remote-peer { display: flex; min-height: 58px; align-items: center; gap: var(--space-3); }
 .remote-peer strong { flex: 1; }
 .remote-state { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; color: var(--muted); }
-.remote-return { max-width: min(200px, 46vw); white-space: nowrap; }
+.remote-return { max-width: min(232px, 55vw); white-space: nowrap; }

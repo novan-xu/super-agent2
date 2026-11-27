@@ -88,11 +88,16 @@ it("relays owner actions, live updates and streamed files without retaining lapt
   const nasDir = join(directory, "nas");
   const localDir = join(directory, "local");
   const pageDir = join(localDir, "page");
+  const nasPage = join(nasDir, "page");
   mkdirSync(pageDir, { recursive: true });
+  mkdirSync(nasPage, { recursive: true });
+  writeFileSync(join(nasPage, "theme.js"), "/* Trusted NAS theme */");
+  writeFileSync(join(pageDir, "theme.js"), "/* Local edition theme */");
+  writeFileSync(join(nasPage, "index.html"), '<!doctype html><title>Trusted NAS bundle</title><script src="/theme.js"></script>');
   const responseMarker = `private-page-${randomUUID()}`;
   const requestMarker = `private-owner-message-${randomUUID()}`;
   const fileMarker = `private-file-${randomUUID()}`;
-  writeFileSync(join(pageDir, "index.html"), `<!doctype html><title>${responseMarker}</title><script src="/theme.js"></script>`);
+  writeFileSync(join(pageDir, "index.html"), "<!doctype html><title>Local edition bundle</title>");
   const log = join(nasDir, "test.log");
   const clock = new TestClock();
   const key = await signingKey("peer-test");
@@ -101,7 +106,7 @@ it("relays owner actions, live updates and streamed files without retaining lapt
   const signedRunner = await assertion({ key, clock, claims: { ...serviceClaims(), aud: [runnerAudience], common_name: clientId } });
   const options = { clock, targets: [fakeTarget("hub")], credentials: testCredentials, environment: {} };
   const startNas = () => startTestHub({
-    ...options, config: { ...testConfig(nasDir), accessPeerAudience: peerAudience, accessRunnerAudience: runnerAudience },
+    ...options, config: { ...testConfig(nasDir), accessPeerAudience: peerAudience, accessRunnerAudience: runnerAudience, pageDir: nasPage },
     keySource: staticKeySource(keySet(key)), report: (line) => writeFileSync(log, `${line}\n`, { flag: "a" }),
   });
   const startLocal = () => startTestHub({
@@ -140,12 +145,14 @@ it("relays owner actions, live updates and streamed files without retaining lapt
     expect((await fetch(urlOf(local.address) + "/api/session", { headers: { origin: "https://unrelated.example" } })).status).toBe(403);
 
     const topic = local.conversations.create();
+    local.conversations.send(topic.id, responseMarker);
     disconnect = connect();
     await expect.poll(async () => (await get(prefix + "/api/session")).status, { timeout: 4_000 }).toBe(200);
     const page = await get(`${prefix}/conversations/${topic.id}`);
     expect(page.headers.get("cache-control")).toBe("private, no-store");
-    expect(page.headers.get("cdn-cache-control")).toBe("no-store");
-    expect(await page.text()).toContain(`<title>${responseMarker}</title><script src="${prefix}/theme.js">`);
+    expect(await page.text()).toContain(`<title>Trusted NAS bundle</title><script src="${prefix}/theme.js">`);
+    expect(await (await fetch(urlOf(local.address) + "/")).text()).toContain("Local edition bundle");
+    expect(await (await get(prefix + "/theme.js")).text()).toBe("/* Trusted NAS theme */");
     expect((await get(prefix + "/brain/mcp")).status).toBe(404);
     expect((await get(prefix + "/sw.js")).status).toBe(404);
 
@@ -159,7 +166,12 @@ it("relays owner actions, live updates and streamed files without retaining lapt
     expect((await post(`/api/conversations/${topic.id}/messages`, { text: requestMarker }, "https://unrelated.example")).status).toBe(403);
     expect((await post(`/api/conversations/${topic.id}/messages`, { text: requestMarker })).status).toBe(202);
     await expect.poll(() => messages.find((message) => message.type === "entry" && "text" in message.entry && message.entry.text === requestMarker)).toBeDefined();
-    expect(await (await get(`${prefix}/api/conversations/${topic.id}`)).text()).toContain(requestMarker);
+    const detail = await get(`${prefix}/api/conversations/${topic.id}`);
+    expect(detail.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(detail.headers.get("content-security-policy")).toContain("sandbox");
+    const content = await detail.text();
+    expect(content).toContain(responseMarker);
+    expect(content).toContain(requestMarker);
     expect(await (await get("/api/conversations")).text()).not.toContain(topic.id);
 
     const repository = "demo/remote-test";

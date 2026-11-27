@@ -4,10 +4,11 @@ import type { Duplex } from "node:stream";
 import { peerTokenHeader, type PeerStatus } from "@super-agent2/protocol";
 import { createWebSocketStream, WebSocketServer } from "ws";
 import { assertionHeader, type AccessVerifier } from "./access.js";
+import { isolatedPreviewPolicy } from "./html-render.js";
 import type { PeerStore } from "./peer-store.js";
 import {
-  copyBothWays, peerFrameLimit, peerNameHeader, peerPageRequest, peerRequestHeaders, peerResponseHeaders,
-  peerSocketPath, peerUpgradeHeader, peerUpgradeHeaders, selectHeaders, watchPeer,
+  copyBothWays, peerFrameLimit, peerApiRequest, peerRequestHeaders, peerResponseHeaders,
+  peerSocketPath, peerUpgradeHeader, peerUpgradeHeaders, safePeerMediaType, selectHeaders, watchPeer,
 } from "./peer-wire.js";
 
 interface Link {
@@ -100,11 +101,17 @@ export class PeerRelay {
     });
   }
 
+  availability(name: string): 200 | 404 | 503 {
+    const peer = this.options.store.find(name);
+    if (peer === undefined) return 404;
+    return this.links.get(name)?.clientId === peer.clientId ? 200 : 503;
+  }
+
   private open(name: string, headers: Parameters<ClientHttp2Session["request"]>[0], endStream: boolean): ClientHttp2Stream | undefined {
     const link = this.links.get(name);
     if (link === undefined || link.session.closed || link.session.destroyed || this.options.store.find(name)?.clientId !== link.clientId) return undefined;
     try {
-      return link.session.request({ ...headers, [peerNameHeader]: name }, { endStream });
+      return link.session.request(headers, { endStream });
     } catch {
       return undefined;
     }
@@ -112,7 +119,7 @@ export class PeerRelay {
 
   http(name: string, target: string, request: IncomingMessage, response: ServerResponse): void {
     const method = request.method ?? "GET";
-    if (!peerPageRequest(method, target)) {
+    if (!peerApiRequest(method, target)) {
       failResponse(request, response, 404);
       return;
     }
@@ -136,6 +143,10 @@ export class PeerRelay {
       if (response.destroyed) return;
       response.writeHead(headers[":status"] ?? 502, {
         ...selectHeaders(headers, peerResponseHeaders),
+        "content-type": safePeerMediaType(headers["content-type"]),
+        "content-security-policy": isolatedPreviewPolicy,
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
         "cache-control": "private, no-store", "cdn-cache-control": "no-store",
       });
       stream.pipe(response);

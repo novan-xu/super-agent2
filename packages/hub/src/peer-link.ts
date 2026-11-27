@@ -1,10 +1,10 @@
 import { createServer, type IncomingHttpHeaders, type ServerHttp2Stream } from "node:http2";
 import { request, type OutgoingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
-import { PeerName, peerLinkPath, peerTokenHeader } from "@super-agent2/protocol";
+import { peerLinkPath, peerTokenHeader } from "@super-agent2/protocol";
 import WebSocket, { createWebSocketStream } from "ws";
 import {
-  copyBothWays, peerFrameLimit, peerNameHeader, peerPageRequest, peerRequestHeaders, peerResponseHeaders,
+  copyBothWays, peerFrameLimit, peerApiRequest, peerRequestHeaders, peerResponseHeaders,
   peerSocketPath, peerUpgradeHeader, peerUpgradeHeaders, selectHeaders, watchPeer,
 } from "./peer-wire.js";
 
@@ -30,10 +30,9 @@ function serveLocal(stream: ServerHttp2Stream, headers: IncomingHttpHeaders, add
   stream.on("error", () => stream.destroy());
   const method = headers[":method"];
   const path = headers[":path"];
-  const name = PeerName.safeParse(headers[peerNameHeader]);
   const upgrade = headers[peerUpgradeHeader] === "websocket";
-  if (!name.success || typeof method !== "string" || typeof path !== "string"
-    || (upgrade ? method !== "POST" || path !== peerSocketPath : !peerPageRequest(method, path))) {
+  if (typeof method !== "string" || typeof path !== "string"
+    || (upgrade ? method !== "POST" || path !== peerSocketPath : !peerApiRequest(method, path))) {
     stream.respond({ ":status": 404 });
     stream.end();
     return;
@@ -42,7 +41,6 @@ function serveLocal(stream: ServerHttp2Stream, headers: IncomingHttpHeaders, add
   const forwarded: OutgoingHttpHeaders = {
     ...selectHeaders(headers, upgrade ? peerUpgradeHeaders : peerRequestHeaders),
     origin: `http://${host}:${address.port}`,
-    [peerNameHeader]: name.data,
   };
   if (upgrade) {
     forwarded.connection = "Upgrade";

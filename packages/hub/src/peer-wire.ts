@@ -2,15 +2,14 @@ import { pageAssetsPath, pageIconsPath, pageRoute, remotePath, themeScriptPath }
 import type { IncomingHttpHeaders, OutgoingHttpHeaders } from "node:http";
 import type { WebSocket } from "ws";
 
-export const peerNameHeader = "x-super-agent2-peer-name";
 export const peerUpgradeHeader = "x-super-agent2-peer-upgrade";
 export const peerSocketPath = "/ws";
 export const peerFrameLimit = 1024 * 1024;
 
 export const peerRequestHeaders = ["accept", "content-length", "content-type", "range"];
 export const peerResponseHeaders = [
-  "accept-ranges", "allow", "content-disposition", "content-length", "content-range", "content-security-policy",
-  "content-type", "referrer-policy", "x-content-type-options", "x-file-media-type", "x-frame-options",
+  "accept-ranges", "allow", "content-disposition", "content-length", "content-range",
+  "x-file-media-type",
 ];
 export const peerUpgradeHeaders = ["sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"];
 
@@ -23,16 +22,22 @@ export function selectHeaders(headers: IncomingHttpHeaders, allowed: readonly st
   return selected;
 }
 
-export function peerPageRequest(method: string, target: string): boolean {
+export function peerApiRequest(method: string, target: string): boolean {
   if (!/^\/(?!\/)/.test(target) || target.includes("\\")) return false;
   const { pathname } = new URL(target, "http://peer");
-  if (pathname.startsWith("/api/")) {
-    return pathname !== "/api/push" && !pathname.startsWith("/api/push/") && ["GET", "HEAD", "POST", "PUT", "DELETE"].includes(method);
-  }
-  if (method !== "GET" && method !== "HEAD") return false;
-  return (pathname !== remotePath && pathname !== `${remotePath}/` && pageRoute(pathname) !== undefined)
-    || pathname === themeScriptPath
-    || [pageAssetsPath, pageIconsPath, "/pdfjs/"].some((prefix) => pathname.startsWith(prefix));
+  return pathname.startsWith("/api/") && pathname !== "/api/push" && !pathname.startsWith("/api/push/")
+    && ["GET", "HEAD", "POST", "PUT", "DELETE"].includes(method);
+}
+
+export function remotePageAsset(path: string): boolean {
+  return (path !== remotePath && path !== `${remotePath}/` && pageRoute(path) !== undefined)
+    || path === themeScriptPath || [pageAssetsPath, pageIconsPath, "/pdfjs/"].some((prefix) => path.startsWith(prefix));
+}
+
+export function safePeerMediaType(header: string | string[] | undefined): string {
+  return typeof header === "string"
+    && /^(?:application\/(?:json|octet-stream|pdf)|text\/(?:html|plain)|image\/(?:png|jpe?g|gif|webp|avif|bmp)|(?:audio|video)\/[a-z0-9.+-]+)(?:;|$)/i.test(header)
+    ? header : "application/octet-stream";
 }
 
 export function watchPeer(socket: WebSocket, check: () => boolean = () => true): void {

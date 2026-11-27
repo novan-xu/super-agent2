@@ -25,6 +25,7 @@ See the [front-door design](design.md#front-door) for the admission rules.
 ## Remote control through the NAS
 
 Keep the local installation in loopback mode and set up [a peer on the NAS](deploy.md#remote-control-peers).
+Use matching releases on the NAS and the local computer so the NAS web app and the local API work together.
 Paste the four `PEER_*` settings printed by the NAS command into the local `local.env` and restart with `corepack pnpm local`.
 The local edition opens an outbound secure WebSocket and needs no tunnel, additional install or inbound port on this computer.
 Open 远程控制 on the signed-in NAS page and choose the local edition when it is online.

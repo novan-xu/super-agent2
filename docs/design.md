@@ -78,7 +78,8 @@ A loopback local edition can open an outbound WebSocket to the NAS peer endpoint
 It reconnects with bounded backoff and makes no change to the local listener or direct request admission.
 The NAS serves the remote page at `/remote/<peer>/` only after verifying the owner's front-door assertion.
 An authenticated link multiplexes requests and the page's WebSocket over HTTP/2 streams to the existing local loopback listener.
-The link carries only the local owner page, its assets and its owner API.
+The NAS serves its own trusted web build under the remote prefix and accepts only owner API traffic and the page WebSocket from the peer.
+The NAS treats peer responses as data and isolates HTML previews, so a peer cannot supply active content on the NAS owner's origin.
 Peer enrollment, runner links and brain tools use separate routes and credentials.
 The NAS brain has no tools for the local edition.
 
