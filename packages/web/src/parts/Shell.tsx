@@ -14,7 +14,6 @@ interface Destination {
 const main: readonly Destination[] = [
   { view: "workbench", icon: "inbox", label: text("navigation.workbench") },
   { view: "conversations", icon: "chat", label: text("navigation.conversation") },
-  { view: "memory", icon: "memory", label: text("navigation.memory") },
   { view: "schedules", icon: "calendar", label: text("navigation.schedules") },
 ];
 
@@ -55,7 +54,7 @@ export interface ShellProps {
   readonly subtitle?: string | null;
   readonly toast: string | null;
   readonly waiting: number;
-  readonly suggestions?: number;
+  readonly settingsCount?: number;
   readonly pendingSchedules?: number;
   readonly hasPeers?: boolean;
   readonly allowance?: ReactNode;
@@ -63,8 +62,8 @@ export interface ShellProps {
   readonly children?: ReactNode;
 }
 
-export function countOf(view: PageView, waiting: number, suggestions = 0, pendingSchedules = 0): number {
-  return view === "workbench" ? waiting : view === "memory" ? suggestions : view === "schedules" ? pendingSchedules : 0;
+export function countOf(view: PageView, waiting: number, settingsCount = 0, pendingSchedules = 0): number {
+  return view === "workbench" ? waiting : view === "settings" ? settingsCount : view === "schedules" ? pendingSchedules : 0;
 }
 
 const sidebarKey = "sidebar.collapsed";
@@ -82,7 +81,7 @@ export function Shell(props: ShellProps) {
   };
   const destinations = props.hasPeers ? [...main, remote] : main;
   const current = viewOf(props.route, props.ticketFrom);
-  const count = (view: PageView) => countOf(view, props.waiting, props.suggestions, props.pendingSchedules);
+  const count = (view: PageView) => countOf(view, props.waiting, props.settingsCount, props.pendingSchedules);
   const link = (destination: Destination, className: string, inner: ReactNode) => (
     <a
       key={destination.view}

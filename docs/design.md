@@ -666,7 +666,8 @@ It belongs to the owner.
   Only a blank box is not saved.
 - The brain only suggests.
   Its `remember` creates a suggestion, which may name the memories it replaces; its `forget` suggests removing one.
-  Suggestions wait in 记忆's 待确认 until the owner presses 确认 or 不要, and the navigation shows how many wait.
+  Suggestions wait in 记忆's 待确认 until the owner presses 确认 or 不要.
+  The pending count appears on 设置 in the navigation and on 记忆 in the Settings menu.
   Nothing else waits on them, so they are not notices.
 - The hub refuses a suggestion whose text is the same as a memory, as a suggestion still waiting, as one the owner declined, or as a memory the owner deleted.
   "The same" ignores white space, punctuation of either width, letter case and invisible characters.
@@ -1035,11 +1036,12 @@ Kept from it:
 - one accent colour, for primary actions, the current item and counts that ask for attention
 - state dots in fixed hues that never take the accent colour
 - a sidebar on wide screens and a tab bar on phones
-- the navigation: 工作台, 对话, 历史, 记忆, 定时, with 设置 last
+- the navigation: 工作台, 对话, 定时, with 设置 last
 - start cards in 工作台: what can start now, and what comes after it
 
 Changed by this design:
 
+- 设置 includes 历史 and 记忆.
 - 定时 uses a canvas of cards with a 待确认 group and persistent cards for active, paused and completed schedules.
   The tab counts pending proposals, and each proposal links to its source topic and shows the changes when it proposes an edit.
   Confirmed cards show the recurrence, next run or triggering service, and latest outcome.

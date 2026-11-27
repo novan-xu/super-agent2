@@ -328,6 +328,7 @@ export function App() {
   const [addingMemory, setAddingMemory] = useState(false);
   const openAdding = useCallback(() => setAddingMemory(true), []);
   const closeAdding = useCallback(() => setAddingMemory(false), []);
+  const settingsCounts = { memory: page.memory.suggestions.length };
   const settingsActions = useMemo<SettingsActions>(
     () => ({
       addMachine: (name, system) => controller.addMachine(name, system),
@@ -364,10 +365,10 @@ export function App() {
       linked={linked}
       model={model}
       fill={inConversation || inTransfer || inWorkbench}
-      subtitle={route.view === "settings" && "section" in route ? text(`settings.section.${route.section}`) : null}
+      subtitle={section === null ? null : text(`settings.section.${section}`)}
       toast={toast}
       waiting={page.waiting.cards.length}
-      suggestions={page.memory.suggestions.length}
+      settingsCount={Object.values(settingsCounts).reduce((sum, count) => sum + count, 0)}
       pendingSchedules={page.schedules?.pending ?? 0}
       hasPeers={Boolean(page.peers?.length)}
       allowance={<AllowanceSidebar report={page.allowance} now={now} />}
@@ -375,7 +376,7 @@ export function App() {
       headerTabs={inWorkbench ? <RepositoryTabs repositories={page.settings?.repositories ?? []} tickets={page.tickets.open} topics={page.list} waiting={page.waiting} selected={workRepository} select={(repository) => { selectWorkRepository(repository); setWorkTicket(null); setWorkPane("canvas"); }} pin={(repository, pinned) => controller.setPinned(repository, pinned)} order={(repositories) => controller.setRepositoryOrder(repositories)} /> : undefined}
       actions={<>
         {peer === undefined ? null : <a className="btn btn-sm remote-return" href="/remote" aria-label={text("remote.back")}><Icon name="screen" /><span className="od-truncate">{peer}</span><span>{text("remote.back")}</span></a>}
-        {route.view === "memory" ? (
+        {section === "memory" ? (
           <button className="btn btn-sm" type="button" onClick={openAdding}>
             <Icon name="plus" />
             {text("memory.new")}
@@ -439,8 +440,6 @@ export function App() {
             backHref={pagePath({ view: "workbench" })} back={() => setWorkTicket(null)} ticketHref={ticketHref}
             openTicket={setWorkTicket} now={now} />}
         />
-      ) : route.view === "memory" ? (
-        <MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />
       ) : route.view === "remote" ? (
         <RemoteView peers={page.peers ?? []} online={page.status === "open"} />
       ) : route.view === "schedules" ? (
@@ -460,7 +459,9 @@ export function App() {
           scrolled={historyScrolled}
           now={now}
         />}
-          section={"section" in route ? route.section : null}
+          memory={<MemoryView memory={page.memory} actions={memoryActions} adding={addingMemory} closeAdding={closeAdding} now={now} />}
+          section={section}
+          sectionCounts={settingsCounts}
           settings={page.settings}
           tickets={page.tickets.open}
           appearance={appearance}

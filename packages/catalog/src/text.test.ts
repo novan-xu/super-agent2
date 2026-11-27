@@ -42,7 +42,7 @@ describe("messages", () => {
     expect(text("navigation.workbench")).toBe("工作台");
     expect(text("navigation.conversation")).toBe("对话");
     expect(text("navigation.history")).toBe("历史");
-    expect(text("navigation.memory")).toBe("记忆");
+    expect(text("settings.section.memory")).toBe("记忆");
     expect(text("navigation.settings")).toBe("设置");
   });
 

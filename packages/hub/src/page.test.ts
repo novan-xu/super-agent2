@@ -61,7 +61,7 @@ async function call(running: Hub, path: string, init: RequestInit = {}, signedIn
 describe("the page", () => {
   it("answers every route of the page with the page itself", async () => {
     const running = await start();
-    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc-123", "/history", "/memory", "/settings"]) {
+    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc-123", "/history", "/memory", "/settings", "/settings/memory"]) {
       const response = await call(running, path);
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");

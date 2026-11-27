@@ -6,11 +6,16 @@ export type Navigate = (route: PageRoute, replace?: boolean) => void;
 
 function current(): PageRoute {
   const pathname = remotePeerRoute(window.location.pathname)?.path ?? window.location.pathname;
-  if (pathname.replace(/\/$/, "") === "/history") {
+  const path = pathname.replace(/\/$/, "");
+  if (path === "/history") {
     window.history.replaceState(window.history.state, "", appPath("/settings/history"));
     return { view: "settings", section: "history" };
   }
-  return pageRoute(pathname, window.location.search) ?? { view: "home" };
+  const route = pageRoute(pathname, window.location.search) ?? { view: "home" };
+  if (path === "/memory") {
+    window.history.replaceState(window.history.state, "", pagePath(route) + window.location.search + window.location.hash);
+  }
+  return route;
 }
 
 export function useRoute(): readonly [PageRoute, Navigate] {

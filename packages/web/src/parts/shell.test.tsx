@@ -23,10 +23,10 @@ function render(overrides: Partial<ShellProps> = {}): string {
 }
 
 describe("Shell", () => {
-  it("offers all five destinations in the sidebar and in the tab bar, in the design's order", () => {
+  it("offers the main destinations in the sidebar and in the tab bar, in the design's order", () => {
     const html = render();
     const labels = [...html.matchAll(destinations)].map((match) => match[1]);
-    expect(labels).toEqual(["工作台", "对话", "记忆", "定时", "设置", "工作台", "对话", "记忆", "定时", "设置"]);
+    expect(labels).toEqual(["工作台", "对话", "定时", "设置", "工作台", "对话", "定时", "设置"]);
     expect(html).toContain('href="/schedules"');
     expect(html).toContain('href="/conversations/c1"');
     expect(html).toContain('href="/workbench"');
@@ -45,8 +45,8 @@ describe("Shell", () => {
   });
 
   it("marks the current destination", () => {
-    const current = [...render({ route: { view: "memory" } }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
-    expect(current).toEqual(["记忆", "记忆"]);
+    const current = [...render({ route: { view: "settings", section: "memory" } }).matchAll(destinations)].filter((match) => match[2] !== undefined).map((match) => match[1]);
+    expect(current).toEqual(["设置", "设置"]);
   });
 
   it("keeps the destination a ticket was opened from marked while the ticket is shown", () => {
@@ -76,11 +76,11 @@ describe("Shell", () => {
     expect(html).toContain('aria-label="工作台 3"');
   });
 
-  it("shows how many suggestions wait on 记忆, beside the count of 工作台", () => {
-    const html = render({ waiting: 2, suggestions: 4 });
+  it("shows the pending Settings count in both navigation areas alongside the workbench count", () => {
+    const html = render({ waiting: 2, settingsCount: 4 });
     expect(html).toContain('<span class="count count--hot">4</span>');
     expect(html).toContain('<span class="tab-badge">4</span>');
-    expect(html).toContain('aria-label="记忆 4"');
+    expect([...html.matchAll(destinations)].filter((match) => match[1] === "设置 4")).toHaveLength(2);
     expect(html).toContain('aria-label="工作台 2"');
     expect(html.match(/count count--hot/g)).toHaveLength(2);
   });
@@ -97,7 +97,7 @@ describe("Shell", () => {
   });
 
   it("shows no count when nothing waits", () => {
-    const html = render({ waiting: 0 });
+    const html = render({ waiting: 0, settingsCount: 0 });
     expect(html).not.toContain("count--hot");
     expect(html).not.toContain("tab-badge");
   });
