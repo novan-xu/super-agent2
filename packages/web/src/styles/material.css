@@ -94,19 +94,19 @@
   --mat-well-rim-top: rgb(var(--mat-ink) / 0.24);
   --mat-well-rim: rgb(var(--mat-ink) / 0.15);
   --mat-well-rim-bottom: rgb(var(--mat-ink) / 0.09);
-  --mat-accent-rim-top: rgb(176 122 0 / 0.24);
-  --mat-accent-rim: rgb(160 108 0 / 0.30);
-  --mat-accent-rim-bottom: rgb(140 92 0 / 0.36);
+  --mat-accent-rim-top: color-mix(in srgb, var(--meta) 24%, transparent);
+  --mat-accent-rim: color-mix(in srgb, var(--meta) 30%, transparent);
+  --mat-accent-rim-bottom: color-mix(in srgb, var(--meta) 36%, transparent);
   --mat-hi: inset 0 0 0 0 transparent;
   --mat-hi-accent: inset 0 0 0 0 transparent;
   --mat-hi-ring: inset 0 0 0 0 transparent;
-  --mat-gradient-accent: linear-gradient(180deg, rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.03) 50%, rgb(150 100 0 / 0.035));
+  --mat-gradient-accent: linear-gradient(180deg, rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.03) 50%, color-mix(in srgb, var(--meta) 3.5%, transparent));
   --mat-drop-control: 0 1px 1px rgb(var(--mat-ink) / 0.07), 0 1px 2px -1px rgb(var(--mat-ink) / 0.08);
   --mat-drop-hover: 0 1px 1px rgb(var(--mat-ink) / 0.08), 0 2px 3px -1px rgb(var(--mat-ink) / 0.10);
   --mat-drop-sm: 0 1px 1px rgb(var(--mat-ink) / 0.07), 0 1px 1px -1px rgb(var(--mat-ink) / 0.06);
   --mat-drop-card: 0 1px 2px rgb(var(--mat-ink) / 0.06), 0 4px 10px -6px rgb(var(--mat-ink) / 0.14);
-  --mat-drop-accent: 0 1px 1px rgb(120 80 0 / 0.11), 0 1px 2px -1px rgb(120 80 0 / 0.09);
-  --mat-drop-accent-hover: 0 1px 1px rgb(120 80 0 / 0.12), 0 2px 3px -1px rgb(120 80 0 / 0.12);
+  --mat-drop-accent: 0 1px 1px color-mix(in srgb, var(--meta) 11%, transparent), 0 1px 2px -1px color-mix(in srgb, var(--meta) 9%, transparent);
+  --mat-drop-accent-hover: 0 1px 1px color-mix(in srgb, var(--meta) 12%, transparent), 0 2px 3px -1px color-mix(in srgb, var(--meta) 12%, transparent);
   --mat-sink: inset 0 1px 2px var(--mat-inset);
   --mat-sink-sm: inset 0 1px 1px var(--mat-inset);
   --mat-sink-press: inset 0 1px 1.5px rgb(var(--mat-ink) / 0.10);
@@ -118,7 +118,7 @@
   --mat-card-rim-bottom: rgb(var(--mat-ink) / 0.12);
   --mat-sheet-edge: rgb(var(--mat-ink) / 0.13);
   --mat-sheet-edge-solid: color-mix(in srgb, rgb(var(--mat-ink)) 13%, var(--side-bg));
-  --mat-focus-ink: color-mix(in srgb, var(--accent) 78%, #7a4f00);
+  --mat-focus-ink: var(--meta);
   --mat-focus: 0 0 0 2px var(--mat-focus-ink);
   --mat-focus-field: 0 0 0 1px var(--mat-focus-ink);
   --mat-bloom-mix: 0%;
@@ -126,7 +126,7 @@
 
 :root[data-theme="light"],
 :root[data-theme="light"][data-accent] {
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 78%, #7a4f00);
+  --focus-ring: 0 0 0 2px var(--meta);
 }
 
 :root .brand-toggle {
