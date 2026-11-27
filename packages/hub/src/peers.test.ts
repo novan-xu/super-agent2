@@ -5,18 +5,21 @@ import { createServer, request } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type HubToBrain, ServerMessage, peerLinkPath, peerTokenHeader, protocolVersion, runnerTokenHeader, startingEngineTable } from "@super-agent2/protocol";
+import { deploymentFile, type HubToBrain, type HubToRunner, ServerMessage, type StartCard, type Ticket, peerLinkPath, peerTokenHeader, protocolVersion, runnerTokenHeader, startingEngineTable } from "@super-agent2/protocol";
 import { expect, it } from "vitest";
 import WebSocket from "ws";
 import { assertionHeader } from "./access.js";
 import { loadConfig } from "./config.js";
 import { secretValues } from "./credentials.js";
 import type { Hub } from "./hub.js";
+import { createPeerQueue, sharedUpdateRepository } from "./peer-exchange.js";
+import { chainStartPath } from "./server.js";
 import { connectToPeer } from "./peer-link.js";
 import { createPeerStore } from "./peer-store.js";
 import { assertion, keySet, personClaims, serviceClaims, signingKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
 import { callBrainTool } from "./testing/brain-tools.js";
 import { fakeTarget, testCredentials } from "./testing/commands.js";
+import { fakeForge, fakeGitHubBase } from "./testing/forge.js";
 import { startTestHub } from "./testing/http.js";
 
 const peerAudience = "d".repeat(64);
@@ -401,3 +404,187 @@ it("exchanges only approved general memories and principles with durable receipt
     rmSync(directory, { recursive: true, force: true });
   }
 }, 35_000);
+
+it("queues merged revisions offline, combines pending build requests, and keeps start authorization local", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hub-peer-update-"));
+  const nasDir = join(directory, "nas");
+  const localDir = join(directory, "local");
+  const clock = new TestClock();
+  const key = await signingKey("peer-update-test");
+  const signedOwner = await assertion({ key, clock, claims: personClaims() });
+  const signedPeer = await assertion({ key, clock, claims: { ...serviceClaims(), aud: [peerAudience], common_name: clientId } });
+  const repository = sharedUpdateRepository;
+  const [old, running, first, unseen, second, third, latest] = (["0", "a", "b", "c", "d", "e", "f"] as const).map((digit) => digit.repeat(40)) as [
+    string, string, string, string, string, string, string,
+  ];
+  const forge = fakeForge();
+  forge.repository(repository).mainline.push(old, running);
+  const recipe = { target: ["mac-mini", "pc"], deploy: "deploy", health: { command: "health" }, rollback: "rollback" };
+  const options = { clock, targets: [fakeTarget("hub")], credentials: testCredentials, environment: {}, forgeFetch: forge.fetch, gitHubBase: fakeGitHubBase };
+  const startNas = () => startTestHub({
+    ...options, keySource: staticKeySource(keySet(key)),
+    config: { ...testConfig(nasDir), accessPeerAudience: peerAudience, sourceRepository: repository, version: running },
+  });
+  let nas = await startNas();
+  const edge = await fakeEdge(() => nas, signedPeer);
+  edge.setOnline(false);
+  const token = createPeerStore(nas.database).add({ name: "work-laptop", clientId, accessTokenId: "update-token" });
+  const local = await startTestHub({
+    ...options,
+    localInstallation: { repository, checkout: localDir, commit: running, restart: () => { throw new Error("The fixture only approves the build"); } },
+    config: {
+      dataDir: localDir, host: "127.0.0.1", port: 0, ownerEmail: "owner@local.invalid", projectFolders: [], brainTokenFile: join(localDir, "brain.token"),
+      outboundPeer: { hub: edge.url, clientId, clientSecret, token },
+    },
+  });
+  const testTitle = { en: "Update the test project", zh: "更新测试项目" };
+  const updates = (hub: Hub) => hub.tickets.list().filter((ticket) => ticket.form === "task");
+  const queued = (hub: Hub) => hub.database.connection.prepare("SELECT payload FROM peer_outbox WHERE item LIKE 'update:%' ORDER BY seq")
+    .all().map(({ payload }) => JSON.parse(String(payload)) as { commit: string });
+  const start = (hub: Hub, card: StartCard) => fetch(urlOf(hub.address) + chainStartPath, {
+    method: "POST", headers: { origin: urlOf(hub.address), "content-type": "application/json", ...(hub === nas ? { [assertionHeader]: signedOwner } : {}) },
+    body: JSON.stringify({ chains: [{ ticket: card.ticket.id, fingerprint: card.fingerprint }] }),
+  });
+  const cardFor = (hub: Hub, ticket: Ticket) => hub.chains.cards().find((card) => card.ticket.id === ticket.id)!;
+  function attach(hub: Hub, name: string) {
+    const stored = hub.machines.get(name) ?? hub.machines.add({ name, accessClientId: name }).machine;
+    const sent: HubToRunner[] = [];
+    const link = hub.runners.attach(stored, { send: (message) => sent.push(message), close: () => undefined });
+    const codex = startingEngineTable.codex.mechanical;
+    link.receive({ type: "hello", protocol: protocolVersion, works: [], machine: {
+      hostname: name, platform: name === "local" ? "win32" : "darwin", arch: "x64", release: "1", user: "owner", slots: { total: 2, free: 2 }, allowances: [],
+      programs: [{ id: "codex", installed: true, path: null, version: null, source: "configuration", problem: null, models: [{ id: codex.model, efforts: [codex.effort] }] }],
+    } });
+    return { sent, link };
+  }
+  async function merge(hub: Hub, number: number, commit: string, repo = repository, target: string | string[] = recipe.target) {
+    const branch = `sa2/peer-update-${number}`;
+    const head = `head-${number}`;
+    const pull = forge.pull(repo, number, head, ["docs/local.md"], branch, [number]);
+    pull.open = false;
+    pull.merged = true;
+    pull.mergeCommit = commit;
+    forge.repository(repo).issues.set(number, "open");
+    forge.repository(repo).mainline.push(commit);
+    forge.file(repo, commit, deploymentFile, JSON.stringify({ ...recipe, target }));
+    const ticket = hub.tickets.open({
+      repository: repo, kind: "feature", title: testTitle, summary: testTitle,
+      issues: [{ repository: repo, number, title: testTitle, summary: testTitle, url: `https://github.com/${repo}/issues/${number}` }],
+    });
+    hub.tickets.change((writes) => {
+      writes.choose(ticket.id, { machine: hub === nas ? "mac-mini" : "local", engine: "claude", model: "claude", effort: "high", by: { machine: "default", engine: "default", model: "default", effort: "default" } });
+      writes.move(ticket.id, "working");
+      writes.setBranch(ticket.id, branch);
+      writes.setPullRequest(ticket.id, number, testTitle);
+      writes.move(ticket.id, "verifying");
+    });
+    await hub.verification.check(ticket.id);
+    expect(hub.tickets.get(ticket.id)?.state).toBe("merged");
+  }
+  function waitFor(hub: Hub, commit: string): Promise<Ticket> {
+    return new Promise((resolve) => {
+      const unsubscribe = hub.tickets.subscribe((ticket) => {
+        if (ticket.form === "task" && ticket.commit === commit) {
+          unsubscribe();
+          resolve(ticket);
+        }
+      });
+    });
+  }
+
+  try {
+    const localRunner = attach(local, "local");
+    nas.machines.add({ name: "mac-mini", accessClientId: "mini" });
+    await merge(nas, 1, first);
+    forge.repository(repository).mainline.push(unseen);
+    await merge(nas, 2, second);
+    await merge(nas, 3, "1".repeat(40), "owner/unrelated");
+    expect(queued(nas).map(({ commit }) => commit)).toEqual([first, second]);
+    expect(updates(local)).toEqual([]);
+
+    await nas.close();
+    nas = await startNas();
+    expect(queued(nas).map(({ commit }) => commit)).toEqual([first, second]);
+    const firstCard = waitFor(local, first).then((ticket) => cardFor(local, ticket));
+    const newest = waitFor(local, second);
+    edge.setOnline(true);
+    const outdated = await firstCard;
+    const build = await newest;
+    expect(updates(local)).toMatchObject([{
+      id: outdated.ticket.id, commitRef: second, commit: second, state: "pending", requiredMachine: "local",
+      localBuild: true, waits: [], title: { zh: "更新本地版（来自 NAS）" },
+    }]);
+    expect(local.conversations.entries(build.conversation!)).toContainEqual(expect.objectContaining({ kind: "notice", text: expect.stringContaining(second.slice(0, 7)) }));
+    expect(localRunner.sent.filter(({ type }) => type === "work.task")).toEqual([]);
+    expect((await start(local, outdated)).status).toBe(409);
+    const record = () => { throw new Error("An older revision would change the card"); };
+    expect(await local.taskTickets.peerUpdate({ commit: unseen, running, previous: { commit: second, ticket: build.id }, record })).toBe("ignored");
+    expect(await local.taskTickets.peerUpdate({ commit: old, running, record })).toBe("ignored");
+    const startedBuild = await start(local, cardFor(local, build));
+    expect(startedBuild.status, await startedBuild.text()).toBe(202);
+    await local.chains.idle();
+    expect(localRunner.sent).toContainEqual(expect.objectContaining({ type: "work.task", task: expect.objectContaining({
+      ticket: build.id, localBuild: true, checkout: expect.objectContaining({ commit: second, ref: null }),
+    }) }));
+    expect(queued(local)).toEqual([]);
+
+    const nasRunner = attach(nas, "mac-mini");
+    const deploymentArrived = waitFor(nas, third);
+    await merge(local, 4, third);
+    const deployment = await deploymentArrived;
+    expect(updates(nas)).toMatchObject([{
+      id: deployment.id, commit: third, state: "pending", deploymentTargets: ["mac-mini", "pc"],
+      waits: [], title: { zh: "部署 Super Agent（来自本地版）" },
+    }]);
+    expect(nas.conversations.entries(deployment.conversation!)).toContainEqual(expect.objectContaining({ kind: "notice", text: expect.stringContaining("来自本地版") }));
+    expect(nasRunner.sent.filter(({ type }) => type === "work.task")).toEqual([]);
+    const newDeployment = waitFor(nas, latest);
+    await merge(local, 5, latest, repository, "mac-mini");
+    await newDeployment;
+    expect(updates(nas)).toMatchObject([{
+      id: deployment.id, commit: latest, state: "pending", requiredMachine: "mac-mini",
+    }]);
+    expect(updates(nas)[0]?.deploymentTargets).toBeUndefined();
+    const startedDeployment = await start(nas, cardFor(nas, deployment));
+    expect(startedDeployment.status, await startedDeployment.text()).toBe(202);
+    await nas.chains.idle();
+    expect(nasRunner.sent).toContainEqual(expect.objectContaining({ type: "work.task", task: expect.objectContaining({
+      ticket: deployment.id, deploys: true, checkout: expect.objectContaining({ commit: latest, ref: null }),
+    }) }));
+    const delivered = new Promise<void>((resolve) => {
+      const unsubscribe = nas.tickets.subscribe((ticket) => {
+        if (ticket.id === deployment.id && ticket.deployedAt !== null) { unsubscribe(); resolve(); }
+      });
+    });
+    nasRunner.link.receive({ type: "work.event", ticket: deployment.id, attempt: 1, seq: 1, at: clock.now(),
+      event: { kind: "delivered", commit: latest, text: null, files: [], report: testTitle } });
+    await delivered;
+    expect(queued(nas)).toEqual([]);
+    expect(updates(local)).toHaveLength(1);
+  } finally {
+    edge.close();
+    await local.close();
+    await nas.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps update deliveries queued while a peer without update support receives memories", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hub-peer-compatibility-"));
+  const hub = await startTestHub({ config: {
+    dataDir: directory, host: "127.0.0.1", port: 0, ownerEmail: "owner@local.invalid", projectFolders: [], brainTokenFile: join(directory, "brain.token"),
+  } });
+  try {
+    const queue = createPeerQueue(hub.database, () => ["peer"]);
+    queue.enqueue({ kind: "update", repository: sharedUpdateRepository, commit: "a".repeat(40) });
+    queue.enqueue({ kind: "remember", item: 1, text: "A general preference." });
+    const memory = queue.next("peer", false);
+    expect(memory?.payload.kind).toBe("remember");
+    queue.acknowledge("peer", memory!.id);
+    expect(queue.next("peer", false)).toBeUndefined();
+    expect(queue.next("peer", true)?.payload.kind).toBe("update");
+  } finally {
+    await hub.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

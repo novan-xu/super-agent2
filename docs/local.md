@@ -47,6 +47,16 @@ Use the local installation's direct URL to subscribe to its push notifications.
 The connection retries automatically after a network interruption or restart.
 Delete the four settings and restart to turn off the outbound link.
 
+## Updating paired installations
+
+When Super Agent work merges through a paired hub, it sends the commit to the other installation.
+A merge on the NAS creates a pending build on the local edition, and a merge on the local edition creates a pending deployment on the NAS.
+If the peer is offline, the request stays queued until the peer reconnects and supports update requests.
+The receiving installation labels the pending card with the source and posts a notice in its topic.
+A newer request advances the pending peer update to the newer commit.
+Press 开始 on the receiving installation to authorize its update.
+An update you already run is ignored, and applying a received update sends no request back.
+
 ## Sharing general preferences
 
 On paired installations, use 跨设备共享 in 记忆 to send an owner preference to the other installation.

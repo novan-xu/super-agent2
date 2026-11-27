@@ -71,7 +71,7 @@ export interface MemoryService {
   sharing(): boolean;
   readonly canProposePrinciples: boolean;
   proposePrinciple(text: string, conversation: string): SuggestOutcome;
-  receivePeer(source: PeerSource, payload: Exclude<PeerPayload, { kind: "principle" }>): (() => void) | undefined;
+  receivePeer(source: PeerSource, payload: Extract<PeerPayload, { kind: "remember" | "forget" }>): (() => void) | undefined;
   subscribe(listener: (list: MemoryList) => void): () => void;
 }
 

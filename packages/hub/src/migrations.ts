@@ -1409,6 +1409,21 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE ticket_tasks ADD COLUMN local_restart TEXT CHECK (local_restart IN ('waiting', 'requested', 'failed'));
     `,
   },
+  {
+    version: 76,
+    sql: `
+      CREATE TABLE peer_update_requests (
+        id INTEGER PRIMARY KEY,
+        commit_sha TEXT NOT NULL UNIQUE,
+        handled INTEGER NOT NULL DEFAULT 0 CHECK (handled IN (0, 1))
+      ) STRICT;
+      CREATE TABLE peer_update_cursor (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        commit_sha TEXT NOT NULL,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id)
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

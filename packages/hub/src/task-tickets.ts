@@ -18,6 +18,7 @@ import type { CredentialSource } from "./credentials.js";
 import type { HubDatabase } from "./database.js";
 import { accountFor } from "./filing.js";
 import { createGitHubApi, type Fetch, type GitHubApi } from "./github-api.js";
+import { sharedUpdateRepository } from "./peer-exchange.js";
 import type { MachineStore } from "./machines.js";
 import { TicketError, type TicketService } from "./tickets.js";
 import type { TicketTurn } from "./ticket-versions.js";
@@ -41,8 +42,16 @@ export interface TaskTicketRequest {
 
 export type TaskOpenOutcome = { readonly ok: true; readonly ticket: Ticket; readonly notes: readonly string[] } | { readonly ok: false; readonly reason: string };
 
+export interface PeerUpdate {
+  readonly commit: string;
+  readonly running: string;
+  readonly previous?: { readonly commit: string; readonly ticket: number } | undefined;
+  readonly record: (ticket: Ticket) => void;
+}
+
 export interface TaskTickets {
   open(request: TaskTicketRequest, turn?: TicketTurn): Promise<TaskOpenOutcome>;
+  peerUpdate(update: PeerUpdate): Promise<"applied" | "ignored" | "retry">;
   ready(): void;
   refreshLocal(): void;
   pausesLocalWork(): boolean;
@@ -167,13 +176,13 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     return createGitHubApi({ fetch: doFetch, token, ...(options.gitHubBase === undefined ? {} : { base: options.gitHubBase }) });
   };
 
-  const readTargets = async (repository: string): Promise<{ readonly targets: readonly string[]; readonly notes: string[] } | { readonly refused: string }> => {
+  const readTargets = async (repository: string, commit?: string): Promise<{ readonly targets: readonly string[]; readonly notes: string[] } | { readonly refused: string }> => {
     const gitHub = gitHubFor(repository);
     if (typeof gitHub === "string") {
       return { targets: [], notes: [`The deployment file could not be read (${gitHub}), so the ticket's machine follows its platform; its worker reads the file in its checkout and refuses to deploy on a machine the file does not name.`] };
     }
     try {
-      const head = await gitHub.commit(repository, "HEAD");
+      const head = commit ?? await gitHub.commit(repository, "HEAD");
       const source = head === null ? null : await gitHub.fileText(repository, deploymentFile, head);
       if (source === null) {
         return {
@@ -196,7 +205,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     }
   };
 
-  const open = async (request: TaskTicketRequest, turn?: TicketTurn): Promise<TaskOpenOutcome> => {
+  const open = async (request: TaskTicketRequest, turn?: TicketTurn, peer?: PeerUpdate): Promise<TaskOpenOutcome> => {
     const refuse = (reason: string): TaskOpenOutcome => ({ ok: false, reason: `Nothing was opened: ${reason}` });
     const repository = request.repository ?? null;
     if (repository !== null && !RepositoryName.safeParse(repository).success) {
@@ -242,11 +251,12 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     if (localBuild) {
       notes.push(`This build updates the local edition on local. Its checkout is ${installation.checkout}, and it currently runs ${installation.commit}.`);
     } else if (request.deploy === true && repository !== null) {
-      const read = await readTargets(repository);
+      const read = await readTargets(repository, peer?.commit);
       if ("refused" in read) {
         return refuse(read.refused);
       }
       targets = read.targets;
+      if (peer !== undefined && targets.length === 0) return refuse("The requested commit has no readable deployment recipe.");
       notes.push(...read.notes);
     }
     if (closed) {
@@ -262,6 +272,15 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       const ticket = tickets.change((writes) => {
         for (const id of after) {
           requirePredecessor(writes.get(id));
+        }
+        if (peer?.previous !== undefined) {
+          const existing = writes.get(peer.previous.ticket);
+          if (existing?.state === "pending" && existing.waits.length === 0 && existing.commit === peer.previous.commit) {
+            writes.pinPendingCommit(existing.id, peer.commit, targets);
+            const updated = writes.get(existing.id)!;
+            peer.record(updated);
+            return updated;
+          }
         }
         if (localBuild && after.length > 0) {
           for (const row of sameBuilds.all(repository, commitRef)) {
@@ -288,10 +307,18 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
           waitsFor: after,
           task: { task: request.task, materials: request.materials, commitRef, deploys: request.deploy === true, localBuild: localBuild ? true : undefined },
         });
+        if (peer !== undefined) {
+          writes.pinPendingCommit(id, peer.commit);
+          writes.state(id, {
+            kind: "operation", difficulty: "mechanical", platform: "any",
+            difficultyReason: { en: "Follow the installation's update procedure.", zh: "按照当前安装的更新流程执行。" },
+          });
+        }
         const opened = writes.get(id);
         if (opened === undefined) {
           throw new TicketError(`Ticket ${tickets.reference(id) ?? "(unavailable)"} was not stored`);
         }
+        peer?.record(opened);
         options.attachments?.grant(id, request.materials.flatMap((piece) => piece.attachment == null ? [] : [piece.attachment]));
         return opened;
       }, turn);
@@ -299,6 +326,44 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     } catch (error) {
       return refuse(reasonOf(error));
     }
+  };
+
+  const peerUpdate = async (update: PeerUpdate): Promise<"applied" | "ignored" | "retry"> => {
+    const repository = sharedUpdateRepository;
+    const { commit, running, previous } = update;
+    if (commit === running || commit === previous?.commit) return "ignored";
+    const gitHub = gitHubFor(repository);
+    if (typeof gitHub === "string") return "retry";
+
+    const head = await gitHub.commit(repository, "HEAD");
+    if (head === null) return "retry";
+    if (commit !== head) {
+      const onMain = await gitHub.compare(repository, commit, head);
+      if (onMain === "unknown" || onMain === "behind") return "retry";
+      if (onMain === "diverged") return "ignored";
+    }
+
+    const installed = await gitHub.compare(repository, running, commit);
+    if (installed === "identical" || installed === "behind") return "ignored";
+    if (installed === "unknown") return "retry";
+
+    if (previous !== undefined && previous.commit !== running) {
+      const order = await gitHub.compare(repository, previous.commit, commit);
+      if (order === "unknown") return "retry";
+      if (order !== "ahead") return "ignored";
+    }
+
+    const local = sameRepository(installation?.repository ?? null, repository);
+    const request: TaskTicketRequest = {
+      title: local ? { en: "Update the local edition (from NAS)", zh: "更新本地版（来自 NAS）" }
+        : { en: "Deploy Super Agent (from local edition)", zh: "部署 Super Agent（来自本地版）" },
+      summary: local ? { en: "Build the requested commit and restart the local edition.", zh: "构建请求的提交并重启本地版。" }
+        : { en: "Apply the requested commit to the NAS.", zh: "将请求的提交部署到 NAS。" },
+      task: local ? "Build and activate the requested commit on the local installation."
+        : "Deploy the requested commit using the repository's deployment recipe.",
+      repository, kind: "operation", deploy: true, commit, materials: [],
+    };
+    return (await open(request, undefined, update)).ok ? "applied" : "retry";
   };
 
   const mark = async (id: number) => {
@@ -425,6 +490,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
 
   return {
     open,
+    peerUpdate,
     ready: () => {
       localReady = true;
       refreshLocal();

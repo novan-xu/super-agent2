@@ -56,6 +56,7 @@ export type Onward = (ticket: number, merged: MergedPart) => AgainOutcome;
 
 export interface VerificationOptions {
   readonly localInstallation?: LocalInstallation;
+  readonly mergedCommit?: (repository: string, commit: string) => void;
   readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
@@ -727,14 +728,17 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const deployment = rowOf(ticket.id)?.deployment ?? null;
     let remaining: number[] = [];
     tickets.change((writes) => {
-      if (writes.get(ticket.id)?.state !== "verifying") {
+      const before = writes.get(ticket.id);
+      if (before?.state !== "verifying") {
         return;
       }
+      const firstMerge = !before.pullRequests.some((entry) => entry.number === pull.number && entry.state === "merged");
       writes.pullRequestMerged(ticket.id, { number: pull.number, closes: closing, mergeCommit: commit, deployment: deployment === null ? null : deployment === 1, head: pull.head });
       writes.setClosedOutside(ticket.id, closures);
       const now = writes.get(ticket.id);
       remaining = now === undefined ? [] : openIssueNumbers(now);
       write(ticket.id, { state: "merged", waiting: null, reason: null });
+      if (firstMerge && commit !== null) options.mergedCommit?.(repository, commit);
       if (remaining.length > 0) {
         return;
       }
