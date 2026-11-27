@@ -400,14 +400,15 @@ it("redirects the old Memory URL and keeps the Settings and Memory badges in syn
   expect(badges()).toEqual(["2", "2", "2"]);
   await act(async () => memoryLink().click());
   expect(window.location.pathname).toBe("/settings/memory");
-  const decide = async (label: string) => {
-    const button = [...host.querySelectorAll<HTMLButtonElement>(".mrow-actions button")].find((item) => item.textContent === label)!;
+  const decide = async (id: number, label: string) => {
+    const row = [...host.querySelectorAll(".mrow")].find((item) => item.querySelector(".mrow-text")?.textContent === `建议 ${id}`)!;
+    const button = [...row.querySelectorAll<HTMLButtonElement>(".mrow-actions button")].find((item) => item.textContent === label)!;
     await act(async () => button.click());
   };
-  await decide(text("memory.confirm"));
+  await decide(1, text("memory.confirm"));
   expect(fetcher).toHaveBeenCalledWith("/api/memories/suggestions/1/confirm", expect.anything());
   expect(badges()).toEqual(["1", "1", "1"]);
-  await decide(text("memory.decline"));
+  await decide(2, text("memory.decline"));
   expect(fetcher).toHaveBeenCalledWith("/api/memories/suggestions/2/decline", expect.anything());
   expect(badges()).toEqual([null, null, null]);
 });
