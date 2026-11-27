@@ -194,9 +194,11 @@ const views = {
     desktop: settingsMenu,
   },
   memory: {
-    route: { view: "memory" },
+    route: { view: "settings", section: "memory" },
     ready: ".mrow-text",
     targets: { "memory text": ".mrow-text", "memory actions": ".mrow-actions button", "add memory": ".top button" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
   },
   schedules: {
     route: { view: "schedules" },

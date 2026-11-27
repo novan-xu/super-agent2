@@ -372,6 +372,46 @@ it("redirects the old History URL into Settings and loads the history", async ()
   expect(fetcher).toHaveBeenCalledWith("/api/tickets?scope=ended", expect.anything());
 });
 
+it("redirects the old Memory URL and keeps the Settings and Memory badges in sync with suggestion decisions", async () => {
+  let suggestions = [1, 2].map((id) => ({
+    id, kind: "remember" as const, text: `建议 ${id}`, memory: null, replaces: [], createdAt: at,
+  }));
+  const fetcher = vi.fn(async (path: string) => {
+    const decision = /^\/api\/memories\/suggestions\/([12])\/(confirm|decline)$/.exec(path);
+    if (decision === null) return Response.json({}, { status: 404 });
+    suggestions = suggestions.filter(({ id }) => id !== Number(decision[1]));
+    TestSocket.current.deliver({ type: "memories", memories: [], suggestions });
+    return Response.json({ memories: [], suggestions });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await open("/memory");
+  expect(window.location.pathname).toBe("/settings/memory");
+  await act(async () => TestSocket.current.deliver({ type: "memories", memories: [], suggestions }));
+  const memoryLink = () => host.querySelector<HTMLAnchorElement>('.set-nav a[href="/settings/memory"]')!;
+  const badges = () => [
+    host.querySelector('.side a[href="/settings"] .count--hot'),
+    host.querySelector('.tabbar a[href="/settings"] .tab-badge'),
+    memoryLink().querySelector(".count--hot"),
+  ].map((badge) => badge?.textContent ?? null);
+  expect(badges()).toEqual(["2", "2", "2"]);
+  expect(memoryLink().getAttribute("aria-current")).toBe("page");
+  await act(async () => host.querySelector<HTMLAnchorElement>(".set-back")!.click());
+  expect(window.location.pathname).toBe("/settings");
+  expect(badges()).toEqual(["2", "2", "2"]);
+  await act(async () => memoryLink().click());
+  expect(window.location.pathname).toBe("/settings/memory");
+  const decide = async (label: string) => {
+    const button = [...host.querySelectorAll<HTMLButtonElement>(".mrow-actions button")].find((item) => item.textContent === label)!;
+    await act(async () => button.click());
+  };
+  await decide(text("memory.confirm"));
+  expect(fetcher).toHaveBeenCalledWith("/api/memories/suggestions/1/confirm", expect.anything());
+  expect(badges()).toEqual(["1", "1", "1"]);
+  await decide(text("memory.decline"));
+  expect(fetcher).toHaveBeenCalledWith("/api/memories/suggestions/2/decline", expect.anything());
+  expect(badges()).toEqual([null, null, null]);
+});
+
 it("opens and closes repository tabs through the shared pin API", async () => {
   let snapshot = settingsSnapshot({ repositories: [
     { repository: "owner/one", account: "novan-xu", chosen: false, pinned: true },

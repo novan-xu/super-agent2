@@ -70,6 +70,8 @@ export interface SettingsActions {
 
 export interface SettingsViewProps {
   readonly history?: ReactNode;
+  readonly memory: ReactNode;
+  readonly sectionCounts: Readonly<Partial<Record<SettingsSection, number>>>;
   readonly section: SettingsSection | null;
   readonly settings: SettingsSnapshot | null;
   readonly tickets: readonly Ticket[];
@@ -87,6 +89,7 @@ const sectionIcons: Readonly<Record<SettingsSection, IconName>> = {
   appearance: "sun",
   usage: "hub",
   history: "history",
+  memory: "memory",
 };
 
 function routeOf(section: SettingsSection | null): PageRoute {
@@ -962,7 +965,7 @@ export function settingsSectionEnabled(section: SettingsSection, settings: Setti
   return true;
 }
 
-export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now, history }: SettingsViewProps) {
+export function SettingsView({ section, settings, tickets, appearance, actions, navigate, now, history, memory, sectionCounts }: SettingsViewProps) {
   const groups = settingsGroups.map((group) => ({ ...group, sections: group.sections.filter((item) => settingsSectionEnabled(item, settings)) })).filter((group) => group.sections.length > 0);
   const active = section ?? firstSection;
   const link = (target: SettingsSection | null) => {
@@ -971,6 +974,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
   };
   const body = () => {
     if (active === "history") return history;
+    if (active === "memory") return memory;
     if (active === "usage") return <UsageSection budget={settings === null || !featureEnabled(settings.features, "openaiCosts") ? undefined : settings.openaiBudget ?? null} />;
     if (active === "appearance") {
       return <AppearanceSection appearance={appearance} choose={actions.setAppearance} />;
@@ -1001,15 +1005,19 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
             <div className="set-group" key={group.group}>
               <p className="set-group-title">{text(`settings.group.${group.group}`)}</p>
               <ul className="nav">
-                {group.sections.map((item) => (
-                  <li key={item}>
-                    <a className="nav-btn" {...link(item)} aria-current={item === active ? "page" : undefined}>
-                      <Icon name={sectionIcons[item]} />
-                      <span className="nav-label">{text(`settings.section.${item}`)}</span>
-                      {item === "machines" && settings !== null && settings.machines.length > 0 ? <span className="count">{`${onlineCount(settings.machines)}/${settings.machines.length}`}</span> : null}
-                    </a>
-                  </li>
-                ))}
+                {group.sections.map((item) => {
+                  const count = sectionCounts[item] ?? 0;
+                  return (
+                    <li key={item}>
+                      <a className="nav-btn" {...link(item)} aria-current={item === active ? "page" : undefined}>
+                        <Icon name={sectionIcons[item]} />
+                        <span className="nav-label">{text(`settings.section.${item}`)}</span>
+                        {count > 0 ? <span className="count count--hot">{count}</span> : null}
+                        {item === "machines" && settings !== null && settings.machines.length > 0 ? <span className="count">{`${onlineCount(settings.machines)}/${settings.machines.length}`}</span> : null}
+                      </a>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}

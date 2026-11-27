@@ -211,7 +211,7 @@ export const clean: Fixture[] = [
         '  return <p>{ok ? text("hold.answer.released") : text("hold.answer.refused")}</p>;',
         '  return <p>{text("hold.reason", { description: "x", evidence: "y" })}</p>;',
         '  return <input placeholder={text("navigation.settings")} aria-label={ok ? text("a") : text("b")} />;',
-        '  return <Button label={text("navigation.memory")} />;',
+        '  return <Button label={text("settings.section.memory")} />;',
       ),
     ),
     lines: [],

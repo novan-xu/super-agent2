@@ -3,7 +3,7 @@ import { RepositoryName } from "./repositories.js";
 import { ScheduleId } from "./schedules.js";
 import { SettingsSection } from "./settings.js";
 
-export const pageViews = ["workbench", "conversations", "history", "memory", "schedules", "remote", "settings"] as const;
+export const pageViews = ["workbench", "conversations", "history", "schedules", "remote", "settings"] as const;
 export type PageView = (typeof pageViews)[number];
 
 export type PageRoute =
@@ -48,6 +48,9 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
   }
   if (trimmed === "/transfer") {
     return { view: "transfer" };
+  }
+  if (trimmed === "/memory") {
+    return { view: "settings", section: "memory" };
   }
   const parts = trimmed.split("/").slice(1);
   const [view, conversation, ...rest] = parts;

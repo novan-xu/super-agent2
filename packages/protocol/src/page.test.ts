@@ -6,7 +6,6 @@ describe("pageRoute", () => {
     expect(pageRoute("/")).toEqual({ view: "home" });
     expect(pageRoute("/workbench")).toEqual({ view: "workbench" });
     expect(pageRoute("/history")).toEqual({ view: "history" });
-    expect(pageRoute("/memory")).toEqual({ view: "memory" });
     expect(pageRoute("/schedules")).toEqual({ view: "schedules" });
     expect(pageRoute("/settings/")).toEqual({ view: "settings" });
     expect(pageRoute("/settings/machines")).toEqual({ view: "settings", section: "machines" });
@@ -24,6 +23,14 @@ describe("pageRoute", () => {
     expect(pageRoute("/tickets/12")).toEqual({ view: "ticket", ticket: 12 });
   });
 
+  it("reads the legacy Memory URL as the Memory settings section", () => {
+    for (const path of ["/memory", "/memory/"]) {
+      const route = pageRoute(path);
+      expect(route).toEqual({ view: "settings", section: "memory" });
+      expect(pagePath(route!)).toBe("/settings/memory");
+    }
+  });
+
   it("links directly to a pending schedule card", () => {
     const proposal = "00000000-0000-4000-8000-000000000001";
     expect(pagePath({ view: "schedules", proposal })).toBe(`/schedules?proposal=${proposal}`);
@@ -38,7 +45,7 @@ describe("pageRoute", () => {
   });
 
   it("writes the path it reads", () => {
-    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/tickets/7", "/history", "/memory", "/settings", "/settings/machines", "/settings/repositories", "/settings/models", "/settings/appearance", "/settings/connections", "/settings/history"]) {
+    for (const path of ["/", "/workbench", "/conversations", "/conversations/abc", "/tickets/7", "/history", "/settings", "/settings/machines", "/settings/repositories", "/settings/models", "/settings/appearance", "/settings/connections", "/settings/history", "/settings/memory"]) {
       const route = pageRoute(path);
       expect(route).toBeDefined();
       if (route !== undefined) {

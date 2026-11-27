@@ -46,7 +46,7 @@ export function unofferedChanges(next: EngineTable, current: EngineTable, machin
   );
 }
 
-export const settingsSections = ["machines", "repositories", "models", "appearance", "connections", "usage", "history"] as const;
+export const settingsSections = ["machines", "repositories", "models", "appearance", "connections", "usage", "history", "memory"] as const;
 export const SettingsSection = z.enum(settingsSections);
 export type SettingsSection = z.infer<typeof SettingsSection>;
 
