@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsSnapshot, tickTickSyncPath } from "@super-agent2/protocol";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { openDatabase, type HubDatabase } from "./database.js";
 import { assertion, keySet, signingKey, staticKeySource, testConfig } from "./testing/access.js";
 import { startTestHub } from "./testing/http.js";
@@ -286,5 +286,42 @@ it("requires the authenticated owner to enable sync and omits it from a loopback
     expect(local.settings.snapshot().tickTickSync).toBeUndefined();
   } finally {
     await local.close();
+  }
+});
+
+it("syncs hand-off completion and reopening as ordinary to-do changes", async () => {
+  const key = await signingKey("ticktick-handoff");
+  let tick: () => void = () => { throw new Error("TickTick ticker did not start"); };
+  const managed = await startTestHub({
+    config: testConfig(join(dataDir, "handoff")), clock, keySource: staticKeySource(keySet(key)), tickTickGateway: gateway,
+    tickTickTicker: (poll) => { tick = poll; return () => undefined; },
+  });
+  try {
+    putRemote("task", { title: "Check the forecast" });
+    const origin = `http://127.0.0.1:${managed.address.port}`;
+    const jwt = await assertion({ key, clock });
+    const response = await fetch(origin + tickTickSyncPath, {
+      method: "PUT", body: JSON.stringify({ enabled: true }),
+      headers: { origin, "content-type": "application/json", "cf-access-jwt-assertion": jwt },
+    });
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(managed.settings.snapshot().tickTickSync?.state).toBe("ready"));
+    const local = managed.todos.snapshot().todos[0]!;
+    at += 1_000;
+    const topic = managed.todos.handoff(local.id);
+    tick();
+    await vi.waitFor(() => expect(managed.settings.snapshot().tickTickSync?.state).toBe("ready"));
+    expect(tasks.get("task")?.done).toBe(true);
+    expect(managed.todos.get(local.id)).toMatchObject({ topic, doneAt: at });
+
+    at += 1_000;
+    managed.todos.edit(local.id, { done: false });
+    tick();
+    await vi.waitFor(() => expect(managed.settings.snapshot().tickTickSync?.state).toBe("ready"));
+    expect(tasks.get("task")?.done).toBe(false);
+    expect(managed.todos.get(local.id)).toMatchObject({ topic, doneAt: null });
+    expect(writes).toEqual(["update", "update"]);
+  } finally {
+    await managed.close();
   }
 });

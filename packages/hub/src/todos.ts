@@ -45,7 +45,7 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
   const latestCreation = connection.prepare("SELECT id, deleted FROM todos WHERE source_topic = ? ORDER BY rowid DESC LIMIT 1");
   const editTodo = connection.prepare("UPDATE todos SET title = ?, notes = ?, list = ?, date = ?, time = ?, done_at = ?, updated_at = ?, deleted = 0 WHERE id = ?");
   const deleteTodo = connection.prepare("UPDATE todos SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0");
-  const linkTodo = connection.prepare("UPDATE todos SET topic = ?, updated_at = ? WHERE id = ?");
+  const completeHandoff = connection.prepare("UPDATE todos SET topic = ?, done_at = COALESCE(done_at, ?), updated_at = ? WHERE id = ?");
   const addList = connection.prepare(`INSERT INTO todo_lists (id, name, position, updated_at)
     VALUES (?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM todo_lists), ?)`);
   const editList = connection.prepare("UPDATE todo_lists SET name = ?, archived = ?, updated_at = ? WHERE id = ?");
@@ -186,7 +186,10 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
         ...(todo.date === null ? [] : [text("todo.handoff.date", { date: todo.time === null ? todo.date : `${todo.date} ${todo.time}` })]),
         ...(todo.notes.trim() === "" ? [] : [text("todo.handoff.notes", { notes: todo.notes })]),
       ].join("\n\n");
-      const { topic } = conversations.sendToNewDailyTopic(message, (topic) => { linkTodo.run(topic, clock.now(), id); });
+      const { topic } = conversations.sendToNewDailyTopic(message, (topic) => {
+        const at = clock.now();
+        completeHandoff.run(topic, at, at, id);
+      });
       changed();
       return topic.id;
     },

@@ -123,17 +123,17 @@ it("manages list order, names and archival without dropping tasks", async () => 
   expect(await snapshot()).toMatchObject({ timeZone: "America/New_York", todos: [{ id: todo.id, list: garden.id }] });
 });
 
-it("atomically hands off to a fresh daily topic and reopens it on retries, including after restart", async () => {
+it("completes the to-do on hand-off and keeps its topic when the to-do is reopened", async () => {
   const inputs: Extract<HubToBrain, { type: "input" }>[] = [];
   const link = hub.conversations.attach({ send: (event) => { if (event.type === "input") inputs.push(event); }, close: () => undefined });
   link.receive({ type: "hello", protocol: protocolVersion, running: [] });
   const list = hub.todos.addList("Garden");
   const todo = hub.todos.add({ title: "Plan this greenhouse", notes: "Review the cap", list: list.id, date: "2026-11-27", time: "14:00" });
   const before = hub.conversations.list().length;
-  expect(() => hub.conversations.sendToNewDailyTopic("Roll this back", () => { throw new Error("rollback"); })).toThrow("rollback");
-  expect(hub.conversations.list()).toHaveLength(before);
   expect(inputs).toHaveLength(0);
   const path = `/${todo.id}/handoff`;
+  at += 1_000;
+  const handedOffAt = at;
   const receipts = await Promise.all([call(path, "POST", {}), call(path, "POST", {})].map(async (pending) => {
     const response = await pending;
     expect(response.status).toBe(200);
@@ -144,13 +144,33 @@ it("atomically hands off to a fresh daily topic and reopens it on retries, inclu
   expect(hub.conversations.list()).toHaveLength(before + 1);
   expect(hub.conversations.detail(topic)).toMatchObject({ conversation: { repository: null }, entries: [{ kind: "owner", text: "Plan this greenhouse\n\n清单：Garden\n\n日期：2026-11-27 14:00\n\n备注：Review the cap" }] });
   expect(inputs).toEqual([expect.objectContaining({ conversation: topic, input: expect.objectContaining({ source: "owner" }) })]);
-  expect(hub.todos.get(todo.id)).toMatchObject({ topic, doneAt: null });
+  expect((await snapshot()).todos).toMatchObject([{ id: todo.id, topic, doneAt: handedOffAt, updatedAt: handedOffAt }]);
   link.detach();
   await hub.close();
+  at += 1_000;
   hub = await start();
+  expect(TodoHandoff.parse(await (await call(path, "POST", {})).json())).toEqual({ topic });
+  expect(hub.todos.get(todo.id)).toMatchObject({ topic, doneAt: handedOffAt, updatedAt: handedOffAt });
+  expect(Todo.parse(await (await call(`/${todo.id}`, "PUT", { done: false })).json())).toMatchObject({ topic, doneAt: null, updatedAt: at });
   expect(TodoHandoff.parse(await (await call(path, "POST", {})).json())).toEqual({ topic });
   expect(hub.conversations.list()).toHaveLength(before + 1);
   expect((await snapshot()).todos).toMatchObject([{ id: todo.id, topic, doneAt: null }]);
+});
+
+it.each([
+  "BEFORE INSERT ON conversations",
+  "AFTER UPDATE OF topic ON todos",
+])("leaves the to-do open and returns an error if hand-off fails at %s", async (operation) => {
+  const todo = hub.todos.add(fields("Plan this greenhouse"));
+  const before = hub.conversations.list().length;
+  const link = hub.conversations.attach({ send: (event) => { expect(event.type).not.toBe("input"); }, close: () => undefined });
+  link.receive({ type: "hello", protocol: protocolVersion, running: [] });
+  hub.database.connection.exec(`CREATE TRIGGER fail_handoff ${operation} BEGIN SELECT RAISE(ABORT, 'hand-off failed'); END;`);
+  at += 1_000;
+  expect((await call(`/${todo.id}/handoff`, "POST", {})).ok).toBe(false);
+  expect(hub.conversations.list()).toHaveLength(before);
+  expect((await snapshot()).todos).toEqual([todo]);
+  link.detach();
 });
 
 it("rejects mutations from another origin on the local edition", async () => {

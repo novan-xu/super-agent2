@@ -86,9 +86,11 @@ it("sends a timed reminder at the right local time, once per scheduled slot", as
   let running = await start();
   const due = running.todos.add(task("Water seedlings", "2026-11-27", "09:15"));
   const completed = running.todos.add(task("Already done", "2026-11-27", "09:15"));
+  const handedOff = running.todos.add(task("Handed off", "2026-11-27", "09:15"));
   const deleted = running.todos.add(task("Deleted task", "2026-11-27", "09:15"));
   const rescheduled = running.todos.add(task("Rescheduled", "2026-11-27", "09:15"));
   running.todos.edit(completed.id, { done: true });
+  running.todos.handoff(handedOff.id);
   running.todos.remove(deleted.id);
   running.todos.edit(rescheduled.id, { time: "10:00" });
   await at("2026-11-27T14:14:59.999Z");
@@ -128,8 +130,10 @@ it("summarizes only the due and overdue all-day tasks at the configured time, on
   running.todos.add(task("Timed", "2026-11-27", "22:00"));
   const future = running.todos.add(task("Future", "2026-11-28"));
   const done = running.todos.add(task("Done", "2026-11-27"));
+  const handedOff = running.todos.add(task("Handed off", "2026-11-27"));
   const deleted = running.todos.add(task("Deleted", "2026-11-27"));
   running.todos.edit(done.id, { done: true });
+  running.todos.handoff(handedOff.id);
   running.todos.remove(deleted.id);
   await at("2026-11-27T12:44:59Z");
   expect(messages).toHaveLength(0);

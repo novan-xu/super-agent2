@@ -1507,6 +1507,13 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 81,
+    sql: "",
+    backfill: (connection, _timeZone, now) => {
+      connection.prepare("UPDATE todos SET done_at = ?, updated_at = ? WHERE deleted = 0 AND done_at IS NULL AND topic IS NOT NULL").run(now, now);
+    },
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {
