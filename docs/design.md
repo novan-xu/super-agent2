@@ -1036,12 +1036,20 @@ Kept from it:
 - one accent colour, for primary actions, the current item and counts that ask for attention
 - state dots in fixed hues that never take the accent colour
 - a sidebar on wide screens and a tab bar on phones
-- the navigation: 工作台, 对话, 定时, with 设置 last
+- the navigation: 工作台, 对话, 待办, 定时, with 设置 last
 - start cards in 工作台: what can start now, and what comes after it
 
 Changed by this design:
 
 - 设置 includes 历史 and 记忆.
+- 待办 stores personal to-dos and lists in the hub, including in the local edition.
+  Quick entry and editing use the owner API without a brain or worker call.
+  The hub's WebSocket tells open pages when to refresh their to-dos.
+  今天 shows due and overdue open to-dos, 计划 groups future items by day, and 收件箱 holds open items without a list.
+  已完成 shows the latest 100 completions and supports reopening them.
+  The date and optional time use the installation's configured time zone.
+  交给大脑 creates a new 日常 topic with the to-do as its first owner message and links it in the same database transaction.
+  Later clicks open the linked topic, and the to-do stays open until the owner completes it.
 - 定时 uses a canvas of cards with a 待确认 group and persistent cards for active, paused and completed schedules.
   The tab counts pending proposals, and each proposal links to its source topic and shows the changes when it proposes an edit.
   Confirmed cards show the recurrence, next run or triggering service, and latest outcome.

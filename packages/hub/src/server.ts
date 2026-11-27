@@ -122,6 +122,8 @@ import type { Machine } from "./machines.js";
 import type { MemoryService, OwnerMemoryError } from "./memories.js";
 import { ScheduleAction, ScheduleId, ScheduleProposalAction, ScheduleProposalConfirm, ScheduleSave, type ScheduleHistory, type ScheduleList } from "@super-agent2/protocol";
 import { ScheduleRefused, type Schedules } from "./schedules.js";
+import { TodoCreate, TodoEdit, TodoId, TodoListCreate, TodoListEdit, TodoReorder, todoListsPath, todosPath } from "@super-agent2/protocol";
+import { TodoRefused, type Todos } from "./todos.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
@@ -246,6 +248,7 @@ export interface HubServerOptions {
   readonly release?: ReleaseSource;
   readonly memories?: MemoryService;
   readonly schedules?: Schedules;
+  readonly todos?: Todos;
   readonly settings?: Settings;
   readonly openaiCost?: () => import("@super-agent2/protocol").OpenAICost;
   readonly refreshOpenAICost?: () => void;
@@ -783,6 +786,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (path.startsWith("/api/schedules") && options.schedules !== undefined
       && await serveSchedules(request, response, path, method, options.schedules)) return;
+    if (path.startsWith(todosPath) && options.todos !== undefined
+      && await serveTodos(request, response, path, method, options.todos)) return;
     if (path.startsWith("/api/transfer") && options.database !== undefined) {
       const read = method === "GET" || method === "HEAD";
       const download = read && /^\/api\/transfer\/files\/[0-9a-f]{32}(?:\/render)?$/.test(path);
@@ -1304,6 +1309,55 @@ export function createHubServer(options: HubServerOptions): HubServer {
     } catch (error) {
       if (!(error instanceof ScheduleRefused)) throw error;
       sendJson(response, 422, { error: "bad_request" });
+    }
+    return true;
+  };
+
+  const serveTodos = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, todos: Todos): Promise<boolean> => {
+    if (path === todosPath && method === "GET") {
+      sendJson(response, 200, todos.snapshot());
+      return true;
+    }
+    const parts = /^\/api\/todos\/(lists\/)?([^/]+)(?:\/(reorder|handoff))?$/.exec(path);
+    const target = TodoId.safeParse(parts?.[2]);
+    const list = parts?.[1] !== undefined;
+    const action = parts?.[3];
+    const create = method === "POST" && (path === todosPath || path === todoListsPath);
+    const item = target.success && action === undefined && (method === "PUT" || (!list && method === "DELETE"));
+    const operation = target.success && method === "POST" && (action === "reorder" || (!list && action === "handoff"));
+    if (!create && !item && !operation) return false;
+    if (!ownerAction(request, response)) return true;
+    const body = await readBody(request, 64_000);
+    const input = <Schema extends z.ZodType>(schema: Schema): z.output<Schema> => {
+      const value = parseJson(body, schema);
+      if (value === undefined) throw new TodoRefused("bad_request");
+      return value;
+    };
+    try {
+      if (create) {
+        sendJson(response, 201, path === todosPath ? todos.add(input(TodoCreate)) : todos.addList(input(TodoListCreate).name));
+      } else if (target.success) {
+        const id = target.data;
+        if (method === "PUT") sendJson(response, 200, list ? todos.editList(id, input(TodoListEdit)) : todos.edit(id, input(TodoEdit)));
+        else if (action === "handoff") {
+          input(z.strictObject({}));
+          sendJson(response, 200, { topic: todos.handoff(id) });
+        } else {
+          if (action === "reorder") {
+            const placement = input(TodoReorder);
+            if (list) todos.reorderList(id, placement);
+            else todos.reorder(id, placement);
+          } else {
+            input(z.strictObject({}));
+            todos.remove(id);
+          }
+          sendJson(response, 200, { ok: true });
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof TodoRefused)) throw error;
+      const status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 400;
+      sendJson(response, status, { error: error.code });
     }
     return true;
   };
@@ -1862,6 +1916,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const unsubscribeAllowance = options.defaults?.subscribe(() => send({ type: "allowance", allowance: allowanceSnapshot(options.defaults!) })) ?? (() => undefined);
     const unsubscribeSettings = options.settings?.subscribe((settings) => send({ type: "settings", settings })) ?? (() => undefined);
     const unsubscribeSchedules = options.schedules?.subscribe((pending) => send({ type: "schedules.changed", pending }));
+    const unsubscribeTodos = options.todos?.subscribe(() => send({ type: "todos.changed" }));
     const unsubscribeWork =
       options.work?.subscribe((event) => {
         if (watchedTickets.has(event.ticket)) {
@@ -1877,6 +1932,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       unsubscribeMemories();
       unsubscribeSettings();
       unsubscribeSchedules?.();
+      unsubscribeTodos?.();
       unsubscribeAllowance();
     });
     client.on("message", (data, binary) => {

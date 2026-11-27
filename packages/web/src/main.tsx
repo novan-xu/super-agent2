@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
 import "./styles/prototype.css";
 import "./styles/page.css";
+import "./styles/todos.css";
 import "./styles/material.css";
 
 document.title = text("app.name");

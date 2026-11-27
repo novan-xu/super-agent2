@@ -30,6 +30,7 @@ import { CanvasWorkbench } from "./views/CanvasWorkbench.js";
 import { type SettingsActions, settingsSectionEnabled, SettingsView } from "./views/SettingsView.js";
 import { RemoteView } from "./views/RemoteView.js";
 import { SchedulesView } from "./views/SchedulesView.js";
+import { TodosView } from "./views/TodosView.js";
 import { type Appearance, appearanceEvent, readAppearance, writeAppearance, themeKey, accentKey } from "./live/appearance.js";
 
 const toastDuration = 4000;
@@ -444,6 +445,8 @@ export function App() {
         <RemoteView peers={page.peers ?? []} online={page.status === "open"} />
       ) : route.view === "schedules" ? (
         <SchedulesView navigate={fromSchedules} update={page.schedules} focusedProposal={"proposal" in route ? route.proposal : undefined} />
+      ) : route.view === "todos" ? (
+        <TodosView selection={"selection" in route ? route.selection : "today"} navigate={navigate} topicRoute={topicRoute} online={page.status === "open"} update={page.todosChanged} now={now} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath(backRoute)} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
       ) : route.view === "settings" ? (

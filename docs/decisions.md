@@ -4034,3 +4034,21 @@ Other options were to keep separate hand-written preset styles or attempt to upd
 - **Why:** Dependencies and build outputs in use stay available throughout the build, and the existing process can continue when a build fails.
   A completed build can wait for workers to finish, and dependent tickets wait for the new installation to start.
 - **Other options:** Install and build in the running checkout and rebuild the previous commit on failure, or stop local work before beginning the build.
+
+## 2026-11-27 — To-do views and hand-off (#398)
+
+- **Chosen:** Use the hub's time zone for Today, Planned and due times.
+  Quick entry in Planned defaults to tomorrow, and quick entry in Completed creates an open Inbox item and switches to Inbox.
+  Completed shows the latest 100 items.
+- **Why:** Devices agree on the date, and a new task appears in a view suited to open work.
+  Limiting completed history keeps the to-do page bounded as tasks accumulate.
+- **Other options:** Use each browser's time zone, require a date before adding a planned item, or show and load the full completion history.
+
+- **Chosen:** Archiving hides the list in navigation while preserving its tasks and name.
+  Dated tasks still appear in Today and Planned, and the list can be restored from Manage Lists.
+- **Why:** An archive should be reversible and should preserve due commitments.
+- **Other options:** Hide all tasks from archived lists, or move them into Inbox.
+
+- **Chosen:** Show a link to the hand-off topic on the to-do.
+- **Why:** The topic remains the source of any tickets created in the discussion and continues to work when it is reassigned or merged.
+- **Other options:** Add ticket codes to the to-do and keep them in sync with topic and ticket changes.

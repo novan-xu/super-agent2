@@ -33,6 +33,7 @@ const conversation = { ...composer, "conversation tabs": ".conv-tabs", "conversa
 const workbench = { "repository tabs": ".wb-tabs", "repository tab strip": ".wb-tabs-scroll", "open repository": ".wb-add" };
 const canvas = { "workbench canvas": ".wb-canvas", "workbench toolbar": ".wb-toolbar", "workbench actions": ".wb-toolbar button", "ticket cards": ".wb-card" };
 const settingsMenu = { "settings menu": ".set-nav", "settings links": ".set-nav .nav-btn" };
+const todoTargets = { "to-do views": ".todo-views a", "quick add": ".todo-content .todo-quick", "to-do rows": ".todo-row", "list management": ".todo-list-manage" };
 
 async function loadImages(images: Locator): Promise<void> {
   await images.evaluateAll((elements) => Promise.all(elements.map(async (element) => {
@@ -199,6 +200,24 @@ const views = {
     targets: { "memory text": ".mrow-text", "memory actions": ".mrow-actions button", "add memory": ".top button" },
     phone: { "settings back link": ".set-back" },
     desktop: settingsMenu,
+  },
+  todos: {
+    route: { view: "todos" },
+    ready: ".todo-row",
+    targets: { ...todoTargets, "overdue marker": ".todo-meta .chip", "hand-off": ".todo-topic .btn" },
+    phone: { "list picker": ".todo-list-picker" },
+    desktop: { "list links": ".todo-list-links a" },
+  },
+  "todos-planned": {
+    route: { view: "todos", selection: "planned" },
+    ready: ".todo-group h3",
+    targets: { ...todoTargets, "day groups": ".todo-group h3" },
+  },
+  "todos-lists": {
+    route: { view: "todos" },
+    ready: ".todo-dialog[open] .todo-managed-lists li",
+    targets: { "list manager": ".todo-dialog[open]", "new list": ".todo-dialog .todo-quick", "list actions": ".todo-list-actions button" },
+    prepare: async (page) => { await page.locator(".todo-list-manage").click(); },
   },
   schedules: {
     route: { view: "schedules" },

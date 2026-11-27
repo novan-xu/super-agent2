@@ -26,6 +26,7 @@ import { type CredentialSource, environmentCredentials, secretValues } from "./c
 import { type HubDatabase, openDatabase } from "./database.js";
 import { lockSettings } from "./irreversible.js";
 import { createMemoryService, type MemoryService } from "./memories.js";
+import { createTodos, type Todos } from "./todos.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
 import { localOwnerEmail, loopbackHost, verifyLoopbackOwner } from "./loopback.js";
@@ -136,6 +137,7 @@ export interface Hub {
   readonly taskTickets: TaskTickets;
   readonly schedules: Schedules;
   readonly memories: MemoryService;
+  readonly todos: Todos;
   readonly admin: MachineAdmin;
   readonly repositories: RepositoryAccounts;
   readonly settings: Settings;
@@ -196,6 +198,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let reviews: DecisionReviews;
   let taskTickets: TaskTickets;
   let memories: MemoryService;
+  let todos: Todos;
   let settings: Settings;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
@@ -303,6 +306,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
 `)),
       },
     });
+    todos = createTodos(database, clock, conversations);
     const told = conversations;
     const modelDiscovery = createModelDiscovery(database, defaults, (notice, prompt) => told.tell(null, notice, prompt));
     modelDiscovery.scan(runners.statuses());
@@ -497,6 +501,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       conversations,
       waiting,
       schedules,
+      todos,
       tools: createToolServer({
         commands,
         conversations,
@@ -639,6 +644,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       taskTickets,
       schedules,
       memories,
+      todos,
       admin,
       repositories,
       settings,
