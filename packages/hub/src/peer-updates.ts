@@ -52,7 +52,7 @@ export function createPeerUpdates(options: {
             handled.run(commit);
             if (ticket.conversation !== null) {
               entry = randomUUID();
-              const source = options.local ? text("notice.peerUpdateNas") : text("notice.peerUpdateLocal");
+              const source = options.local ? "NAS" : text("notice.peerUpdateLocal");
               options.conversations.writePromptNotice(entry, ticket.conversation, text("notice.peerUpdateReceived", {
                 source, ticket: ticket.code.toUpperCase(), commit: short(commit),
               }));
