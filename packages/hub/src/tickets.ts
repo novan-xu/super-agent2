@@ -234,6 +234,7 @@ export interface TicketWrites {
   nextPiece(id: number, branch: string): void;
   setReport(id: number, report: GeneratedText): void;
   setCommit(id: number, commit: string): void;
+  pinPendingCommit(id: number, commit: string, deploymentTargets?: readonly string[]): void;
   startRound(id: number, round: RoundToStart): TicketRound;
   stick(id: number, failure: LoopFailure): Ticket;
   describeStuck(id: number, where: GeneratedText): Ticket;
@@ -690,6 +691,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
   const selectTask = connection.prepare("SELECT task, materials, commit_ref, commit_sha, deploys, local_build FROM ticket_tasks WHERE ticket_id = ?");
   const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys, local_build) VALUES (?, ?, ?, ?, ?, ?)");
+  const updateTargets = connection.prepare("UPDATE tickets SET required_machine = ?, deployment_targets = ?, platform = ?, owner_machine = ? WHERE id = ?");
+  const pinCommit = connection.prepare("UPDATE ticket_tasks SET commit_ref = ?, commit_sha = ? WHERE ticket_id = ?");
   const updateCommit = connection.prepare("UPDATE ticket_tasks SET commit_sha = ? WHERE ticket_id = ?");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets WHERE (? OR light IS NULL) ORDER BY created_at DESC, id DESC LIMIT ?");
@@ -1427,6 +1430,18 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
         existing(id);
         const given = GeneratedText.parse(report);
         updateReport.run(given.en, given.zh, id);
+        touch(id);
+      },
+      pinPendingCommit: (id, commit, targets) => {
+        const ticket = existing(id);
+        if (ticket.form !== "task" || ticket.state !== "pending") throw new TicketError("Only a pending task can change its requested commit.");
+        pinCommit.run(commit, commit, id);
+        if (targets !== undefined && targets.length > 0) {
+          const ownerMachine = ticket.ownerChoice.machine;
+          updateTargets.run(targets.length === 1 ? targets[0]! : null, targets.length > 1 ? JSON.stringify(targets) : null,
+            targets.length > 1 ? deploymentPlatform(targets) : "any",
+            ownerMachine !== null && targets.includes(ownerMachine) ? ownerMachine : null, id);
+        }
         touch(id);
       },
       setCommit: (id, commit) => {

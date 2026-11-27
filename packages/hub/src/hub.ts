@@ -1,4 +1,5 @@
-import { createPeerQueue, nasPeer, type PeerExchange } from "./peer-exchange.js";
+import { createPeerQueue, nasPeer, sharedUpdateRepository, type PeerExchange } from "./peer-exchange.js";
+import { createPeerUpdates, type PeerUpdates } from "./peer-updates.js";
 import { receivePrinciple } from "./peer-principles.js";
 import { connectToPeer } from "./peer-link.js";
 import { createPeerStore } from "./peer-store.js";
@@ -180,6 +181,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const peerQueue = nas !== undefined ? createPeerQueue(database, () => [nas.id])
     : peerStore === undefined ? undefined : createPeerQueue(database, () => peerStore.list().map(({ clientId }) => clientId));
   let peerExchange: PeerExchange | undefined;
+  let peerUpdates: PeerUpdates | undefined;
+  const localUpdates = options.localInstallation?.repository.toLowerCase() === sharedUpdateRepository;
+  const updateVersion = localUpdates ? options.localInstallation?.commit
+    : config.sourceRepository?.toLowerCase() === sharedUpdateRepository ? config.version : undefined;
   let closePeer: (() => void) | undefined;
   let commands: CommandService;
   let conversations: ConversationService;
@@ -271,8 +276,13 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     memories = createMemoryService({ database, clock, secrets, ...(peerQueue === undefined ? {} : { peerQueue, proposePrinciples: nas !== undefined }) });
     peerExchange = peerQueue === undefined ? undefined : {
       queue: peerQueue,
-      receive: (source, payload) => payload.kind !== "principle" ? memories.receivePeer(source, payload)
-        : peerStore === undefined ? undefined : receivePrinciple({ database, clock, conversations, source, proposal: payload.text, secrets: secrets() }),
+      receive: (source, payload) => {
+        if (payload.kind === "update") return peerUpdates?.receive(payload.commit);
+        if (payload.kind === "principle") {
+          return peerStore === undefined ? undefined : receivePrinciple({ database, clock, conversations, source, proposal: payload.text, secrets: secrets() });
+        }
+        return memories.receivePeer(source, payload);
+      },
     };
     lock =
       options.gate === undefined
@@ -378,6 +388,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     });
     const worker = work;
     verification = createVerification({
+      mergedCommit: (repository, commit) => peerUpdates?.merged(repository, commit),
       database,
       clock,
       tickets,
@@ -449,6 +460,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     });
     if (options.localInstallation !== undefined) runners.subscribe(taskTickets.refreshLocal);
+    if (peerQueue !== undefined && updateVersion !== undefined) {
+      peerUpdates = createPeerUpdates({
+        database, queue: peerQueue, tasks: taskTickets, conversations, running: updateVersion, local: localUpdates,
+      });
+    }
     const linkedConversations = conversations;
     settings = createSettings({
       database,
@@ -596,6 +612,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     chains.resume();
     verification.resume();
     taskTickets.resume();
+    peerUpdates?.resume();
     schedules.resume();
     topicTidy = createTopicTidy({ database, clock, conversations, time: config.topicTidyTime, enabled: config.topicTidyEnabled,
       ticker: options.topicTidyTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
@@ -670,6 +687,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           closePeer?.();
           await Promise.all([server.close(), closeWorkRequests?.()]);
         } finally {
+          peerUpdates?.close();
           taskTickets.close();
           await taskTickets.idle();
           failures.close();
@@ -697,6 +715,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     await appGateway?.close();
     await mailIntake?.idle();
     await Promise.allSettled([address === undefined ? undefined : server.close(), closeWorkRequests?.()]);
+    peerUpdates?.close();
     taskTickets.close();
     await taskTickets.idle();
     verification.close();

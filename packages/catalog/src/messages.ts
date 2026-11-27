@@ -642,6 +642,8 @@ export const messages = {
   "stuck.resume": "继续",
   "stuck.giveUp": "放弃",
   "stuck.words": "给大脑的话",
+  "notice.peerUpdateLocal": "本地版",
+  "notice.peerUpdateReceived": "收到来自{source}的更新请求，工单 {ticket} 待开始，目标提交 {commit}。",
   "notice.peerPrinciplesTitle": "工程原则提案",
   "notice.peerPrinciple": "收到工程原则提案：{proposal}",
   "memory.pending": "待确认",

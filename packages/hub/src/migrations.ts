@@ -1412,6 +1412,21 @@ export const migrations: readonly Migration[] = [
   {
     version: 76,
     sql: `
+      CREATE TABLE peer_update_requests (
+        id INTEGER PRIMARY KEY,
+        commit_sha TEXT NOT NULL UNIQUE,
+        handled INTEGER NOT NULL DEFAULT 0 CHECK (handled IN (0, 1))
+      ) STRICT;
+      CREATE TABLE peer_update_cursor (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        commit_sha TEXT NOT NULL,
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id)
+      ) STRICT;
+    `,
+  },
+  {
+    version: 77,
+    sql: `
       CREATE TABLE todo_lists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,

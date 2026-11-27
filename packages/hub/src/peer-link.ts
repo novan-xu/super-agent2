@@ -3,7 +3,7 @@ import { request, type OutgoingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { peerLinkPath, peerTokenHeader } from "@super-agent2/protocol";
 import WebSocket, { createWebSocketStream } from "ws";
-import { nasPeer, peerExchangePath, serveExchange, type PeerExchange } from "./peer-exchange.js";
+import { nasPeer, peerExchangePath, peerUpdatesHeader, serveExchange, type PeerExchange } from "./peer-exchange.js";
 import {
   copyBothWays, peerFrameLimit, peerApiRequest, peerRequestHeaders, peerResponseHeaders,
   peerSocketPath, peerUpgradeHeader, peerUpgradeHeaders, selectHeaders, watchPeer,
@@ -93,7 +93,7 @@ export function connectToPeer(config: PeerConnectionConfig, address: AddressInfo
   const source = nasPeer(config.hub, config.clientId);
   http2.on("sessionError", () => undefined);
   http2.on("stream", (stream, headers) => {
-    if (exchange !== undefined && headers[":path"] === peerExchangePath && headers[":method"] === "POST") serveExchange(stream, exchange, source);
+    if (exchange !== undefined && headers[":path"] === peerExchangePath && headers[":method"] === "POST") serveExchange(stream, exchange, source, headers[peerUpdatesHeader] === "1");
     else serveLocal(stream, headers, address);
   });
   let stopped = false;
