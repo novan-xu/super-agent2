@@ -337,6 +337,7 @@ export function App() {
       setMachineStorage: (name, storage) => controller.setMachineStorage(name, storage),
       setMachineLoad: (limits) => controller.setMachineLoad(limits),
       setTodoReminders: (settings) => controller.setTodoReminders(settings),
+      setTickTickSync: (enabled) => controller.setTickTickSync(enabled),
       setOrder: (role, order) => controller.setOrder(role, order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
       setPinned: (repository, pinned) => controller.setPinned(repository, pinned),

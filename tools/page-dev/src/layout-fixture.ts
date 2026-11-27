@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { storeTopic, type Hub } from "@super-agent2/hub";
+import { storeTopic, type Hub, type HubOptions } from "@super-agent2/hub";
 import { AttachmentUpload, type MachineReport, nextTodoDay, protocolVersion, type ScheduleFields, startingEngineTable, todoDay } from "@super-agent2/protocol";
 
 export interface LayoutFixture {
@@ -11,6 +11,23 @@ export interface LayoutFixture {
   readonly previewName: string;
   readonly todoDetail: string;
   readonly graphs: readonly (readonly number[])[];
+}
+
+export function tickTickLayoutFixture(): NonNullable<HubOptions["tickTickGateway"]> {
+  const readOnly = async () => { throw new Error("TickTick fixture is read-only"); };
+  return {
+    connected: () => true,
+    account: () => "page-dev-ticktick",
+    session: () => ({
+      projects: async () => [{ id: "inbox", name: "Inbox" }],
+      open: async () => [],
+      task: async () => null,
+      createProject: readOnly,
+      create: readOnly,
+      update: readOnly,
+      remove: readOnly,
+    }),
+  };
 }
 
 const repositories = [

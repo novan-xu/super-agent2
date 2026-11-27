@@ -1469,6 +1469,44 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX todos_source_topic ON todos(source_topic) WHERE source_topic IS NOT NULL;
     `,
   },
+  {
+    version: 80,
+    sql: `
+      CREATE TABLE ticktick_sync_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        account TEXT,
+        last_sync INTEGER,
+        failures INTEGER NOT NULL DEFAULT 0,
+        retry_at INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      INSERT INTO ticktick_sync_state (id) VALUES (1);
+      CREATE TABLE ticktick_sync_projects (
+        account TEXT NOT NULL,
+        project TEXT NOT NULL,
+        list TEXT NOT NULL REFERENCES todo_lists(id),
+        PRIMARY KEY (account, project),
+        UNIQUE (account, list)
+      ) STRICT;
+      CREATE TABLE ticktick_sync_tasks (
+        account TEXT NOT NULL,
+        task TEXT NOT NULL,
+        todo TEXT NOT NULL REFERENCES todos(id),
+        project TEXT NOT NULL,
+        local_hash TEXT NOT NULL,
+        remote_hash TEXT,
+        remote_modified_at INTEGER,
+        needs_push INTEGER NOT NULL DEFAULT 0 CHECK (needs_push IN (0, 1)),
+        PRIMARY KEY (account, task),
+        UNIQUE (account, todo)
+      ) STRICT;
+      CREATE TABLE ticktick_sync_log (
+        id INTEGER PRIMARY KEY,
+        at INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        count INTEGER NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

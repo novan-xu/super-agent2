@@ -124,6 +124,8 @@ import { ScheduleAction, ScheduleId, ScheduleProposalAction, ScheduleProposalCon
 import { ScheduleRefused, type Schedules } from "./schedules.js";
 import { TodoCreate, TodoEdit, TodoId, TodoListCreate, TodoListEdit, TodoReminderChange, TodoReorder, todoListsPath, todoReminderSettingsPath, todosPath } from "@super-agent2/protocol";
 import { TodoRefused, type Todos } from "./todos.js";
+import { TickTickSyncChange, tickTickSyncPath } from "@super-agent2/protocol";
+import type { TickTickSync } from "./ticktick-sync.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
 import type { TicketService } from "./tickets.js";
@@ -249,6 +251,7 @@ export interface HubServerOptions {
   readonly memories?: MemoryService;
   readonly schedules?: Schedules;
   readonly todos?: Todos;
+  readonly tickTickSync?: TickTickSync;
   readonly settings?: Settings;
   readonly openaiCost?: () => import("@super-agent2/protocol").OpenAICost;
   readonly refreshOpenAICost?: () => void;
@@ -722,6 +725,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       const given = parseJson(await readBody(request), TodoReminderChange);
       if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
       options.settings.setTodoReminders(given);
+      sendJson(response, 200, options.settings.snapshot());
+      return;
+    }
+    if (path === tickTickSyncPath && method === "PUT" && options.settings !== undefined && options.tickTickSync !== undefined) {
+      if (!ownerAction(request, response)) return;
+      const input = parseJson(await readBody(request), TickTickSyncChange);
+      if (input === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+      if (!options.tickTickSync.setEnabled(input.enabled)) { sendJson(response, 409, { error: "conflict" }); return; }
       sendJson(response, 200, options.settings.snapshot());
       return;
     }
@@ -1323,6 +1334,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
 
   const serveTodos = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, todos: Todos): Promise<boolean> => {
     if (path === todosPath && method === "GET") {
+      options.tickTickSync?.pageOpened();
       const selected = TodoId.safeParse(new URL(request.url ?? "/", "http://hub").searchParams.get("todo"));
       sendJson(response, 200, todos.snapshot(selected.success ? selected.data : undefined));
       return true;

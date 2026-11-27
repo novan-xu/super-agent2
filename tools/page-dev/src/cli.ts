@@ -10,7 +10,7 @@ import { type AccessKeySet, brainToolsPath, peerLinkPath, type Provider, startin
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
-import { seedLayout } from "./layout-fixture.js";
+import { seedLayout, tickTickLayoutFixture } from "./layout-fixture.js";
 import { createScriptedRunners } from "./scripted.js";
 
 const { values } = parseArgs({
@@ -29,6 +29,7 @@ const { values } = parseArgs({
     "page-dir": { type: "string" },
     "remote-fixture": { type: "boolean", default: false },
     "layout-fixture": { type: "boolean", default: false },
+    "ticktick-fixture": { type: "boolean", default: false },
     "minimal-integrations": { type: "boolean", default: false },
   },
 });
@@ -153,6 +154,7 @@ const forge = values.forge === "fake" ? fakeForge() : undefined;
 const minimalIntegrations = values["minimal-integrations"];
 
 const hub = await startHub({
+  ...(values["ticktick-fixture"] ? { tickTickGateway: tickTickLayoutFixture() } : {}),
   ...(minimalIntegrations ? { environment: {} } : {}),
   config: {
     accessTeam: team,

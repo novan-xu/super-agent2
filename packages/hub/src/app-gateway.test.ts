@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brainToolsPath, conversationHeader, type RunningTurn, turnHeader } from "@super-agent2/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AppGateway, appWrites } from "./app-gateway.js";
+import { AppGateway, appWrites, tickTickWrites } from "./app-gateway.js";
 import type { BrainLink } from "./conversations.js";
 import type { Hub } from "./hub.js";
 import { testConfig } from "./testing/access.js";
@@ -20,7 +20,7 @@ let threads = 0;
 const links = [{ link_id: "outlook-a", profile_email: "first@example.com" }, { link_id: "outlook-b", profile_email: "second@example.com" }];
 const writes = [
   "gmail.create_draft", "gmail.update_draft", "microsoft_outlook_email.draft_email", "microsoft_outlook_email.create_reply_draft",
-  "ticktick_to_do_list_calendar.create_task", "ticktick_to_do_list_calendar.delete_task",
+  "ticktick_to_do_list_calendar.batch_add_tasks", "ticktick_to_do_list_calendar.delete_task",
   "gmail.send_email", "microsoft_outlook_email.reply_to_email", "microsoft_teams.send_chat_message",
 ];
 const names = [
@@ -87,8 +87,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return result({ isError: true, content: [{ type: "text", text: "HTTP 403: PRIVATE ERROR TEXT" }] });
   }
   if (query === "invalid") return result({ content: [{ type: "text", text: "PRIVATE ERROR TEXT" }] });
-  if (params.tool === "ticktick_to_do_list_calendar.create_task") {
-    const { task } = params.arguments;
+  if (params.tool === "ticktick_to_do_list_calendar.batch_add_tasks") {
+    const task = params.arguments.tasks[0];
     if (task.title === "Write then exit") process.exit(1);
     if (task.title === "Write then time out") return;
     const tasks = existsSync("tasks") ? JSON.parse(readFileSync("tasks", "utf8")) : {};
@@ -171,7 +171,7 @@ describe("the app gateway", () => {
       "microsoft_outlook_email.draft_email", "microsoft_outlook_email.delete_message", "microsoft_outlook_email.mark_email_read_state",
       "microsoft_teams.send_chat_message", "microsoft_teams.reply_to_message", "microsoft_teams.send_channel_message",
       "microsoft_teams.update_message", "microsoft_teams.add_reaction", "microsoft_teams.delete_message",
-      "ticktick_to_do_list_calendar.create_task", "ticktick_to_do_list_calendar.delete_task", "constructor",
+      "ticktick_to_do_list_calendar.batch_add_tasks", "ticktick_to_do_list_calendar.delete_task", "constructor",
     ]) {
       await expect(gateway.call(name, {})).rejects.toMatchObject({ kind: "tool not allowed" });
     }
@@ -212,14 +212,17 @@ describe("the app gateway", () => {
       await expect(gateway.write(name as typeof appWrites.gmailDraft, {}, () => true)).rejects.toMatchObject({ kind: "tool not allowed" });
     }
     await expect(gateway.write(appWrites.gmailDraft, {}, () => false)).rejects.toMatchObject({ kind: "owner request required" });
+    await expect(gateway.writeTickTick(tickTickWrites.create, {}, "connection", () => false)).rejects.toMatchObject({ kind: "owner request required" });
+    await expect(gateway.writeTickTick(tickTickWrites.create, {}, "other-account", () => true)).rejects.toMatchObject({ kind: "owner request required" });
+    await expect(gateway.writeTickTick(appWrites.gmailDraft as typeof tickTickWrites.create, {}, "connection", () => true)).rejects.toMatchObject({ kind: "tool not allowed" });
     expect(requests("mcpServer/tool/call")).toHaveLength(0);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const timedOut = expect(gateway.write(appWrites.tickTickCreate, { task: { title: "Write then time out" } }, () => true))
+    const timedOut = expect(gateway.writeTickTick(tickTickWrites.create, { tasks: [{ title: "Write then time out" }] }, "connection", () => true))
       .rejects.toMatchObject({ kind: "write outcome unknown" });
     await vi.advanceTimersByTimeAsync(60_000);
     await timedOut;
     vi.useRealTimers();
-    await expect(gateway.write(appWrites.tickTickCreate, { task: { title: "Write then exit" } }, () => true))
+    await expect(gateway.writeTickTick(tickTickWrites.create, { tasks: [{ title: "Write then exit" }] }, "connection", () => true))
       .rejects.toMatchObject({ kind: "write outcome unknown" });
     expect(requests("mcpServer/tool/call")).toHaveLength(2);
     expect(requests("process")).toHaveLength(1);

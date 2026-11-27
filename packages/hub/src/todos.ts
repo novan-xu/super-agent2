@@ -17,6 +17,8 @@ const listColumns = "id, name, position, archived, updated_at AS updatedAt";
 const ListRow = TodoList.extend({ archived: z.union([z.literal(0), z.literal(1)]).transform(Boolean) });
 const Position = z.object({ id: z.string(), position: z.number().int() });
 const BrainCreation = z.object({ id: z.string(), deleted: z.union([z.literal(0), z.literal(1)]).transform(Boolean) });
+const SyncTodo = Todo.extend({ deleted: z.union([z.literal(0), z.literal(1)]).transform(Boolean) });
+export type SyncTodo = z.output<typeof SyncTodo>;
 const recentCompletions = 100;
 
 export type Todos = ReturnType<typeof createTodos>;
@@ -27,6 +29,8 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
   const changed = () => { for (const listen of listeners) listen(); };
   const getTodo = connection.prepare(`SELECT ${todoColumns} FROM todos WHERE id = ? AND deleted = 0`);
   const hasTodo = connection.prepare("SELECT 1 FROM todos WHERE id = ?");
+  const syncRows = connection.prepare(`SELECT ${todoColumns}, deleted FROM todos ORDER BY position, id`);
+  const syncOne = connection.prepare(`SELECT ${todoColumns}, deleted FROM todos WHERE id = ?`);
   const open = connection.prepare(`SELECT ${todoColumns} FROM todos WHERE deleted = 0 AND done_at IS NULL ORDER BY position, id`);
   const completed = connection.prepare(`SELECT ${todoColumns} FROM todos WHERE deleted = 0 AND done_at IS NOT NULL ORDER BY done_at DESC, id LIMIT ?`);
   const getList = connection.prepare(`SELECT ${listColumns} FROM todo_lists WHERE id = ?`);
@@ -39,7 +43,7 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
     ORDER BY done_at IS NOT NULL, updated_at DESC, id LIMIT ? OFFSET ?`);
   const creation = connection.prepare("SELECT id, deleted FROM todos WHERE id = ? AND source_topic IS NOT NULL");
   const latestCreation = connection.prepare("SELECT id, deleted FROM todos WHERE source_topic = ? ORDER BY rowid DESC LIMIT 1");
-  const editTodo = connection.prepare("UPDATE todos SET title = ?, notes = ?, list = ?, date = ?, time = ?, done_at = ?, updated_at = ? WHERE id = ?");
+  const editTodo = connection.prepare("UPDATE todos SET title = ?, notes = ?, list = ?, date = ?, time = ?, done_at = ?, updated_at = ?, deleted = 0 WHERE id = ?");
   const deleteTodo = connection.prepare("UPDATE todos SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0");
   const linkTodo = connection.prepare("UPDATE todos SET topic = ?, updated_at = ? WHERE id = ?");
   const addList = connection.prepare(`INSERT INTO todo_lists (id, name, position, updated_at)
@@ -61,11 +65,11 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
     return ListRow.parse(row);
   };
   const listRows = () => lists.all().map((row) => ListRow.parse(row));
-  const fields = (input: TodoFields, priorList: string | null): TodoFields => {
+  const fields = (input: TodoFields, priorList: string | null, syncing = false): TodoFields => {
     const result = TodoFields.safeParse(input);
     if (!result.success || (result.data.date === null && result.data.time !== null)) throw new TodoRefused("bad_request");
     const id = result.data.list;
-    if (id !== null && id !== priorList && list(id).archived) throw new TodoRefused("conflict");
+    if (id !== null && id !== priorList && list(id).archived && !syncing) throw new TodoRefused("conflict");
     return result.data;
   };
   const validateName = (name: string, id: string) => {
@@ -101,6 +105,11 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
     };
   };
 
+  const insert = (id: string, input: TodoFields, sourceTopic: string | null) => {
+    const at = clock.now();
+    addTodo.run(id, input.title, input.notes, input.list, input.date, input.time, at, at, sourceTopic);
+  };
+
   return {
     snapshot: (id?: string): TodoSnapshot => {
       const selected = id === undefined ? undefined : get(id);
@@ -114,14 +123,25 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
     get,
     lists: listRows,
     search: (query: string, limit: number, offset: number): Todo[] => search.all(query, query, limit, offset).map((row) => Todo.parse(row)),
+    syncRows: (): SyncTodo[] => syncRows.all().map((row) => SyncTodo.parse(row)),
+    syncOne: (id: string): SyncTodo | undefined => SyncTodo.optional().parse(syncOne.get(id)),
+    applySync(id: string, input: TodoFields, done: boolean): Todo {
+      const checked = fields(input, null, true);
+      const current = get(id);
+      const at = clock.now();
+      if (hasTodo.get(id) === undefined) insert(id, checked, null);
+      const doneAt = done ? current?.doneAt ?? at : null;
+      editTodo.run(checked.title, checked.notes, checked.list, checked.date, checked.time, doneAt, at, id);
+      changed();
+      return item(id);
+    },
     brainCreation: (sourceTopic: string, receipt?: string) => BrainCreation.optional().parse(receipt === undefined ? latestCreation.get(sourceTopic) : creation.get(receipt)),
     add({ id = randomUUID(), ...provided }: TodoCreate, sourceTopic: string | null = null): Todo {
       const existing = get(id);
       const input = fields(provided, existing?.list ?? null);
       if (existing !== undefined && Object.entries(input).every(([key, value]) => existing[key as keyof TodoFields] === value)) return existing;
       if (hasTodo.get(id) !== undefined) throw new TodoRefused("conflict");
-      const at = clock.now();
-      addTodo.run(id, input.title, input.notes, input.list, input.date, input.time, at, at, sourceTopic);
+      insert(id, input, sourceTopic);
       changed();
       return item(id);
     },
