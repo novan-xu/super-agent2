@@ -164,6 +164,7 @@ const views = {
     route: { view: "settings", section: "appearance" },
     ready: ".accents",
     targets: { "accent choices": ".accents" },
+    after: async (page) => { await page.locator("#accent-title").evaluate((element) => element.scrollIntoView({ block: "start" })); },
     phone: { "settings back link": ".set-back" },
     desktop: settingsMenu,
   },
