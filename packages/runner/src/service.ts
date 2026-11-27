@@ -129,6 +129,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     changed: () => { bound?.update(); updater?.changed(); programUpdater?.changed(); },
   });
   let requestAllowance: () => void = () => undefined;
+  let setAllowanceMode: (read: boolean) => void = () => undefined;
   let requestPrograms: (id: string) => void = () => undefined;
   const report = () => ({
     ...machineReport(config.slots, programs, platform, allowances, updatingPrograms ? config.slots : busy()),
@@ -142,6 +143,7 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
     config,
     setStorage: (settings) => { storage.apply(settings); refreshStorage(); },
     refreshAllowance: () => requestAllowance(),
+    allowanceMode: (read) => setAllowanceMode(read),
     refreshPrograms: (id) => requestPrograms(id),
     report,
     check: checks.receive,
@@ -249,11 +251,16 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
   let reading: Promise<void> | undefined;
+  // A Windows runner reads the allowance only while the hub says no macOS or Linux runner is online,
+  // because the programs it starts open console windows on the Windows desktop.
+  let readsAllowance = platform !== "win32";
+  let lastAllowanceRead: number | undefined;
   const readAllowance = (): Promise<void> => {
-    if (platform === "win32") return Promise.resolve();
+    if (!readsAllowance) return Promise.resolve();
     if (reading !== undefined) return reading;
     reading = (async () => {
       try {
+        lastAllowanceRead = now();
         allowances = await readAllowances(prober, programs, now);
         log(
           `Allowance: ${allowances
@@ -292,10 +299,27 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   requestPrograms = (id) => { pendingPrograms.push(id); flushPrograms(); };
   requestAllowance = () => { void probed.then(readAllowance).catch(() => undefined); };
   const allowanceRead = probed.then(readAllowance).catch((error: unknown) => log(`Could not read the allowance: ${error instanceof Error ? error.message : String(error)}`));
-  const allowanceTimer = platform === "win32" ? undefined : setInterval(() => {
-    void readAllowance().catch(() => undefined);
-  }, options.allowanceMilliseconds ?? 10 * 60 * 1000);
-  allowanceTimer?.unref();
+  const allowanceInterval = options.allowanceMilliseconds ?? 10 * 60 * 1000;
+  let allowanceTimer: ReturnType<typeof setInterval> | undefined;
+  const scheduleAllowance = () => {
+    clearInterval(allowanceTimer);
+    allowanceTimer = undefined;
+    if (!readsAllowance || closed) return;
+    allowanceTimer = setInterval(() => {
+      void readAllowance().catch(() => undefined);
+    }, allowanceInterval);
+    allowanceTimer.unref();
+  };
+  scheduleAllowance();
+  setAllowanceMode = (read) => {
+    if (platform !== "win32" || read === readsAllowance || closed) return;
+    readsAllowance = read;
+    log(read
+      ? "No macOS or Linux runner is online, so this Windows runner reads the allowance"
+      : "A macOS or Linux runner is online, so this Windows runner stops reading the allowance");
+    scheduleAllowance();
+    if (read && (lastAllowanceRead === undefined || now() - lastAllowanceRead >= allowanceInterval)) requestAllowance();
+  };
   return {
     link,
     works,
