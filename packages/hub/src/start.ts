@@ -4,7 +4,7 @@ import { cloudflareServiceTokens, cloudflareSettings } from "./cloudflare.js";
 import { type Hub, type HubOptions, startHub } from "./hub.js";
 import type { KeySource } from "./keys.js";
 
-export interface StartOptions extends Pick<HubOptions, "credentials" | "commandShell"> {
+export interface StartOptions extends Pick<HubOptions, "credentials" | "commandShell" | "localInstallation"> {
   readonly report: (line: string) => void;
   readonly projectFolders?: readonly string[];
   readonly keySource?: KeySource;
@@ -30,6 +30,7 @@ export async function startFromEnvironment(
     },
     environment: env,
     report: options.report,
+    ...(options.localInstallation === undefined ? {} : { localInstallation: options.localInstallation }),
     ...("missing" in cloudflare ? {} : { serviceTokens: cloudflareServiceTokens(cloudflare), inboxServiceTokens: cloudflareServiceTokens(cloudflare, "inbox") }),
     ...(options.keySource === undefined ? {} : { keySource: options.keySource }),
     ...(options.clock === undefined ? {} : { clock: options.clock }),

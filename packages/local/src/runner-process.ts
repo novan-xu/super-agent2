@@ -1,8 +1,10 @@
+import { dirname } from "node:path";
+import { localBuilder } from "./local-build.js";
 import { once } from "node:events";
 import { runnerFiles, startRunnerService } from "@super-agent2/runner";
 import { holdPresence } from "./presence.js";
 
-const [home, mode] = process.argv.slice(2);
+const [home, mode, checkout] = process.argv.slice(2);
 const stop = new AbortController();
 process.once("SIGINT", () => stop.abort());
 process.once("SIGTERM", () => stop.abort());
@@ -19,6 +21,7 @@ async function main(): Promise<void> {
     const service = await startRunnerService({
       checkSignIn: true,
       files: runnerFiles(home), environment: process.env, tokenOnly: mode === "--loopback",
+      ...(checkout === undefined ? {} : { work: { localBuild: localBuilder(dirname(home), checkout, process.env) } }),
       log: (line) => process.stdout.write(`Local runner: ${line}\n`),
     });
     if (service === undefined) throw new Error("The local runner could not start");

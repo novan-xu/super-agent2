@@ -187,6 +187,7 @@ export const TaskAssignment = z.object({
   materials: z.array(TaskMaterial),
   checkout: TaskCheckout.nullable().default(null),
   deploys: z.boolean().default(false),
+  localBuild: z.literal(true).optional(),
   engine: WorkEngine,
   model: z.string().min(1),
   effort: z.string().min(1),

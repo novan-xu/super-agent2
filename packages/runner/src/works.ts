@@ -96,6 +96,7 @@ export interface WorksOptions {
   readonly send: (message: RunnerToHub) => void;
   readonly now?: () => number;
   readonly adapters?: AdapterFactory;
+  readonly localBuild?: (task: TaskAssignment, signal: AbortSignal, log: (output: string) => void) => Promise<string>;
   readonly findProgram?: (executable: string) => string | undefined;
   readonly run?: ProcessRunner;
   readonly remote?: RemoteUrl;
@@ -209,6 +210,7 @@ interface Work {
   task: WorkTask | undefined;
   assignment: TaskAssignment | undefined;
   deployment?: DeploymentFile;
+  buildAbort?: AbortController;
   handle: ProgramHandle | undefined;
   turn: boolean;
   queue: Prompt[];
@@ -843,6 +845,34 @@ export function createWorks(options: WorksOptions): Works {
     withWaiting(note === "" ? resumeText(currentTask, where) : continueText(currentTask, where, note));
   };
 
+  const buildLocal = async (work: Work, task: TaskAssignment) => {
+    const controller = new AbortController();
+    work.buildAbort = controller;
+    emit(work, { kind: "phase", phase: "started", detail: "Building the local edition" });
+    let report: Extract<WorkEvent, { kind: "delivered" }>;
+    try {
+      if (options.localBuild === undefined) throw new Error("This runner does not manage a local installation");
+      const logPath = join(work.paths.artifacts?.path ?? work.paths.folder, `local-build-${task.attempt}.log`);
+      writeFileSync(logPath, "", { mode: 0o600 });
+      const commit = await options.localBuild(task, controller.signal, (output) => appendFileSync(logPath, output));
+      work.record = { ...work.record, commit };
+      report = {
+        kind: "delivered", commit, text: null, files: [],
+        report: { en: `Built ${commit} for the local edition.`, zh: `已为本地版构建 ${commit}。` },
+      };
+    } catch (error) {
+      const output = messageOf(error).slice(-12_000);
+      report = {
+        kind: "delivered", outcome: "failed", text: null, files: [],
+        report: { en: `The local build failed.
+${output}`, zh: `本地版构建失败。
+${output}` },
+      };
+    }
+    delete work.buildAbort;
+    if (!work.stopping) await end(work, report);
+  };
+
   const beginTask = async (work: Work, task: TaskAssignment) => {
     emit(work, { kind: "phase", phase: "preparing", detail: `Preparing the scratch folder ${scratchFolder(work.paths)}${task.checkout === null ? "" : ` and a checkout of ${task.checkout.repository}`}` });
     const details: string[] = [];
@@ -941,6 +971,7 @@ export function createWorks(options: WorksOptions): Works {
     }
     if (existing?.live === true) {
       existing.stopping = true;
+      existing.buildAbort?.abort();
       existing.generation += 1;
       await closeHandle(existing);
       await existing.preparing?.catch(() => undefined);
@@ -995,7 +1026,7 @@ export function createWorks(options: WorksOptions): Works {
     changed();
     try {
       const projects = storage.projectsDir;
-      if (workspace === null && projects !== undefined) {
+      if (workspace === null && projects !== undefined && !("assignment" in given && given.assignment.localBuild === true)) {
         await preparing(work, async () => {
           if (work.stopping) return;
           const credentialed = "code" in given ? given.code : credentialedOf(given.assignment);
@@ -1024,6 +1055,8 @@ export function createWorks(options: WorksOptions): Works {
     }
     if ("code" in given) {
       await begin(work, given.code);
+    } else if (given.assignment.localBuild === true) {
+      await buildLocal(work, given.assignment);
     } else {
       await beginTask(work, given.assignment);
     }
@@ -1209,6 +1242,7 @@ export function createWorks(options: WorksOptions): Works {
     const task = work.task;
     const open = !work.record.ended;
     work.stopping = true;
+    work.buildAbort?.abort();
     work.generation += 1;
     await closeHandle(work);
     await work.preparing?.catch(() => undefined);
@@ -1311,6 +1345,7 @@ export function createWorks(options: WorksOptions): Works {
       closing = true;
       for (const work of works.values()) {
         work.stopping = true;
+        work.buildAbort?.abort();
         work.generation += 1;
       }
       await Promise.all([...works.values()].map((work) => closeHandle(work)));

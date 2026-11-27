@@ -624,7 +624,7 @@ function ticketDefinitions(agentWring: boolean) {
           repository: { type: "string", description: "The repository as owner/name, when the task needs a checkout of it" },
           project: { type: "string", description: "The related repository as owner/name, when the task needs no checkout" },
           commit: { type: "string", description: `SHA, branch, or "${mergedCommit}" for the preceding chain's final merge commit. If omitted, use the default branch at start, or "${mergedCommit}" for a deployment after its code chain.` },
-          deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}` },
+          deploy: { type: "boolean", description: `Deploy the repository by its ${deploymentFile}, or build the local installation when this is its own repository` },
           after: { type: "array", items: ticketCodeSchema("Ticket to wait for until merged or done. A dependency already started does not authorize this task.") },
           difficulty: startChoices.difficulty,
           platform: startChoices.platform,
@@ -1261,7 +1261,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
                 ...(detail.ticket.repository === null
                   ? []
                   : [
-                      `Checkout of ${detail.ticket.repository} at ${task.commit ?? (task.commitRef === null ? "the default branch's head when the work begins" : task.commitRef === mergedCommit ? "the final merge commit of the chain it comes after, once that has merged" : `${task.commitRef} when the work begins`)}${task.deploys ? `; it deploys it by its ${deploymentFile}` : ""}.`,
+                      `Checkout of ${detail.ticket.repository} at ${task.commit ?? (task.commitRef === null ? "the default branch's head when the work begins" : task.commitRef === mergedCommit ? "the final merge commit of the chain it comes after, once that has merged" : `${task.commitRef} when the work begins`)}${task.localBuild === true ? ", followed by a local installation restart" : task.deploys ? `; it deploys it by its ${deploymentFile}` : ""}.`,
                     ]),
                 ...task.materials.map(
                   (piece) =>

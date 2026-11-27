@@ -6,6 +6,7 @@ export interface ChainNode {
   readonly state: TicketState;
   readonly waits: readonly TicketWait[];
   readonly deployedAt: number | null;
+  readonly localBuild?: true | undefined;
 }
 
 export type ChainIndex<Node extends ChainNode = ChainNode> = ReadonlyMap<number, Node>;
@@ -21,7 +22,7 @@ export function waitMet(wait: TicketWait, before: ChainNode | undefined): boolea
   if (before === undefined || !isDoneTicket(before.state)) {
     return false;
   }
-  return !wait.deployment || before.deployedAt !== null;
+  return (!wait.deployment && before.localBuild !== true) || before.deployedAt !== null;
 }
 
 export function unmetWaits(ticket: ChainNode, index: ChainIndex): TicketWait[] {

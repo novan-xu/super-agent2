@@ -692,6 +692,10 @@ When the brain files work that will need deploying, it arranges the deployment's
 The worker deploys, checks health, rolls back when the new version does not come up, and reports.
 Done, the merged tickets it contains are marked deployed and what waits for that deployment begins; failed, it is a failed ticket like any other.
 
+On the local edition, an update to the installation's own repository is a build ticket pinned to the local runner.
+The runner stages the build away from the running files, and a successful build waits for active work before restarting.
+A dependent ticket waits for the launcher to confirm the new commit.
+
 Super Agent lists `mac-mini`, `macbook-air` and `pc`, whose workers run `deploy/deploy.sh release` on the NAS over SSH.
 The hub and the brain restart underneath the ticket; the worker goes on, its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 

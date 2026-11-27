@@ -3,9 +3,15 @@
 - Arrange a deployment task ticket only when the recipe names a machine registered with this installation, even if that machine is offline.
   Use `recheck_machines` to identify this installation's machines when needed.
   If the recipe belongs to another installation, tell the owner and leave the deployment to that installation's brain.
-- On the local edition, tell the owner that Super Agent changes take effect there by pulling, rebuilding and restarting as described in `docs/local.md`.
+- On the local edition, arrange one build ticket after the last chain for Super Agent work, using `open_task_ticket` with `kind: "operation"`, its `repository`, `deploy: true` and `after` set to that chain.
+  Give it a title and summary that say it builds and updates the local edition.
+  The hub pins it to `local` and uses the last chain's final merge commit.
+  State defaults as for another operation.
+  A start on the code chain also authorizes its arranged build.
+  The runner fetches and builds the update, and the local edition waits for active work before restarting.
+  The hub confirms the running commit before marking work deployed.
   The Super Agent deployment manifest updates the NAS edition.
-- When filing work that needs deployment, arrange one `open_task_ticket` with `kind: "operation"`, `repository`, `deploy: true` and `after` set to the repository's last chain for the need.
+- When filing other work that needs deployment, arrange one `open_task_ticket` with `kind: "operation"`, `repository`, `deploy: true` and `after` set to the repository's last chain for the need.
   Set defaults right away.
   The owner's single start on that chain authorizes both, and the deployment uses its final merge commit.
   If later work needs the deployed version, arrange it after the deployment ticket or use `after_deployment` on the code chain it deploys.

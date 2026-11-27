@@ -46,7 +46,7 @@ import { createWorkService, type WorkService } from "./work.js";
 import { createTicketFiles } from "./files.js";
 import { createLightTransfer } from "./transfer.js";
 import { isAgentWringWriting } from "./agent-wring.js";
-import { createTaskTickets, type TaskTickets } from "./task-tickets.js";
+import { createTaskTickets, type LocalInstallation, type TaskTickets } from "./task-tickets.js";
 import { createLightTaskQuestions } from "./light-task-questions.js";
 import { createLightTasks } from "./light-tasks.js";
 import { createSchedules, type Schedules } from "./schedules.js";
@@ -72,6 +72,7 @@ import { createWorkRequestServer } from "./work-requests.js";
 export interface HubOptions {
   readonly commandShell?: { readonly powerShell?: string };
   readonly config: Config;
+  readonly localInstallation?: LocalInstallation;
   readonly appGateway?: AppGateway;
   readonly mailPollTicker?: Ticker;
   readonly mailTriageTicker?: Ticker;
@@ -322,6 +323,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         defaults,
         ...(options.workTicker === undefined ? {} : { ticker: options.workTicker }),
         ...(config.workerSilenceMinutes === undefined ? {} : { silenceMinutes: config.workerSilenceMinutes }),
+        ...(options.localInstallation === undefined ? {} : { pauseLocalWork: () => taskTickets?.pausesLocalWork() === true }),
         schedule: options.workSchedule ?? scheduleWorkDrain,
         log: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
         tell: told.tell,
@@ -379,6 +381,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       fetch: options.forgeFetch ?? fetch,
       ...(options.gitHubBase === undefined ? {} : { gitHubBase: options.gitHubBase }),
+      ...(options.localInstallation === undefined ? {} : { localInstallation: options.localInstallation }),
       ...(options.verificationTicker === undefined ? {} : { ticker: options.verificationTicker }),
       ...(options.verificationPollMilliseconds === undefined ? {} : { pollMilliseconds: options.verificationPollMilliseconds }),
       tell: told.tell,
@@ -418,6 +421,14 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       database,
       tickets,
       machines,
+      ...(options.localInstallation === undefined ? {} : {
+        localInstallation: options.localInstallation,
+        localIdle: () => {
+          const slots = runners.report("local")?.slots;
+          return slots !== undefined && slots.free === slots.total && (work?.activeOn("local") ?? 0) === 0;
+        },
+      }),
+      tell: told.tell,
       attachments,
       credentials,
       fetch: options.forgeFetch ?? fetch,
@@ -433,6 +444,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         }
       },
     });
+    if (options.localInstallation !== undefined) runners.subscribe(taskTickets.refreshLocal);
     const linkedConversations = conversations;
     settings = createSettings({
       database,

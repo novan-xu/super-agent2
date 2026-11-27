@@ -20,6 +20,7 @@ import {
   type VerifiedWorkflow,
 } from "@super-agent2/protocol";
 import { z } from "zod";
+import type { LocalInstallation } from "./task-tickets.js";
 import type { Tell } from "./chains.js";
 import type { Clock } from "./clock.js";
 import type { CredentialSource } from "./credentials.js";
@@ -54,6 +55,7 @@ export interface MergedPart {
 export type Onward = (ticket: number, merged: MergedPart) => AgainOutcome;
 
 export interface VerificationOptions {
+  readonly localInstallation?: LocalInstallation;
   readonly accountOf?: (repository: string) => GitHubAccount;
   readonly database: HubDatabase;
   readonly clock: Clock;
@@ -555,6 +557,9 @@ export function createVerification(options: VerificationOptions): VerificationSe
   const mergedPullsOf = (ticket: Ticket) =>
     [...tickets.lineage(ticket.id), ticket].flatMap((piece) => piece.pullRequests.filter((pull) => pull.state === "merged"));
 
+  const isLocalBuild = (repository: string | null): boolean =>
+    repository !== null && repository.toLowerCase() === options.localInstallation?.repository.toLowerCase();
+
   const report = (id: number) => {
     const ticket = tickets.get(id);
     const row = rowOf(id);
@@ -564,6 +569,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
     const rule = VerificationRule.nullable().catch(null).parse(row.rule);
     const issues = (tickets.lineage(id)[0] ?? ticket).issues.map((issue) => `#${issue.number}`).join(", ");
     const deployed = row.deployment === 1;
+    const localBuild = isLocalBuild(ticket.repository);
     const waitingForDeployment = tickets.waitingFor(id).filter((after) => after.waits.some((entry) => entry.ticket === id && entry.deployment && !entry.waived) && (after.state === "waiting" || after.state === "pending"));
     const deploying = tickets.waitingFor(id).filter((after) => after.form === "task" && after.deploys && after.waits.some((entry) => entry.ticket === id && !entry.waived) && (after.state === "waiting" || after.state === "working"));
     const merged = mergedPullsOf(ticket);
@@ -580,7 +586,11 @@ export function createVerification(options: VerificationOptions): VerificationSe
       `The last, #${ticket.pullRequest ?? 0}, was merged${row.head === null ? "" : ` at ${row.head}`}${row.merge_commit === null ? "" : ` as commit ${row.merge_commit}`}${rule === null ? "" : `, because ${ruleWords[rule]}${rule === "skipped" && row.skip_reason !== null ? ` (${row.skip_reason})` : ""}`}. That is the final merge commit; it contains every earlier one.`,
       `Issues closed: ${issues === "" ? "none" : issues}. Its worktree is removed, and the tickets that waited for it begin by themselves.`,
       ...closureLines(ticket),
-      deployed
+      localBuild
+        ? deploying.length > 0
+          ? `Local edition: the build ${deploying.map((after) => `ticket ${ticketReference(after)}`).join(", ")} starts after this chain. The hub reports the result after restarting on the new commit.`
+          : `Local edition: read deployment.md and arrange one build ticket after the last chain for this update. If this is the last chain and the owner has not deferred the update, use open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}). State its defaults. The owner starts it.`
+        : deployed
         ? deploying.length > 0
           ? `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and ${deploying.map((after) => `task ticket ${ticketReference(after)}`).join(", ")} deploys it, arranged after this chain: it begins by itself now. You are told when it is done or fails.`
           : `Deployment: the repository has a deployment (${deploymentFile} at the merged commit), and no task ticket is arranged to deploy it. Read deployment.md and check whether this installation has a registered machine named in the recipe. If it does and the owner has not deferred, grouped or declined deployment, open one with open_task_ticket (deploy true, after ["${ticketReference(ticket)}"], commit ${row.merge_commit ?? "merged"}). State its defaults. The owner starts it.`
@@ -592,7 +602,7 @@ export function createVerification(options: VerificationOptions): VerificationSe
       ...decisionReport(ticket),
     ];
     save(id, { reported_at: clock.now() });
-    const notice = text(deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: ticket.code });
+    const notice = text(localBuild ? "notice.localBuildMerged" : deployed ? (deploying.length > 0 ? "notice.ticketMergedDeploying" : "notice.ticketMergedDeploy") : "notice.ticketMerged", { ticket: ticket.code });
     const screenshots = [...tickets.lineage(id), ticket].flatMap((piece) => piece.pullRequests.flatMap((pull) =>
       pull.state === "merged" && pull.screenshots !== undefined ? [{ ticket: piece.id, pullRequest: pull.number, images: pull.screenshots.images }] : []));
     if (screenshots.length === 0) tell(id, notice, lines.join("\n"));
@@ -704,8 +714,8 @@ export function createVerification(options: VerificationOptions): VerificationSe
         save(ticket.id, { branch_done: 1 });
       }
       if (rowOf(ticket.id)?.deployment === null) {
-        const found = await gitHub.contents(repository, deploymentFile, commit ?? pull.head);
-        save(ticket.id, { deployment: found === null ? 0 : 1 });
+        const needsUpdate = isLocalBuild(repository) || await gitHub.contents(repository, deploymentFile, commit ?? pull.head) !== null;
+        save(ticket.id, { deployment: needsUpdate ? 1 : 0 });
       }
     } catch (error) {
       wait(ticket.id, "finishing", `Merged on GitHub; finishing failed and is tried again: ${reasonOf(error)}`, { state: "merging" });
