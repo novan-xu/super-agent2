@@ -3996,3 +3996,9 @@ The alternative was to use the white logo for every icon or invert the logo on e
 The upper-right logo dot is orange across the white logo and the dark Apple touch icon.
 The saturated orange distinguishes it from the interface's amber accent while remaining visible against both backgrounds.
 The previous dot was red.
+
+## 2026-11-26 — Desktop icon size (#361)
+
+The rounded desktop icon tile now fills 98% of the canvas instead of about 83%, retaining a small transparent margin and the same glyph proportions.
+Windows displays the icon as supplied, so the larger tile better matches neighbouring app icons while preserving the rounded corners and grey edge.
+The separate full-bleed maskable and Apple icons remain unchanged.
