@@ -25,6 +25,12 @@ describe("destinationOfMessage", () => {
     expect(destinationOfMessage({ type: "open", url: "/workbench?card=hold%3Aabc" }, origin)).toEqual({ route: { view: "workbench" }, card: "hold:abc" });
   });
 
+  it("opens a timed reminder on its task and an all-day summary on Today", () => {
+    const todo = "00000000-0000-4000-8000-000000000001";
+    expect(destinationOfMessage({ type: "open", url: `/todos?todo=${todo}` }, origin)).toEqual({ route: { view: "todos", todo }, card: null });
+    expect(destinationOfMessage({ type: "open", url: "/todos" }, origin)).toEqual({ route: { view: "todos" }, card: null });
+  });
+
   it("ignores any other message", () => {
     for (const data of [null, "open", 3, {}, { type: "other", url: "/workbench" }, { type: "open" }, { type: "open", url: 5 }]) {
       expect(destinationOfMessage(data, origin)).toBeUndefined();

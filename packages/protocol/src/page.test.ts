@@ -48,6 +48,9 @@ describe("pageRoute", () => {
     }
     expect(pageRoute("/todos", `?list=${list}`)).toEqual({ view: "todos", selection: { list } });
     expect(pagePath({ view: "todos", selection: { list } })).toBe(`/todos?list=${list}`);
+    expect(pageRoute("/todos", `?todo=${list}`)).toEqual({ view: "todos", todo: list });
+    expect(pagePath({ view: "todos", todo: list })).toBe(`/todos?todo=${list}`);
+    expect(pageRoute("/todos", "?todo=invalid")).toEqual({ view: "todos" });
     expect(pageRoute("/todos", "?list=invalid")).toEqual({ view: "todos" });
     expect(pageRoute("/todos/invalid")).toBeUndefined();
   });

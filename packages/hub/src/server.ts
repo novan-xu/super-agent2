@@ -122,7 +122,7 @@ import type { Machine } from "./machines.js";
 import type { MemoryService, OwnerMemoryError } from "./memories.js";
 import { ScheduleAction, ScheduleId, ScheduleProposalAction, ScheduleProposalConfirm, ScheduleSave, type ScheduleHistory, type ScheduleList } from "@super-agent2/protocol";
 import { ScheduleRefused, type Schedules } from "./schedules.js";
-import { TodoCreate, TodoEdit, TodoId, TodoListCreate, TodoListEdit, TodoReorder, todoListsPath, todosPath } from "@super-agent2/protocol";
+import { TodoCreate, TodoEdit, TodoId, TodoListCreate, TodoListEdit, TodoReminderChange, TodoReorder, todoListsPath, todoReminderSettingsPath, todosPath } from "@super-agent2/protocol";
 import { TodoRefused, type Todos } from "./todos.js";
 import type { ReleaseSource } from "./release.js";
 import type { Runners } from "./runners.js";
@@ -714,6 +714,14 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     if (path === settingsPath && method === "GET" && options.settings !== undefined) {
+      sendJson(response, 200, options.settings.snapshot());
+      return;
+    }
+    if (path === todoReminderSettingsPath && method === "PUT" && options.settings !== undefined && options.push !== undefined) {
+      if (!ownerAction(request, response)) return;
+      const given = parseJson(await readBody(request), TodoReminderChange);
+      if (given === undefined) { sendJson(response, 400, { error: "bad_request" }); return; }
+      options.settings.setTodoReminders(given);
       sendJson(response, 200, options.settings.snapshot());
       return;
     }
@@ -1315,7 +1323,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
 
   const serveTodos = async (request: IncomingMessage, response: ServerResponse, path: string, method: string, todos: Todos): Promise<boolean> => {
     if (path === todosPath && method === "GET") {
-      sendJson(response, 200, todos.snapshot());
+      const selected = TodoId.safeParse(new URL(request.url ?? "/", "http://hub").searchParams.get("todo"));
+      sendJson(response, 200, todos.snapshot(selected.success ? selected.data : undefined));
       return true;
     }
     const parts = /^\/api\/todos\/(lists\/)?([^/]+)(?:\/(reorder|handoff))?$/.exec(path);

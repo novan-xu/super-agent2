@@ -1054,6 +1054,10 @@ Changed by this design:
   The date and optional time use the installation's configured time zone.
   交给大脑 creates a new 日常 topic with the to-do as its first owner message and links it in the same database transaction.
   Later clicks open the linked topic, and the to-do stays open until the owner completes it.
+  With web push configured, 待办提醒 in 设置 controls to-do notifications for subscribed devices.
+  Timed items use their due time, and one daily push summarizes due and overdue all-day items at the configured time, initially 09:00.
+  A timed push links to its task, and the daily push opens 今天.
+  The hub claims each reminder before dispatch and catches up on missed due times for up to three hours while the tasks are still open.
 - 定时 uses a canvas of cards with a 待确认 group and persistent cards for active, paused and completed schedules.
   The tab counts pending proposals, and each proposal links to its source topic and shows the changes when it proposes an edit.
   Confirmed cards show the recurrence, next run or triggering service, and latest outcome.

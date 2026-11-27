@@ -9,6 +9,7 @@ export interface LayoutFixture {
   readonly ticket: number;
   readonly startCard: number;
   readonly previewName: string;
+  readonly todoDetail: string;
   readonly graphs: readonly (readonly number[])[];
 }
 
@@ -94,7 +95,7 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string, deviceT
   const today = todoDay(now, timeZone);
   const tomorrow = nextTodoDay(today);
   hub.todos.add({ title: "核对温室水表", notes: "记录早上的读数，并与上周的数据对照。", list: garden.id, date: todoDay(now - 86_400_000, timeZone), time: null });
-  hub.todos.add({ title: "把种子清单发给园艺小组", notes: "附上下一轮播种的品种和数量。", list: garden.id, date: today, time: "16:30" });
+  const todoDetail = hub.todos.add({ title: "把种子清单发给园艺小组", notes: "附上下一轮播种的品种和数量。", list: garden.id, date: today, time: "16:30" }).id;
   hub.todos.add({ title: "准备周末维护材料", notes: "确认园艺剪和备用标签够用。", list: garden.id, date: today, time: null });
   hub.todos.add({ title: "预约土壤检测", notes: "", list: garden.id, date: nextTodoDay(tomorrow), time: null });
   hub.todos.add({ title: "补充育苗土", notes: "", list: null, date: tomorrow, time: "10:00" });
@@ -190,5 +191,5 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string, deviceT
   for (const repository of repositories) hub.repositories.setPinned(repository, true);
 
   if (deviceTransfer) await seedTransfer(url, icon);
-  return { ticket: detail, startCard, previewName, graphs: [forkThenMerge, fork, merge] };
+  return { ticket: detail, startCard, previewName, todoDetail, graphs: [forkThenMerge, fork, merge] };
 }

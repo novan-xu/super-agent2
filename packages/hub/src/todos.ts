@@ -95,11 +95,15 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
   };
 
   return {
-    snapshot: (): TodoSnapshot => ({
-      timeZone,
-      todos: [...open.all(), ...completed.all(recentCompletions)].map((row) => Todo.parse(row)),
-      lists: lists.all().map((row) => ListRow.parse(row)),
-    }),
+    snapshot: (id?: string): TodoSnapshot => {
+      const selected = id === undefined ? undefined : get(id);
+      return {
+        timeZone,
+        todos: [...open.all(), ...completed.all(recentCompletions)].map((row) => Todo.parse(row)),
+        lists: lists.all().map((row) => ListRow.parse(row)),
+        ...(selected === undefined ? {} : { selected }),
+      };
+    },
     get,
     add({ id = randomUUID(), ...provided }: TodoCreate): Todo {
       const existing = get(id);

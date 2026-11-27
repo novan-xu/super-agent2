@@ -19,6 +19,8 @@ export interface PushService {
   inbox(source: string, message: string, topic: string): void;
   transfer(source: string, files: readonly string[], entry: number): void;
   health(message: string, topic: string, key: string): void;
+  hasSubscribers(): boolean;
+  todo(payload: PushPayload): Promise<void>;
   idle(): Promise<void>;
   close(): Promise<void>;
 }
@@ -54,6 +56,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (result === "gone") store.remove(target.endpoint);
     })).then(() => undefined).finally(() => pending.delete(work));
     pending.add(work);
+    return work;
   };
   return {
     publicKey: options.settings.publicKey,
@@ -68,6 +71,8 @@ export function createPushService(options: PushServiceOptions): PushService {
       return "saved";
     },
     unsubscribe: (endpoint) => store.remove(endpoint),
+    hasSubscribers: () => store.list(options.settings.publicKey).length > 0,
+    todo: send,
     health: (message, topic, key) => {
       send({ title: "System", body: [...message].slice(0, 160).join(""), url: pagePath({ view: "conversations", conversation: topic, scope: { kind: "daily" } }), tag: `health:${key}` });
     },

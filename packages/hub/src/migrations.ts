@@ -1452,6 +1452,16 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX todos_recently_done ON todos(done_at DESC, id) WHERE deleted = 0 AND done_at IS NOT NULL;
     `,
   },
+  {
+    version: 78,
+    sql: `
+      CREATE TABLE todo_reminder_slots (
+        key TEXT PRIMARY KEY,
+        due_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX todos_reminder_dates ON todos(date, time, id) WHERE deleted = 0 AND done_at IS NULL AND date IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

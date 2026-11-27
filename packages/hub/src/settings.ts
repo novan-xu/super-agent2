@@ -4,6 +4,7 @@ import {
   type BrainSettings,
   type Device,
   defaultMachineLoadSettings,
+  defaultTodoReminderSettings,
   type EngineTable,
   type HubFeatures,
   type MachineStatus,
@@ -16,6 +17,8 @@ import {
   type SettingsSnapshot,
   startingBrainOrder,
   startingWorkerOrder,
+  type TodoReminderChange,
+  TodoReminderSettings,
   type TableCell,
   unofferedChanges,
 } from "@super-agent2/protocol";
@@ -40,6 +43,8 @@ export interface Settings {
   budget(): number | null;
   setBudget(value: number | null): void;
   setLoadSettings(settings: MachineLoadSettings): void;
+  todoReminders(): TodoReminderSettings;
+  setTodoReminders(change: TodoReminderChange): void;
   changed(): void;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
   close(): void;
@@ -61,6 +66,7 @@ export interface SettingsOptions {
 
 const orderKeys = { brain: "brain_order", worker: "worker_order" };
 const loadKey = "machine_load";
+const reminderKey = "todo_reminders";
 
 const ValueRow = z.object({ value: z.string() });
 const DeviceRow = z.object({ endpoint: z.string(), created_at: z.number().int() });
@@ -127,6 +133,16 @@ export function createSettings(options: SettingsOptions): Settings {
     return Number.isFinite(value) && value > 0 ? value : null;
   };
 
+  const todoReminders = (): TodoReminderSettings => {
+    const row = selectSetting.get(reminderKey);
+    if (row === undefined) return defaultTodoReminderSettings;
+    try {
+      return TodoReminderSettings.parse(JSON.parse(ValueRow.parse(row).value));
+    } catch {
+      return defaultTodoReminderSettings;
+    }
+  };
+
   const snapshot = (): SettingsSnapshot => {
     const conversations = options.conversations();
     const subscriptions = options.defaults.subscriptions();
@@ -147,6 +163,7 @@ export function createSettings(options: SettingsOptions): Settings {
       subscriptions: [subscriptions.codex, subscriptions.claude],
       unavailable: options.defaults.unavailable(),
       devices: devices(),
+      ...(options.pushKey === undefined ? {} : { todoReminders: { ...todoReminders(), timeZone: options.database.ticketTimeZone } }),
       ...(appGateway === undefined ? {} : { appGateway }),
       ...(features === undefined ? {} : { features }),
     };
@@ -213,6 +230,11 @@ export function createSettings(options: SettingsOptions): Settings {
     setLoadSettings: (settings) => {
       upsertSetting.run(loadKey, JSON.stringify(settings), options.clock.now());
       options.runners.setLoadSettings(settings);
+      changed();
+    },
+    todoReminders,
+    setTodoReminders: (change) => {
+      upsertSetting.run(reminderKey, JSON.stringify({ ...todoReminders(), ...change }), options.clock.now());
       changed();
     },
     changed,

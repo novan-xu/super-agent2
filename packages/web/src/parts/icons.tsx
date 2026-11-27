@@ -37,6 +37,7 @@ const shapes = {
   more: <path d="M5 12h.01M12 12h.01M19 12h.01" />,
   down: <path d="M6 9.5l6 6 6-6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  bell: <path d="M9.5 20h5M5 16h14l-1.5-2.5V9a5.5 5.5 0 0 0-11 0v4.5z" />,
   todos: <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="m8 12 2.5 2.5L16 9" /></>,
   grip: <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" />,
   x: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,

@@ -60,9 +60,11 @@ import {
   TodoHandoff,
   TodoList,
   type TodoListEdit,
+  type TodoReminderChange,
   type TodoReorder,
   TodoSnapshot,
   todoListsPath,
+  todoReminderSettingsPath,
   todosPath,
 } from "@super-agent2/protocol";
 import { z } from "zod";
@@ -180,6 +182,7 @@ export const hubApi = {
   revokeMachine: (name: string) => call(`/api/machines/${encodeURIComponent(name)}/revoke`, MachineRevoked, {}),
   setMachineStorage: (name: string, storage: StorageSettings) => call(`/api/machines/${encodeURIComponent(name)}/storage`, StorageSettings, storage, "PUT"),
   setMachineLoad: (limits: MachineLoadSettings) => call("/api/settings/machine-load", SettingsSnapshot, limits, "PUT"),
+  setTodoReminders: (change: TodoReminderChange) => call(todoReminderSettingsPath, SettingsSnapshot, change, "PUT"),
   setOrder: (role: "brain" | "worker", order: readonly Provider[]) => call(role === "brain" ? "/api/brain/order" : "/api/workers/order", SettingsSnapshot, { order }, "PUT"),
   setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
   setRepositoryOrder: (repositories: readonly string[]) => call("/api/repositories/order", SettingsSnapshot, { repositories }),
@@ -210,7 +213,7 @@ const todoListResource = (id: string) => `${todoListsPath}/${encodeURIComponent(
 const todoAck = z.object({ ok: z.literal(true) });
 
 export const todoApi = {
-  snapshot: (signal: AbortSignal) => call(todosPath, TodoSnapshot, undefined, "POST", signal),
+  snapshot: (signal: AbortSignal, id?: string) => call(id === undefined ? todosPath : `${todosPath}?todo=${encodeURIComponent(id)}`, TodoSnapshot, undefined, "POST", signal),
   add: (input: TodoCreate) => call(todosPath, Todo, input),
   edit: (id: string, patch: TodoEdit) => call(todoResource(id), Todo, patch, "PUT"),
   remove: (id: string) => call(todoResource(id), todoAck, {}, "DELETE"),

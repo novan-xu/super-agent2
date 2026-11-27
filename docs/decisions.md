@@ -4061,3 +4061,16 @@ Other options were to keep separate hand-written preset styles or attempt to upd
 - **Chosen:** Show a link to the hand-off topic on the to-do.
 - **Why:** The topic remains the source of any tickets created in the discussion and continues to work when it is reassigned or merged.
 - **Other options:** Add ticket codes to the to-do and keep them in sync with topic and ticket changes.
+
+## 2026-11-27 — To-do push reminders (#399)
+
+- **Chosen:** Turn on to-do reminders by default for existing web push subscribers and let the owner switch them off in Settings.
+  The all-day summary starts at 09:00 and has a three-hour catch-up window that ends at local midnight.
+- **Why:** Existing subscriptions already express the owner's choice to receive push notifications.
+  A short window recovers from brief outages, and a morning summary should still refer to the current hub day.
+- **Other options:** Require a separate opt-in, or send overdue summaries after a longer outage or after midnight.
+
+- **Chosen:** Record a reminder before dispatch and wait for in-flight sends during normal shutdown.
+- **Why:** A Web Push provider may accept a message just before the hub crashes without returning a result.
+  Retrying after an uncertain delivery can produce a duplicate, while recording the dispatch first can miss a notification if the hub crashes during sending.
+- **Other options:** Record after dispatch and retry uncertain sends, or keep the reminders entirely in memory.

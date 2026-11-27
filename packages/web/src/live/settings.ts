@@ -23,7 +23,7 @@ export type SettingsGroup = "work" | "links" | "personal";
 export const settingsGroups: readonly { readonly group: SettingsGroup; readonly sections: readonly SettingsSection[] }[] = [
   { group: "work", sections: ["machines", "models", "repositories", "usage"] },
   { group: "links", sections: ["connections"] },
-  { group: "personal", sections: ["appearance", "history", "memory"] },
+  { group: "personal", sections: ["appearance", "history", "memory", "todo-reminders"] },
 ];
 
 export const firstSection: SettingsSection = "machines";

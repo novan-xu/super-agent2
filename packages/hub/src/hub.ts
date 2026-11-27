@@ -28,6 +28,7 @@ import { type HubDatabase, openDatabase } from "./database.js";
 import { lockSettings } from "./irreversible.js";
 import { createMemoryService, type MemoryService } from "./memories.js";
 import { createTodos, type Todos } from "./todos.js";
+import { createTodoReminders } from "./todo-reminders.js";
 import { createKeyCache, fetchKeySource, type KeySource } from "./keys.js";
 import { type ConfirmationLock, createConfirmationLock } from "./lock.js";
 import { localOwnerEmail, loopbackHost, verifyLoopbackOwner } from "./loopback.js";
@@ -98,6 +99,7 @@ export interface HubOptions {
   readonly workTicker?: Ticker;
   readonly workSchedule?: (drain: () => void) => void;
   readonly scheduleTicker?: Ticker;
+  readonly todoReminderTicker?: Ticker;
   readonly healthTicker?: Ticker;
   readonly topicTidyTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
@@ -191,6 +193,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let lock: ConfirmationLock | undefined;
   let waiting: Waiting;
   let push: PushService | undefined;
+  let todoReminders: ReturnType<typeof createTodoReminders> | undefined;
   let health: ReturnType<typeof createHealthNotices> | undefined;
   let server: HubServer;
   let chains: Chains;
@@ -614,6 +617,10 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     taskTickets.resume();
     peerUpdates?.resume();
     schedules.resume();
+    if (push !== undefined) todoReminders = createTodoReminders({
+      database, clock, push, settings: settings.todoReminders, ticker: options.todoReminderTicker,
+      report: options.report ?? ((line) => process.stderr.write(`${line}\n`)),
+    });
     topicTidy = createTopicTidy({ database, clock, conversations, time: config.topicTidyTime, enabled: config.topicTidyEnabled,
       ticker: options.topicTidyTicker, report: options.report ?? ((line) => process.stderr.write(`${line}\n`)) });
     const warn = () => {
@@ -669,6 +676,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       address,
       ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
+        const pendingReminders = todoReminders?.close();
         openaiCosts?.close();
         topicTidy?.close();
         mailIntake?.close();
@@ -697,6 +705,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           chains.close();
           await chains.idle();
           waiting.close();
+          await pendingReminders;
           await push?.close();
           conversations.close();
           await commands.close();
@@ -705,6 +714,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    const pendingReminders = todoReminders?.close();
     closePeer?.();
     topicTidy?.close();
     mailIntake?.close();
@@ -723,6 +733,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     work?.close();
     chains.close();
     waiting.close();
+    await pendingReminders;
     await push?.close();
     conversations.close();
     await commands.close();
