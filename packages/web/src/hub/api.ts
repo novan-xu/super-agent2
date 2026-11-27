@@ -82,9 +82,12 @@ async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, metho
   try {
     response = await fetch(
       appPath(path),
-      body === undefined
-        ? { headers: { accept: "application/json" }, cache: "no-store" }
-        : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body), ...(signal === undefined ? {} : { signal }) },
+      {
+        ...(body === undefined
+          ? { headers: { accept: "application/json" }, cache: "no-store" }
+          : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) }),
+        ...(signal === undefined ? {} : { signal }),
+      },
     );
   } catch {
     return { ok: false, error: "network" };

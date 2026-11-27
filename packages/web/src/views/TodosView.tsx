@@ -135,9 +135,9 @@ function TodoRows({ rows, lists, today, groupDate, busy, editing, setEditing, ap
       };
       return <li className="todo-row" key={todo.id} data-todo-id={todo.id} data-drop={drop?.anchor === todo.id ? drop.side : undefined}>
         <div className="todo-row-main">
-          <button className="icon-btn todo-check" type="button" aria-label={text(done ? "todo.undo" : "todo.done")} title={text(done ? "todo.undo" : "todo.done")}
+          <button className="todo-check" type="button" aria-label={text(done ? "todo.undo" : "todo.done")} title={text(done ? "todo.undo" : "todo.done")}
             disabled={busy} onClick={() => void apply(() => todoApi.edit(todo.id, { done: !done }))}>
-            {done ? <Icon name="check" size={16} /> : null}
+            <span className="icon-btn todo-check-mark" aria-hidden="true">{done ? <Icon name="check" size={16} /> : null}</span>
           </button>
           <div className="todo-copy">
             <button className="todo-title" type="button" aria-expanded={editing === todo.id} title={text("todo.edit")} onClick={() => setEditing(editing === todo.id ? null : todo.id)}>{todo.title}</button>
