@@ -65,6 +65,7 @@ import {
   TodoSnapshot,
   todoListsPath,
   todoReminderSettingsPath,
+  tickTickSyncPath,
   todosPath,
 } from "@super-agent2/protocol";
 import { z } from "zod";
@@ -183,6 +184,7 @@ export const hubApi = {
   setMachineStorage: (name: string, storage: StorageSettings) => call(`/api/machines/${encodeURIComponent(name)}/storage`, StorageSettings, storage, "PUT"),
   setMachineLoad: (limits: MachineLoadSettings) => call("/api/settings/machine-load", SettingsSnapshot, limits, "PUT"),
   setTodoReminders: (change: TodoReminderChange) => call(todoReminderSettingsPath, SettingsSnapshot, change, "PUT"),
+  setTickTickSync: (enabled: boolean) => call(tickTickSyncPath, SettingsSnapshot, { enabled }, "PUT"),
   setOrder: (role: "brain" | "worker", order: readonly Provider[]) => call(role === "brain" ? "/api/brain/order" : "/api/workers/order", SettingsSnapshot, { order }, "PUT"),
   setAccount: (repository: string, account: GitHubAccount) => call("/api/repositories/account", SettingsSnapshot, { repository, account }, "PUT"),
   setRepositoryOrder: (repositories: readonly string[]) => call("/api/repositories/order", SettingsSnapshot, { repositories }),

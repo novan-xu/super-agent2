@@ -544,6 +544,10 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
 }
 
 .set-body > .page { max-width: none; padding: 0; }
+.ticktick-sync-log { border-top: 1px solid var(--border-soft); padding: var(--space-3) var(--space-5); font-size: var(--text-sm); }
+.ticktick-sync-log summary { cursor: pointer; }
+.ticktick-sync-log ul { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
+.ticktick-sync-log li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
 .usage-budget .field { width: auto; height: 32px; min-height: 32px; margin-inline-start: var(--space-2); padding: 0 var(--space-2); }
 .usage-budget > .btn { margin-block-start: var(--space-2); }
 

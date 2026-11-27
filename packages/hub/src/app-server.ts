@@ -13,7 +13,8 @@ export class AppGatewayError extends Error {
 export function appRefusal(detail: string, code?: number): AppGatewayError {
   const status = code !== undefined && code >= 400 && code <= 599
     ? code
-    : /\b(?:HTTP(?: status(?: code)?)?[: ]+|status(?: code)?[: ]+)([45]\d\d)\b/i.exec(detail)?.[1];
+    : /\b(?:HTTP(?: status(?: code)?)?[: ]+|status(?: code)?[: ]+)([45]\d\d)\b/i.exec(detail)?.[1]
+      ?? (/TickTick API error \[resource_not_found\]/i.test(detail) ? 404 : undefined);
   return new AppGatewayError("tool refused", status === undefined ? undefined : Number(status));
 }
 

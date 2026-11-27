@@ -302,6 +302,10 @@ export class PageController {
     return this.changeSettings(() => this.options.api.setTodoReminders(change));
   }
 
+  setTickTickSync(enabled: boolean): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setTickTickSync(enabled));
+  }
+
   setOrder(role: "brain" | "worker", order: readonly Provider[]): Promise<boolean> {
     return this.changeSettings(() => this.options.api.setOrder(role, order));
   }

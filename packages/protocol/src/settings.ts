@@ -9,6 +9,7 @@ import { ProviderUnavailable } from "./providers.js";
 import { MachineLoadSettings, MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
 import { type Difficulty, difficulties, RepositoryName } from "./tickets.js";
 import { TodoReminderStatus } from "./todos.js";
+import { TickTickSyncStatus } from "./ticktick-sync.js";
 
 export const tableEngines = ["codex", "claude", "dsh", "antigravity"] as const;
 export type TableEngine = (typeof tableEngines)[number];
@@ -141,6 +142,7 @@ export const AppGatewayStatus = z.object({
 export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
 
 export const SettingsSnapshot = z.object({
+  tickTickSync: TickTickSyncStatus.optional(),
   todoReminders: TodoReminderStatus.optional(),
   features: HubFeatures.optional(),
   openaiBudget: z.number().positive().nullable().optional(),

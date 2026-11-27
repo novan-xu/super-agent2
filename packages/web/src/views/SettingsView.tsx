@@ -24,6 +24,7 @@ import {
   type Ticket,
   type TodoReminderChange,
   type TodoReminderStatus,
+  type TickTickSyncStatus,
   withCell,
 } from "@super-agent2/protocol";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -63,6 +64,7 @@ export interface SettingsActions {
   readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
   readonly setMachineLoad: (limits: MachineLoadSettings) => Promise<boolean>;
   readonly setTodoReminders: (change: TodoReminderChange) => Promise<boolean>;
+  readonly setTickTickSync: (enabled: boolean) => Promise<boolean>;
   readonly setOrder: (role: "brain" | "worker", order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
@@ -772,7 +774,33 @@ function InboxSources() {
   </section>;
 }
 
-function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnapshot; readonly now: number }) {
+function TickTickSyncCard({ sync, now, save }: { readonly sync: TickTickSyncStatus; readonly now: number; readonly save: SettingsActions["setTickTickSync"] }) {
+  const [saving, setSaving] = useState(false);
+  const title = text("ticktick.sync.title", { app: "TickTick" });
+  const change = async () => {
+    setSaving(true);
+    try { await save(!sync.enabled); } finally { setSaving(false); }
+  };
+  return <section className="section ticktick-sync">
+    <div className="rows">
+      <div className="srow">
+        <div className="srow-text">
+          <span className="srow-title">{title}</span>
+          <span className="srow-help" aria-live="polite">{text(`ticktick.sync.${sync.state}`)}</span>
+          {sync.lastSync === null ? null : <span className="srow-help">{text("ticktick.sync.last", { time: momentOf(sync.lastSync, now) })}</span>}
+        </div>
+        <div className="srow-ctl"><button type="button" role="switch" className="switch" aria-label={title} aria-checked={sync.enabled}
+          disabled={saving || (!sync.enabled && sync.state === "unavailable")} onClick={() => void change()} /></div>
+      </div>
+      {sync.log.length === 0 ? null : <details className="ticktick-sync-log">
+        <summary>{text("ticktick.sync.log")}</summary>
+        <ul>{sync.log.map((entry, index) => <li key={index}><span>{text(`ticktick.sync.event.${entry.event}`, { count: entry.count })}</span><span className="muted">{momentOf(entry.at, now)}</span></li>)}</ul>
+      </details>}
+    </div>
+  </section>;
+}
+
+function ConnectionsSection({ settings, now, actions }: { readonly settings: SettingsSnapshot; readonly now: number; readonly actions: SettingsActions }) {
   const gateway = settings.appGateway;
   const features = settings.features;
   const accounts = settings.accounts.filter((account) => features === undefined || account.configured);
@@ -808,6 +836,7 @@ function ConnectionsSection({ settings, now }: { readonly settings: SettingsSnap
           </div>
         </section>
       )}
+      {settings.tickTickSync === undefined ? null : <TickTickSyncCard sync={settings.tickTickSync} now={now} save={actions.setTickTickSync} />}
       {accounts.length === 0 ? null : <section className="section">
         <div className="section-head">
           <h2>{text("connections.github")}</h2>
@@ -997,6 +1026,7 @@ export function settingsSectionEnabled(section: SettingsSection, settings: Setti
   if (section === "models") return !!features && (features.workerPrograms.length > 0 || features.brainProviders.length > 0);
   if (section === "connections") return !!features && (
     features.brainProviders.length > 0 || settings?.accounts.some((account) => account.configured) === true
+    || settings?.tickTickSync !== undefined
     || features.enabled.some((feature) => feature === "inboxSources" || feature === "appGateway" || feature === "push")
   );
   return true;
@@ -1031,7 +1061,7 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
       case "repositories":
         return <RepositoriesSection settings={settings} actions={actions} />;
       case "connections":
-        return <ConnectionsSection settings={settings} now={now} />;
+        return <ConnectionsSection settings={settings} now={now} actions={actions} />;
       case "todo-reminders":
         return settings.todoReminders === undefined ? null : <TodoReminderSection settings={settings.todoReminders} save={actions.setTodoReminders} />;
     }

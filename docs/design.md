@@ -809,7 +809,7 @@ This is the complete list.
     The owner explicitly required Teams to stay read-only and mail writes to be limited to drafts requested by the owner.
     The hub checks each exact connector tool name against the allowlist in code and intersects it with the discovered tools.
     Sending, directly replying, forwarding and deleting mail are outside the allowlist.
-    The gateway's allowlist includes drafting mail and creating and deleting TickTick tasks, and brain tools use the gateway for drafts.
+    The gateway's allowlist includes mail draft tools and the TickTick operations used by the hub's separately authorized sync job.
     This rule covers the app gateway and its brain tools.
     The brain's shell in the hub container can access the shared ChatGPT login and could start a separate app server, so this rule does not constrain arbitrary shell commands.
 
@@ -849,6 +849,26 @@ A timed task follows the installation's notification setting.
 `update_todo` completes, reopens or changes the due date of an existing task.
 `undo_created` deletes a task the brain created, by receipt or by the latest creation in its current topic.
 These tools work without the app gateway in both editions, and their writes use the same active owner-turn and owner-request checks as draft writes.
+
+### TickTick to-do sync
+
+The managed hub offers a TickTick sync switch under 设置 → 连接 when a TickTick connection is discovered.
+It starts off and grants standing authorization for the sync job to write to the currently linked account when enabled.
+Turning it off stops future dispatches and keeps local to-dos and their sync mappings.
+Changing accounts requires authorizing the new account.
+Standalone installations omit the switch and the job.
+
+The job checks TickTick every two minutes, after local changes and when the to-do page opens.
+It retries connector failures with backoff and exposes the last successful sync and a bounded activity log in Settings.
+It matches writable TickTick projects to built-in lists initially by name and then by ID, with Inbox mapping to Inbox.
+It imports open tasks and tracks completion, reopening, and deletion for previously linked tasks.
+The later change wins when both sides edit a task, using the time a remote change was observed if TickTick supplies no modification time.
+
+The job syncs the title, notes, due date and time, list, completion and deletion.
+List names and archival remain managed on each side.
+TickTick recurrence, checklists, priorities and existing remote reminders stay on the TickTick task.
+A recurring task appears locally as a single plain occurrence, with an entry in the sync log.
+Tasks created through sync request an empty TickTick reminder list.
 
 ### Mail intake and triage
 

@@ -20,6 +20,7 @@ import {
   type TodoReminderChange,
   TodoReminderSettings,
   type TableCell,
+  type TickTickSyncStatus,
   unofferedChanges,
 } from "@super-agent2/protocol";
 import { z } from "zod";
@@ -61,6 +62,7 @@ export interface SettingsOptions {
   readonly credentials: CredentialSource;
   readonly pushKey: string | undefined;
   readonly appGateway?: () => AppGatewayStatus;
+  readonly tickTickSync?: () => TickTickSyncStatus | undefined;
   readonly features?: (machines: readonly MachineStatus[], brain: BrainSettings, apps?: AppGatewayStatus) => HubFeatures;
 }
 
@@ -149,6 +151,7 @@ export function createSettings(options: SettingsOptions): Settings {
     const machines = options.runners.statuses();
     const brain = brainSettings(conversations?.linked() ?? false, brainOrder(), conversations?.providers());
     const appGateway = options.appGateway?.();
+    const tickTickSync = options.tickTickSync?.();
     const features = options.features?.(machines, brain, appGateway);
     return {
       openaiBudget: budget(),
@@ -165,6 +168,7 @@ export function createSettings(options: SettingsOptions): Settings {
       devices: devices(),
       ...(options.pushKey === undefined ? {} : { todoReminders: { ...todoReminders(), timeZone: options.database.ticketTimeZone } }),
       ...(appGateway === undefined ? {} : { appGateway }),
+      ...(tickTickSync === undefined ? {} : { tickTickSync }),
       ...(features === undefined ? {} : { features }),
     };
   };

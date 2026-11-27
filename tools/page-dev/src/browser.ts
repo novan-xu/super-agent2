@@ -231,6 +231,13 @@ const views = {
     phone: { "settings back link": ".set-back" },
     desktop: settingsMenu,
   },
+  connections: {
+    route: { view: "settings", section: "connections" },
+    ready: ".set-body .srow",
+    targets: { "TickTick sync switch": ".ticktick-sync .switch" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
+  },
   schedules: {
     route: { view: "schedules" },
     ready: ".schedule-card",
@@ -425,9 +432,10 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
   const scratch = resolve(process.env.SUPERAGENT2_ARTIFACTS_DIR || tmpdir());
   await mkdir(scratch, { recursive: true });
   const data = await mkdtemp(join(scratch, "page-layout-"));
-  const push = names.includes("todo-reminders") || (!minimalIntegrations && names.includes("settings"));
+  const push = names.includes("connections") || names.includes("todo-reminders") || (!minimalIntegrations && names.includes("settings"));
   const child = fork(fileURLToPath(new URL("cli.js", import.meta.url)), [
     "--port", "0", "--data", data, "--brain", "none", "--push", push ? "generated" : "none", "--layout-fixture",
+    ...(names.includes("connections") ? ["--ticktick-fixture"] : []),
     ...(minimalIntegrations ? ["--minimal-integrations", "--cloudflare", "none"] : []),
     ...(remoteFixture || names.some((name) => name === "remote" || name === "remote-conversation") ? ["--remote-fixture"] : []),
     ...(pageDir === undefined ? [] : ["--page-dir", resolve(pageDir)]),

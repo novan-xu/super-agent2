@@ -14,6 +14,8 @@ import type { AddressInfo } from "node:net";
 import { text } from "@super-agent2/catalog";
 import { createAccessVerifier, ownerOnly } from "./access.js";
 import { AppGateway } from "./app-gateway.js";
+import { createTickTickGateway, type TickTickGateway } from "./ticktick-gateway.js";
+import { createTickTickSync, type TickTickSync } from "./ticktick-sync.js";
 import { createTodoTools } from "./todo-tools.js";
 import { createMailIntake } from "./mail-intake.js";
 import { createMailTriage, type MailTriage } from "./mail-triage.js";
@@ -100,6 +102,8 @@ export interface HubOptions {
   readonly workSchedule?: (drain: () => void) => void;
   readonly scheduleTicker?: Ticker;
   readonly todoReminderTicker?: Ticker;
+  readonly tickTickTicker?: Ticker;
+  readonly tickTickGateway?: TickTickGateway;
   readonly healthTicker?: Ticker;
   readonly topicTidyTicker?: Ticker;
   readonly verificationPollMilliseconds?: number;
@@ -207,6 +211,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   let taskTickets: TaskTickets;
   let memories: MemoryService;
   let todos: Todos;
+  let tickTickSync: TickTickSync | undefined;
   let settings: Settings;
   const machines = createMachineStore(database, clock);
   const runners = createRunners({
@@ -469,6 +474,13 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       });
     }
     const linkedConversations = conversations;
+    const syncGateway = options.tickTickGateway ?? (appGateway === undefined ? undefined : createTickTickGateway(appGateway, database.ticketTimeZone));
+    if (!loopback && options.localInstallation === undefined && syncGateway !== undefined) {
+      tickTickSync = createTickTickSync({
+        database, clock, todos, gateway: syncGateway, ticker: options.tickTickTicker,
+        changed: () => settingsChanged(),
+      });
+    }
     settings = createSettings({
       database,
       clock,
@@ -480,6 +492,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       credentials,
       features: features.snapshot,
       pushKey: config.vapid?.publicKey,
+      tickTickSync: () => tickTickSync?.status(),
       ...(appGateway === undefined ? {} : { appGateway: () => {
         const status = appGateway.status();
         return { ...status, mailboxes: mailIntake?.status() ?? status.mailboxes };
@@ -553,6 +566,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       attachments,
       memories,
       settings,
+      ...(tickTickSync === undefined ? {} : { tickTickSync }),
       ...(openaiCost === undefined ? {} : { openaiCost, refreshOpenAICost: () => { void openaiCosts?.refresh(); } }),
       admin,
       repositories,
@@ -647,6 +661,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     mailTriage?.start();
     appGateway?.start(() => {
       settingsChanged();
+      tickTickSync?.poll();
       void mailIntake?.poll().catch(() => options.report?.("Mail intake: storage failure"));
     });
     mailIntake?.start();
@@ -677,6 +692,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       address,
       ...(workRequestAddress === undefined ? {} : { workRequestAddress }),
       close: async () => {
+        const pendingSync = tickTickSync?.close();
         const pendingReminders = todoReminders?.close();
         openaiCosts?.close();
         topicTidy?.close();
@@ -691,6 +707,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
         settings.close();
         try {
           await appGateway?.close();
+          await pendingSync;
           await mailIntake?.idle();
           runners.close();
           closePeer?.();
@@ -715,6 +732,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    const pendingSync = tickTickSync?.close();
     const pendingReminders = todoReminders?.close();
     closePeer?.();
     topicTidy?.close();
@@ -724,6 +742,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     runners.close();
     schedules?.close();
     await appGateway?.close();
+    await pendingSync;
     await mailIntake?.idle();
     await Promise.allSettled([address === undefined ? undefined : server.close(), closeWorkRequests?.()]);
     peerUpdates?.close();

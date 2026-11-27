@@ -17,6 +17,8 @@ const readTools = new Set([
   "microsoft_teams.list_channel_messages",
   "ticktick_to_do_list_calendar.list_projects",
   "ticktick_to_do_list_calendar.search_task",
+  "ticktick_to_do_list_calendar.get_project_with_undone_tasks",
+  "ticktick_to_do_list_calendar.get_task_by_id",
 ]);
 
 export const appWrites = {
@@ -24,9 +26,18 @@ export const appWrites = {
   gmailUpdate: "gmail.update_draft",
   outlookDraft: "microsoft_outlook_email.draft_email",
   outlookReply: "microsoft_outlook_email.create_reply_draft",
-  tickTickCreate: "ticktick_to_do_list_calendar.create_task",
-  tickTickDelete: "ticktick_to_do_list_calendar.delete_task",
 } as const;
+
+export const tickTickWrites = {
+  create: "ticktick_to_do_list_calendar.batch_add_tasks",
+  update: "ticktick_to_do_list_calendar.update_task",
+  move: "ticktick_to_do_list_calendar.move_task",
+  delete: "ticktick_to_do_list_calendar.delete_task",
+  complete: "ticktick_to_do_list_calendar.complete_task",
+  createProject: "ticktick_to_do_list_calendar.create_project",
+} as const;
+type TickTickWriteName = (typeof tickTickWrites)[keyof typeof tickTickWrites];
+const syncWrites = new Set<string>(Object.values(tickTickWrites));
 
 type AppWriteName = (typeof appWrites)[keyof typeof appWrites];
 const writeTools = new Set<string>(Object.values(appWrites));
@@ -109,10 +120,12 @@ export class AppGateway {
   }
 
   start(changed: () => void): void {
+    const revision = () => JSON.stringify([this.status(), [...this.tools.keys()].filter((name) => name.startsWith("ticktick_to_do_list_calendar."))
+      .sort().map((name) => [name, this.connectionOf(name)])]);
     const refresh = () => {
-      const before = JSON.stringify(this.status());
+      const before = revision();
       void this.refresh().then(() => {
-        if (JSON.stringify(this.status()) !== before) {
+        if (revision() !== before) {
           changed();
         }
       });
@@ -178,7 +191,7 @@ export class AppGateway {
         if (apps !== undefined) {
           foundApps = true;
           for (const [name, value] of Object.entries(apps.tools)) {
-            if (!readTools.has(name) && !writeTools.has(name)) {
+            if (!readTools.has(name) && !writeTools.has(name) && !syncWrites.has(name)) {
               continue;
             }
             const tool = Tool.safeParse(value);
@@ -226,6 +239,13 @@ export class AppGateway {
       throw new AppGatewayError("owner request required");
     }
     return this.callTool(name, args, authorized);
+  }
+
+  async writeTickTick(name: TickTickWriteName, args: Record<string, unknown>, account: string, authorized: () => boolean): Promise<unknown> {
+    if (!syncWrites.has(name)) throw new AppGatewayError("tool not allowed");
+    const permitted = () => authorized() && this.connectionOf(name) === account;
+    if (!permitted()) throw new AppGatewayError("owner request required");
+    return this.callTool(name, args, permitted);
   }
 
   private async callTool(name: string, args: Record<string, unknown>, authorized?: () => boolean): Promise<unknown> {
