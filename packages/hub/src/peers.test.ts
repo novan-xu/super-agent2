@@ -10,6 +10,7 @@ import { expect, it } from "vitest";
 import WebSocket from "ws";
 import { assertionHeader } from "./access.js";
 import { loadConfig } from "./config.js";
+import { secretValues } from "./credentials.js";
 import type { Hub } from "./hub.js";
 import { connectToPeer } from "./peer-link.js";
 import { createPeerStore } from "./peer-store.js";
@@ -77,6 +78,7 @@ it("requires a dedicated Access audience and all four local settings", () => {
   expect(loadConfig({ ...env, ACCESS_PEER_AUD: accessAudience }).ok).toBe(false);
   expect(loadConfig({ ...env, ACCESS_PEER_AUD: peerAudience })).toMatchObject({ ok: true, config: { accessPeerAudience: peerAudience } });
   const outbound = { PEER_HUB_URL: "https://nas.example.test", PEER_ACCESS_CLIENT_ID: clientId, PEER_ACCESS_CLIENT_SECRET: clientSecret, PEER_TOKEN: randomBytes(32).toString("base64url") };
+  expect(secretValues(outbound)).toEqual([clientId, clientSecret, outbound.PEER_TOKEN]);
   expect(loadConfig({ HUB_DATA_DIR: "test", PEER_HUB_URL: outbound.PEER_HUB_URL }).ok).toBe(false);
   expect(loadConfig({ ...env, ...outbound }).ok).toBe(false);
   expect(loadConfig({ HUB_DATA_DIR: "test", ...outbound, PEER_HUB_URL: "http://nas.example.test" }).ok).toBe(false);
