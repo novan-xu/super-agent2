@@ -36,12 +36,12 @@ describe("Shell", () => {
     expect(render()).toMatch(/<button class="side-toggle brand-toggle"[^>]*aria-expanded="true"[^>]*><svg class="logo" width="48" height="48"/);
   });
 
-  it("renders the brand colours independently of the accent", () => {
+  it("renders the brand colours with an accent dot", () => {
     const html = render();
     expect(html).toContain('rx="6" fill="#ffffff" stroke="#dddddd"');
     expect(html).toContain('r="3.3" fill="#1a1917"');
     expect(html).toContain('stroke="#1a1917" stroke-width="2"');
-    expect(html).toContain('r="2.1" fill="#f97316"');
+    expect(html).toContain('r="2.1" fill="var(--accent)"');
   });
 
   it("marks the current destination", () => {

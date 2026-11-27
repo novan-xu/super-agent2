@@ -160,6 +160,13 @@ const views = {
     targets: settingsMenu,
     desktop: { "machine load settings": ".load-fields input" },
   },
+  appearance: {
+    route: { view: "settings", section: "appearance" },
+    ready: ".accents",
+    targets: { "accent choices": ".accents" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
+  },
   machines: {
     route: { view: "settings", section: "machines" },
     ready: ".mcard",

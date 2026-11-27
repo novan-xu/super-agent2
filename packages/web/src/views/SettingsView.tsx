@@ -25,7 +25,8 @@ import {
 } from "@super-agent2/protocol";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { type AccentChoice, accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
+import { accentChoices, type Appearance, type ThemeChoice, themeChoices } from "../live/appearance.js";
+import { accentColor } from "../live/appearance-model.js";
 import { featureEnabled, programForProvider } from "../live/features.js";
 import {
   availableNow,
@@ -689,7 +690,7 @@ function AppearanceSection({ appearance, choose }: { readonly appearance: Appear
           <h2 id="accent-title">{text("appearance.accent")}</h2>
         </div>
         <div className="accents" role="radiogroup" aria-labelledby="accent-title">
-          {accentChoices.map((choice: AccentChoice) => (
+          {accentChoices.map((choice) => (
             <button
               key={choice}
               className={`accent-opt accent-opt--${choice}`}
@@ -703,6 +704,15 @@ function AppearanceSection({ appearance, choose }: { readonly appearance: Appear
               <i />
             </button>
           ))}
+        </div>
+        <div className="accents">
+          <label className="accent-custom" data-on={appearance.accent.startsWith("#")}>
+            <input type="color" value={accentColor(appearance.accent)} onChange={(event) => choose({ accent: event.target.value as `#${string}` })} />
+            {text("appearance.accent.custom")}
+          </label>
+          <input key={appearance.accent} className="field accent-hex" aria-label={text("appearance.accent.hex")} defaultValue={accentColor(appearance.accent)} maxLength={7} spellCheck={false} onChange={(event) => {
+            if (/^#[0-9a-f]{6}$/i.test(event.target.value)) choose({ accent: event.target.value.toLowerCase() as `#${string}` });
+          }} />
         </div>
       </section>
     </>
