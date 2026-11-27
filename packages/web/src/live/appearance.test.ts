@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import css from "../styles/page.css?raw";
+import * as model from "./appearance-model.js";
 import * as script from "../theme/appearance.js";
 import { accentChoices, accentKey, appearanceEvent, readAppearance, themeChoices, themeKey, writeAppearance } from "./appearance.js";
 
@@ -24,13 +24,13 @@ describe("the appearance kept in the browser", () => {
   });
 
   it("falls back to the system and the first accent, and survives a storage that throws", () => {
-    expect(readAppearance(memoryStorage())).toEqual({ theme: "system", accent: "amber" });
+    expect(readAppearance(memoryStorage())).toEqual({ theme: "system", accent: "orange" });
     expect(readAppearance(memoryStorage({ [themeKey]: "dark", [accentKey]: "teal" }))).toEqual({ theme: "dark", accent: "teal" });
-    expect(readAppearance(memoryStorage({ [themeKey]: "neon", [accentKey]: "#ff0000" }))).toEqual({ theme: "system", accent: "amber" });
+    expect(readAppearance(memoryStorage({ [themeKey]: "neon", [accentKey]: "invalid" }))).toEqual({ theme: "system", accent: "orange" });
     const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(readAppearance(broken)).toEqual({ theme: "system", accent: "amber" });
+    expect(readAppearance(broken)).toEqual({ theme: "system", accent: "orange" });
     expect(writeAppearance(broken, { theme: "dark" })).toBe(false);
-    expect(readAppearance(undefined)).toEqual({ theme: "system", accent: "amber" });
+    expect(readAppearance(undefined)).toEqual({ theme: "system", accent: "orange" });
   });
 
   it("writes only what changed", () => {
@@ -40,9 +40,9 @@ describe("the appearance kept in the browser", () => {
   });
 
   it("is applied as attributes, with the system's preference when it follows the system", () => {
-    expect(script.attributesOf(null, null, true)).toEqual({ theme: "light", accent: null, color: "#f6f5f3" });
+    expect(script.attributesOf(null, null, true)).toEqual({ theme: "light", accent: "orange", color: "#f6f5f3" });
     expect(script.attributesOf("dark", "blue", true)).toEqual({ theme: "dark", accent: "blue", color: "#161514" });
-    expect(script.attributesOf("system", "amber", false)).toEqual({ theme: "dark", accent: null, color: "#161514" });
+    expect(script.attributesOf("system", "amber", false)).toEqual({ theme: "dark", accent: "amber", color: "#161514" });
     expect(script.concernsAppearance(themeKey)).toBe(true);
     expect(script.concernsAppearance(null)).toBe(true);
     expect(script.concernsAppearance("other")).toBe(false);
@@ -69,36 +69,29 @@ function contrast(a: string, b: string): number {
   return ((high ?? 0) + 0.05) / ((low ?? 0) + 0.05);
 }
 
-function tokens(css: string, selector: string): Record<string, string> {
-  const start = css.indexOf(`${selector} {`);
-  expect(start, selector).toBeGreaterThanOrEqual(0);
-  const body = css.slice(start + selector.length + 2, css.indexOf("}", start));
-  return Object.fromEntries(
-    body
-      .split(";")
-      .map((part) => part.trim())
-      .filter((part) => part.startsWith("--"))
-      .map((part) => [part.slice(0, part.indexOf(":")).trim(), part.slice(part.indexOf(":") + 1).trim()]),
-  );
-}
-
 describe("every accent", () => {
-  it("reads the stylesheet", () => {
-    expect(css.length).toBeGreaterThan(100);
-  });
-
-  it("keeps accent text readable and accent buttons legible on both grounds", () => {
-    for (const accent of accentChoices.filter((choice) => choice !== "amber")) {
+  it("keeps derived text and buttons readable in both themes", () => {
+    for (const accent of [...accentChoices, "#ff0000", "#000000", "#ffffff", "#123456"] as const) {
       for (const theme of ["dark", "light"] as const) {
-        const selector = theme === "dark" ? `:root[data-accent="${accent}"]` : `:root[data-theme="light"][data-accent="${accent}"]`;
-        const values = tokens(css, selector);
+        const values = script.accentTokens(accent, theme);
+        expect(values).toEqual(model.accentTokens(accent, theme));
         const meta = values["--meta"] ?? "";
         const fill = values["--accent"] ?? "";
         const on = values["--accent-on"] ?? "";
         expect(contrast(meta, ground[theme].surface), `${accent} ${theme} text`).toBeGreaterThanOrEqual(4.5);
         expect(contrast(meta, ground[theme].bg), `${accent} ${theme} text on the page`).toBeGreaterThanOrEqual(4.5);
         expect(contrast(fill, on), `${accent} ${theme} button`).toBeGreaterThanOrEqual(4.5);
+        expect(values["--focus-ring"]).toContain("0.45");
+        expect(values["--accent-soft"]).toContain(theme === "light" ? "0.16" : "0.14");
       }
     }
+  });
+
+  it("accepts and persists custom colours and rejects invalid values", () => {
+    const storage = memoryStorage();
+    expect(writeAppearance(storage, { accent: "#ff0000" })).toBe(true);
+    expect(readAppearance(storage).accent).toBe("#ff0000");
+    expect(script.readAccent("#FF0000")).toBe("#ff0000");
+    expect(script.readAccent("#123")).toBe("orange");
   });
 });
