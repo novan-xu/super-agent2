@@ -41,7 +41,7 @@ describe("Shell", () => {
     expect(html).toContain('rx="6" fill="#ffffff" stroke="#dddddd"');
     expect(html).toContain('r="3.3" fill="#1a1917"');
     expect(html).toContain('stroke="#1a1917" stroke-width="2"');
-    expect(html).toContain('r="2.1" fill="#e5484d"');
+    expect(html).toContain('r="2.1" fill="#f97316"');
   });
 
   it("marks the current destination", () => {
