@@ -8,6 +8,7 @@ import { EngineTable, type MachineChoice, offers } from "./defaults.js";
 import { ProviderUnavailable } from "./providers.js";
 import { MachineLoadSettings, MachineName, MachineStatus, MachineSystem, type ProgramId } from "./runner.js";
 import { type Difficulty, difficulties, RepositoryName } from "./tickets.js";
+import { TodoReminderStatus } from "./todos.js";
 
 export const tableEngines = ["codex", "claude", "dsh", "antigravity"] as const;
 export type TableEngine = (typeof tableEngines)[number];
@@ -46,7 +47,7 @@ export function unofferedChanges(next: EngineTable, current: EngineTable, machin
   );
 }
 
-export const settingsSections = ["machines", "repositories", "models", "appearance", "connections", "usage", "history", "memory"] as const;
+export const settingsSections = ["machines", "repositories", "models", "appearance", "connections", "usage", "history", "memory", "todo-reminders"] as const;
 export const SettingsSection = z.enum(settingsSections);
 export type SettingsSection = z.infer<typeof SettingsSection>;
 
@@ -140,6 +141,7 @@ export const AppGatewayStatus = z.object({
 export type AppGatewayStatus = z.infer<typeof AppGatewayStatus>;
 
 export const SettingsSnapshot = z.object({
+  todoReminders: TodoReminderStatus.optional(),
   features: HubFeatures.optional(),
   openaiBudget: z.number().positive().nullable().optional(),
   machines: z.array(MachineStatus),

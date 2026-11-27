@@ -62,6 +62,7 @@ function api(overrides: Partial<HubApi> = {}): HubApi & { readonly calls: string
     revokeMachine: (name) => answer(`revokeMachine ${name}`, { name, accessToken: "removed" as const }),
     setMachineStorage: (name, storage) => answer(`setMachineStorage ${name}`, storage),
     setMachineLoad: (machineLoad) => answer("setMachineLoad", settingsSnapshot({ machineLoad })),
+    setTodoReminders: (change) => answer("setTodoReminders", settingsSnapshot({ todoReminders: { enabled: true, summaryTime: "09:00", timeZone: "UTC", ...change } })),
     setOrder: (role, order) => answer(`setOrder ${role} ${order.join(",")}`, settingsSnapshot(role === "brain" ? { brain: { linked: true, order: [...order], providers: [] } } : { workerOrder: [...order] })),
     setAccount: (repository, account) => answer(`setAccount ${repository} ${account}`, settingsSnapshot()),
     setAlias: (repository, alias) => answer(`setAlias ${repository} ${alias}`, settingsSnapshot()),

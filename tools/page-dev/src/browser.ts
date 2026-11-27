@@ -219,6 +219,18 @@ const views = {
     targets: { "list manager": ".todo-dialog[open]", "new list": ".todo-dialog .todo-quick", "list actions": ".todo-list-actions button" },
     prepare: async (page) => { await page.locator(".todo-list-manage").click(); },
   },
+  "todo-detail": {
+    route: ({ todoDetail }) => ({ view: "todos", todo: todoDetail }),
+    ready: ".todo-row",
+    targets: { "to-do detail": ".todo-content", "to-do row": ".todo-row", "to-do actions": ".todo-topic .btn, .todo-check" },
+  },
+  "todo-reminders": {
+    route: { view: "settings", section: "todo-reminders" },
+    ready: ".todo-reminder-settings input[type=time]",
+    targets: { "reminder switch": ".todo-reminder-settings .switch", "summary time": ".todo-reminder-settings input[type=time]", "save summary time": ".todo-reminder-settings button[type=submit]" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
+  },
   schedules: {
     route: { view: "schedules" },
     ready: ".schedule-card",
@@ -413,8 +425,9 @@ async function run(names: readonly ViewName[], widths: readonly Width[], mode: M
   const scratch = resolve(process.env.SUPERAGENT2_ARTIFACTS_DIR || tmpdir());
   await mkdir(scratch, { recursive: true });
   const data = await mkdtemp(join(scratch, "page-layout-"));
+  const push = names.includes("todo-reminders") || (!minimalIntegrations && names.includes("settings"));
   const child = fork(fileURLToPath(new URL("cli.js", import.meta.url)), [
-    "--port", "0", "--data", data, "--brain", "none", "--push", "none", "--layout-fixture",
+    "--port", "0", "--data", data, "--brain", "none", "--push", push ? "generated" : "none", "--layout-fixture",
     ...(minimalIntegrations ? ["--minimal-integrations", "--cloudflare", "none"] : []),
     ...(remoteFixture || names.some((name) => name === "remote" || name === "remote-conversation") ? ["--remote-fixture"] : []),
     ...(pageDir === undefined ? [] : ["--page-dir", resolve(pageDir)]),

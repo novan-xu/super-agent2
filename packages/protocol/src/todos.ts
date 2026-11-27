@@ -3,9 +3,17 @@ import { ConversationId } from "./conversations.js";
 
 export const todosPath = "/api/todos";
 export const todoListsPath = `${todosPath}/lists`;
+export const todoReminderSettingsPath = "/api/settings/todo-reminders";
 export const TodoId = z.uuid();
 export const TodoDate = z.iso.date();
 export const TodoTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
+export const TodoReminderSettings = z.strictObject({ enabled: z.boolean(), summaryTime: TodoTime });
+export type TodoReminderSettings = z.infer<typeof TodoReminderSettings>;
+export const TodoReminderChange = TodoReminderSettings.partial().refine((given) => given.enabled !== undefined || given.summaryTime !== undefined);
+export type TodoReminderChange = z.infer<typeof TodoReminderChange>;
+export const defaultTodoReminderSettings: TodoReminderSettings = { enabled: true, summaryTime: "09:00" };
+export const TodoReminderStatus = TodoReminderSettings.extend({ timeZone: z.string() });
+export type TodoReminderStatus = z.infer<typeof TodoReminderStatus>;
 export const TodoTitle = z.string().trim().min(1).max(240);
 export const TodoListName = z.string().trim().min(1).max(80);
 
@@ -50,6 +58,7 @@ export const TodoSnapshot = z.object({
   todos: z.array(Todo),
   lists: z.array(TodoList),
   timeZone: z.string(),
+  selected: Todo.optional(),
 });
 export type TodoSnapshot = z.infer<typeof TodoSnapshot>;
 export const TodoHandoff = z.object({ topic: ConversationId });

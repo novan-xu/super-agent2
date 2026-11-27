@@ -15,6 +15,7 @@ export type PageRoute =
   | { readonly view: "settings"; readonly section: SettingsSection }
   | { readonly view: "schedules"; readonly proposal: string }
   | { readonly view: "todos"; readonly selection: TodoView }
+  | { readonly view: "todos"; readonly todo: string }
   | { readonly view: Exclude<PageView, "conversations"> };
 
 export const pageAssetsPath = "/assets/";
@@ -85,6 +86,8 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
   if (view === "todos") {
     if (conversation !== undefined) return undefined;
     const params = new URLSearchParams(search);
+    const todo = TodoId.safeParse(params.get("todo"));
+    if (todo.success) return { view, todo: todo.data };
     const list = TodoId.safeParse(params.get("list"));
     const section = params.get("view");
     if (list.success) return { view, selection: { list: list.data } };
@@ -116,6 +119,7 @@ export function pagePath(route: PageRoute): string {
     case "schedules":
       return "proposal" in route ? `/schedules?proposal=${encodeURIComponent(route.proposal)}` : "/schedules";
     case "todos":
+      if ("todo" in route) return `/todos?todo=${encodeURIComponent(route.todo)}`;
       if (!("selection" in route) || route.selection === "today") return "/todos";
       return typeof route.selection === "string" ? `/todos?view=${route.selection}` : `/todos?list=${encodeURIComponent(route.selection.list)}`;
     default:

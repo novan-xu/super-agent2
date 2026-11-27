@@ -336,6 +336,7 @@ export function App() {
       revokeMachine: (name) => controller.revokeMachine(name),
       setMachineStorage: (name, storage) => controller.setMachineStorage(name, storage),
       setMachineLoad: (limits) => controller.setMachineLoad(limits),
+      setTodoReminders: (settings) => controller.setTodoReminders(settings),
       setOrder: (role, order) => controller.setOrder(role, order),
       setAccount: (repository, account) => controller.setAccount(repository, account),
       setPinned: (repository, pinned) => controller.setPinned(repository, pinned),
@@ -446,7 +447,8 @@ export function App() {
       ) : route.view === "schedules" ? (
         <SchedulesView navigate={fromSchedules} update={page.schedules} focusedProposal={"proposal" in route ? route.proposal : undefined} />
       ) : route.view === "todos" ? (
-        <TodosView selection={"selection" in route ? route.selection : "today"} navigate={navigate} topicRoute={topicRoute} online={page.status === "open"} update={page.todosChanged} now={now} />
+        <TodosView selection={"selection" in route ? route.selection : "today"} focused={"todo" in route ? route.todo : undefined}
+          navigate={navigate} topicRoute={topicRoute} online={page.status === "open"} update={page.todosChanged} now={now} />
       ) : route.view === "ticket" ? (
         <TicketView detail={page.detail} known={known} actions={ticketActions} origin={origin} backHref={pagePath(backRoute)} back={backFromTicket} ticketHref={ticketHref} openTicket={openLinked} now={now} />
       ) : route.view === "settings" ? (

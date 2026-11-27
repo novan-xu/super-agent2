@@ -245,8 +245,9 @@ function ListManager({ lists, busy, error, apply, dialogRef, close }: {
   </dialog>;
 }
 
-export function TodosView({ selection, navigate, topicRoute, online, update, now }: {
+export function TodosView({ selection, focused, navigate, topicRoute, online, update, now }: {
   readonly selection: TodoView;
+  readonly focused: string | undefined;
   readonly navigate: Navigate;
   readonly topicRoute: (id: string) => PageRoute;
   readonly online: boolean;
@@ -254,6 +255,7 @@ export function TodosView({ selection, navigate, topicRoute, online, update, now
   readonly now: number;
 }) {
   const [data, setData] = useState<TodoSnapshot | null>(null);
+  const [loadedFocus, setLoadedFocus] = useState<string>();
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reload, refresh] = useReducer((version: number) => version + 1, 0);
@@ -266,15 +268,16 @@ export function TodosView({ selection, navigate, topicRoute, online, update, now
 
   useEffect(() => {
     const request = new AbortController();
-    void todoApi.snapshot(request.signal).then((answer) => {
+    void todoApi.snapshot(request.signal, focused).then((answer) => {
       if (request.signal.aborted) return;
       if (answer.ok) {
         setData(answer.value);
+        setLoadedFocus(focused);
         setLoadFailed(false);
       } else setLoadFailed(true);
     });
     return () => request.abort();
-  }, [online, update, reload]);
+  }, [focused, online, update, reload]);
 
   const apply: Apply = async (run) => {
     if (inFlight.current) return undefined;
@@ -299,7 +302,10 @@ export function TodosView({ selection, navigate, topicRoute, online, update, now
   const active = lists.filter((list) => !list.archived);
   const selectedList = typeof selection === "string" ? undefined : active.find((list) => list.id === selection.list);
   const today = data === null ? "" : todoDay(now, data.timeZone);
-  const groups = data === null ? [] : todosFor(data.todos, selection, today);
+  const selected = focused === undefined ? undefined : data?.selected?.id === focused ? data.selected : data?.todos.find(({ id }) => id === focused);
+  const groups = selected !== undefined ? [{ date: null, todos: [selected] }]
+    : data === null || focused !== undefined ? [] : todosFor(data.todos, selection, today);
+  const loading = data === null || (focused !== undefined && selected === undefined && loadedFocus !== focused);
   const available = typeof selection === "string" || selectedList !== undefined;
   const choose = (view: TodoView) => {
     setEditing(null);
@@ -331,7 +337,7 @@ export function TodosView({ selection, navigate, topicRoute, online, update, now
     <div className="todo-layout">
       <aside className="todo-sidebar">
         <nav className="todo-views" aria-label={text("todo.views")}>
-          {todoViews.map((view) => <a className="nav-btn" key={view} {...link(view, selection === view)}><Icon name={viewIcons[view]} size={18} /><span>{text(`todo.view.${view}`)}</span></a>)}
+          {todoViews.map((view) => <a className="nav-btn" key={view} {...link(view, focused === undefined && selection === view)}><Icon name={viewIcons[view]} size={18} /><span>{text(`todo.view.${view}`)}</span></a>)}
         </nav>
         <div className="todo-list-nav">
           <nav className="todo-list-links" aria-label={text("todo.lists")}>
@@ -353,14 +359,15 @@ export function TodosView({ selection, navigate, topicRoute, online, update, now
         </div>
       </aside>
       <section className="todo-content" aria-labelledby="todo-view-title">
-        <h2 id="todo-view-title">{typeof selection === "string" ? text(`todo.view.${selection}`) : selectedList?.name ?? text("todo.lists")}</h2>
-        {available && data !== null ? <form className="todo-quick" onSubmit={add}>
+        <h2 id="todo-view-title">{focused !== undefined ? text("todo.details") : typeof selection === "string" ? text(`todo.view.${selection}`) : selectedList?.name ?? text("todo.lists")}</h2>
+        {focused === undefined && available && data !== null ? <form className="todo-quick" onSubmit={add}>
           <input className="field" name="title" placeholder={text("todo.quickAdd")} aria-label={text("todo.quickAdd")} required maxLength={240} disabled={busy} />
           <button className="btn btn-primary" type="submit" aria-label={text("todo.quickAdd")} title={text("todo.quickAdd")} disabled={busy}><Icon name="plus" /></button>
         </form> : null}
         {loadFailed ? <div className="todo-error" role="alert">{text("todo.loadFailed")} <button className="btn btn-sm" type="button" onClick={refresh}>{text("todo.retry")}</button></div> : null}
         {error === null || managing ? null : <p className="todo-error" role="alert">{error}</p>}
-        {data === null ? (loadFailed ? null : <div className="empty" role="status">{text("todo.loading")}</div>)
+        {loading ? (loadFailed ? null : <div className="empty" role="status">{text("todo.loading")}</div>)
+          : focused !== undefined && selected === undefined ? <div className="empty">{text("todo.unavailable")}</div>
           : !available ? <div className="empty">{text("todo.listUnavailable")}</div>
           : groups.every(({ todos }) => todos.length === 0) ? <div className="empty todo-empty"><Icon name={typeof selection === "string" ? viewIcons[selection] : "folder"} />{text("todo.empty")}</div>
           : groups.map(({ date, todos }) => <div className="todo-group" key={date ?? "open"}>

@@ -19,6 +19,7 @@ import {
   type Provider,
   type StoredWorkEvent,
   type StuckAnswer,
+  type TodoReminderChange,
   type TopicMove,
   type TopicScope,
   topicInScope,
@@ -295,6 +296,10 @@ export class PageController {
 
   setMachineLoad(limits: MachineLoadSettings): Promise<boolean> {
     return this.changeSettings(() => this.options.api.setMachineLoad(limits));
+  }
+
+  setTodoReminders(change: TodoReminderChange): Promise<boolean> {
+    return this.changeSettings(() => this.options.api.setTodoReminders(change));
   }
 
   setOrder(role: "brain" | "worker", order: readonly Provider[]): Promise<boolean> {

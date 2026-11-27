@@ -22,6 +22,8 @@ import {
   storageFolders,
   type StorageSettings,
   type Ticket,
+  type TodoReminderChange,
+  type TodoReminderStatus,
   withCell,
 } from "@super-agent2/protocol";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -60,6 +62,7 @@ export interface SettingsActions {
   readonly revokeMachine: (name: string) => Promise<MachineRevoked | undefined>;
   readonly setMachineStorage: (name: string, storage: StorageSettings) => Promise<boolean>;
   readonly setMachineLoad: (limits: MachineLoadSettings) => Promise<boolean>;
+  readonly setTodoReminders: (change: TodoReminderChange) => Promise<boolean>;
   readonly setOrder: (role: "brain" | "worker", order: readonly Provider[]) => Promise<boolean>;
   readonly setAccount: (repository: string, account: GitHubAccount) => Promise<boolean>;
   readonly setPinned: (repository: string, pinned: boolean) => Promise<boolean>;
@@ -90,6 +93,7 @@ const sectionIcons: Readonly<Record<SettingsSection, IconName>> = {
   usage: "hub",
   history: "history",
   memory: "memory",
+  "todo-reminders": "bell",
 };
 
 function routeOf(section: SettingsSection | null): PageRoute {
@@ -954,7 +958,40 @@ function UsageSection({ budget }: { readonly budget: number | null | undefined }
   </>;
 }
 
+function TodoReminderSection({ settings, save }: { readonly settings: TodoReminderStatus; readonly save: SettingsActions["setTodoReminders"] }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const summaryTime = draft ?? settings.summaryTime;
+  const apply = async (value: TodoReminderChange): Promise<boolean> => {
+    setBusy(true);
+    try { return await save(value); } finally { setBusy(false); }
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (summaryTime === "" || busy || summaryTime === settings.summaryTime) return;
+    if (await apply({ summaryTime })) setDraft(null);
+  };
+  return <div className="rows todo-reminder-settings">
+    <div className="srow">
+      <div className="srow-text"><span className="srow-title">{text("todo.reminders.enabled")}</span><span className="srow-help">{text("todo.reminders.device")}</span></div>
+      <div className="srow-ctl"><button className="switch" type="button" role="switch" aria-label={text("todo.reminders.enabled")} aria-checked={settings.enabled} disabled={busy}
+        onClick={() => void apply({ enabled: !settings.enabled })} /></div>
+    </div>
+    <form className="srow" onSubmit={(event) => void submit(event)}>
+      <div className="srow-text">
+        <label className="srow-title" htmlFor="todo-summary-time">{text("todo.reminders.summaryTime")}</label>
+        <span className="srow-help">{text("todo.reminders.timeZone", { timeZone: settings.timeZone })}</span>
+      </div>
+      <div className="srow-ctl">
+        <input className="field" id="todo-summary-time" type="time" value={summaryTime} disabled={busy} required onChange={(event) => setDraft(event.target.value)} />
+        <button className="btn btn-sm" type="submit" disabled={busy || summaryTime === "" || summaryTime === settings.summaryTime}>{text("todo.save")}</button>
+      </div>
+    </form>
+  </div>;
+}
+
 export function settingsSectionEnabled(section: SettingsSection, settings: SettingsSnapshot | null): boolean {
+  if (section === "todo-reminders") return settings?.todoReminders !== undefined;
   const features = settings?.features;
   if (features === undefined && settings !== null) return true;
   if (section === "models") return !!features && (features.workerPrograms.length > 0 || features.brainProviders.length > 0);
@@ -995,6 +1032,8 @@ export function SettingsView({ section, settings, tickets, appearance, actions, 
         return <RepositoriesSection settings={settings} actions={actions} />;
       case "connections":
         return <ConnectionsSection settings={settings} now={now} />;
+      case "todo-reminders":
+        return settings.todoReminders === undefined ? null : <TodoReminderSection settings={settings.todoReminders} save={actions.setTodoReminders} />;
     }
   };
   return (
