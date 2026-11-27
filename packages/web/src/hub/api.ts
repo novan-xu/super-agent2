@@ -54,6 +54,16 @@ import {
   type ScheduleAction,
   type ScheduleFields,
   StorageSettings,
+  Todo,
+  type TodoCreate,
+  type TodoEdit,
+  TodoHandoff,
+  TodoList,
+  type TodoListEdit,
+  type TodoReorder,
+  TodoSnapshot,
+  todoListsPath,
+  todosPath,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import { appPath } from "../parts/app-path.js";
@@ -72,9 +82,12 @@ async function call<T>(path: string, schema: z.ZodType<T>, body?: unknown, metho
   try {
     response = await fetch(
       appPath(path),
-      body === undefined
-        ? { headers: { accept: "application/json" }, cache: "no-store" }
-        : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body), ...(signal === undefined ? {} : { signal }) },
+      {
+        ...(body === undefined
+          ? { headers: { accept: "application/json" }, cache: "no-store" }
+          : { method, headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) }),
+        ...(signal === undefined ? {} : { signal }),
+      },
     );
   } catch {
     return { ok: false, error: "network" };
@@ -190,6 +203,22 @@ export const scheduleApi = {
   changeSchedule: (id: string, action: ScheduleAction) => call(`/api/schedules/${encodeURIComponent(id)}/${action}`, ScheduleList, {}),
   confirmProposal: (id: string, fields?: ScheduleFields) => call(`/api/schedules/proposals/${encodeURIComponent(id)}/confirm`, ScheduleList, { fields }),
   discardProposal: (id: string) => call(`/api/schedules/proposals/${encodeURIComponent(id)}/discard`, ScheduleList, {}),
+};
+
+const todoResource = (id: string) => `${todosPath}/${encodeURIComponent(id)}`;
+const todoListResource = (id: string) => `${todoListsPath}/${encodeURIComponent(id)}`;
+const todoAck = z.object({ ok: z.literal(true) });
+
+export const todoApi = {
+  snapshot: (signal: AbortSignal) => call(todosPath, TodoSnapshot, undefined, "POST", signal),
+  add: (input: TodoCreate) => call(todosPath, Todo, input),
+  edit: (id: string, patch: TodoEdit) => call(todoResource(id), Todo, patch, "PUT"),
+  remove: (id: string) => call(todoResource(id), todoAck, {}, "DELETE"),
+  handoff: (id: string) => call(`${todoResource(id)}/handoff`, TodoHandoff, {}),
+  reorder: (id: string, placement: TodoReorder) => call(`${todoResource(id)}/reorder`, todoAck, placement),
+  addList: (name: string) => call(todoListsPath, TodoList, { name }),
+  editList: (id: string, patch: TodoListEdit) => call(todoListResource(id), TodoList, patch, "PUT"),
+  reorderList: (id: string, placement: TodoReorder) => call(`${todoListResource(id)}/reorder`, todoAck, placement),
 };
 
 function attachmentResource(id: string): string {

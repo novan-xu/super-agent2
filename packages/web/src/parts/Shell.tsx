@@ -14,6 +14,7 @@ interface Destination {
 const main: readonly Destination[] = [
   { view: "workbench", icon: "inbox", label: text("navigation.workbench") },
   { view: "conversations", icon: "chat", label: text("navigation.conversation") },
+  { view: "todos", icon: "todos", label: text("navigation.todos") },
   { view: "schedules", icon: "calendar", label: text("navigation.schedules") },
 ];
 

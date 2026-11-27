@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { storeTopic, type Hub } from "@super-agent2/hub";
-import { AttachmentUpload, type MachineReport, protocolVersion, type ScheduleFields, startingEngineTable } from "@super-agent2/protocol";
+import { AttachmentUpload, type MachineReport, nextTodoDay, protocolVersion, type ScheduleFields, startingEngineTable, todoDay } from "@super-agent2/protocol";
 
 export interface LayoutFixture {
   readonly ticket: number;
@@ -86,6 +86,18 @@ export async function seedLayout(hub: Hub, url: string, pageDir: string, deviceT
     hub.conversations.writeConfirmation(topic, randomUUID(), markdown);
   }
   hub.memories.add(paragraph.repeat(4));
+  const garden = hub.todos.addList("花园维护");
+  hub.todos.addList("周末采购");
+  const archived = hub.todos.addList("秋季种植");
+  hub.todos.editList(archived.id, { archived: true });
+  const timeZone = hub.database.ticketTimeZone;
+  const today = todoDay(now, timeZone);
+  const tomorrow = nextTodoDay(today);
+  hub.todos.add({ title: "核对温室水表", notes: "记录早上的读数，并与上周的数据对照。", list: garden.id, date: todoDay(now - 86_400_000, timeZone), time: null });
+  hub.todos.add({ title: "把种子清单发给园艺小组", notes: "附上下一轮播种的品种和数量。", list: garden.id, date: today, time: "16:30" });
+  hub.todos.add({ title: "准备周末维护材料", notes: "确认园艺剪和备用标签够用。", list: garden.id, date: today, time: null });
+  hub.todos.add({ title: "预约土壤检测", notes: "", list: garden.id, date: nextTodoDay(tomorrow), time: null });
+  hub.todos.add({ title: "补充育苗土", notes: "", list: null, date: tomorrow, time: "10:00" });
 
   let detail = 0;
   let stopped = 0;

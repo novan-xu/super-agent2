@@ -38,6 +38,20 @@ describe("pageRoute", () => {
     expect(pageRoute("/schedules", "?proposal=invalid")).toEqual({ view: "schedules" });
   });
 
+  it("links to the to-do page and its built-in views and lists", () => {
+    const list = "00000000-0000-4000-8000-000000000001";
+    expect(pageRoute("/todos")).toEqual({ view: "todos" });
+    expect(pagePath({ view: "todos", selection: "today" })).toBe("/todos");
+    for (const selection of ["planned", "inbox", "completed"] as const) {
+      expect(pageRoute("/todos", `?view=${selection}`)).toEqual({ view: "todos", selection });
+      expect(pagePath({ view: "todos", selection })).toBe(`/todos?view=${selection}`);
+    }
+    expect(pageRoute("/todos", `?list=${list}`)).toEqual({ view: "todos", selection: { list } });
+    expect(pagePath({ view: "todos", selection: { list } })).toBe(`/todos?list=${list}`);
+    expect(pageRoute("/todos", "?list=invalid")).toEqual({ view: "todos" });
+    expect(pageRoute("/todos/invalid")).toBeUndefined();
+  });
+
   it("refuses paths the page does not have", () => {
     for (const path of ["", "/api", "/assets/index.js", "/ws", "/health", "/conversations/a/b", "/memory/x", "/conversations/a.b", "/Workbench", "/tickets", "/tickets/0", "/tickets/012", "/tickets/x", "/tickets/1/2", "/tickets/12345678901234567", "/settings/rules", "/settings/machines/x", "/settings/Machines"]) {
       expect(pageRoute(path)).toBeUndefined();

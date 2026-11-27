@@ -41,6 +41,7 @@ describe("messages", () => {
   it("has a key for every navigation item of the design", () => {
     expect(text("navigation.workbench")).toBe("工作台");
     expect(text("navigation.conversation")).toBe("对话");
+    expect(text("navigation.todos")).toBe("待办");
     expect(text("navigation.history")).toBe("历史");
     expect(text("settings.section.memory")).toBe("记忆");
     expect(text("navigation.settings")).toBe("设置");

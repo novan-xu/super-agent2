@@ -95,6 +95,7 @@ export interface ConversationService {
   readonly topics: TopicContext;
   previewStream(request: StreamPreviewRequest, signal?: AbortSignal): Promise<StreamPreview>;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
+  sendToNewDailyTopic(message: string, record: (topic: string) => void): StreamEntry;
   sendOwner(request: OwnerSend): Promise<SendOutcome>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
   assignRepository(conversation: string, turn: string, repository: string | null, topic?: string): string | undefined;
@@ -1382,8 +1383,8 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const placeOwner = (
     id: string, at: number, { message, attachments, scope, voiceTranscript }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
-    { repository, proposal, ownerChanged = false, pending }: {
-      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing;
+    { repository, proposal, ownerChanged = false, pending, record }: {
+      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing; record?: (topic: string) => void;
     },
   ): StreamEntry => {
     connection.exec("BEGIN IMMEDIATE");
@@ -1399,6 +1400,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       writeOwner(conversation, message, attachments, { id, at, voiceTranscript, possibleMatch: match?.id });
       if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: pending === undefined });
       if (pending !== undefined) deletePending.run(id);
+      record?.(conversation.id);
       connection.exec("COMMIT");
     } catch (error) {
       connection.exec("ROLLBACK");
@@ -1654,6 +1656,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       return { proposal: RoutingProposal.parse(proposal), title: destination?.title ?? null };
     },
     sendToStream: (topic, message, attachments, options) => streamSend(randomUUID(), topic, message, attachments, options),
+    sendToNewDailyTopic: (message, record) => placeOwner(randomUUID(), clock.now(), { message, attachments: [], scope: { kind: "daily" } }, undefined, { repository: null, record }),
     sendOwner,
     readQuote: (conversation, id, offset) => {
       const quote = hasQuote.get(conversation, id) === undefined ? undefined : quoteOf(id);

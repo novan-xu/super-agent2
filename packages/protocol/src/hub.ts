@@ -6,6 +6,7 @@ import { ProtocolVersion } from "./version.js";
 import { MemoriesUpdate } from "./memory.js";
 import { AllowanceReport } from "./providers.js";
 import { SchedulesUpdate } from "./schedules.js";
+import { TodoChanged } from "./todos.js";
 import { SettingsUpdate } from "./settings.js";
 import { TicketsUpdate, TicketUpdate } from "./tickets.js";
 import { WaitingUpdate } from "./waiting.js";
@@ -85,6 +86,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   MemoriesUpdate,
   SettingsUpdate,
   SchedulesUpdate,
+  TodoChanged,
   z.object({ type: z.literal("allowance"), allowance: AllowanceReport }),
 ]);
 

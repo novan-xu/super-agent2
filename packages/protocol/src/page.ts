@@ -2,8 +2,9 @@ import { ConversationId, MessageId, type TopicScope } from "./conversations.js";
 import { RepositoryName } from "./repositories.js";
 import { ScheduleId } from "./schedules.js";
 import { SettingsSection } from "./settings.js";
+import { TodoId, type TodoView } from "./todos.js";
 
-export const pageViews = ["workbench", "conversations", "history", "schedules", "remote", "settings"] as const;
+export const pageViews = ["workbench", "conversations", "history", "todos", "schedules", "remote", "settings"] as const;
 export type PageView = (typeof pageViews)[number];
 
 export type PageRoute =
@@ -13,6 +14,7 @@ export type PageRoute =
   | { readonly view: "ticket"; readonly ticket: number }
   | { readonly view: "settings"; readonly section: SettingsSection }
   | { readonly view: "schedules"; readonly proposal: string }
+  | { readonly view: "todos"; readonly selection: TodoView }
   | { readonly view: Exclude<PageView, "conversations"> };
 
 export const pageAssetsPath = "/assets/";
@@ -80,6 +82,14 @@ export function pageRoute(path: string, search = ""): PageRoute | undefined {
     const proposal = ScheduleId.safeParse(new URLSearchParams(search).get("proposal"));
     return { view, ...(proposal.success ? { proposal: proposal.data } : {}) };
   }
+  if (view === "todos") {
+    if (conversation !== undefined) return undefined;
+    const params = new URLSearchParams(search);
+    const list = TodoId.safeParse(params.get("list"));
+    const section = params.get("view");
+    if (list.success) return { view, selection: { list: list.data } };
+    if (section === "planned" || section === "inbox" || section === "completed") return { view, selection: section };
+  }
   return conversation === undefined ? { view } : undefined;
 }
 
@@ -105,6 +115,9 @@ export function pagePath(route: PageRoute): string {
       return "section" in route ? `/settings/${route.section}` : "/settings";
     case "schedules":
       return "proposal" in route ? `/schedules?proposal=${encodeURIComponent(route.proposal)}` : "/schedules";
+    case "todos":
+      if (!("selection" in route) || route.selection === "today") return "/todos";
+      return typeof route.selection === "string" ? `/todos?view=${route.selection}` : `/todos?list=${encodeURIComponent(route.selection.list)}`;
     default:
       return `/${route.view}`;
   }

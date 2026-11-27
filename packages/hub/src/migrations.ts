@@ -1424,6 +1424,34 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 77,
+    sql: `
+      CREATE TABLE todo_lists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        position INTEGER NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        notes TEXT NOT NULL,
+        list TEXT REFERENCES todo_lists(id),
+        date TEXT,
+        time TEXT CHECK (time IS NULL OR date IS NOT NULL),
+        done_at INTEGER,
+        position INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+        topic TEXT REFERENCES conversations(id) ON DELETE SET NULL
+      ) STRICT;
+      CREATE INDEX todos_open_order ON todos(position, id) WHERE deleted = 0 AND done_at IS NULL;
+      CREATE INDEX todos_recently_done ON todos(done_at DESC, id) WHERE deleted = 0 AND done_at IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -26,7 +26,7 @@ describe("Shell", () => {
   it("offers the main destinations in the sidebar and in the tab bar, in the design's order", () => {
     const html = render();
     const labels = [...html.matchAll(destinations)].map((match) => match[1]);
-    expect(labels).toEqual(["工作台", "对话", "定时", "设置", "工作台", "对话", "定时", "设置"]);
+    expect(labels).toEqual(["工作台", "对话", "待办", "定时", "设置", "工作台", "对话", "待办", "定时", "设置"]);
     expect(html).toContain('href="/schedules"');
     expect(html).toContain('href="/conversations/c1"');
     expect(html).toContain('href="/workbench"');
