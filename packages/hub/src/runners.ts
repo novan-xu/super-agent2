@@ -69,7 +69,6 @@ export interface RunnersOptions {
   readonly allowanceFallbackMilliseconds?: number;
 }
 
-/** How long the hub waits after the last macOS or Linux runner went away before Windows runners read allowances instead. */
 export const allowanceFallbackDelay = 2 * 60 * 1000;
 
 interface Link {
@@ -101,8 +100,6 @@ export function createRunners(options: RunnersOptions): Runners {
   };
   const now = options.now ?? Date.now;
   const fallbackDelay = options.allowanceFallbackMilliseconds ?? allowanceFallbackDelay;
-  // When a macOS or Linux runner was last online, so that a brief reconnect or a hub restart does not
-  // start allowance programs on Windows runners right away.
   let readerSeenAt = machines.list()
     .filter((machine) => machine.revokedAt === null && readsAllowance(machine.report))
     .reduce<number | undefined>((latest, machine) => Math.max(latest ?? 0, machine.lastSeenAt ?? 0), undefined);

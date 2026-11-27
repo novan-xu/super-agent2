@@ -251,8 +251,6 @@ export async function startRunnerService(options: RunnerServiceOptions): Promise
   }, options.reprobeMilliseconds ?? 6 * 60 * 60 * 1000);
   timer.unref();
   let reading: Promise<void> | undefined;
-  // A Windows runner reads the allowance only while the hub says no macOS or Linux runner is online,
-  // because the programs it starts open console windows on the Windows desktop.
   let readsAllowance = platform !== "win32";
   let lastAllowanceRead: number | undefined;
   const readAllowance = (): Promise<void> => {
