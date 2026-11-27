@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Hub } from "./hub.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -26,7 +27,7 @@ beforeEach(async () => {
   writeFileSync(join(pageDir, "sw.js"), "self.addEventListener(\"push\", () => undefined);");
   writeFileSync(join(pageDir, "theme.js"), "document.documentElement.dataset.theme = \"dark\";");
   mkdirSync(join(pageDir, "icons"));
-  writeFileSync(join(pageDir, "icons", "icon-192.png"), Buffer.from([137, 80, 78, 71]));
+  for (const name of ["apple-touch-icon.png", "mark.svg", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]) writeFileSync(join(pageDir, "icons", name), Buffer.from(name));
   writeFileSync(join(pageDir, "icons", "notes.txt"), "not an icon");
   clock = new TestClock();
   key = await signingKey("key-1");
@@ -103,10 +104,16 @@ describe("the page", () => {
 
   it("serves the icons and builds the manifest in Chinese from the catalog", async () => {
     const running = await start();
-    const icon = await call(running, "/icons/icon-192.png");
+    const iconBytes = Buffer.from("icon-192.png");
+    const iconHash = createHash("sha256").update(iconBytes).digest("hex");
+    const iconPath = `/icons/icon-192.${iconHash}.png`;
+    const icon = await call(running, iconPath);
     expect(icon.status).toBe(200);
     expect(icon.headers.get("content-type")).toBe("image/png");
-    expect(Buffer.from(await icon.arrayBuffer())).toEqual(Buffer.from([137, 80, 78, 71]));
+    expect(icon.headers.get("cache-control")).toContain("immutable");
+    expect(Buffer.from(await icon.arrayBuffer())).toEqual(iconBytes);
+    expect((await call(running, `/icons/icon-192.${"0".repeat(64)}.png`)).status).toBe(404);
+    expect(Buffer.from(await (await call(running, "/icons/icon-192.png")).arrayBuffer())).toEqual(iconBytes);
     expect((await call(running, "/icons/notes.txt")).status).toBe(404);
     expect((await call(running, "/icons/missing.png")).status).toBe(404);
     expect((await call(running, "/icons/..%5csecret.txt")).status).toBe(404);
@@ -116,7 +123,7 @@ describe("the page", () => {
     const body = (await manifest.json()) as { name: string; short_name: string; display: string; lang: string; icons: { src: string; purpose: string }[] };
     expect(body).toMatchObject({ name: "Super Agent", short_name: "Super Agent", display: "standalone", lang: "zh-CN" });
     expect(body.icons.map((entry) => entry.purpose)).toEqual(["any", "any", "maskable"]);
-    expect(body.icons.map((entry) => entry.src)).toEqual(["/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"]);
+    expect(body.icons.map((entry) => entry.src)).toEqual(["icon-192.png", "icon-512.png", "icon-maskable-512.png"].map((name) => `/icons/${name.replace(".png", `.${createHash("sha256").update(name).digest("hex")}.png`)}`));
   });
 
   it("keeps the worker, the icons and the manifest behind the front door", async () => {
