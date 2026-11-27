@@ -1,5 +1,6 @@
 import { text } from "@super-agent2/catalog";
-import { type PageRoute, pagePath, type TopicScope } from "@super-agent2/protocol";
+import { type PageRoute, type TopicScope } from "@super-agent2/protocol";
+import { pagePath } from "../parts/app-path.js";
 import { useContext } from "react";
 import { FeatureContext, transferEnabled } from "../live/features.js";
 import { codeScope, dailyScope } from "../live/topic-scope.js";

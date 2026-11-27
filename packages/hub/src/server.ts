@@ -1,3 +1,5 @@
+import { PeerRelay, type PeerRelayOptions } from "./peer-relay.js";
+import { peerSocketPath, remotePageAsset } from "./peer-wire.js";
 import { renderHtml } from "./html-render.js";
 import { Previews, previewFile } from "./previews.js";
 import { join } from "node:path";
@@ -8,6 +10,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { type Duplex, Readable } from "node:stream";
 import {
+  peerLinkPath,
+  remotePath,
+  remotePeerRoute,
+  remotePeerPrefix,
   type AllowanceList,
   allowancePrograms,
   BrainMessage,
@@ -134,7 +140,7 @@ import { voiceRequest } from "./voice-api.js";
 import type { VoiceService } from "./voice.js";
 
 export const sessionPath = "/api/session";
-export const socketPath = "/ws";
+export const socketPath = peerSocketPath;
 export const commandsPath = "/api/commands";
 export const holdsPath = "/api/holds";
 export const conversationsPath = "/api/conversations";
@@ -214,6 +220,7 @@ export interface HubServerOptions {
   readonly verifyRunner?: AccessVerifier;
   readonly verifyInbox?: AccessVerifier;
   readonly verifyMcp?: AccessVerifier;
+  readonly peer?: PeerRelayOptions;
   readonly inbox?: Inbox;
   readonly admit: Admission;
   readonly lock?: ConfirmationLock;
@@ -411,6 +418,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const previews = options.converterUrl === undefined ? undefined : new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
+  const peerRelay = options.peer === undefined ? undefined : new PeerRelay(options.peer, (peers) => {
+    const message = JSON.stringify({ type: "peers", peers });
+    for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(message);
+  });
   const transferChanged = () => {
     if (!transfer) return;
     for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: "transfer.changed" }));
@@ -606,6 +617,38 @@ export function createHubServer(options: HubServerOptions): HubServer {
     }
     if (declaresTooLarge(request)) {
       refuseTooLarge(request, response);
+      return;
+    }
+    const remote = remotePeerRoute(path);
+    if (request.url?.startsWith(`${remotePath}/`) && path !== `${remotePath}/` && remote === undefined) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (remote !== undefined) {
+      if (peerRelay === undefined) {
+        request.resume();
+        sendJson(response, 404, { error: "not_found" });
+      } else if (!["GET", "HEAD"].includes(method) && !isSameOrigin(request)) {
+        request.resume();
+        sendJson(response, 403, { error: "forbidden" });
+      } else if (["GET", "HEAD"].includes(method) && remotePageAsset(remote.path)) {
+        request.resume();
+        const availability = peerRelay.availability(remote.name);
+        const headOnly = method === "HEAD";
+        if (availability !== 200) sendJson(response, availability, { error: availability === 404 ? "not_found" : "unavailable" }, headOnly);
+        else if (!(await servePage(response, remote.path, headOnly, remotePeerPrefix(remote.name)))) {
+          sendJson(response, 404, { error: "not_found" }, headOnly);
+        }
+      } else {
+        const { search } = new URL(request.url ?? "/", "http://hub");
+        peerRelay.http(remote.name, remote.path + search, request, response);
+      }
+      return;
+    }
+    if ((path === remotePath || path === `${remotePath}/`) && !peerRelay?.status().length) {
+      request.resume();
+      sendJson(response, 404, { error: "not_found" });
       return;
     }
     if (path === voicePath || path.startsWith(`${voicePath}/`)) {
@@ -946,18 +989,23 @@ export function createHubServer(options: HubServerOptions): HubServer {
     sendJson(response, 200, settings.snapshot());
   };
 
-  const servePage = async (response: ServerResponse, path: string, headOnly: boolean): Promise<boolean> => {
+  const servePage = async (response: ServerResponse, path: string, headOnly: boolean, prefix?: string): Promise<boolean> => {
     const file = await options.page?.(path);
     if (file === undefined) {
       return false;
     }
+    const body = prefix !== undefined && file.type.startsWith("text/html")
+      ? Buffer.from(file.body.toString().replace(/<link rel="manifest"[^>]*>/, "").replace(/(href|src)="\/(?!\/)/g, `$1="${prefix}/`))
+      : file.body;
     response.writeHead(200, {
       ...pageSecurityHeaders,
       "content-type": file.type,
-      "content-length": file.body.length,
-      "cache-control": file.immutable ? "public, max-age=31536000, immutable" : "no-cache",
+      "content-length": body.length,
+      ...(prefix === undefined
+        ? { "cache-control": file.immutable ? "public, max-age=31536000, immutable" : "no-cache" }
+        : { "cache-control": "private, no-store", "cdn-cache-control": "no-store" }),
     });
-    response.end(headOnly ? undefined : file.body);
+    response.end(headOnly ? undefined : body);
     return true;
   };
 
@@ -1905,6 +1953,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }
     });
     send({ type: "hello", protocol: protocolVersion, identity });
+    const peers = peerRelay?.status();
+    if (peers?.length) send({ type: "peers", peers: [...peers] });
     if (options.conversations !== undefined) send({ type: "brain", brain: options.conversations.brainStatus() });
     if (options.defaults !== undefined) send({ type: "allowance", allowance: allowanceSnapshot(options.defaults) });
     if (options.waiting !== undefined) {
@@ -1928,6 +1978,10 @@ export function createHubServer(options: HubServerOptions): HubServer {
       return;
     }
     const path = pathOf(request);
+    if (path === peerLinkPath && peerRelay !== undefined) {
+      await peerRelay.accept(request, socket, head);
+      return;
+    }
     if (isBrainPath(path)) {
       if (!isBrain(request)) {
         refuseSocket(socket, 403);
@@ -1958,7 +2012,13 @@ export function createHubServer(options: HubServerOptions): HubServer {
       refuseSocket(socket, 403);
       return;
     }
-    if (pathOf(request) !== socketPath) {
+    const remote = remotePeerRoute(path);
+    if (remote !== undefined && peerRelay !== undefined) {
+      if (!isSameOrigin(request)) refuseSocket(socket, 403);
+      else peerRelay.upgrade(remote.name, remote.path, request, socket, head);
+      return;
+    }
+    if (path !== socketPath) {
       refuseSocket(socket, 404);
       return;
     }
@@ -1999,6 +2059,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        peerRelay?.close();
         for (const client of sockets.clients) {
           client.terminate();
         }

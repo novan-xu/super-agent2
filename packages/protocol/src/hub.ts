@@ -1,3 +1,4 @@
+import { PeerStatus } from "./peers.js";
 import { z } from "zod";
 import { CommandOutput, CommandUpdate, FollowCommand, UnfollowCommand } from "./commands.js";
 import { BrainUpdate, ConversationUpdate, EntryDelta, EntryUpdate, ReadStreamPage, StreamEntryUpdate, StreamPageUpdate, TopicDetailUpdate, TopicHistoryUpdate, TurnUpdate, UnwatchConversation, UnwatchStream, WatchConversation, WatchStream } from "./conversations.js";
@@ -64,6 +65,7 @@ export type Hello = z.infer<typeof Hello>;
 
 export const ServerMessage = z.discriminatedUnion("type", [
   Hello,
+  z.object({ type: z.literal("peers"), peers: z.array(PeerStatus) }),
   z.object({ type: z.literal("transfer.changed") }),
   CommandUpdate,
   CommandOutput,

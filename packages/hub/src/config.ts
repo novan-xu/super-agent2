@@ -7,6 +7,7 @@ import { isAbsolutePath } from "./paths.js";
 import { vapidProblem } from "./push.js";
 import { validTicketTimeZone } from "./ticket-codes.js";
 import { loopbackHost, localOwnerEmail } from "./loopback.js";
+import { peerHubUrl, type PeerConnectionConfig } from "./peer-link.js";
 
 function list(text: string | undefined): string[] {
   return (text ?? "")
@@ -42,6 +43,11 @@ const Environment = z.object({
   ACCESS_RUNNER_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the runner application's audience tag, 64 lower-case hexadecimal characters" })),
   ACCESS_INBOX_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the inbox application's audience tag, 64 lower-case hexadecimal characters" })),
   ACCESS_MCP_AUD: unlessEmpty(z.string().regex(/^[0-9a-f]{64}$/, { error: "must be the OAuth MCP application's audience tag, 64 lower-case hexadecimal characters" })),
+  ACCESS_PEER_AUD: unlessEmpty(accessAudience),
+  PEER_HUB_URL: unlessEmpty(z.string().refine((url) => peerHubUrl(url) !== undefined, { error: "must be the NAS HTTPS origin" })),
+  PEER_ACCESS_CLIENT_ID: unlessEmpty(z.string().regex(/^[\x21-\x7e]+$/)),
+  PEER_ACCESS_CLIENT_SECRET: unlessEmpty(z.string().regex(/^[\x21-\x7e]+$/)),
+  PEER_TOKEN: unlessEmpty(z.string().regex(/^[A-Za-z0-9_-]{43}$/)),
   OWNER_EMAIL: unlessEmpty(ownerEmail),
   HUB_DATA_DIR: z.string(present("must be text")).min(1, { error: "must not be empty" }),
   HUB_PORT: z
@@ -91,12 +97,14 @@ interface AccessConfig {
   readonly accessRunnerAudience?: string;
   readonly accessInboxAudience?: string;
   readonly accessMcpAudience?: string;
+  readonly accessPeerAudience?: string;
 }
 
 type LoopbackConfig = { readonly [Key in keyof AccessConfig]?: never };
 
 export type Config = (AccessConfig | LoopbackConfig) & {
   readonly ownerEmail: string;
+  readonly outboundPeer?: PeerConnectionConfig;
   readonly dataDir: string;
   readonly port: number;
   readonly host: string;
@@ -151,7 +159,7 @@ export const defaultPageDir = fileURLToPath(new URL("../../web/dist/", import.me
 export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly problems: readonly string[] };
 
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigResult {
-  const access = [env.ACCESS_AUD, env.ACCESS_RUNNER_AUD, env.ACCESS_INBOX_AUD, env.ACCESS_MCP_AUD].some((value) => value !== undefined && value !== "");
+  const access = [env.ACCESS_AUD, env.ACCESS_RUNNER_AUD, env.ACCESS_INBOX_AUD, env.ACCESS_MCP_AUD, env.ACCESS_PEER_AUD].some((value) => value !== undefined && value !== "");
   const schema = access ? AccessEnvironment : Environment;
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
@@ -165,6 +173,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     ...(value.ACCESS_RUNNER_AUD === undefined ? {} : { accessRunnerAudience: value.ACCESS_RUNNER_AUD }),
     ...(value.ACCESS_INBOX_AUD === undefined ? {} : { accessInboxAudience: value.ACCESS_INBOX_AUD }),
     ...(value.ACCESS_MCP_AUD === undefined ? {} : { accessMcpAudience: value.ACCESS_MCP_AUD }),
+    ...(value.ACCESS_PEER_AUD === undefined ? {} : { accessPeerAudience: value.ACCESS_PEER_AUD }),
   } : {};
   const host = value.HUB_HOST ?? (access ? "0.0.0.0" : "127.0.0.1");
   const bind = access ? host : loopbackHost(host);
@@ -179,6 +188,18 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
   }
   if (value.ACCESS_MCP_AUD !== undefined && [value.ACCESS_AUD, value.ACCESS_RUNNER_AUD, value.ACCESS_INBOX_AUD].includes(value.ACCESS_MCP_AUD)) {
     return { ok: false, problems: ["ACCESS_MCP_AUD must be the audience tag of a separate OAuth MCP application"] };
+  }
+  if (value.ACCESS_PEER_AUD !== undefined && [value.ACCESS_AUD, value.ACCESS_RUNNER_AUD, value.ACCESS_INBOX_AUD, value.ACCESS_MCP_AUD].includes(value.ACCESS_PEER_AUD)) {
+    return { ok: false, problems: ["ACCESS_PEER_AUD must be the audience tag of a separate peer application"] };
+  }
+  const { PEER_HUB_URL: hub, PEER_ACCESS_CLIENT_ID: clientId, PEER_ACCESS_CLIENT_SECRET: clientSecret, PEER_TOKEN: token } = value;
+  let outboundPeer: PeerConnectionConfig | undefined;
+  if ([hub, clientId, clientSecret, token].some((setting) => setting !== undefined)) {
+    if (hub === undefined || clientId === undefined || clientSecret === undefined || token === undefined) {
+      return { ok: false, problems: ["PEER_HUB_URL, PEER_ACCESS_CLIENT_ID, PEER_ACCESS_CLIENT_SECRET and PEER_TOKEN must be set together"] };
+    }
+    if (access) return { ok: false, problems: ["The outbound peer link requires a loopback hub"] };
+    outboundPeer = { hub, clientId, clientSecret, token };
   }
   const { HUB_WORK_REQUEST_PORT: workPort, HUB_WORK_SOURCES_DIR: workDirectory } = value;
   if ((workPort === undefined) !== (workDirectory === undefined)) {
@@ -195,6 +216,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     ok: true,
     config: {
       ...accessConfig,
+      ...(outboundPeer === undefined ? {} : { outboundPeer }),
       ownerEmail: access ? value.OWNER_EMAIL!.toLowerCase() : localOwnerEmail,
       dataDir: value.HUB_DATA_DIR,
       port: value.HUB_PORT,

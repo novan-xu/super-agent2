@@ -1362,6 +1362,17 @@ export const migrations: readonly Migration[] = [
     version: 72,
     sql: `ALTER TABLE tickets ADD COLUMN deployment_targets TEXT;`,
   },
+  {
+    version: 73,
+    sql: `
+      CREATE TABLE peers (
+        name TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL UNIQUE,
+        access_token_id TEXT NOT NULL,
+        token_hash BLOB NOT NULL CHECK (length(token_hash) = 32)
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

@@ -10,6 +10,7 @@ export default defineConfig({
     mkdirSync("dist/pdfjs", { recursive: true });
     for (const folder of ["cmaps", "standard_fonts"]) cpSync(join(root, folder), join("dist/pdfjs", folder), { recursive: true });
   } }],
+  experimental: { renderBuiltUrl: (_filename, { hostType }) => hostType === "js" ? { relative: true } : undefined },
   build: {
     rollupOptions: {
       input: { index: "index.html", sw: "src/worker/sw.ts", theme: "src/theme/theme.ts" },

@@ -2,6 +2,8 @@ import { canDrawBytes, decodeText, kindOf } from "@super-agent2/catalog";
 import type { ServerResponse } from "node:http";
 import type { Readable } from "node:stream";
 
+export const isolatedPreviewPolicy = "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-ancestors 'self'";
+
 export async function renderHtml(response: ServerResponse, file: { name: string; size: number; mediaType: string; open(): Readable }): Promise<boolean> {
   if (kindOf({ name: file.name, mime: file.mediaType }) !== "html" || !canDrawBytes(file.size)) return false;
   const parts: Buffer[] = [];
@@ -16,7 +18,7 @@ export async function renderHtml(response: ServerResponse, file: { name: string;
   response.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
     "content-length": body.length,
-    "content-security-policy": "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-ancestors 'self'",
+    "content-security-policy": isolatedPreviewPolicy,
     "x-content-type-options": "nosniff",
     "content-disposition": "inline",
     "referrer-policy": "no-referrer",

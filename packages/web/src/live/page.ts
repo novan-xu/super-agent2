@@ -1,4 +1,4 @@
-import type { AllowanceReport, BrainStatus, Conversation, ConversationDetail, ConversationEntry, ConversationList, SchedulesUpdate, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
+import type { AllowanceReport, BrainStatus, Conversation, ConversationDetail, ConversationEntry, ConversationList, PeerStatus, SchedulesUpdate, ServerMessage, SettingsSnapshot, StoredWorkEvent, TicketDetail, TicketHistory } from "@super-agent2/protocol";
 import type { SocketStatus } from "../hub/socket.js";
 import { type ConversationState, emptyConversation, receive, receiveDetail, receiveOwn } from "./conversation.js";
 import { type HistoryState, initialHistory, moreFailed, moreStarted, pageFailed, receiveEnded, receiveMore, receivePage, startLoading, typeQuery } from "./history.js";
@@ -27,6 +27,7 @@ export interface PageState {
   readonly settings: SettingsSnapshot | null;
   readonly allowance: AllowanceReport | null;
   readonly schedules: SchedulesUpdate | null;
+  readonly peers?: readonly PeerStatus[];
 }
 
 export type PageAction =
@@ -147,6 +148,8 @@ export function pageReducer(state: PageState, action: PageAction): PageState {
         }
         return { ...state, list, current: { id: conversation.id, conversation, turns, entries } };
       }
+      if (message.type === "hello" && state.peers !== undefined) return { ...state, peers: [] };
+      if (message.type === "peers") return { ...state, peers: message.peers };
       if (message.type === "allowance") return { ...state, allowance: message.allowance };
       if (message.type === "schedules.changed") return { ...state, schedules: message };
       if (message.type === "settings") {

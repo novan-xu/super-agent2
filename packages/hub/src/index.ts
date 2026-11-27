@@ -40,3 +40,5 @@ export * from "./verification.js";
 export * from "./waiting.js";
 export * from "./woodpecker.js";
 export * from "./work.js";
+export * from "./peer-store.js";
+export * from "./peer-link.js";

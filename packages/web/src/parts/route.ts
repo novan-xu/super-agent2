@@ -1,14 +1,16 @@
-import { type PageRoute, pagePath, pageRoute } from "@super-agent2/protocol";
+import { type PageRoute, pageRoute, remotePeerRoute } from "@super-agent2/protocol";
+import { appPath, pagePath } from "./app-path.js";
 import { useCallback, useEffect, useState } from "react";
 
 export type Navigate = (route: PageRoute, replace?: boolean) => void;
 
 function current(): PageRoute {
-  if (window.location.pathname.replace(/\/$/, "") === "/history") {
-    window.history.replaceState(window.history.state, "", "/settings/history");
+  const pathname = remotePeerRoute(window.location.pathname)?.path ?? window.location.pathname;
+  if (pathname.replace(/\/$/, "") === "/history") {
+    window.history.replaceState(window.history.state, "", appPath("/settings/history"));
     return { view: "settings", section: "history" };
   }
-  return pageRoute(window.location.pathname, window.location.search) ?? { view: "home" };
+  return pageRoute(pathname, window.location.search) ?? { view: "home" };
 }
 
 export function useRoute(): readonly [PageRoute, Navigate] {

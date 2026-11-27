@@ -4,8 +4,8 @@ import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
-import { defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
-import { type AccessKeySet, brainToolsPath, type Provider, startingBrainOrder } from "@super-agent2/protocol";
+import { createPeerStore, defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
+import { type AccessKeySet, brainToolsPath, peerLinkPath, type Provider, startingBrainOrder } from "@super-agent2/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { demoProgram } from "./demo.js";
 import { createAllowanceForcing, createHarness, demoTarget, fakeServiceTokens, forgeHandBack } from "./harness.js";
@@ -26,6 +26,7 @@ const { values } = parseArgs({
     source: { type: "string", default: "novan-xu/super-agent2" },
     cloudflare: { type: "string", default: "fake" },
     "page-dir": { type: "string" },
+    "remote-fixture": { type: "boolean", default: false },
     "layout-fixture": { type: "boolean", default: false },
     "minimal-integrations": { type: "boolean", default: false },
   },
@@ -34,6 +35,10 @@ const { values } = parseArgs({
 const team = "page-dev";
 const audience = "d".repeat(64);
 const runnerAudience = "e".repeat(64);
+const peerAudience = "f".repeat(64);
+const peerName = "studio-laptop";
+const peerClientId = "page-dev-peer.access";
+const peerClientSecret = "page-dev-peer-secret";
 const ownerEmail = "owner@example.com";
 const port = Number(values.port);
 const dataDir = resolve(values.data);
@@ -100,15 +105,21 @@ async function ownerAssertion(): Promise<string> {
   return token;
 }
 
-async function serviceAssertion(clientId: string): Promise<string> {
+async function serviceAssertion(clientId: string, serviceAudience = runnerAudience): Promise<string> {
   const seconds = Math.floor(Date.now() / 1000);
-  return new SignJWT({ iss: `https://${team}.cloudflareaccess.com`, aud: [runnerAudience], common_name: clientId, sub: "", type: "app", iat: seconds, exp: seconds + 600 })
+  return new SignJWT({ iss: `https://${team}.cloudflareaccess.com`, aud: [serviceAudience], common_name: clientId, sub: "", type: "app", iat: seconds, exp: seconds + 600 })
     .setProtectedHeader({ alg: "RS256", kid: "page-dev", typ: "JWT" })
     .sign(pair.privateKey);
 }
 
 function assertionFor(incoming: IncomingMessage): Promise<string | undefined> {
-  if (!new URL(incoming.url ?? "/", "http://page-dev").pathname.startsWith("/runner/")) {
+  const path = new URL(incoming.url ?? "/", "http://page-dev").pathname;
+  if (path === peerLinkPath) {
+    return values["remote-fixture"] && incoming.headers["cf-access-client-id"] === peerClientId
+      && incoming.headers["cf-access-client-secret"] === peerClientSecret
+      ? serviceAssertion(peerClientId, peerAudience) : Promise.resolve(undefined);
+  }
+  if (!path.startsWith("/runner/")) {
     return ownerAssertion();
   }
   const clientId = incoming.headers["cf-access-client-id"];
@@ -146,6 +157,7 @@ const hub = await startHub({
     accessTeam: team,
     accessAudience: audience,
     accessRunnerAudience: runnerAudience,
+    ...(values["remote-fixture"] ? { accessPeerAudience: peerAudience } : {}),
     ownerEmail,
     dataDir: hubDir,
     port: 0,
@@ -343,6 +355,23 @@ const harness = createHarness({
   ...(forge === undefined ? {} : { deployments, forge }),
 });
 
+let local: Hub | undefined;
+if (values["remote-fixture"]) {
+  const peers = createPeerStore(hub.database);
+  const token = peers.add({ name: peerName, clientId: peerClientId, accessTokenId: peerName });
+  peers.add({ name: "travel-laptop", clientId: "offline-peer.access", accessTokenId: "offline-peer" });
+  const localDir = join(dataDir, "local");
+  local = await startHub({
+    environment: {},
+    config: {
+      ownerEmail: "owner@local.invalid", host: "127.0.0.1", port: 0, dataDir: localDir, projectFolders: [],
+      brainTokenFile: join(localDir, "brain.token"), pageDir: defaultPageDir,
+      outboundPeer: { hub: publicUrl, clientId: peerClientId, clientSecret: peerClientSecret, token },
+    },
+  });
+  await seedLayout(local, `http://127.0.0.1:${local.address.port}`, defaultPageDir, false);
+}
+
 if (values["layout-fixture"]) {
   const fixture = await seedLayout(hub, publicUrl, defaultPageDir, !minimalIntegrations);
   process.send?.({ url: publicUrl, fixture });
@@ -386,6 +415,7 @@ const stop = () => {
   }
   void (async () => {
     await stopBrain?.();
+    await local?.close();
     await hub.close();
     process.exit(0);
   })();

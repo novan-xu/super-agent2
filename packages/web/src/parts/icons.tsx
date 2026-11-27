@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 const shapes = {
+  screen: <><rect x="3" y="4.5" width="18" height="12" rx="2" /><path d="M12 16.5V20m-4 0h8" /></>,
   chat: <path d="M4 5.5h16v10.5H10l-5 4v-4H4z" />,
   inbox: (
     <>
