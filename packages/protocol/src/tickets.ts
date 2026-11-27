@@ -226,6 +226,7 @@ export const Ticket = z.object({
   commitRef: z.string().nullable().default(null),
   commit: z.string().nullable().default(null),
   deploys: z.boolean().default(false),
+  localBuild: z.literal(true).optional(),
   brainEngine: ProgramId.nullable(),
   ownerChoice: OwnerChoice,
   state: TicketState,

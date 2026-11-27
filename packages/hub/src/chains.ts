@@ -169,6 +169,7 @@ export function chainFingerprint(shown: readonly ShownChain[]): string {
     ticket.enginePin,
     ticket.commitRef,
     ticket.deploys,
+    ticket.localBuild,
     ticket.kind,
     ticket.difficulty,
     ticket.platform,
@@ -939,7 +940,7 @@ export function createChains(options: ChainsOptions): Chains {
       }
       const rewired = outsideWaits.get(ticket.id);
       const waits = rewired === undefined ? ticket.waits : rewired.map((wait) => ({ ...wait, waived: false }));
-      graph.push({ id: ticket.id, state: ticket.state, deployedAt: ticket.deployedAt, waits });
+      graph.push({ id: ticket.id, state: ticket.state, deployedAt: ticket.deployedAt, localBuild: ticket.localBuild, waits });
     }
     for (const spec of specs) {
       graph.push({

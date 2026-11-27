@@ -1,3 +1,4 @@
+import { text } from "@super-agent2/catalog";
 import { ticketReference } from "@super-agent2/protocol";
 import type { GitHubAccount } from "@super-agent2/protocol";
 import {
@@ -42,15 +43,28 @@ export type TaskOpenOutcome = { readonly ok: true; readonly ticket: Ticket; read
 
 export interface TaskTickets {
   open(request: TaskTicketRequest, turn?: TicketTurn): Promise<TaskOpenOutcome>;
+  ready(): void;
+  refreshLocal(): void;
+  pausesLocalWork(): boolean;
   resume(): void;
   idle(): Promise<void>;
   close(): void;
+}
+
+export interface LocalInstallation {
+  readonly repository: string;
+  readonly checkout: string;
+  readonly commit: string;
+  restart(commit: string): void;
 }
 
 export interface TaskTicketsOptions {
   readonly database: HubDatabase;
   readonly tickets: TicketService;
   readonly machines: MachineStore;
+  readonly localInstallation?: LocalInstallation;
+  readonly localIdle?: () => boolean;
+  readonly tell?: import("./chains.js").Tell;
   readonly attachments?: AttachmentStore;
   readonly credentials: CredentialSource;
   readonly fetch?: Fetch;
@@ -116,6 +130,9 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
   const marking = new Set<number>();
   const running = new Set<Promise<void>>();
   let closed = false;
+  let localReady = false;
+  let restartIssued = false;
+  let checkingLocal: NodeJS.Immediate | undefined;
 
   const selectUndeployed = connection.prepare(
     "SELECT t.id AS id, v.merge_commit AS merge_commit FROM tickets t JOIN ticket_verifications v ON v.ticket_id = t.id WHERE t.form = 'code' AND t.state = 'merged' AND t.deployed_at IS NULL AND v.merge_commit IS NOT NULL AND t.repository = ? COLLATE NOCASE ORDER BY t.id",
@@ -123,6 +140,20 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
   const selectUnmarked = connection.prepare(
     "SELECT t.id AS id FROM tickets t JOIN ticket_tasks k ON k.ticket_id = t.id WHERE t.state = 'delivered' AND k.deploys = 1 AND t.deployed_at IS NULL ORDER BY t.id",
   );
+
+  const selectLocal = connection.prepare(
+    "SELECT t.id, k.commit_sha, k.local_restart FROM tickets t JOIN ticket_tasks k ON k.ticket_id = t.id WHERE t.state = 'delivered' AND t.deployed_at IS NULL AND k.local_build = 1 AND k.local_restart IS NOT 'failed' ORDER BY t.id",
+  );
+  const sameBuilds = connection.prepare(
+    "SELECT t.id FROM tickets t JOIN ticket_tasks k ON k.ticket_id = t.id WHERE t.repository = ? COLLATE NOCASE AND t.state IN ('pending', 'waiting', 'working') AND k.local_build = 1 AND k.commit_ref IS ? ORDER BY t.id",
+  );
+  const setRestart = connection.prepare("UPDATE ticket_tasks SET local_restart = ? WHERE ticket_id = ?");
+  const LocalBuild = IdRow.extend({
+    commit_sha: z.string().nullable(),
+    local_restart: z.enum(["waiting", "requested"]).nullable(),
+  });
+  const localBuilds = () => selectLocal.all().map((row) => LocalBuild.parse(row));
+  const installation = options.localInstallation;
 
   const gitHubFor = (repository: string): GitHubApi | string => {
     const found = options.credentials((options.accountOf ?? accountFor)(repository));
@@ -205,9 +236,12 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     } else if (request.deploy === true && chains.length > 0) {
       commitRef = mergedCommit;
     }
+    const localBuild = request.deploy === true && installation !== undefined && sameRepository(repository, installation.repository);
     const notes: string[] = [];
     let targets: readonly string[] = [];
-    if (request.deploy === true && repository !== null) {
+    if (localBuild) {
+      notes.push(`This build updates the local edition on local. Its checkout is ${installation.checkout}, and it currently runs ${installation.commit}.`);
+    } else if (request.deploy === true && repository !== null) {
       const read = await readTargets(repository);
       if ("refused" in read) {
         return refuse(read.refused);
@@ -229,6 +263,15 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
         for (const id of after) {
           requirePredecessor(writes.get(id));
         }
+        if (localBuild && after.length > 0) {
+          for (const row of sameBuilds.all(repository, commitRef)) {
+            const existing = writes.get(IdRow.parse(row).id);
+            if (existing?.waits.length === after.length && existing.waits.every((wait) => !wait.deployment && !wait.waived && after.includes(wait.ticket))) {
+              notes.push("A local build ticket is already arranged after these chains.");
+              return existing;
+            }
+          }
+        }
         const id = writes.open({
           form: "task",
           repository,
@@ -239,11 +282,11 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
           kind: request.kind,
           difficulty: request.difficulty,
           platform: request.platform,
-          requiredMachine: targets.length === 1 ? targets[0] : undefined,
+          requiredMachine: localBuild ? "local" : targets.length === 1 ? targets[0] : undefined,
           deploymentTargets: targets.length > 1 ? targets : undefined,
           conversation: request.conversation,
           waitsFor: after,
-          task: { task: request.task, materials: request.materials, commitRef, deploys: request.deploy === true },
+          task: { task: request.task, materials: request.materials, commitRef, deploys: request.deploy === true, localBuild: localBuild ? true : undefined },
         });
         const opened = writes.get(id);
         if (opened === undefined) {
@@ -265,6 +308,8 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     }
     const repository = ticket.repository;
     const commit = ticket.commit;
+    const localBuild = ticket.localBuild === true;
+    if (localBuild && (!localReady || commit === null || installation?.commit !== commit)) return;
     const candidates = selectUndeployed.all(repository).map((row) => UndeployedRow.parse(row));
     const notes: string[] = [];
     const direct = chainsBefore(ticket, tickets.get).filter((before) => before.state === "merged" && before.deployedAt === null);
@@ -306,6 +351,10 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
       }
       writes.deployed(id);
     });
+    if (localBuild && commit !== null) {
+      options.tell?.(id, text("notice.localBuildActivated", { ticket: ticket.code, commit: short(commit) }),
+        `[hub] The local edition started on ${commit}. Ticket ${ticketReference(ticket)} is deployed, and work waiting for it can begin.`);
+    }
     options.marked?.(tickets.get(id) ?? ticket, deployed, notes);
   };
 
@@ -323,14 +372,65 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     running.add(task);
   };
 
+  const refreshLocal = () => {
+    if (closed || !localReady || installation === undefined || restartIssued || checkingLocal !== undefined) return;
+    checkingLocal = setImmediate(() => {
+      checkingLocal = undefined;
+      for (const build of localBuilds()) {
+        const ticket = tickets.get(build.id);
+        if (ticket === undefined) continue;
+        const commit = build.commit_sha;
+        if (commit === installation.commit) {
+          start(ticket.id);
+          continue;
+        }
+        const failure = (reason: string) => {
+          setRestart.run("failed", ticket.id);
+          options.tell?.(ticket.id, text("notice.localBuildFailed", { ticket: ticket.code, commit: short(installation.commit) }),
+            `[hub] The local edition is running ${installation.commit}. Ticket ${ticketReference(ticket)} expected ${commit ?? "a build commit"}. ${reason}`);
+        };
+        if (commit === null || build.local_restart === "requested") {
+          failure(commit === null ? "The build reported no commit." : "The restart did not start the requested build.");
+          continue;
+        }
+        if (options.localIdle?.() !== true) {
+          if (build.local_restart === null) {
+            setRestart.run("waiting", ticket.id);
+            options.tell?.(ticket.id, text("notice.localBuildWaiting", { ticket: ticket.code }),
+              `[hub] Ticket ${ticketReference(ticket)} built ${commit}. The local edition waits for its running work to finish before restarting.`);
+          }
+          return;
+        }
+        try {
+          setRestart.run("requested", ticket.id);
+          options.tell?.(ticket.id, text("notice.localBuildRestart", { ticket: ticket.code, commit: short(commit) }),
+            `[hub] The local edition is restarting on ${commit} for ticket ${ticketReference(ticket)}.`);
+          installation.restart(commit);
+          restartIssued = true;
+          return;
+        } catch (error) {
+          failure(reasonOf(error));
+        }
+      }
+    });
+  };
+
   const unsubscribe = tickets.subscribe((ticket) => {
     if (ticket.deploys && ticket.state === "delivered" && ticket.deployedAt === null) {
-      start(ticket.id);
+      if (ticket.localBuild === true) refreshLocal();
+      else start(ticket.id);
     }
+    refreshLocal();
   });
 
   return {
     open,
+    ready: () => {
+      localReady = true;
+      refreshLocal();
+    },
+    refreshLocal,
+    pausesLocalWork: () => installation !== undefined && localBuilds().some((build) => !localReady || build.commit_sha !== installation.commit),
     resume: () => {
       for (const row of selectUnmarked.all()) {
         start(IdRow.parse(row).id);
@@ -343,6 +443,7 @@ export function createTaskTickets(options: TaskTicketsOptions): TaskTickets {
     },
     close: () => {
       closed = true;
+      clearImmediate(checkingLocal);
       unsubscribe();
     },
   };

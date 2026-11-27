@@ -75,6 +75,7 @@ export interface WorkServiceOptions {
   readonly credentials: CredentialSource;
   readonly tell?: Tell;
   readonly files?: TicketFiles;
+  readonly pauseLocalWork?: () => boolean;
   readonly deliver?: (delivery: Delivery) => void;
   readonly lightDelivery?: (ticket: Ticket, attempt: number, event: DeliveredEvent) => () => void;
   readonly lightQuestions?: LightTaskQuestions;
@@ -143,6 +144,7 @@ export interface WorkService extends TicketWork {
   events(ticket: number, after?: number, limit?: number): StoredWorkEvent[];
   output(ticket: number, limit?: number): string;
   lastActivity(ticket: number): number | null;
+  activeOn(machine: string): number;
   subscribe(listener: WorkListener): () => void;
   resume(): void;
   close(): void;
@@ -195,7 +197,7 @@ function taskWords(ticket: Ticket): string {
   if (ticket.repository === null) {
     return "It is a task ticket, worked on in a scratch folder.";
   }
-  return `It is a task ticket on ${ticket.repository}${ticket.commit === null ? "" : ` at ${ticket.commit}`}${ticket.deploys ? ", which deploys it" : ""}.`;
+  return `It is a task ticket on ${ticket.repository}${ticket.commit === null ? "" : ` at ${ticket.commit}`}${ticket.localBuild === true ? ", which builds the local installation" : ticket.deploys ? ", which deploys it" : ""}.`;
 }
 
 const failureWords: Readonly<Record<WorkFailure, string>> = {
@@ -232,6 +234,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
   );
   const selectActiveOn = connection.prepare("SELECT * FROM ticket_attempts WHERE machine = ? AND state IN ('preparing', 'running')");
   const selectActive = connection.prepare("SELECT * FROM ticket_attempts WHERE state IN ('preparing', 'running')");
+  const activeLocalBuild = connection.prepare("SELECT 1 FROM ticket_attempts a JOIN ticket_tasks k ON k.ticket_id = a.ticket_id WHERE a.machine = 'local' AND a.state IN ('preparing', 'running') AND k.local_build = 1 LIMIT 1");
   const countActiveOn = connection.prepare("SELECT COUNT(*) AS count FROM ticket_attempts WHERE machine = ? AND state IN ('preparing', 'running')");
   const insertAttempt = connection.prepare(
     "INSERT INTO ticket_attempts (ticket_id, attempt, machine, engine, model, effort, state, resume_session, note, handover, takeover, created_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
@@ -492,6 +495,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       materials: [...task.materials],
       checkout,
       deploys: task.deploys,
+      ...(task.localBuild === true ? { localBuild: true as const } : {}),
       engine: attempt.engine,
       model: attempt.model,
       effort: attempt.effort,
@@ -577,6 +581,8 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       if (ticket === undefined || ticket.state !== "working") {
         continue;
       }
+      if (attempt.machine === "local" && (options.pauseLocalWork?.() === true
+        || (ticket.localBuild === true && activeLocalBuild.get() !== undefined))) continue;
       let report = runners.report(attempt.machine);
       if (ticket.deploymentTargets !== undefined && (report === undefined || report.load?.high === true || activeOn(attempt.machine) >= report.slots.total)) {
         const alternate = alternateForDeployment(ticket, attempt);
@@ -607,7 +613,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
         continue;
       }
       const defaults = options.defaults;
-      const out = defaults === undefined ? undefined : outFor(defaults.out(), defaults.antigravityOut(), attempt.engine, attempt.model);
+      const out = defaults === undefined || ticket.localBuild === true ? undefined : outFor(defaults.out(), defaults.antigravityOut(), attempt.engine, attempt.model);
       if (out !== undefined) {
         touch(ticket.id, () => end(ticket.id, attempt.attempt, "unavailable", null, out.reason));
         const ended = attemptOf(ticket.id, attempt.attempt);
@@ -815,6 +821,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
     }
     const files = event.files.map((file) => ({ name: file.name, size: file.size }));
     const commit = ticket.commit ?? event.commit ?? null;
+    const localBuild = ticket.localBuild === true;
     options.deliver({
       ticket: ticket.id,
       title: ticket.title,
@@ -823,7 +830,9 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       files,
       prompt: [
         `[hub] Task ticket ${ticketReference(ticket)} (${ticket.title.en}) is done. Its result was delivered to the owner in this conversation: the worker's report${event.text === null ? "" : ", the text as written"}${files.length === 0 ? "" : " and the files as downloads"}, so do not repeat it. Nothing was verified.`,
-        ...(ticket.deploys && ticket.repository !== null
+        ...(localBuild
+          ? [`It built ${commit ?? "the update"} for the local edition. The hub confirms the update separately after restarting on that commit.`]
+          : ticket.deploys && ticket.repository !== null
           ? [
               `It deployed ${ticket.repository}${commit === null ? "" : ` at ${commit}`}. The hub marks the merged tickets of ${ticket.repository} that ${commit === null ? "it" : short(commit)} contains as deployed, so what was arranged after this deployment begins by itself.`,
             ]
@@ -2001,6 +2010,7 @@ export function createWorkService(options: WorkServiceOptions): WorkService {
       const latest = latestOf(ticket);
       return latest === undefined ? "" : outputOf(ticket, latest.attempt, limit);
     },
+    activeOn,
     lastActivity: silence.lastActivity,
     subscribe: (listener) => {
       listeners.add(listener);

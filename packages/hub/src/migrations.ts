@@ -1402,6 +1402,13 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 75,
+    sql: `
+      ALTER TABLE ticket_tasks ADD COLUMN local_build INTEGER NOT NULL DEFAULT 0 CHECK (local_build IN (0, 1));
+      ALTER TABLE ticket_tasks ADD COLUMN local_restart TEXT CHECK (local_restart IN ('waiting', 'requested', 'failed'));
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

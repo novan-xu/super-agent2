@@ -17,6 +17,7 @@ import { callBrainTool } from "./testing/brain-tools.js";
 import { z } from "zod";
 import type { CredentialSource } from "./credentials.js";
 import type { Hub } from "./hub.js";
+import type { LocalInstallation } from "./task-tickets.js";
 import type { RunnerLink } from "./runners.js";
 import { chainChoicePath, chainStartPath } from "./server.js";
 import { assertion, keySet, signingKey, type SigningKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
@@ -102,7 +103,7 @@ function connect(running: Hub, report: MachineReport): { readonly link: RunnerLi
   return { link, sent };
 }
 
-async function start(reports = [machine("pc"), machine("mac")]): Promise<Started> {
+async function start(reports = [machine("pc"), machine("mac")], localInstallation?: LocalInstallation): Promise<Started> {
   const running = await startTestHub({
     config: testConfig(dataDir),
     keySource: staticKeySource(keySet(key)),
@@ -110,6 +111,7 @@ async function start(reports = [machine("pc"), machine("mac")]): Promise<Started
     credentials,
     forgeFetch: forge.fetch,
     gitHubBase: fakeGitHubBase,
+    ...(localInstallation === undefined ? {} : { localInstallation }),
   });
   hub = running;
   const runners = new Map<string, { readonly link: RunnerLink; readonly sent: HubToRunner[] }>();
@@ -595,5 +597,82 @@ describe("deployment eligibility in this installation", () => {
     expect(answer.isError, answer.text).toBe(false);
     expect(answer.text).toContain(note);
     expect(running.tickets.list()).toMatchObject([{ requiredMachine: null, deploys: true, commitRef: null, platform: "macos" }]);
+  });
+});
+
+describe("building the local installation", () => {
+  const previous = "a".repeat(40);
+  const target = "merge-of-local-update";
+  const installation = (commit: string, restart: (commit: string) => void): LocalInstallation => ({
+    repository, checkout: dataDir, commit, restart,
+  });
+
+  async function localTick(running: Hub): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await running.taskTickets.idle();
+  }
+
+  function notices(running: Hub, conversation: string): string {
+    return JSON.stringify(running.database.connection.prepare("SELECT body FROM conversation_entries WHERE conversation_id = ? AND kind = 'notice' ORDER BY seq").all(conversation));
+  }
+
+  it.each(["target", "previous"])("requests one restart after active work drains and checks the %s commit after boot", async (boot) => {
+    const restarted: string[] = [];
+    const restart = (commit: string) => { restarted.push(commit); };
+    const { running, runners, conversation } = await start([machine("local")], installation(previous, restart));
+    running.taskTickets.ready();
+    const first = chain(running, conversation, 21);
+    const request = { ...deploymentRequest, title: { en: "Build the local edition", zh: "构建本地版" }, after: [first.code] };
+    const opened = await callBrainTool(running, "open_task_ticket", request, conversation);
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain(`currently runs ${previous}`);
+    const repeat = await callBrainTool(running, "open_task_ticket", request, conversation);
+    expect(repeat.isError, repeat.text).toBe(false);
+    const builds = running.tickets.list().filter((ticket) => ticket.form === "task");
+    expect(builds).toMatchObject([{ requiredMachine: "local", commitRef: "merged", deploys: true, waitsFor: [first.id] }]);
+    const build = builds[0]!;
+    const follow = await callBrainTool(running, "open_task_ticket", {
+      ...deploymentRequest, title: { en: "Check the local edition", zh: "检查本地版" }, deploy: false, after: [build.code],
+    }, conversation);
+    expect(follow.isError, follow.text).toBe(false);
+    const dependent = running.tickets.list().find((ticket) => ticket.form === "task" && ticket.id !== build.id)!;
+    await stated(running, [first, build, dependent]);
+    const card = (await cards(running)).find((entry) => entry.ticket.id === first.id);
+    expect((await ownerPost(running, chainStartPath, { chains: [{ ticket: first.id, fingerprint: card?.fingerprint }] })).status).toBe(202);
+    await merge(running, runners, first, 75, "local-update");
+    const local = runners.get("local")!;
+    expect(tasksSent(local.sent, build.id)).toMatchObject([{
+      task: { deploys: true, localBuild: true, checkout: { commit: target, ref: null } },
+    }]);
+    local.link.receive({ type: "report", machine: { ...machine("local"), slots: { total: 2, free: 1 } } });
+    event(local.link, build.id, 1, { kind: "delivered", commit: target, text: null, files: [], report: { en: "Built", zh: "已构建" } });
+    await localTick(running);
+    expect(restarted).toEqual([]);
+    expect(current(running, first.id).deployedAt).toBeNull();
+    expect(notices(running, conversation)).toContain("等当前工作完成");
+    local.link.receive({ type: "report", machine: machine("local") });
+    await localTick(running);
+    expect(restarted).toEqual([target]);
+    expect(current(running, build.id)).toMatchObject({ state: "delivered", deployedAt: null });
+    expect(current(running, dependent.id).state).toBe("waiting");
+    expect(notices(running, conversation)).toContain("本地版正在重启");
+    await running.close();
+
+    const rebooted = (await start([machine("local")], installation(boot === "target" ? target : previous, restart))).running;
+    rebooted.taskTickets.ready();
+    await localTick(rebooted);
+    await rebooted.chains.idle();
+    expect(restarted).toEqual([target]);
+    if (boot === "target") {
+      expect(current(rebooted, first.id).deployedAt).not.toBeNull();
+      expect(current(rebooted, build.id).deployedAt).not.toBeNull();
+      expect(current(rebooted, dependent.id).state).toBe("working");
+      expect(notices(rebooted, conversation)).toContain(`本地版正在运行 ${target}`);
+    } else {
+      expect(current(rebooted, first.id).deployedAt).toBeNull();
+      expect(current(rebooted, build.id).deployedAt).toBeNull();
+      expect(current(rebooted, dependent.id).state).toBe("waiting");
+      expect(notices(rebooted, conversation)).toContain("更新失败，本地版当前运行");
+    }
   });
 });

@@ -4025,3 +4025,12 @@ Other options were to keep separate hand-written preset styles or attempt to upd
 - **Console windows:** `windowsHide` already hides the program and the `cmd.exe` that starts a `.cmd` shim (Node then creates them with `CREATE_NO_WINDOW`, and their console children inherit the hidden console).
   A window still opens when a descendant starts a console program from a process without a console: a child the program starts detached, or the console children of a GUI-subsystem process.
   The runner cannot pass flags to its grandchildren, so there is no fix in the prober; running the programs on a hidden desktop would hide them but needs native code, and was not done.
+
+
+## 2026-11-27 — Build tickets update the local edition (#391)
+
+- **Chosen:** Fetch and build a local installation update in a separate Git worktree, then have the launcher start the new build after the hub drains active work on the local runner.
+  Advance the source checkout and mark the update deployed after verifying the new process's commit.
+- **Why:** Dependencies and build outputs in use stay available throughout the build, and the existing process can continue when a build fails.
+  A completed build can wait for workers to finish, and dependent tickets wait for the new installation to start.
+- **Other options:** Install and build in the running checkout and rebuild the previous commit on failure, or stop local work before beginning the build.

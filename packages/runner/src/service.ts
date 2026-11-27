@@ -27,7 +27,7 @@ export interface RunnerServiceOptions {
   readonly allowanceMilliseconds?: number;
   readonly sampleLoad?: () => Promise<MachineLoad>;
   readonly now?: () => number;
-  readonly work?: Partial<Pick<WorksOptions, "adapters" | "findProgram" | "run" | "remote" | "readPullRequest">>;
+  readonly work?: Partial<Pick<WorksOptions, "adapters" | "findProgram" | "run" | "remote" | "readPullRequest" | "localBuild">>;
   readonly mainPath?: string;
   readonly version?: string;
   readonly supervised?: boolean;

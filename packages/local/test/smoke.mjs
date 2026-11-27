@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -13,8 +13,8 @@ const entry = fileURLToPath(new URL("../start.mjs", import.meta.url));
 const fake = fileURLToPath(new URL("./fake-codex.mjs", import.meta.url));
 const pathOf = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
-function launch(env) {
-  const child = fork(entry, [], { env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, execArgv: [] });
+function launch(env, launcher = entry) {
+  const child = fork(launcher, [], { env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, execArgv: [] });
   const closed = once(child, "close");
   const exited = once(child, "exit");
   let output = "";
@@ -205,3 +205,71 @@ test("the pnpm local entry starts all parts, runs a worker and reopens the same 
     try { await running?.close(); } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
+
+for (const successful of [true, false]) {
+  test(successful ? "the launcher relaunches and remembers a confirmed build" : "the launcher brings back its previous build when a staged build fails to start", async () => {
+    const root = mkdtempSync(join(tmpdir(), "super-agent2-relaunch-"));
+    const home = join(root, "state");
+    const commit = "b".repeat(40);
+    const staged = join(home, "local-builds", commit);
+    const launcher = join(root, "packages", "local", "start.mjs");
+    const write = (folder, path, code) => {
+      const file = join(folder, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, code);
+    };
+    write(root, "package.json", '{"type":"module"}');
+    write(root, "packages/local/dist/settings.js", "export const stateFolder = (env) => env.SUPERAGENT2_HOME;");
+    write(root, "packages/local/dist/presence.js", "export const holdPresence = async () => async () => {};");
+    for (const name of ["local/dist/runner-process.js", "brain/dist/index.js", "hub/dist/index.js", "runner/dist/index.js", "programs/dist/index.js", "web/dist/index.html"]) {
+      write(root, `packages/${name}`, "");
+    }
+    write(root, "packages/local/dist/main.js", `
+      import { existsSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      const checkpoint = join(process.env.SUPERAGENT2_HOME, "requested");
+      if (existsSync(checkpoint)) {
+        console.log("Running previous build");
+        process.on("disconnect", () => {});
+      } else {
+        writeFileSync(checkpoint, "");
+        writeFileSync(join(process.env.SUPERAGENT2_HOME, "local-build-pending.json"), JSON.stringify({ checkout: process.argv[2], commit: "${commit}" }));
+        process.exitCode = 75;
+        process.disconnect();
+      }
+    `);
+    write(staged, "package.json", '{"type":"module"}');
+    write(staged, "packages/local/dist/main.js", successful ? `
+      const wanted = process.argv[3];
+      if (wanted === undefined) {
+        console.log("Running saved build");
+        process.on("disconnect", () => {});
+      } else {
+        process.on("message", (message) => {
+          if (message.localBuildConfirmed === wanted) console.log("Running confirmed build " + wanted);
+        });
+        process.send({ localBuildReady: wanted });
+      }
+    ` : 'process.exitCode = 1; process.disconnect();');
+    copyFileSync(entry, launcher);
+    const environment = { ...process.env, SUPERAGENT2_HOME: home };
+    let running;
+    try {
+      running = launch(environment, launcher);
+      if (successful) {
+        assert.equal(await running.address(/^Running confirmed build (.*)$/), commit);
+        assert.equal(JSON.parse(readFileSync(join(home, "local-build-active.json"), "utf8")).commit, commit);
+        await running.close();
+        running = launch(environment, launcher);
+        assert.equal(await running.address(/^(Running saved build)$/), "Running saved build");
+      } else {
+        assert.equal(await running.address(/^(Running previous build)$/), "Running previous build");
+        assert.match(running.output, /could not start build.*Starting the previous build/);
+        assert.equal(existsSync(join(home, "local-build-pending.json")), false);
+        assert.equal(existsSync(join(home, "local-build-active.json")), false);
+      }
+    } finally {
+      try { await running?.close(); } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  });
+}

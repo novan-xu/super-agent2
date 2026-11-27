@@ -13,6 +13,18 @@ Set `PORT` to change the listening port or `TIME_ZONE` to override the computer'
 Use existing setting names in `local.env` to configure integrations or provider programs, such as `BRAIN_PROVIDERS` or `RUNNER_MODELS_CODEX`.
 On Windows the brain's `run_command` tool runs in Windows PowerShell.
 
+## Updating the local edition
+
+For Super Agent work filed here, the brain arranges one build ticket after the last code chain for the update.
+Starting that chain also authorizes the build on the `local` runner after the merge.
+The runner fetches the merged commit from the installation checkout's GitHub origin and runs `corepack pnpm install --frozen-lockfile` and `corepack pnpm build` in a separate worktree.
+Keep the installation checkout clean and on a commit that can fast-forward to the update.
+A build failure reports the command output and leaves the running checkout intact.
+After a successful build, the local edition lets current work finish before restarting.
+The new process verifies the commit, advances the installation checkout by fast-forwarding, and reports the update in the ticket's topic.
+Subsequent launches use the verified build under the installation state folder.
+To return to a manually built checkout, stop the local edition, build the checkout, remove `local-build-active.json` from the state folder, and start `corepack pnpm local` again.
+
 ## Using Cloudflare Access
 
 Set `ACCESS_TEAM`, `ACCESS_AUD` and `OWNER_EMAIL` for the owner application and `ACCESS_RUNNER_AUD` for a separate runner application if one is configured.

@@ -45,7 +45,7 @@ export function prepareRunner(hub: Hub, home: string, projects: string, settings
   if (JSON.stringify(previous) !== JSON.stringify(values)) writeSecretFile(path, formatSettings(values));
 }
 
-export function superviseRunner(home: string, tokenOnly: boolean, environment: Environment, report: (line: string) => void): () => Promise<void> {
+export function superviseRunner(home: string, tokenOnly: boolean, environment: Environment, report: (line: string) => void, checkout?: string): () => Promise<void> {
   const privateNames = new Set([...secretVariables, "RUNNER_TOKEN"].filter((name) => !["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY"].includes(name)));
   const env = Object.fromEntries(Object.entries(environment).filter(([name]) => !privateNames.has(name.toUpperCase())));
   const entry = fileURLToPath(new URL("./runner-process.js", import.meta.url));
@@ -62,7 +62,7 @@ export function superviseRunner(home: string, tokenOnly: boolean, environment: E
 
   const start = () => {
     const startedAt = performance.now();
-    const current = fork(entry, [home, ...(tokenOnly ? ["--loopback"] : [])], { env, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true, execArgv: [] });
+    const current = fork(entry, [home, tokenOnly ? "--loopback" : "--access", ...(checkout === undefined ? [] : [checkout])], { env, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true, execArgv: [] });
     child = current;
     ready = false;
     current.on("message", (message) => {

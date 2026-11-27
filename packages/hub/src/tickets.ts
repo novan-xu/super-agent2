@@ -70,6 +70,7 @@ export interface TaskToOpen {
   readonly materials: readonly TaskMaterial[];
   readonly commitRef?: string | null | undefined;
   readonly deploys?: boolean | undefined;
+  readonly localBuild?: true | undefined;
 }
 
 export interface TicketTask {
@@ -78,6 +79,7 @@ export interface TicketTask {
   readonly commitRef: string | null;
   readonly commit: string | null;
   readonly deploys: boolean;
+  readonly localBuild?: true;
 }
 
 export interface TicketToOpen {
@@ -478,7 +480,7 @@ const IdRow = z.object({ ticket_id: z.number().int() });
 
 const FoundRow = z.object({ id: z.number().int() });
 
-const TaskRow = z.object({ task: z.string(), materials: z.string(), commit_ref: z.string().nullable(), commit_sha: z.string().nullable(), deploys: z.number().int() });
+const TaskRow = z.object({ task: z.string(), materials: z.string(), commit_ref: z.string().nullable(), commit_sha: z.string().nullable(), deploys: z.number().int(), local_build: z.number().int() });
 
 const SeqRow = z.object({ seq: z.number().int().nullable() });
 
@@ -686,8 +688,8 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
   const updateFinalPullRequest = connection.prepare("UPDATE tickets SET pull_request = ? WHERE id = ?");
   const updateClosedOutside = connection.prepare("UPDATE tickets SET closed_outside = ? WHERE id = ? AND closed_outside <> ?");
   const updateReport = connection.prepare("UPDATE tickets SET report_en = ?, report_zh = ? WHERE id = ?");
-  const selectTask = connection.prepare("SELECT task, materials, commit_ref, commit_sha, deploys FROM ticket_tasks WHERE ticket_id = ?");
-  const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys) VALUES (?, ?, ?, ?, ?)");
+  const selectTask = connection.prepare("SELECT task, materials, commit_ref, commit_sha, deploys, local_build FROM ticket_tasks WHERE ticket_id = ?");
+  const insertTask = connection.prepare("INSERT INTO ticket_tasks (ticket_id, task, materials, commit_ref, deploys, local_build) VALUES (?, ?, ?, ?, ?, ?)");
   const updateCommit = connection.prepare("UPDATE ticket_tasks SET commit_sha = ? WHERE ticket_id = ?");
   const selectLastSeq = connection.prepare("SELECT MAX(seq) AS seq FROM ticket_moves WHERE ticket_id = ?");
   const selectAll = connection.prepare("SELECT * FROM tickets WHERE (? OR light IS NULL) ORDER BY created_at DESC, id DESC LIMIT ?");
@@ -808,6 +810,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       commitRef: task?.commitRef ?? null,
       commit: task?.commit ?? null,
       deploys: task?.deploys ?? false,
+      ...(task?.localBuild === true ? { localBuild: true as const } : {}),
       brainEngine: value.brain_engine,
       ownerChoice: { machine: value.owner_machine, engine: value.owner_engine, model: value.owner_model, effort: value.owner_effort },
       state: value.state,
@@ -983,6 +986,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       commitRef: value.commit_ref,
       commit: value.commit_sha,
       deploys: value.deploys === 1,
+      ...(value.local_build === 1 ? { localBuild: true as const } : {}),
     };
   };
 
@@ -1083,7 +1087,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
       }
       insertIssues(id, request.issues);
       if (request.task !== undefined) {
-        insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0);
+        insertTask.run(id, request.task.task.trim(), JSON.stringify(request.task.materials), request.task.commitRef ?? null, request.task.deploys === true ? 1 : 0, request.task.localBuild === true ? 1 : 0);
       }
       for (const before of new Set(request.waitsFor ?? [])) {
         insertWait.run(id, before, 0);
@@ -1194,7 +1198,7 @@ export function createTicketService(options: TicketServiceOptions): TicketServic
           platform: old.platform ?? undefined,
           requiredMachine: old.machinePinned === true ? undefined : old.requiredMachine,
           deploymentTargets: old.deploymentTargets,
-          ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys } }),
+          ...(task === undefined ? {} : { task: { task: task.task, materials: task.materials, commitRef: task.commitRef, deploys: task.deploys, localBuild: task.localBuild } }),
         }, writes.topic(id));
         writes.inheritPins(repair, old);
         if (task?.commit !== undefined && task.commit !== null) {
