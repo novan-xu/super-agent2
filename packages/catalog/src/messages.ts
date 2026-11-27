@@ -66,6 +66,7 @@ export const messages = {
   "todo.overdue": "已逾期",
   "todo.handoff": "交给大脑",
   "todo.openTopic": "打开话题",
+  "todo.sourceTopic": "来源话题",
   "todo.handoff.list": "清单：{list}",
   "todo.handoff.date": "日期：{date}",
   "todo.handoff.notes": "备注：{notes}",

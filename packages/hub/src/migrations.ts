@@ -1462,6 +1462,13 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX todos_reminder_dates ON todos(date, time, id) WHERE deleted = 0 AND done_at IS NULL AND date IS NOT NULL;
     `,
   },
+  {
+    version: 79,
+    sql: `
+      ALTER TABLE todos ADD COLUMN source_topic TEXT REFERENCES conversations(id) ON DELETE SET NULL;
+      CREATE INDEX todos_source_topic ON todos(source_topic) WHERE source_topic IS NOT NULL;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

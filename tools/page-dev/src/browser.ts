@@ -204,7 +204,7 @@ const views = {
   todos: {
     route: { view: "todos" },
     ready: ".todo-row",
-    targets: { ...todoTargets, "overdue marker": ".todo-meta .chip", "hand-off": ".todo-topic .btn" },
+    targets: { ...todoTargets, "overdue marker": ".todo-meta .chip", "hand-off": ".todo-topic .btn", "source topic": ".todo-source-topic" },
     phone: { "list picker": ".todo-list-picker" },
     desktop: { "list links": ".todo-list-links a" },
   },
@@ -222,7 +222,7 @@ const views = {
   "todo-detail": {
     route: ({ todoDetail }) => ({ view: "todos", todo: todoDetail }),
     ready: ".todo-row",
-    targets: { "to-do detail": ".todo-content", "to-do row": ".todo-row", "to-do actions": ".todo-topic .btn, .todo-check" },
+    targets: { "to-do detail": ".todo-content", "to-do row": ".todo-row", "to-do actions": ".todo-topic .btn, .todo-check", "source topic": ".todo-source-topic" },
   },
   "todo-reminders": {
     route: { view: "settings", section: "todo-reminders" },

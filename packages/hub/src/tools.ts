@@ -39,11 +39,12 @@ import {
   ticketKinds,
   taskKinds,
   isPrivateAppTool,
+  isTodoTool,
 } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { AppGateway } from "./app-gateway.js";
 import { appDefinitions, appToolCall, appToolError } from "./app-tools.js";
-import type { AppTodos } from "./app-todos.js";
+import { todoDefinitions, todoToolError, type TodoToolCall } from "./todo-tools.js";
 import { mailTriageDefinition, mailTriageTool, type MailTriage } from "./mail-triage.js";
 import type { ArrangeOutcome, ChainArranger, StateOutcome, TicketOutcome } from "./chains.js";
 import type { StartDefaults } from "./defaults.js";
@@ -274,7 +275,7 @@ export interface ToolServerOptions {
   readonly attachments?: AttachmentStore;
   readonly transferTools?: TransferTools;
   readonly appGateway?: AppGateway;
-  readonly appTodos?: AppTodos;
+  readonly todoTools?: TodoToolCall;
   readonly mailTriage?: MailTriage;
 }
 
@@ -840,25 +841,22 @@ function heldText(command: CommandRecord): string {
 export function createToolServer(options: ToolServerOptions): ToolServer {
   const { commands, conversations } = options;
   const agentWring = options.features?.includes("agentWring") ?? true;
+  const providerFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) =>
+    conversation === undefined || turn === undefined || aborted.aborted ? undefined : conversations.activeTurnProvider(conversation, turn);
   const ownerTurn = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) =>
-    conversation !== undefined && turn !== undefined && !aborted.aborted
-    && conversations.activeTurnProvider(conversation, turn) !== undefined && conversations.ownerAppTurn(conversation, turn);
+    conversation !== undefined && turn !== undefined && providerFor(conversation, turn, aborted) !== undefined && conversations.ownerAppTurn(conversation, turn);
   const reviewOf = (conversation: string | undefined, turn: string | undefined) =>
     conversation === undefined || turn === undefined ? undefined : conversations.mailReviewOf(conversation, turn);
   const gatewayFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal): AppGateway | undefined => {
-    if (conversation === undefined || turn === undefined || aborted.aborted) {
-      return undefined;
-    }
-    const provider = conversations.activeTurnProvider(conversation, turn);
+    const provider = providerFor(conversation, turn, aborted);
     return provider === "claude" || provider === "gpt" ? options.appGateway : undefined;
   };
   const appWritesFor = (conversation: string | undefined, turn: string | undefined, aborted: AbortSignal) => {
-    const todos = options.appTodos;
-    if (conversation === undefined || turn === undefined || todos === undefined) {
+    if (conversation === undefined || turn === undefined) {
       return undefined;
     }
     const authorized = () => gatewayFor(conversation, turn, aborted) !== undefined && conversations.ownerAppTurn(conversation, turn);
-    return authorized() ? { conversation, todos, authorized } : undefined;
+    return authorized() ? { authorized } : undefined;
   };
 
   const materialsOf = (material: readonly z.infer<typeof MaterialArgument>[]) => {
@@ -1537,6 +1535,18 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
         return { status: 200, body: resultBody(id, { content: [{ type: "text", text: appToolError(error) }], isError: true }) };
       }
     }
+    if (isTodoTool(name) && options.todoTools !== undefined) {
+      if (conversation === undefined || providerFor(conversation, turn, aborted) === undefined || (name !== "todo_lookup" && !ownerTurn(conversation, turn, aborted))) {
+        const text = name === "todo_lookup" ? "To-do lookup requires an active turn." : "To-do changes require the owner's request in the active turn.";
+        return { status: 200, body: resultBody(id, { content: [{ type: "text", text }], isError: true }) };
+      }
+      try {
+        const data = options.todoTools(name, args, conversation);
+        return { status: 200, body: resultBody(id, { content: [{ type: "text", text: JSON.stringify({ untrustedAppData: data }) }], isError: false }) };
+      } catch (error) {
+        return { status: 200, body: resultBody(id, { content: [{ type: "text", text: clip(todoToolError(error), 60_000) }], isError: true }) };
+      }
+    }
     if ((name === "transfer_lookup" || name === "transfer_read") && options.transferTools !== undefined) {
       const result = ownerTurn(conversation, turn, aborted) ? options.transferTools.call(name, args)
         : { text: "Transfer tools require the owner's request in an active turn.", isError: true };
@@ -1658,8 +1668,10 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
           return gateway === undefined || options.mailTriage === undefined ? []
             : [...appDefinitions(gateway).filter(({ name }) => name === "mail_read"), mailTriageDefinition];
         }
-        return definitions(gateway, appWritesFor(conversation, turn, aborted) !== undefined,
-          options.transferTools !== undefined && ownerTurn(conversation, turn, aborted));
+        const owner = ownerTurn(conversation, turn, aborted);
+        const active = providerFor(conversation, turn, aborted) !== undefined;
+        return [...definitions(gateway, appWritesFor(conversation, turn, aborted) !== undefined, options.transferTools !== undefined && owner),
+          ...(options.todoTools !== undefined && active ? todoDefinitions(owner) : [])];
       },
       call: (id, params) => call(id, params, conversation, turn, aborted),
     }),

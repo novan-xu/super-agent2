@@ -261,7 +261,7 @@ async function listed(hub: Hub, scope?: RunningTurn): Promise<string[]> {
   return result.tools.map(({ name }) => name);
 }
 
-it("serves paged mail, Teams chats and channels, and TickTick only to eligible brain turns", async () => {
+it("serves paged mail and Teams only to eligible brain turns", async () => {
   hub = await startTestHub({ config: testConfig(directory), appGateway: gateway });
   await gateway.refresh();
   const brain = attachBrain(hub);
@@ -303,8 +303,6 @@ it("serves paged mail, Teams chats and channels, and TickTick only to eligible b
   expect((await call("teams_chats", { view: "channels", team_id: "team-1" })).text).toContain("channel-1");
   expect((await call("teams_messages", { team_id: "team-1", channel_id: "channel-1" })).text).toContain("channel-message-1");
   expect((await call("teams_search", { query: "test" })).text).toContain("search-hit-1");
-  expect((await call("todo_lookup", {})).text).toContain("project-1");
-  expect((await call("todo_lookup", { query: "test" })).text).toContain("todo-1");
 
   brain.receive({ type: "tool.started", ...scope, call: "private", name: "hub.mail_read", input: "Private query" });
   brain.receive({ type: "tool.output", ...scope, call: "private", delta: second.text });
@@ -368,66 +366,19 @@ it("saves and revises drafts only in an eligible owner turn", async () => {
   expect(requests("mcpServer/tool/call")).toHaveLength(6);
 });
 
-it("keeps TickTick receipts across a restart and limits undo to those receipts and their connection", async () => {
-  hub = await startTestHub({ config: testConfig(directory), appGateway: gateway });
-  await gateway.refresh();
-  let brain = attachBrain(hub);
-  const topic = hub.conversations.create().id;
-  let scope = ownerTurn(hub, brain, topic, "Add two TickTick tasks.");
-  const call = (name: string, args: Record<string, unknown>) => requestBrainTool(hub!, name, { owner_requested: true, ...args }, scope);
-  expect(await listed(hub, scope)).toEqual(expect.arrayContaining(["add_todo", "undo_created"]));
-  expect(await call("add_todo", { title: "Closed list", list: "Old" })).toMatchObject({ isError: true, text: expect.stringContaining("No open TickTick list") });
-  expect(await call("add_todo", { title: "Skipped hour", due: "2026-03-08T02:30" })).toMatchObject({ isError: true, text: expect.stringContaining("does not exist") });
-  const first = await call("add_todo", { title: "Buy cat food", list: "home", due: "2026-11-21", notes: "Grain free" });
-  const firstReceipt = JSON.parse(first.text).untrustedAppData.receipt;
-  expect(JSON.parse(first.text)).toMatchObject({ untrustedAppData: { taskId: "task-1", list: "Home", due: "2026-11-21" } });
-  const second = await call("add_todo", { title: "Call the bank", due: "2026-07-17T09:30", remind: true });
-  const secondReceipt = JSON.parse(second.text).untrustedAppData.receipt;
-  expect(requests("mcpServer/tool/call").filter(({ params }) => params?.["tool"] === appWrites.tickTickCreate).map(({ params }) => params?.["arguments"])).toEqual([
-    { client_timezone: "America/New_York", task: { title: "Buy cat food", projectId: "project-1", dueDate: "2026-11-21T00:00:00.000-05:00", isAllDay: true, timeZone: "America/New_York", content: "Grain free" } },
-    { client_timezone: "America/New_York", task: { title: "Call the bank", dueDate: "2026-07-17T09:30:00.000-04:00", isAllDay: false, timeZone: "America/New_York", reminders: ["TRIGGER;RELATED=END:PT0S"] } },
-  ]);
-  const receipts = hub.database.connection.prepare("SELECT id, topic, connection, task, project FROM ticktick_receipts ORDER BY rowid").all();
-  expect(receipts).toEqual([
-    { id: firstReceipt, topic, connection: "connection", task: "task-1", project: "project-1" },
-    { id: secondReceipt, topic, connection: "connection", task: "task-2", project: "inbox" },
-  ]);
-  brain.receive({ type: "turn.finished", ...scope, outcome: "completed", reason: null });
-  await hub.close();
-  gateway = makeGateway();
-  hub = await startTestHub({ config: testConfig(directory), appGateway: gateway });
-  await gateway.refresh();
-  brain = attachBrain(hub);
-  scope = ownerTurn(hub, brain, topic, "Undo the task you just added.");
-  expect(await call("undo_created", { receipt: "task-1" })).toMatchObject({ isError: true, text: expect.stringContaining("no matching") });
-  appendFileSync(join(directory, "relinked"), "");
-  await gateway.refresh();
-  expect(await call("undo_created", {})).toMatchObject({ isError: true, text: expect.stringContaining("connection is unavailable") });
-  rmSync(join(directory, "relinked"));
-  await gateway.refresh();
-  const duplicate = await Promise.all([call("undo_created", {}), call("undo_created", {})]);
-  expect(duplicate.some(({ text }) => text.includes(secondReceipt))).toBe(true);
-  expect(JSON.parse((await call("undo_created", {})).text)).toMatchObject({ untrustedAppData: { receipt: secondReceipt, alreadyUndone: true } });
-  expect(JSON.parse(readFileSync(join(directory, "tasks"), "utf8"))).toEqual({ "task-1": "project-1" });
-  expect(requests("mcpServer/tool/call").filter(({ params }) => params?.["tool"] === appWrites.tickTickDelete).map(({ params }) => params?.["arguments"])).toEqual([
-    { project_id: "inbox", task_id: "task-2" },
-  ]);
-});
-
-it("records a known task when TickTick omits its list ID without guessing a deletion target", async () => {
+it("serves all built-in to-do tools without making a TickTick call even when the gateway is connected", async () => {
   hub = await startTestHub({ config: testConfig(directory), appGateway: gateway });
   await gateway.refresh();
   const brain = attachBrain(hub);
   const topic = hub.conversations.create().id;
-  const add = ownerTurn(hub, brain, topic, "Add a TickTick task.");
-  const created = await requestBrainTool(hub, "add_todo", { owner_requested: true, title: "No list ID" }, add);
-  const { receipt } = JSON.parse(created.text).untrustedAppData;
-  expect(JSON.parse(created.text)).toMatchObject({ untrustedAppData: { taskId: "task-1", projectId: null, undoAvailable: false } });
-  expect(hub.database.connection.prepare("SELECT id, task, project FROM ticktick_receipts").get()).toEqual({ id: receipt, task: "task-1", project: null });
-  brain.receive({ type: "turn.finished", ...add, outcome: "completed", reason: null });
-  const undo = ownerTurn(hub, brain, topic, "Undo the task.");
-  expect(await requestBrainTool(hub, "undo_created", { owner_requested: true }, undo)).toMatchObject({
-    isError: true, text: expect.stringContaining("no list ID"),
-  });
-  expect(requests("mcpServer/tool/call").map(({ params }) => params?.["tool"])).toEqual([appWrites.tickTickCreate]);
+  const scope = ownerTurn(hub, brain, topic, "Add a to-do, then mark it complete and undo it.");
+  const call = (name: string, args: Record<string, unknown>) => requestBrainTool(hub!, name, args, scope);
+  expect(hub.settings.snapshot().appGateway?.ticktick).toBe(true);
+  expect(await listed(hub, scope)).toEqual(expect.arrayContaining(["add_todo", "todo_lookup", "update_todo", "undo_created"]));
+  const created = await call("add_todo", { owner_requested: true, title: "Buy cat food" });
+  const { taskId, receipt } = JSON.parse(created.text).untrustedAppData;
+  expect((await call("todo_lookup", { query: "cat food" })).text).toContain(taskId);
+  expect(JSON.parse((await call("update_todo", { owner_requested: true, task_id: taskId, done: true })).text)).toMatchObject({ untrustedAppData: { done: true } });
+  expect((await call("undo_created", { owner_requested: true, receipt })).isError).toBe(false);
+  expect(requests("mcpServer/tool/call")).toEqual([]);
 });

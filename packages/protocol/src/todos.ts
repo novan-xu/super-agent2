@@ -37,6 +37,7 @@ export const Todo = TodoFields.extend({
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
   topic: ConversationId.nullable(),
+  sourceTopic: ConversationId.nullable().optional(),
 });
 export type Todo = z.infer<typeof Todo>;
 

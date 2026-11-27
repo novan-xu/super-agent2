@@ -4074,3 +4074,14 @@ Other options were to keep separate hand-written preset styles or attempt to upd
 - **Why:** A Web Push provider may accept a message just before the hub crashes without returning a result.
   Retrying after an uncertain delivery can produce a duplicate, while recording the dispatch first can miss a notification if the hub crashes during sending.
 - **Other options:** Record after dispatch and retry uncertain sends, or keep the reminders entirely in memory.
+
+## 2026-11-27 — Built-in to-do tools (#400)
+
+- **Chosen:** Use the built-in task ID as its creation receipt, and recognize legacy TickTick receipts for an explanation.
+- **Why:** A built-in creation and its undo identity are stored together, and an older receipt can identify where the owner should undo the task.
+- **Other options:** Keep routing legacy undos to TickTick or report all legacy receipts as unknown.
+
+- **Chosen:** Let timed tasks from the brain follow the same reminder settings as tasks entered on the page.
+  The existing `remind` argument requires a due time and uses the installation's notification setting.
+- **Why:** The time and notification controls already apply to all timed to-dos.
+- **Other options:** Apply a separate reminder default to tasks created by the brain.
