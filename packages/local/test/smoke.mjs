@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -73,9 +73,25 @@ function live(url) {
   };
 }
 
+function nodeOnly(folder) {
+  mkdirSync(folder, { recursive: true });
+  const target = join(folder, windows ? "node.exe" : "node");
+  try {
+    linkSync(process.execPath, target);
+  } catch {
+    try { symlinkSync(process.execPath, target); } catch { copyFileSync(process.execPath, target); }
+  }
+  return folder;
+}
+
 function isolatedEnvironment(paths, home) {
+  const root = dirname(home);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(SystemRoot|ComSpec|TEMP|TMP|LOCALAPPDATA|USERPROFILE|HOME|PATHEXT|APPDATA)$/i.test(name)));
-  env.PATH = [...paths, dirname(process.execPath), ...(windows ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"])].join(delimiter);
+  env.CODEX_HOME = join(root, "codex-home");
+  env.CLAUDE_CONFIG_DIR = join(root, "claude-config");
+  mkdirSync(env.CODEX_HOME, { recursive: true });
+  mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true });
+  env.PATH = [...paths, nodeOnly(join(root, "node")), ...(windows ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"])].join(delimiter);
   env.SUPERAGENT2_HOME = home;
   return env;
 }
