@@ -1076,8 +1076,8 @@ Changed by this design:
   今天 shows due and overdue open to-dos, 计划 groups future items by day, and 收件箱 holds open items without a list.
   已完成 shows the latest 100 completions and supports reopening them.
   The date and optional time use the installation's configured time zone.
-  交给大脑 creates a new 日常 topic with the to-do as its first owner message and links it in the same database transaction.
-  Later clicks open the linked topic, and the to-do stays open until the owner completes it.
+  交给大脑 creates a new 日常 topic with the to-do as its first owner message, links it, and completes the to-do in the same database transaction.
+  Reopening the to-do from 已完成 keeps the link, and later clicks open the linked topic.
   With web push configured, 待办提醒 in 设置 controls to-do notifications for subscribed devices.
   Timed items use their due time, and one daily push summarizes due and overdue all-day items at the configured time, initially 09:00.
   A timed push links to its task, and the daily push opens 今天.

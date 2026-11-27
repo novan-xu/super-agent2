@@ -35,6 +35,46 @@ describe("openDatabase", () => {
     }
   });
 
+  it("completes existing open hand-offs once during upgrade", () => {
+    const clock = new TestClock();
+    const prior = openDatabase({ dataDir, clock, migrations: migrations.filter(({ version }) => version <= 80) });
+    const earlier = clock.now();
+    const oldCompletion = earlier - 1_000;
+    try {
+      prior.connection.prepare("INSERT INTO conversations (id, title, state, created_at, updated_at) VALUES ('topic', 'Daily', 'idle', ?, ?)").run(earlier, earlier);
+      const add = prior.connection.prepare(`INSERT INTO todos (id, title, notes, position, created_at, updated_at, topic, source_topic, done_at, deleted)
+        VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?)`);
+      add.run("linked", "Handed off", earlier, earlier, "topic", null, null, 0);
+      add.run("already-done", "Already completed", earlier, earlier, "topic", null, oldCompletion, 0);
+      add.run("deleted", "Deleted", earlier, earlier, "topic", null, null, 1);
+      add.run("source-only", "Created by brain", earlier, earlier, null, "topic", null, 0);
+    } finally {
+      prior.close();
+    }
+
+    clock.advance(1_000);
+    const upgraded = openDatabase({ dataDir, clock });
+    try {
+      const rows = upgraded.connection.prepare("SELECT id, topic, source_topic, done_at, updated_at FROM todos ORDER BY id").all();
+      expect(rows).toEqual([
+        { id: "already-done", topic: "topic", source_topic: null, done_at: oldCompletion, updated_at: earlier },
+        { id: "deleted", topic: "topic", source_topic: null, done_at: null, updated_at: earlier },
+        { id: "linked", topic: "topic", source_topic: null, done_at: clock.now(), updated_at: clock.now() },
+        { id: "source-only", topic: null, source_topic: "topic", done_at: null, updated_at: earlier },
+      ]);
+      upgraded.connection.exec("UPDATE todos SET done_at = NULL WHERE id = 'linked'");
+    } finally {
+      upgraded.close();
+    }
+
+    const restarted = openDatabase({ dataDir, clock });
+    try {
+      expect(restarted.connection.prepare("SELECT done_at, topic FROM todos WHERE id = 'linked'").get()).toEqual({ done_at: null, topic: "topic" });
+    } finally {
+      restarted.close();
+    }
+  });
+
   it("keeps its state across a restart", () => {
     const clock = new TestClock();
     const first = openDatabase({ dataDir, clock });
