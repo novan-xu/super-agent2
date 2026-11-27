@@ -602,7 +602,7 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
 .conversation-chain-identity { flex: 1; overflow: hidden; }
 .conversation-chain-identity a, .conversation-chain-engine, .conversation-chain-row button, .conversation-chain-state { flex: none; }
 .conversation-chain-title, .conversation-chain-choice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conversation-chain-title { flex: 1 1 auto; min-width: 0; }
+.conversation-chain-title { flex: 1 1 0; min-width: 0; }
 .conversation-chain-choice { flex: 0 1 auto; min-width: 0; color: var(--muted); }
 .conversation-chain-choice::before, .conversation-chain-engine::before { content: "· "; }
 .conversation-chain-engine { color: var(--muted); }
