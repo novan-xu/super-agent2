@@ -160,6 +160,18 @@ const views = {
     targets: settingsMenu,
     desktop: { "machine load settings": ".load-fields input" },
   },
+  repositories: {
+    route: { view: "settings", section: "repositories" },
+    ready: ".set-body .rows",
+    prepare: async (page) => {
+      await page.locator(".repository-tabs, .repository-group-toggle").first().waitFor();
+      const oldPinned = page.locator(".repository-tabs button:first-child");
+      if (await oldPinned.count()) await oldPinned.evaluate((button: HTMLButtonElement) => button.click());
+    },
+    targets: { "repository rows": ".set-body .rows" },
+    phone: { "settings back link": ".set-back" },
+    desktop: settingsMenu,
+  },
   appearance: {
     route: { view: "settings", section: "appearance" },
     ready: ".accents",
