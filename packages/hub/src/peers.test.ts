@@ -5,7 +5,7 @@ import { createServer, request } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ServerMessage, peerLinkPath, peerTokenHeader, protocolVersion, runnerTokenHeader, startingEngineTable } from "@super-agent2/protocol";
+import { type HubToBrain, ServerMessage, peerLinkPath, peerTokenHeader, protocolVersion, runnerTokenHeader, startingEngineTable } from "@super-agent2/protocol";
 import { expect, it } from "vitest";
 import WebSocket from "ws";
 import { assertionHeader } from "./access.js";
@@ -15,6 +15,7 @@ import type { Hub } from "./hub.js";
 import { connectToPeer } from "./peer-link.js";
 import { createPeerStore } from "./peer-store.js";
 import { assertion, keySet, personClaims, serviceClaims, signingKey, staticKeySource, TestClock, testConfig } from "./testing/access.js";
+import { callBrainTool } from "./testing/brain-tools.js";
 import { fakeTarget, testCredentials } from "./testing/commands.js";
 import { startTestHub } from "./testing/http.js";
 
@@ -43,8 +44,9 @@ function upgradeStatus(url: string, headers: Record<string, string>): Promise<nu
 async function fakeEdge(target: () => Hub, signed: string) {
   const server = createServer();
   const connections = new Set<Socket>();
+  let accepting = true;
   server.on("upgrade", (incoming, socket, head) => {
-    if (incoming.url !== peerLinkPath || incoming.headers["cf-access-client-id"] !== clientId
+    if (!accepting || incoming.url !== peerLinkPath || incoming.headers["cf-access-client-id"] !== clientId
       || incoming.headers["cf-access-client-secret"] !== clientSecret) {
       socket.destroy();
       return;
@@ -69,7 +71,11 @@ async function fakeEdge(target: () => Hub, signed: string) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const cut = () => { for (const socket of connections) socket.destroy(); };
-  return { url: urlOf(server.address() as AddressInfo), cut, close: () => { cut(); server.close(); } };
+  return {
+    url: urlOf(server.address() as AddressInfo), cut,
+    setOnline: (online: boolean) => { accepting = online; if (!online) cut(); },
+    close: () => { cut(); server.close(); },
+  };
 }
 
 it("requires a dedicated Access audience and all four local settings", () => {
@@ -250,3 +256,148 @@ it("relays owner actions, live updates and streamed files without retaining lapt
     rmSync(directory, { recursive: true, force: true });
   }
 }, 20_000);
+
+it("exchanges only approved general memories and principles with durable receipts", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hub-peer-shared-"));
+  const nasDir = join(directory, "nas");
+  const localDir = join(directory, "local");
+  const clock = new TestClock();
+  const key = await signingKey("peer-sharing-test");
+  const signedOwner = await assertion({ key, clock, claims: personClaims() });
+  const signedPeer = await assertion({ key, clock, claims: { ...serviceClaims(), aud: [peerAudience], common_name: clientId } });
+  const options = { clock, targets: [fakeTarget("hub")], credentials: testCredentials, environment: {} };
+  const nas = await startTestHub({
+    ...options, config: { ...testConfig(nasDir), accessPeerAudience: peerAudience },
+    keySource: staticKeySource(keySet(key)),
+  });
+  const edge = await fakeEdge(() => nas, signedPeer);
+  edge.setOnline(false);
+  const localToken = createPeerStore(nas.database).add({ name: "work-laptop", clientId, accessTokenId: "sharing-token" });
+  const startLocal = () => startTestHub({
+    ...options, config: {
+      dataDir: localDir, host: "127.0.0.1", port: 0, ownerEmail: "owner@local.invalid", projectFolders: [], brainTokenFile: join(localDir, "brain.token"),
+      outboundPeer: { hub: edge.url, clientId, clientSecret, token: localToken },
+    },
+  });
+  let local = await startLocal();
+  let localClosed = false;
+  const settle = (condition: () => unknown) => expect.poll(condition, { timeout: 9_000, interval: 70 });
+  const queued = (hub: Hub) => hub.database.connection.prepare("SELECT target, item, id, payload FROM peer_outbox ORDER BY seq").all();
+  const localWords = "你希望先列出已验证的结果。";
+  const nasWords = "你希望发版说明用短句。";
+  const privateWords = "公司专用系统编号 ABCDEF 一律留在本机。";
+  const declinedWords = "你希望保留一条被拒过的偏好。";
+  const removedWords = "你希望保留一条已删除的偏好。";
+  const discardedWords = "你希望这条离线后撤回的建议。";
+  const principle = "Keep retryable operations idempotent at their public entry point.";
+  const memoryApi = (hub: Hub, path: string, body: object, method = "POST") => {
+    const origin = urlOf(hub.address);
+    return fetch(origin + "/api/memories" + path, {
+      method, headers: { origin, "content-type": "application/json", ...(hub === nas ? { [assertionHeader]: signedOwner } : {}) },
+      body: JSON.stringify(body),
+    });
+  };
+
+  const nasBrain: HubToBrain[] = [];
+  const brain = nas.conversations.attach({ send: (message) => nasBrain.push(message), close: () => undefined });
+  brain.receive({ type: "hello", protocol: protocolVersion, running: [] });
+  try {
+    expect(local.memories.snapshot().sharing).toBe(true);
+    expect(nas.memories.snapshot().sharing).toBe(true);
+    const legacy = nas.memories.add(nasWords);
+    expect(legacy.ok).toBe(true);
+    if (!legacy.ok) throw new Error("Could not seed legacy memory");
+    const legacyId = legacy.list.memories[0]!.id;
+    expect(queued(nas)).toEqual([]);
+    expect((await memoryApi(nas, `/${legacyId}`, { text: nasWords, scope: "general" }, "PUT")).status).toBe(200);
+    expect(local.memories.add(privateWords).ok).toBe(true);
+    expect(local.memories.add(`你保存的密钥是 ${localToken}`, "general").ok).toBe(false);
+    expect((await callBrainTool(local, "remember", { text: localWords, scope: "general" })).isError).toBe(false);
+    const draft = local.memories.suggestions().find(({ text }) => text === localWords)!;
+    expect(draft.scope).toBe("general");
+    expect(queued(local)).toEqual([]);
+    expect((await memoryApi(local, `/suggestions/${draft.id}/confirm`, { scope: "general" })).status).toBe(200);
+    const firstDelivery = queued(local)[0]!;
+    const discarded = local.memories.add(discardedWords, "general");
+    if (!discarded.ok) throw new Error("Could not seed withdrawn memory");
+    const discardedId = discarded.list.memories.find(({ text }) => text === discardedWords)!.id;
+    expect(local.memories.edit(discardedId, privateWords, "local").ok).toBe(true);
+    expect(JSON.stringify(queued(local))).not.toContain(privateWords);
+    expect(JSON.stringify(queued(local))).not.toContain(discardedWords);
+
+    const declined = nas.memories.remember({ text: declinedWords, conversation: null });
+    if (!declined.ok) throw new Error("Could not seed declined memory");
+    nas.memories.decline(declined.suggestion.id);
+    const removed = nas.memories.add(removedWords);
+    if (!removed.ok) throw new Error("Could not seed deleted memory");
+    nas.memories.remove(removed.list.memories.find(({ text }) => text === removedWords)!.id);
+    for (const words of [declinedWords, removedWords, nasWords]) expect(local.memories.add(words, "general").ok).toBe(true);
+
+    expect((await callBrainTool(local, "propose_principle", { text: principle })).isError).toBe(false);
+    const proposal = local.memories.suggestions().find(({ kind }) => kind === "principle")!;
+    expect(local.memories.state().pending).not.toContainEqual(expect.objectContaining({ id: proposal.id }));
+    expect(queued(local).some(({ payload }) => String(payload).includes(principle))).toBe(false);
+    expect((await memoryApi(local, `/suggestions/${proposal.id}/confirm`, {})).status).toBe(200);
+    expect(nasBrain.some((message) => message.type === "input" && message.input.text.includes(principle))).toBe(false);
+    expect((await memoryApi(nas, "/suggestions/1/confirm", {}, "POST")).status).toBe(404);
+
+    await local.close();
+    localClosed = true;
+    edge.setOnline(true);
+    local = await startLocal();
+    localClosed = false;
+
+    await settle(() => queued(local).length + queued(nas).length).toBe(0);
+    const fromLaptop = nas.memories.suggestions().find(({ text }) => text === localWords)!;
+    const fromNas = local.memories.suggestions().find(({ text }) => text === nasWords);
+    expect(fromLaptop).toMatchObject({ kind: "remember", scope: "general", origin: "work-laptop" });
+    expect(fromNas).toBeUndefined();
+    expect(nas.memories.suggestions().map(({ text }) => text)).toEqual([localWords]);
+    expect(nas.memories.list().some(({ text }) => text === localWords)).toBe(false);
+    expect((await memoryApi(nas, `/suggestions/${fromLaptop.id}/confirm`, {})).status).toBe(200);
+    expect(nas.memories.list().find(({ text }) => text === localWords)?.origin).toBe("work-laptop");
+    expect(queued(nas)).toEqual([]);
+
+    const nasNew = "你希望每次复盘都列出可复验的证据。";
+    expect((await memoryApi(nas, "", { text: nasNew, scope: "general" })).status).toBe(200);
+    await settle(() => local.memories.suggestions().find(({ text }) => text === nasNew)?.origin).toBe("NAS");
+    const nasSuggestion = local.memories.suggestions().find(({ text }) => text === nasNew)!;
+    expect(local.memories.list().some(({ text }) => text === nasNew)).toBe(false);
+    expect((await memoryApi(local, `/suggestions/${nasSuggestion.id}/confirm`, {})).status).toBe(200);
+    expect(queued(local)).toEqual([]);
+
+    const notice = nasBrain.find((message) => message.type === "input" && message.input.text.includes(principle));
+    expect(notice).toMatchObject({ type: "input", input: { source: "hub", text: expect.stringContaining("docs/development-standard.md") } });
+    if (notice?.type !== "input") throw new Error("The NAS brain did not receive the proposal");
+    expect(nas.conversations.get(notice.conversation)?.repository).toBe("novan-xu/super-agent2");
+    expect(nas.conversations.entries(notice.conversation)).toContainEqual(expect.objectContaining({ kind: "notice", text: expect.stringContaining(principle) }));
+
+    local.database.connection.prepare("INSERT INTO peer_outbox (target, item, id, payload) VALUES (?, ?, ?, ?)")
+      .run(firstDelivery.target!, firstDelivery.item!, firstDelivery.id!, firstDelivery.payload!);
+    await settle(() => queued(local).length).toBe(0);
+    expect(nas.memories.suggestions()).toEqual([]);
+    expect(nas.memories.list().filter(({ text }) => text === localWords)).toHaveLength(1);
+
+    const editedWords = "你希望先列出已验证的结果和对应证据。";
+    const localId = local.memories.list().find(({ text }) => text === localWords)!.id;
+    const remoteId = nas.memories.list().find(({ text }) => text === localWords)!.id;
+    expect((await memoryApi(local, `/${localId}`, { text: editedWords, scope: "general" }, "PUT")).status).toBe(200);
+    await settle(() => nas.memories.suggestions()).toContainEqual(expect.objectContaining({ text: editedWords, replaces: [remoteId] }));
+    const replacement = nas.memories.suggestions().find(({ text }) => text === editedWords)!;
+    expect((await memoryApi(nas, `/suggestions/${replacement.id}/confirm`, {})).status).toBe(200);
+    expect(nas.memories.list().some(({ id }) => id === remoteId)).toBe(false);
+
+    expect((await memoryApi(local, `/${localId}`, {}, "DELETE")).status).toBe(200);
+    await settle(() => nas.memories.suggestions()).toContainEqual(expect.objectContaining({ kind: "forget", text: editedWords, origin: "work-laptop" }));
+    expect(nas.memories.list().some(({ text }) => text === editedWords)).toBe(true);
+    const removal = nas.memories.suggestions().find(({ kind }) => kind === "forget")!;
+    expect((await memoryApi(nas, `/suggestions/${removal.id}/confirm`, {})).status).toBe(200);
+    expect(nas.memories.list().some(({ text }) => text === editedWords)).toBe(false);
+    expect(queued(nas)).toEqual([]);
+  } finally {
+    edge.close();
+    if (!localClosed) await local.close();
+    await nas.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 35_000);

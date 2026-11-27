@@ -1,3 +1,4 @@
+import type { MemoryScope } from "@super-agent2/protocol";
 import {
   type ReviewedStreamDestination,
   type StreamPreviewRequest,
@@ -230,20 +231,20 @@ export class PageController {
     return true;
   }
 
-  addMemory(text: string): Promise<boolean> {
-    return this.memoryCall(() => this.options.api.addMemory(text));
+  addMemory(text: string, scope?: MemoryScope): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.addMemory(text, scope));
   }
 
-  editMemory(id: number, text: string): Promise<boolean> {
-    return this.memoryCall(() => this.options.api.editMemory(id, text));
+  editMemory(id: number, text: string, scope?: MemoryScope): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.editMemory(id, text, scope));
   }
 
   deleteMemory(id: number): Promise<boolean> {
     return this.memoryCall(() => this.options.api.deleteMemory(id));
   }
 
-  decideSuggestion(id: number, decision: "confirm" | "decline"): Promise<boolean> {
-    return this.memoryCall(() => this.options.api.decideSuggestion(id, decision));
+  decideSuggestion(id: number, decision: "confirm" | "decline", scope?: MemoryScope): Promise<boolean> {
+    return this.memoryCall(() => this.options.api.decideSuggestion(id, decision, scope));
   }
 
   async refreshAllowance(): Promise<void> {

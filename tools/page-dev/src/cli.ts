@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, request } from "node:http";
 import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { setTimeout } from "node:timers/promises";
 import { createBrain, createHubLink, type ProgramAdapter, prepareWorkspace, programAdapter, startingModels, systemClock } from "@super-agent2/brain";
 import { createPeerStore, defaultPageDir, environmentCredentials, fakeForge, fakeGitHubBase, fakeWoodpeckerServer, generateVapidKeys, type Hub, localTarget, startHub, type VapidKeys } from "@super-agent2/hub";
 import { type AccessKeySet, brainToolsPath, peerLinkPath, type Provider, startingBrainOrder } from "@super-agent2/protocol";
@@ -374,6 +375,16 @@ if (values["remote-fixture"]) {
 
 if (values["layout-fixture"]) {
   const fixture = await seedLayout(hub, publicUrl, defaultPageDir, !minimalIntegrations);
+  if (local !== undefined) {
+    hub.memories.add("你希望发布说明先写用户能看到的变化，再补验证结果。", "general");
+    local.memories.add("你希望复盘把已验证的事实和待验证的假设分开。", "general");
+    hub.memories.remember({ text: "你希望每个修复注明复现条件。", conversation: null, scope: "general" });
+    const deadline = Date.now() + 8_000;
+    while (!hub.memories.suggestions().some(({ origin }) => origin === peerName)) {
+      if (Date.now() >= deadline) throw new Error("The layout memory did not arrive from the remote fixture");
+      await setTimeout(100);
+    }
+  }
   process.send?.({ url: publicUrl, fixture });
 }
 

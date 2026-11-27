@@ -1,3 +1,5 @@
+import { createPeerQueue, nasPeer, type PeerExchange } from "./peer-exchange.js";
+import { receivePrinciple } from "./peer-principles.js";
 import { connectToPeer } from "./peer-link.js";
 import { createPeerStore } from "./peer-store.js";
 import { createOpenAICosts } from "./openai-costs.js";
@@ -170,6 +172,11 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const verifyInbox = accessVerifier?.(config.accessInboxAudience);
   const verifyMcp = accessVerifier?.(config.accessMcpAudience);
   const verifyPeer = accessVerifier?.(config.accessPeerAudience);
+  const peerStore = verifyPeer === undefined ? undefined : createPeerStore(database);
+  const nas = config.outboundPeer === undefined ? undefined : nasPeer(config.outboundPeer.hub, config.outboundPeer.clientId);
+  const peerQueue = nas !== undefined ? createPeerQueue(database, () => [nas.id])
+    : peerStore === undefined ? undefined : createPeerQueue(database, () => peerStore.list().map(({ clientId }) => clientId));
+  let peerExchange: PeerExchange | undefined;
   let closePeer: (() => void) | undefined;
   let commands: CommandService;
   let conversations: ConversationService;
@@ -252,7 +259,17 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     const brainSecret = ensureBrainToken(config.brainTokenFile);
     const brainToken = brainTokenCheck(brainSecret);
     const vapidKey = config.vapid?.privateKey;
-    memories = createMemoryService({ database, clock, secrets: () => secretValues(environment, [...extraMcp.brain, ...extraMcp.workers].map((server) => server.token).concat(vapidKey === undefined ? [brainSecret] : [brainSecret, vapidKey])) });
+    const secrets = () => secretValues(environment, [
+      ...extraMcp.brain.map((server) => server.token), ...extraMcp.workers.map((server) => server.token),
+      brainSecret, ...(vapidKey === undefined ? [] : [vapidKey]),
+      ...(config.outboundPeer === undefined ? [] : [config.outboundPeer.token, config.outboundPeer.clientSecret]),
+    ]);
+    memories = createMemoryService({ database, clock, secrets, ...(peerQueue === undefined ? {} : { peerQueue, proposePrinciples: nas !== undefined }) });
+    peerExchange = peerQueue === undefined ? undefined : {
+      queue: peerQueue,
+      receive: (source, payload) => payload.kind !== "principle" ? memories.receivePeer(source, payload)
+        : peerStore === undefined ? undefined : receivePrinciple({ database, clock, conversations, source, proposal: payload.text, secrets: secrets() }),
+    };
     lock =
       options.gate === undefined
         ? createConfirmationLock({
@@ -460,7 +477,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(verifyRunner === undefined ? {} : { verifyRunner }),
       ...(verifyInbox === undefined ? {} : { verifyInbox }),
       ...(verifyMcp === undefined ? {} : { verifyMcp }),
-      ...(verifyPeer === undefined ? {} : { peer: { verify: verifyPeer, store: createPeerStore(database) } }),
+      ...(verifyPeer === undefined || peerStore === undefined ? {} : { peer: { verify: verifyPeer, store: peerStore, ...(peerExchange === undefined ? {} : { exchange: peerExchange }) } }),
       ...(loopback ? { loopback } : {}),
       ...(verifyInbox === undefined && verifyMcp === undefined ? {} : { inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
       admit: ownerOnly(ownerEmail),
@@ -550,7 +567,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     }
     work?.resume();
     address = await server.listen(config.port, host);
-    if (config.outboundPeer !== undefined) closePeer = connectToPeer(config.outboundPeer, address);
+    if (config.outboundPeer !== undefined) closePeer = connectToPeer(config.outboundPeer, address, undefined, peerExchange);
     let workRequestAddress: AddressInfo | undefined;
     if (config.workRequests !== undefined) {
       const { port, directory } = config.workRequests;

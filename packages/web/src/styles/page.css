@@ -611,3 +611,6 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
 .conversation-chain-details .chain-missing { margin: 0; padding-left: var(--space-4); }
 .conversation-chain-follower { min-width: 0; padding-left: var(--space-3); }
 .conversation-chains > button { justify-self: start; }
+
+.memory-sharing { display: flex; align-items: center; gap: var(--space-2); min-height: 32px; width: fit-content; color: var(--fg-2); font-size: var(--text-sm); }
+.memory-sharing input { accent-color: var(--accent); }

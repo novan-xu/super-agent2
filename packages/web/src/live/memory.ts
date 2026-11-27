@@ -2,6 +2,7 @@ import { isBlank, type Memory, type MemoryList, type MemorySuggestion } from "@s
 
 export interface MemoryState {
   readonly loaded: boolean;
+  readonly sharing?: true;
   readonly memories: readonly Memory[];
   readonly suggestions: readonly MemorySuggestion[];
 }
@@ -17,7 +18,7 @@ function newestSuggestionFirst(a: MemorySuggestion, b: MemorySuggestion): number
 }
 
 export function receiveMemories(list: MemoryList): MemoryState {
-  return { loaded: true, memories: [...list.memories].sort(newestFirst), suggestions: [...list.suggestions].sort(newestSuggestionFirst) };
+  return { loaded: true, ...(list.sharing ? { sharing: true } : {}), memories: [...list.memories].sort(newestFirst), suggestions: [...list.suggestions].sort(newestSuggestionFirst) };
 }
 
 export function canSave(draft: string, original: string): boolean {

@@ -119,8 +119,8 @@ export function createMailTriage(options: MailTriageOptions) {
   const writeNotice = (notice: string) => {
     const entry = randomUUID();
     const topic = mailTopic();
-    conversations.writeScheduleNotice(entry, topic, notice, undefined, topicTitle);
-    return () => conversations.publishScheduleNotice(entry);
+    conversations.writePromptNotice(entry, topic, notice, undefined, topicTitle);
+    return () => conversations.publishPromptNotice(entry);
   };
 
   const checkFinished = () => {

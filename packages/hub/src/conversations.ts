@@ -120,8 +120,8 @@ export interface ConversationService {
   writeConfirmation(conversation: string, turn: string, message: string): string;
   tidyTopics(prompt: string): void;
   tidyNotice(notice: string): void;
-  writeScheduleNotice(id: string, topic: string, notice: string, prompt?: string, source?: string): void;
-  publishScheduleNotice(id: string): void;
+  writePromptNotice(id: string, topic: string, notice: string, prompt?: string, source?: string): void;
+  publishPromptNotice(id: string): void;
   writeMailReview(id: string, topic: string, prompt: string): void;
   deliverMailReview(id: string): void;
   mailReviewOf(conversation: string, turn: string): string | undefined;
@@ -1526,7 +1526,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     tidyNotice: (notice) => {
       addEntry({ conversation: noticeTarget(null), kind: "notice", turn: null, body: { text: notice } });
     },
-    writeScheduleNotice: (id, conversation, notice, prompt, source) => {
+    writePromptNotice: (id, conversation, notice, prompt, source) => {
       writeEntry({ id, conversation, kind: "notice", turn: null, body: { text: notice, source }, ...(prompt === undefined ? {} : { prompt }) });
     },
     writeMailReview: (id, conversation, prompt) => {
@@ -1539,7 +1539,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     mailReviewOf,
     mailReviewReady: () => link?.ready === true && link.mailReview && (brainProviders?.providers.some(({ provider, available, until }) =>
       provider !== "deepseek" && (available || (until !== null && until <= clock.now()))) ?? false),
-    publishScheduleNotice: (id) => {
+    publishPromptNotice: (id) => {
       const row = EntryRow.optional().parse(selectEntry.get(id));
       if (row === undefined) return;
       updateConversation(row.conversation_id, { topic_state: "active" });

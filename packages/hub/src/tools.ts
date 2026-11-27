@@ -975,7 +975,7 @@ export function createToolServer(options: ToolServerOptions): ToolServer {
       ...(options.tickets?.chains === undefined || options.tickets.defaults === undefined ? [] : defaultsDefinitions()),
       ...(options.tickets?.verification === undefined ? [] : verificationDefinitions()),
       ...(options.tickets?.loop === undefined ? [] : loopDefinitions()),
-      ...(options.memories === undefined ? [] : memoryDefinitions()),
+      ...(options.memories === undefined ? [] : memoryDefinitions(options.memories)),
       { name: "ask_owner", title: "Ask the owner", description: "Show all questions of a choice together. The owner's answer arrives later in this topic.", inputSchema: z.toJSONSchema(z.object({ questions: Questions }), { io: "input" }) },
       ...topicDefinitions(),
       ...(gateway === undefined ? [] : appDefinitions(gateway, appWrites)),

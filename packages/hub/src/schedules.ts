@@ -267,12 +267,12 @@ export function createSchedules({ database, clock, conversations, tickets, chain
           const key = started !== undefined && started > 0 ? "schedule.notice.incomplete"
             : state === "completed" ? "schedule.notice.completed"
               : state === "cancelled" ? "schedule.notice.cancelled" : "schedule.notice.failed";
-          conversations.writeScheduleNotice(notice, run.topic, text(key));
+          conversations.writePromptNotice(notice, run.topic, text(key));
         }
         finish.run(state, notice ?? run.reply, run.id);
         completeOnce.run(run.schedule, run.revision);
       });
-      if (notice !== undefined) conversations.publishScheduleNotice(notice);
+      if (notice !== undefined) conversations.publishPromptNotice(notice);
       tickets.announce(pendingVisible.all(run.id).map((row) => z.number().parse(row.id)));
     }
   };
@@ -300,11 +300,11 @@ export function createSchedules({ database, clock, conversations, tickets, chain
         JSON.stringify(batch),
       ].join("\n\n");
       transaction(() => {
-        conversations.writeScheduleNotice(id, topic.id, notice, prompt, source);
+        conversations.writePromptNotice(id, topic.id, notice, prompt, source);
         insertRun.run(id, row.id, row.revision, row.due_at, id, "pending");
         clearTrigger.run(row.id);
       });
-      conversations.publishScheduleNotice(id);
+      conversations.publishPromptNotice(id);
     }
     const now = clock.now();
     for (const raw of due.all(now)) {
@@ -317,12 +317,12 @@ export function createSchedules({ database, clock, conversations, tickets, chain
       const id = randomUUID();
       const prompt = skip ? undefined : runPrompt(id, fields);
       transaction(() => {
-        conversations.writeScheduleNotice(id, topic.id, text(skip ? "schedule.notice.skipped" : "schedule.notice.started", { title: fields.title }), prompt);
+        conversations.writePromptNotice(id, topic.id, text(skip ? "schedule.notice.skipped" : "schedule.notice.started", { title: fields.title }), prompt);
         insertRun.run(id, row.id, row.revision, row.next_at, id, skip ? "skipped" : "pending");
         advance.run("at" in recurrence ? null : nextOccurrence(recurrence, now, timeZone), row.id);
         if (skip) completeOnce.run(row.id, row.revision);
       });
-      conversations.publishScheduleNotice(id);
+      conversations.publishPromptNotice(id);
     }
   };
 
@@ -398,7 +398,7 @@ export function createSchedules({ database, clock, conversations, tickets, chain
         const saved = save(fields, topic, proposal.target ?? undefined, proposal.target_revision ?? undefined);
         const destination = conversations.get(saved.topic)?.id ?? saved.topic;
         const message = proposal.target === null ? "schedule.notice.confirmed" : "schedule.notice.revised";
-        conversations.writeScheduleNotice(entry, destination, text(message, { title: fields.title }));
+        conversations.writePromptNotice(entry, destination, text(message, { title: fields.title }));
         deleteProposal.run(id);
       });
       conversations.announceEntry(entry);

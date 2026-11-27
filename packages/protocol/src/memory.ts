@@ -7,17 +7,25 @@ export const MemoryId = z.number().int().positive();
 
 export const SuggestionId = z.number().int().positive();
 
+export const MemoryScope = z.enum(["local", "general"]);
+export type MemoryScope = z.infer<typeof MemoryScope>;
+
+export const sharedMemoryLimit = 4_000;
+export const principleLimit = 1_600;
+
 export const Memory = z.object({
   id: MemoryId,
   text: z.string(),
   by: MemoryAuthor,
+  scope: MemoryScope.optional(),
+  origin: z.string().optional(),
   revision: z.number().int().positive(),
   createdAt: z.number().int().nonnegative(),
   changedAt: z.number().int().nonnegative(),
 });
 export type Memory = z.infer<typeof Memory>;
 
-export const SuggestionKind = z.enum(["remember", "forget"]);
+export const SuggestionKind = z.enum(["remember", "forget", "principle"]);
 export type SuggestionKind = z.infer<typeof SuggestionKind>;
 
 export const MemorySuggestion = z.object({
@@ -27,12 +35,15 @@ export const MemorySuggestion = z.object({
   memory: MemoryId.nullable(),
   replaces: z.array(MemoryId),
   createdAt: z.number().int().nonnegative(),
+  scope: MemoryScope.optional(),
+  origin: z.string().optional(),
 });
 export type MemorySuggestion = z.infer<typeof MemorySuggestion>;
 
 export const MemoryList = z.object({
   memories: z.array(Memory),
   suggestions: z.array(MemorySuggestion),
+  sharing: z.literal(true).optional(),
 });
 export type MemoryList = z.infer<typeof MemoryList>;
 
@@ -40,11 +51,13 @@ export const MemoriesUpdate = z.object({
   type: z.literal("memories"),
   memories: z.array(Memory),
   suggestions: z.array(MemorySuggestion),
+  sharing: z.literal(true).optional(),
 });
 export type MemoriesUpdate = z.infer<typeof MemoriesUpdate>;
 
 export const MemoryText = z.object({
   text: z.string(),
+  scope: MemoryScope.optional(),
 });
 export type MemoryText = z.infer<typeof MemoryText>;
 
