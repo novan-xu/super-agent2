@@ -4002,3 +4002,11 @@ The previous dot was red.
 The rounded desktop icon tile now fills 98% of the canvas instead of about 83%, retaining a small transparent margin and the same glyph proportions.
 Windows displays the icon as supplied, so the larger tile better matches neighbouring app icons while preserving the rounded corners and grey edge.
 The separate full-bleed maskable and Apple icons remain unchanged.
+
+## 2026-11-26 — Custom accent colours (#375)
+
+The browser stores either a preset name or a six-digit hexadecimal colour, with orange as the default and the existing amber choice retained.
+All accents use the same contrast-based derivation for text and focus colours, and the logo and favicon follow the chosen colour.
+This keeps custom colours readable in both themes and preserves explicit choices from earlier versions.
+Installed icons remain orange because operating systems capture static icons at installation; replacing them dynamically would not reliably update existing installations.
+Other options were to keep separate hand-written preset styles or attempt to update installed icons dynamically.
