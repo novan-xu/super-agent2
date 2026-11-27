@@ -49,9 +49,16 @@ it("confirms abandoning the pending conversation card", async () => {
   const entry = { kind: "chains" as const, id: "e", conversation: "c", seq: 1, at: 1, turn: "t", chains: [{ ticket: 1, fingerprint: card.fingerprint }] };
   await act(async () => root.render(<ConversationChains entry={entry} tickets={[]} waiting={{ ...initialWaiting, known: true, cards: [card] }} start={() => undefined} stop={stop} />));
   const abandon = () => [...host.querySelectorAll("button")].find((button) => button.textContent === "放弃")!;
+  const row = host.querySelector(".conversation-chain-row")!;
+  expect(row.contains(abandon())).toBe(true);
+  expect(row.textContent).toContain("开始");
   await act(async () => abandon().click());
   expect(stop).not.toHaveBeenCalled();
-  expect(host.textContent).toContain("取消");
+  expect(row.textContent).toContain("取消");
+  expect(row.textContent).not.toContain("开始");
+  await act(async () => [...row.querySelectorAll("button")].find((button) => button.textContent === "取消")!.click());
+  expect(row.textContent).toContain("开始");
+  await act(async () => abandon().click());
   await act(async () => abandon().click());
   expect(stop).toHaveBeenCalledWith(1);
   await act(async () => root.unmount());
