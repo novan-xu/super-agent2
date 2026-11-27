@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 import { peerTokenHeader, type PeerStatus } from "@super-agent2/protocol";
 import { createWebSocketStream, WebSocketServer } from "ws";
 import { assertionHeader, type AccessVerifier } from "./access.js";
+import { exchangeWithPeer, type PeerExchange } from "./peer-exchange.js";
 import { isolatedPreviewPolicy } from "./html-render.js";
 import type { PeerStore } from "./peer-store.js";
 import {
@@ -29,6 +30,7 @@ function failUpgrade(socket: Duplex, status: 403 | 404 | 502 | 503): void {
 export interface PeerRelayOptions {
   readonly verify: AccessVerifier;
   readonly store: PeerStore;
+  readonly exchange?: PeerExchange;
 }
 
 export class PeerRelay {
@@ -94,6 +96,7 @@ export class PeerRelay {
         const prior = this.links.get(peer.name);
         this.links.set(peer.name, { session, clientId: peer.clientId });
         prior?.session.destroy();
+        if (this.options.exchange !== undefined) exchangeWithPeer(session, this.options.exchange, { id: peer.clientId, name: peer.name });
         this.refresh();
       });
       client.once("close", () => session.destroy());

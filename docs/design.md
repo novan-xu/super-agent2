@@ -85,10 +85,26 @@ The NAS brain has no tools for the local edition.
 
 The NAS relays remote page traffic without retaining it.
 It never writes relayed request or response bodies or WebSocket messages to SQLite, logs, files, attachments, notices or caches.
-It keeps only the peer identity and token hash, with connection status held in memory.
+For the page relay it keeps only the peer identity and token hash, with connection status held in memory.
 The relay forces no-store responses and sends neither browser credentials nor Access credentials to the local web handlers.
 The remote page uses its own URL prefix for navigation, assets and live updates.
 Its composer drafts stay in memory and push subscriptions remain available from each installation's direct page.
+
+### Shared preferences and principles
+
+The authenticated peer link has a separate exchange for owner-approved general memories and engineering proposals.
+General memories stay in the source installation's durable outbox during an outage and arrive as suggestions with the source name.
+The destination acknowledges an event only after recording its receipt with the suggestion, or after applying the existing refusal rules.
+Confirming or editing a received memory does not publish it back to its source or to a different peer.
+Existing memories and new memories without the owner's explicit sharing selection stay local.
+An approved edit to a shared item offers a replacement and retracting it offers removal, each requiring confirmation by the destination owner.
+A retraction withdraws any pending suggestion for that item.
+Records for the exchange contain approved payloads and delivery IDs, while remote page traffic remains outside this storage.
+
+The local brain can draft a cross-project principle for owner approval in 记忆.
+Approval sends the short proposal to the NAS, where it becomes a notice for the brain in the super-agent2 project.
+The NAS brain discusses it with the owner and the standard changes through the usual issue flow.
+The current [development standard](development-standard.md) remains the source of truth.
 
 ### Optional integrations
 

@@ -1373,6 +1373,35 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 74,
+    sql: `
+      ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'local' CHECK (scope IN ('local', 'general'));
+      ALTER TABLE memories ADD COLUMN origin TEXT;
+      ALTER TABLE memories ADD COLUMN peer_key TEXT;
+      ALTER TABLE memory_suggestions ADD COLUMN scope TEXT NOT NULL DEFAULT 'local' CHECK (scope IN ('local', 'general'));
+      ALTER TABLE memory_suggestions ADD COLUMN origin TEXT;
+      ALTER TABLE memory_suggestions ADD COLUMN peer_key TEXT;
+      CREATE UNIQUE INDEX memory_peer_key ON memories (peer_key) WHERE peer_key IS NOT NULL;
+      CREATE INDEX pending_suggestion_peer_key ON memory_suggestions (peer_key) WHERE state = 'pending';
+      CREATE TABLE peer_outbox (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        target TEXT NOT NULL,
+        item TEXT NOT NULL,
+        id TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        UNIQUE (target, item)
+      ) STRICT;
+      CREATE TRIGGER clear_revoked_peer_queue AFTER DELETE ON peers BEGIN
+        DELETE FROM peer_outbox WHERE target = OLD.client_id;
+      END;
+      CREATE TABLE peer_receipts (
+        source TEXT NOT NULL,
+        id TEXT NOT NULL,
+        PRIMARY KEY (source, id)
+      ) STRICT;
+    `,
+  },
 ];
 
 function ticketVersionTriggers(table: string): string {

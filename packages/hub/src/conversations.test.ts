@@ -1668,7 +1668,7 @@ describe("topic corrections and archive policy", () => {
       if (remaining === "open ticket") openTicket(running, source);
       link.receive({ type: "turn.started", ...turn, inputs: [routed.entry.id, ...(other === undefined ? [] : [other.id])], provider: "gpt", model: "model" });
       link.receive({ type: "tool.started", ...turn, call: "handover", name: "handover", input: "{}" });
-      if (remaining === "queued notice") service.writeScheduleNotice("scheduled", source, "Schedule notice", "Handle this notice");
+      if (remaining === "queued notice") service.writePromptNotice("scheduled", source, "Schedule notice", "Handle this notice");
 
       expect(service.handover(source, turn.turn, destination, routed.entry.id)).toEqual({ ok: true, value: routed.entry.id });
       expect(service.get(source)?.topicState).toBe("active");

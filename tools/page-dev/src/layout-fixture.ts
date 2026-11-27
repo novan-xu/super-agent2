@@ -62,7 +62,7 @@ function seedSchedules(hub: Hub, topic: string, now: number): void {
     .run(now - 86_400_000, completed);
   const active = hub.schedules.save(plan);
   const entry = randomUUID();
-  hub.conversations.writeScheduleNotice(entry, topic, "巡检记录已整理。");
+  hub.conversations.writePromptNotice(entry, topic, "巡检记录已整理。");
   connection.prepare("UPDATE schedules SET topic = ? WHERE id = ?").run(topic, active);
   connection.prepare("INSERT INTO schedule_runs (id, schedule, revision, due_at, entry, state) VALUES (?, ?, 1, ?, ?, 'completed')")
     .run(randomUUID(), active, now, entry);

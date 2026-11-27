@@ -35,6 +35,20 @@ Use the local installation's direct URL to subscribe to its push notifications.
 The connection retries automatically after a network interruption or restart.
 Delete the four settings and restart to turn off the outbound link.
 
+## Sharing general preferences
+
+On paired installations, use 跨设备共享 in 记忆 to send an owner preference to the other installation.
+Review the received suggestion and press 确认 there before it takes effect.
+Existing memories stay local until you edit one and select sharing.
+General memories are written in Simplified Chinese, and project-specific details and credentials stay local.
+Edits to a shared item offer a replacement on the other installation.
+Deleting an item or clearing its share setting offers removal where the memory was confirmed and withdraws its pending suggestion where it was still waiting.
+Changes made offline are delivered after reconnecting.
+
+After discussing a general engineering principle with the local brain, review its draft in 记忆 and approve sending it to the NAS.
+Review the proposal with the NAS brain in the super-agent2 project.
+The [development standard](development-standard.md) is the source of truth for the final rule.
+
 ## Optional integrations
 
 An installation can start with only `PROJECTS_DIR`.

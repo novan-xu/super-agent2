@@ -229,6 +229,8 @@ a.back:hover { text-decoration: none; }
 .mrow--armed { background: var(--danger-soft); }
 .mem-list { overflow: hidden; }
 .mrow-text, .mrow-replaces s { white-space: pre-wrap; }
+.memory-sharing { display: flex; align-items: center; gap: var(--space-2); min-height: 32px; width: fit-content; color: var(--fg-2); font-size: var(--text-sm); }
+.memory-sharing input { accent-color: var(--accent); }
 .mem-new { margin-bottom: var(--space-8); }
 
 .decisions { margin-bottom: var(--space-6); }

@@ -317,10 +317,10 @@ export function App() {
   );
   const memoryActions = useMemo<MemoryActions>(
     () => ({
-      add: (words) => controller.addMemory(words),
-      edit: (id, words) => controller.editMemory(id, words),
+      add: (words, scope) => controller.addMemory(words, scope),
+      edit: (id, words, scope) => controller.editMemory(id, words, scope),
       remove: (id) => controller.deleteMemory(id),
-      decide: (id, decision) => controller.decideSuggestion(id, decision),
+      decide: (id, decision, scope) => controller.decideSuggestion(id, decision, scope),
     }),
     [controller],
   );

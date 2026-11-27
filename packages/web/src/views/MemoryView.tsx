@@ -1,5 +1,5 @@
 import { text } from "@super-agent2/catalog";
-import type { Memory } from "@super-agent2/protocol";
+import { hasChinese, isBlank, sharedMemoryLimit, type Memory, type MemoryScope } from "@super-agent2/protocol";
 import { type FormEvent, type KeyboardEvent, memo, useState } from "react";
 import { canSave, type MemoryState, type SuggestionView, suggestionView } from "../live/memory.js";
 import { Icon } from "../parts/icons.js";
@@ -9,10 +9,10 @@ import { momentOf } from "./TicketParts.js";
 export type SuggestionDecision = "confirm" | "decline";
 
 export interface MemoryActions {
-  readonly add: (text: string) => Promise<boolean>;
-  readonly edit: (id: number, text: string) => Promise<boolean>;
+  readonly add: (text: string, scope?: MemoryScope) => Promise<boolean>;
+  readonly edit: (id: number, text: string, scope?: MemoryScope) => Promise<boolean>;
   readonly remove: (id: number) => Promise<boolean>;
-  readonly decide: (id: number, decision: SuggestionDecision) => Promise<boolean>;
+  readonly decide: (id: number, decision: SuggestionDecision, scope?: MemoryScope) => Promise<boolean>;
 }
 
 export interface MemoryViewProps {
@@ -26,20 +26,32 @@ export interface MemoryViewProps {
 interface EditorProps {
   readonly original: string;
   readonly label: string;
-  readonly save: (text: string) => Promise<boolean>;
+  readonly save: MemoryActions["add"];
+  readonly scope?: MemoryScope | undefined;
   readonly done: () => void;
 }
 
-function Editor({ original, label, save, done }: EditorProps) {
+function ShareControl({ scope, change }: { readonly scope: MemoryScope; readonly change: (next: MemoryScope) => void }) {
+  return <label className="memory-sharing"><input type="checkbox" checked={scope === "general"} onChange={(event) => change(event.target.checked ? "general" : "local")} />{text("memory.scope.general")}</label>;
+}
+
+function allowsSharing(words: string): boolean {
+  return hasChinese(words) && words.trim().length <= sharedMemoryLimit;
+}
+
+function Editor({ original, label, save, scope, done }: EditorProps) {
   const [draft, setDraft] = useState(original);
   const [sending, setSending] = useState(false);
-  const ready = canSave(draft, original);
+  const [selected, setSelected] = useState(scope ?? "local");
+  const chosen = scope === undefined ? undefined : selected;
+  const ready = (canSave(draft, original) || (!isBlank(draft) && chosen !== scope))
+    && (chosen !== "general" || allowsSharing(draft));
   const send = async () => {
     if (!ready || sending) {
       return;
     }
     setSending(true);
-    if (await save(draft)) {
+    if (await save(draft, chosen)) {
       done();
     } else {
       setSending(false);
@@ -63,6 +75,7 @@ function Editor({ original, label, save, done }: EditorProps) {
   return (
     <form className="editor" onSubmit={submit}>
       <textarea className="field" rows={3} value={draft} autoFocus aria-label={label} onChange={(event) => setDraft(event.target.value)} onKeyDown={keyDown} />
+      {scope === undefined ? null : <ShareControl scope={selected} change={setSelected} />}
       <div className="card-actions">
         <button className={`btn btn-primary btn-sm${sending ? " is-busy" : ""}`} type="submit" disabled={!ready || sending} aria-busy={sending}>
           {text("memory.save")}
@@ -79,17 +92,19 @@ type Step = { readonly kind: "idle" } | { readonly kind: "editing" } | { readonl
 
 interface RowProps {
   readonly memory: Memory;
+  readonly sharing: boolean;
   readonly actions: MemoryActions;
   readonly now: number;
 }
 
-const MemoryRow = memo(function MemoryRow({ memory, actions, now }: RowProps) {
+const MemoryRow = memo(function MemoryRow({ memory, sharing, actions, now }: RowProps) {
   const [step, setStep] = useState<Step>({ kind: "idle" });
   const idle = () => setStep({ kind: "idle" });
   if (step.kind === "editing") {
     return (
       <div className="mrow mrow--editing" role="listitem">
-        <Editor original={memory.text} label={text("memory.text")} save={(words) => actions.edit(memory.id, words)} done={idle} />
+        <Editor original={memory.text} label={text("memory.text")} scope={sharing && memory.origin === undefined ? memory.scope ?? "local" : undefined}
+          save={(words, scope) => actions.edit(memory.id, words, scope)} done={idle} />
       </div>
     );
   }
@@ -109,7 +124,8 @@ const MemoryRow = memo(function MemoryRow({ memory, actions, now }: RowProps) {
       <div className="mrow-main">
         <p className="mrow-text">{memory.text}</p>
         <div className="mrow-meta">
-          <span className="chip">{text(`memory.by.${memory.by}`)}</span>
+          <span className="chip">{memory.origin === undefined ? text(`memory.by.${memory.by}`) : text("memory.origin", { peer: memory.origin })}</span>
+          {sharing && memory.origin === undefined ? <span>{text(`memory.scope.${memory.scope ?? "local"}`)}</span> : null}
           <span className="num">{momentOf(memory.changedAt, now)}</span>
         </div>
       </div>
@@ -138,19 +154,24 @@ const MemoryRow = memo(function MemoryRow({ memory, actions, now }: RowProps) {
 
 interface SuggestionRowProps {
   readonly view: SuggestionView;
+  readonly sharing: boolean;
   readonly decide: MemoryActions["decide"];
   readonly now: number;
 }
 
-const SuggestionRow = memo(function SuggestionRow({ view, decide, now }: SuggestionRowProps) {
+const SuggestionRow = memo(function SuggestionRow({ view, sharing, decide, now }: SuggestionRowProps) {
   const [sending, setSending] = useState<SuggestionDecision | null>(null);
   const { suggestion, struck } = view;
+  const [scope, setScope] = useState<MemoryScope>(suggestion.scope ?? "local");
+  const canShare = sharing && suggestion.origin === undefined && suggestion.kind === "remember" && allowsSharing(suggestion.text);
+  const confirmsShared = canShare && scope === "general";
+  const confirmLabel = suggestion.kind === "principle" ? "memory.confirmSend" : confirmsShared ? "memory.confirmShare" : "memory.confirm";
   const press = (decision: SuggestionDecision) => {
     if (sending !== null) {
       return;
     }
     setSending(decision);
-    void decide(suggestion.id, decision).then((decided) => {
+    void decide(suggestion.id, decision, decision === "confirm" && canShare ? scope : undefined).then((decided) => {
       if (!decided) {
         setSending(null);
       }
@@ -159,7 +180,7 @@ const SuggestionRow = memo(function SuggestionRow({ view, decide, now }: Suggest
   return (
     <div className="mrow" role="listitem">
       <div className="mrow-main">
-        {suggestion.kind === "remember" ? <p className="mrow-text">{suggestion.text}</p> : null}
+        {suggestion.kind !== "forget" ? <p className="mrow-text">{suggestion.text}</p> : null}
         {struck.length === 0 ? null : (
           <div className="mrow-replaces">
             <span>{text(suggestion.kind === "remember" ? "memory.replaces" : "memory.forgets")}</span>
@@ -169,12 +190,15 @@ const SuggestionRow = memo(function SuggestionRow({ view, decide, now }: Suggest
           </div>
         )}
         <div className="mrow-meta">
+          {suggestion.origin === undefined ? null : <span className="chip">{text("memory.origin", { peer: suggestion.origin })}</span>}
+          {suggestion.kind === "principle" ? <span className="chip">{text("memory.principle")}</span> : null}
           <span className="num">{momentOf(suggestion.createdAt, now)}</span>
         </div>
+        {canShare ? <ShareControl scope={scope} change={setScope} /> : null}
       </div>
       <div className="mrow-actions">
         <button className={`btn btn-primary btn-sm${sending === "confirm" ? " is-busy" : ""}`} type="button" disabled={sending !== null} aria-busy={sending === "confirm"} onClick={() => press("confirm")}>
-          {text("memory.confirm")}
+          {text(confirmLabel)}
         </button>
         <button className={`btn btn-ghost btn-sm${sending === "decline" ? " is-busy" : ""}`} type="button" disabled={sending !== null} aria-busy={sending === "decline"} onClick={() => press("decline")}>
           {text("memory.decline")}
@@ -191,7 +215,7 @@ export function MemoryView({ memory, actions, adding, closeAdding, now }: Memory
     <div className="page page--narrow">
       {adding ? (
         <div className="mem-new">
-          <Editor original="" label={text("memory.new")} save={actions.add} done={closeAdding} />
+          <Editor original="" label={text("memory.new")} scope={memory.sharing ? "local" : undefined} save={actions.add} done={closeAdding} />
         </div>
       ) : null}
       {empty ? (
@@ -208,7 +232,7 @@ export function MemoryView({ memory, actions, adding, closeAdding, now }: Memory
           </div>
           <div className="mem-list" role="list" aria-labelledby="memory-pending">
             {pending.map((view) => (
-              <SuggestionRow key={view.suggestion.id} view={view} decide={actions.decide} now={now} />
+              <SuggestionRow key={view.suggestion.id} view={view} sharing={memory.sharing === true} decide={actions.decide} now={now} />
             ))}
           </div>
         </section>
@@ -221,7 +245,7 @@ export function MemoryView({ memory, actions, adding, closeAdding, now }: Memory
           </div>
           <div className="mem-list" role="list" aria-labelledby="memory-kept">
             {memory.memories.map((item) => (
-              <MemoryRow key={item.id} memory={item} actions={actions} now={now} />
+              <MemoryRow key={item.id} memory={item} sharing={memory.sharing === true} actions={actions} now={now} />
             ))}
           </div>
         </section>

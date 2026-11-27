@@ -77,6 +77,7 @@ import {
   type MemoryList,
   largestMessageBytes,
   MemoryText,
+  MemoryScope,
   positionOfCursor,
   protocolVersion,
   releaseVersionHeader,
@@ -418,9 +419,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const previews = options.converterUrl === undefined ? undefined : new Previews(join(options.database.dataDir, "previews"), options.converterUrl);
   const sockets = new WebSocketServer({ noServer: true });
   const ownerSockets = new Set<WebSocket>();
+  let sharingMemories = options.memories?.sharing();
   const peerRelay = options.peer === undefined ? undefined : new PeerRelay(options.peer, (peers) => {
     const message = JSON.stringify({ type: "peers", peers });
     for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(message);
+    const memories = options.memories;
+    if (memories !== undefined && sharingMemories !== memories.sharing()) {
+      sharingMemories = memories.sharing();
+      const update = JSON.stringify({ type: "memories", ...memories.snapshot() });
+      for (const client of ownerSockets) if (client.readyState === client.OPEN) client.send(update);
+    }
   });
   const transferChanged = () => {
     if (!transfer) return;
@@ -1202,22 +1210,22 @@ export function createHubServer(options: HubServerOptions): HubServer {
       path === memoriesPath && method === "POST"
         ? (body: string | undefined) => {
             const given = parseJson(body, MemoryText.strict());
-            return given === undefined ? undefined : memories.add(given.text);
+            return given === undefined ? undefined : memories.add(given.text, given.scope);
           }
         : id !== undefined && method === "PUT"
           ? (body: string | undefined) => {
               const given = parseJson(body, MemoryText.strict());
-              return given === undefined ? undefined : memories.edit(Number(id), given.text);
+              return given === undefined ? undefined : memories.edit(Number(id), given.text, given.scope);
             }
           : id !== undefined && method === "DELETE"
             ? (body: string | undefined) => (parseJson(body, z.object({}).strict()) === undefined ? undefined : memories.remove(Number(id)))
             : suggestion !== null && method === "POST"
-              ? (body: string | undefined) =>
-                  parseJson(body, z.object({}).strict()) === undefined
-                    ? undefined
-                    : suggestion[2] === "confirm"
-                      ? memories.confirm(Number(suggestion[1]))
-                      : memories.decline(Number(suggestion[1]))
+              ? (body: string | undefined) => {
+                  const given = parseJson(body, z.object({ scope: MemoryScope.optional() }).strict());
+                  return given === undefined ? undefined : suggestion[2] === "confirm"
+                    ? memories.confirm(Number(suggestion[1]), given.scope)
+                    : memories.decline(Number(suggestion[1]));
+                }
               : undefined;
     if (act === undefined) {
       return false;

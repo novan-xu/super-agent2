@@ -1,8 +1,10 @@
-import { describeMemoryState, MemoryId } from "@super-agent2/protocol";
+import { describeMemoryState, MemoryId, MemoryScope, principleLimit } from "@super-agent2/protocol";
 import { z } from "zod";
 import type { MemoryService, Refusal } from "./memories.js";
 
-const RememberArguments = z.object({ text: z.string(), replaces: z.array(MemoryId).optional(), ownerAsked: z.boolean().optional() });
+const RememberArguments = z.object({ text: z.string(), replaces: z.array(MemoryId).optional(), ownerAsked: z.boolean().optional(), scope: MemoryScope.optional() });
+
+const PrincipleArguments = z.object({ text: z.string().trim().min(1).max(principleLimit) }).strict();
 
 const RecallArguments = z.object({});
 
@@ -11,7 +13,7 @@ const ForgetArguments = z.object({ id: MemoryId, ownerAsked: z.boolean().optiona
 const ownerAskedDescription =
   "True only for an explicit owner request to revisit a declined, deleted or kept memory.";
 
-export function memoryDefinitions() {
+export function memoryDefinitions(memories: MemoryService) {
   return [
     {
       name: "remember",
@@ -23,6 +25,7 @@ export function memoryDefinitions() {
           text: { type: "string", description: "The memory, in Simplified Chinese" },
           replaces: { type: "array", items: { type: "integer", minimum: 1 }, description: "The memories this one replaces once the owner confirms it" },
           ownerAsked: { type: "boolean", description: ownerAskedDescription },
+          ...(memories.sharing() ? { scope: { type: "string", enum: MemoryScope.options, description: "Use general only for an owner preference useful across installations. Keep project details, company work and identifying information local. Defaults to local." } } : {}),
         },
         required: ["text"],
         additionalProperties: false,
@@ -48,6 +51,12 @@ export function memoryDefinitions() {
         additionalProperties: false,
       },
     },
+    ...(memories.canProposePrinciples ? [{
+      name: "propose_principle",
+      title: "Propose a general engineering principle",
+      description: "Draft a cross-project rule for the Super Agent development standard. Use only after discussing the rule with the owner. Summarize the principle without company names, code, data or ticket details. The owner must approve sending it in 记忆.",
+      inputSchema: z.toJSONSchema(PrincipleArguments, { io: "input" }),
+    }] : []),
   ];
 }
 
@@ -106,6 +115,7 @@ export function memoryCall(memories: MemoryService, name: string, raw: unknown, 
         text: parsed.data.text,
         ...(parsed.data.replaces === undefined ? {} : { replaces: parsed.data.replaces }),
         ...(parsed.data.ownerAsked === undefined ? {} : { ownerAsked: parsed.data.ownerAsked }),
+        ...(parsed.data.scope === undefined ? {} : { scope: parsed.data.scope }),
         conversation: conversation ?? null,
       });
       if (!outcome.ok) {
@@ -114,6 +124,15 @@ export function memoryCall(memories: MemoryService, name: string, raw: unknown, 
       return withState(
         `Suggested (suggestion ${outcome.suggestion.id}). It waits in 记忆 for the owner to confirm or decline; nothing is remembered until the owner confirms. Tell the owner in a few words what you suggested.`,
       );
+    }
+    case "propose_principle": {
+      if (!memories.canProposePrinciples || conversation === undefined) return { text: "A local peer and an active conversation are required.", isError: true };
+      const parsed = PrincipleArguments.safeParse(raw);
+      if (!parsed.success) return { text: `Give a short engineering principle of at most ${principleLimit} characters.`, isError: true };
+      const outcome = memories.proposePrinciple(parsed.data.text, conversation);
+      return outcome.ok
+        ? { text: "The draft waits in 记忆 for the owner to approve sending it to the NAS. Tell the owner where to review it." }
+        : { text: refusalText(outcome.refusal), isError: true };
     }
     case "recall": {
       const parsed = RecallArguments.safeParse(raw);

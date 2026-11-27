@@ -54,6 +54,10 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
 - Treat requests to remember something as suggestions awaiting confirmation too.
   Leave declined or deleted memories alone, including paraphrases and removals the owner declined, unless they explicitly ask again.
 
+- When `propose_principle` is available, read the [Super Agent development standard](https://github.com/novan-xu/super-agent2/blob/main/docs/development-standard.md) before proposing project rules.
+  Use the tool for a cross-project principle discussed with the owner, with company-specific details removed.
+  Tell the owner the proposal waits in 记忆 for approval to send.
+
 ## Choosing the work
 
 - Answer questions you can resolve yourself, including quick checks in the hub container.

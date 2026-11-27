@@ -3,6 +3,7 @@ import { request, type OutgoingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { peerLinkPath, peerTokenHeader } from "@super-agent2/protocol";
 import WebSocket, { createWebSocketStream } from "ws";
+import { nasPeer, peerExchangePath, serveExchange, type PeerExchange } from "./peer-exchange.js";
 import {
   copyBothWays, peerFrameLimit, peerApiRequest, peerRequestHeaders, peerResponseHeaders,
   peerSocketPath, peerUpgradeHeader, peerUpgradeHeaders, selectHeaders, watchPeer,
@@ -85,12 +86,16 @@ function serveLocal(stream: ServerHttp2Stream, headers: IncomingHttpHeaders, add
   else stream.pipe(upstream);
 }
 
-export function connectToPeer(config: PeerConnectionConfig, address: AddressInfo, retryBase = 1_000): () => void {
+export function connectToPeer(config: PeerConnectionConfig, address: AddressInfo, retryBase = 1_000, exchange?: PeerExchange): () => void {
   const url = new URL(peerLinkPath, config.hub);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   const http2 = createServer({ settings: { maxConcurrentStreams: 64 } });
+  const source = nasPeer(config.hub, config.clientId);
   http2.on("sessionError", () => undefined);
-  http2.on("stream", (stream, headers) => serveLocal(stream, headers, address));
+  http2.on("stream", (stream, headers) => {
+    if (exchange !== undefined && headers[":path"] === peerExchangePath && headers[":method"] === "POST") serveExchange(stream, exchange, source);
+    else serveLocal(stream, headers, address);
+  });
   let stopped = false;
   let failures = 0;
   let socket: WebSocket;
