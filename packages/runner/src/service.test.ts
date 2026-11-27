@@ -63,12 +63,20 @@ async function startOn(platform: NodeJS.Platform) {
     prober: { find: (name) => name === "codex" ? "/codex" : undefined, capture: async (_path, args) => { calls.push([...args]); return args[0] === "--version" ? "codex-cli 1.0.0" : ""; } },
     connect: (_url, _headers, handlers) => { events = handlers; return { send: () => undefined, close: () => handlers.close(1000, ""), terminate: () => handlers.close(1000, "") }; },
   });
-  if (service === undefined || events === undefined) throw new Error("Runner did not start");
-  const hub = events;
-  hub.open();
-  hub.message(JSON.stringify({ type: "welcome", protocol: 1, name: "test" }));
+  if (service === undefined) throw new Error("Runner did not start");
+  let welcomed: LinkSocketEvents | undefined;
+  const hub = () => {
+    if (events === undefined) throw new Error("Runner did not connect");
+    if (welcomed !== events) {
+      welcomed = events;
+      events.open();
+      events.message(JSON.stringify({ type: "welcome", protocol: 1, name: "test" }));
+    }
+    return events;
+  };
+  hub();
   await service.allowanceRead;
-  const tell = async (message: unknown) => { hub.message(JSON.stringify(message)); await vi.advanceTimersByTimeAsync(0); };
+  const tell = async (message: unknown) => { hub().message(JSON.stringify(message)); await vi.advanceTimersByTimeAsync(0); };
   return { service, lines, tell, reads: () => calls.filter((args) => args[0] === "app-server").length };
 }
 
