@@ -168,6 +168,7 @@ export function chainFingerprint(shown: readonly ShownChain[]): string {
     ticket.machinePinned,
     ticket.enginePin,
     ticket.commitRef,
+    ticket.commit,
     ticket.deploys,
     ticket.localBuild,
     ticket.kind,

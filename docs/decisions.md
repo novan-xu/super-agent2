@@ -4034,3 +4034,12 @@ Other options were to keep separate hand-written preset styles or attempt to upd
 - **Why:** Dependencies and build outputs in use stay available throughout the build, and the existing process can continue when a build fails.
   A completed build can wait for workers to finish, and dependent tickets wait for the new installation to start.
 - **Other options:** Install and build in the running checkout and rebuild the previous commit on failure, or stop local work before beginning the build.
+
+
+## 2026-11-27 — Update requests between paired installations (#393)
+
+- **Chosen:** Queue an update for each merged Super Agent pull request and check commit ancestry before combining pending requests at the receiving installation.
+  Keep received updates independently authorized on their own cards.
+- **Why:** Both installations can catch up after a disconnection, and the owner can decide when to update each one.
+  An older delivery cannot move a pending update back, and a local chain cannot authorize a received request.
+- **Other options:** Send once after the whole chain, or combine incoming requests with work already arranged after a local chain.

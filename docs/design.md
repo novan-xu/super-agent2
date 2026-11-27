@@ -697,6 +697,10 @@ On the local edition, an update to the installation's own repository is a build 
 The runner stages the build away from the running files, and a successful build waits for active work before restarting.
 A dependent ticket waits for the launcher to confirm the new commit.
 
+A Super Agent pull request merge queues an update for compatible paired installations.
+Each receiving installation creates a standalone pending update or advances its existing pending peer update to a newer commit.
+The owner starts the received update on the receiving installation.
+
 Super Agent lists `mac-mini`, `macbook-air` and `pc`, whose workers run `deploy/deploy.sh release` on the NAS over SSH.
 The hub and the brain restart underneath the ticket; the worker goes on, its hand-back reaches the new hub, and the runner then moves to the new hub's version.
 

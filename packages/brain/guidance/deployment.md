@@ -20,6 +20,11 @@
   For a list of several machines, the hub derives the platform from their systems, chooses an available machine from the list, and lets the owner choose a listed machine on the card.
   If the manifest is being added and the hub cannot read it yet, state the platform the new recipe needs, using `any` for a mixed macOS and Windows list.
   The runner checks the manifest at the deployed commit.
+- A Super Agent merge sends a pending update to paired installations through the hub.
+  Each receiving installation shows where the request came from and waits for its own owner start.
+  Arrange this installation’s update after the code chain and let the hub send the peer request.
+  Never treat approval on another installation as approval here.
+  If a peer update card is already waiting, use that card for the received update.
 - If the owner wants a deployment and the repository has no manifest, read the repository and file a code issue to add it.
   Ask which machines can run the deployment only if you cannot find out.
   Use JSON with the following keys, with `folder` optional, and leave credentials out.
