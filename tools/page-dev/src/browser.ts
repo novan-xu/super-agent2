@@ -164,7 +164,6 @@ const views = {
     route: { view: "settings", section: "appearance" },
     ready: ".accents",
     targets: { "accent choices": ".accents" },
-    after: async (page) => { await page.locator("#accent-title").evaluate((element) => element.scrollIntoView({ block: "start" })); },
     phone: { "settings back link": ".set-back" },
     desktop: settingsMenu,
   },
@@ -313,6 +312,7 @@ async function visit(browser: Browser, url: string, fixture: LayoutFixture, name
       if (issues.length > 0) throw new Error(issues.join("\n"));
       process.stdout.write(`Layout passed for ${name} at ${width} (${viewports[width].width}px)\n`);
     } else {
+      if (name === "appearance") await page.locator("#accent-title").evaluate((element) => element.scrollIntoView({ block: "start" }));
       if (name === "ticket" && phone) await page.locator(".panel-toggle").click();
       if (name === "machines" && phone) await page.locator(".mcard").first().evaluate((card) => card.scrollIntoView({ block: "start" }));
       if (name === "daily" || name === "code" || name === "workbench-conversation") {
