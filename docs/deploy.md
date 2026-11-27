@@ -183,7 +183,7 @@ Then:
 
 ## Cloudflare Access
 
-The host name has four Access applications when OAuth MCP is enabled.
+The host name has separate Access applications for the owner and each configured service integration.
 Nothing in them changes when a machine is added or revoked.
 
 | Application | Covers | Policy | Audience tag in `secrets/hub.env` |
@@ -191,6 +191,7 @@ Nothing in them changes when a machine is added or revoked.
 | The host's own (exists) | The host name, empty path | Allow: the owner's email, through Google | `ACCESS_AUD` |
 | `Super-agent2 runners` (new) | The host name, path `runner` | Service Auth: service token tag `superagent2` = `runner` | `ACCESS_RUNNER_AUD` |
 | `Super-agent2 inbox` | The host name, path `inbox` | Service Auth: service token tag `superagent2` = `inbox` | `ACCESS_INBOX_AUD` |
+| `Super-agent2 peers` | The host name, path `peer` | Service Auth: service token tag `superagent2` = `peer` | `ACCESS_PEER_AUD` |
 | `Super-agent2 OAuth MCP` | The host name, path `mcp` | Allow: the owner's email, through Google with Managed OAuth | `ACCESS_MCP_AUD` |
 
 Cloudflare gives the more specific path precedence, and a path covers the paths below it, so `/runner/link`, `/runner/release` and `/runner/install` are decided by the runner application alone: a service token never reaches the owner's pages or API at Cloudflare, and the owner's sign-in never reaches the runner paths.
@@ -221,7 +222,7 @@ Steps, once, in the Cloudflare dashboard (Zero Trust):
    The hub refuses to start if it equals `ACCESS_AUD`.
 5. **The hub's API token.**
    `CLOUDFLARE_ACCESS_API_TOKEN` must be an API token of the account `CLOUDFLARE_ACCOUNT_ID` with the one permission Account › **Access: Service Tokens** › **Edit** (Cloudflare's documentation calls it "Access: Service Tokens Write"), for that account only.
-   The hub uses it for two calls and nothing else:
+   The hub uses it to create and delete service tokens:
    `POST /accounts/<id>/access/service_tokens` with the name `superagent2-runner-<machine>`, the duration `forever` and the tag `superagent2` = `runner` when 添加机器 is pressed, and `DELETE /accounts/<id>/access/service_tokens/<token id>` when a machine is revoked.
    It needs no permission on applications or policies.
 6. **The old Bypass application, if it was ever made.**
@@ -375,6 +376,32 @@ When a share fails or times out at session start, the ticket records the local p
 Files written there stay local.
 Once the share returns, subsequent sessions can write to the NAS.
 Ending a ticket leaves its artifacts in place.
+
+### Remote control peers
+
+1. In Zero Trust, add a self-hosted Access application named `Super-agent2 peers` on the existing host with path `peer`.
+2. Add a single Service Auth policy with **Include › Service Token Tag**, key `superagent2` and value `peer`.
+   Keep `/remote` and `/remote/*` on the existing owner application and use no Bypass policy.
+3. Copy the peer application's Audience Tag to `ACCESS_PEER_AUD` in `/share/Container/superagent2/secrets/hub.env`.
+   Use a distinct audience and recreate the hub with `bash /share/Container/superagent2/deploy.sh up`.
+4. Enable WebSockets for the host and set a Cloudflare Cache Rule to **Bypass cache** for this host and paths beginning with `/remote/`.
+   Keep request and response payload logging disabled on the tunnel and any proxy in front of the hub.
+5. Register and, when necessary, revoke a peer inside the hub container on the NAS.
+
+See Cloudflare's instructions for [service token tags](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/#authorize-service-tokens-by-tag) and [cache bypass rules](https://developers.cloudflare.com/cache/troubleshooting/dynamic-content-and-login-issues/).
+
+```sh
+docker=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
+$docker exec superagent2-hub node dist/peer-cli.js add work-laptop --hub 'https://<host>'
+$docker exec superagent2-hub node dist/peer-cli.js revoke work-laptop
+```
+
+The command requires the same Cloudflare account and service-token API credentials used for runners.
+It prints the Access credentials and peer token once on the terminal for copying to the local edition's `local.env`.
+Revocation refuses new remote requests and closes the existing link within five seconds.
+If deleting the Cloudflare service token fails, remove it in Zero Trust after the hub reports that it revoked the peer.
+A signed-out browser must be refused at `/remote/work-laptop/` and a peer service token must be refused on the owner and runner paths.
+Use the signed-in browser to verify that the peer appears online in 远程控制 and that its page updates after opening it.
 
 ### Adding or revoking a machine by hand on the NAS
 

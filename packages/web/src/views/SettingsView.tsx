@@ -1,3 +1,4 @@
+import { appPath } from "../parts/app-path.js";
 import { text } from "@super-agent2/catalog";
 import {
   defaultMachineLoadSettings,
@@ -727,7 +728,7 @@ function InboxSources() {
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState(true);
   const refresh = async () => {
-    const response = await fetch("/api/inbox/sources");
+    const response = await fetch(appPath("/api/inbox/sources"));
     if (response.status === 503) { setAvailable(false); return; }
     if (!response.ok) throw new Error();
     const body = await response.json() as { sources: { id: string; name: string }[] };
@@ -737,7 +738,7 @@ function InboxSources() {
   const add = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const response = await fetch("/api/inbox/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+      const response = await fetch(appPath("/api/inbox/sources"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
       if (!response.ok) throw new Error();
       setCreated(await response.json() as { clientId: string; clientSecret: string });
       setName(""); await refresh();
@@ -746,7 +747,7 @@ function InboxSources() {
   const revoke = async (id: string) => {
     setBusy(true); setError("");
     try {
-      const response = await fetch(`/api/inbox/sources/${encodeURIComponent(id)}/revoke`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const response = await fetch(appPath(`/api/inbox/sources/${encodeURIComponent(id)}/revoke`), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
       if (!response.ok) throw new Error();
       const result = await response.json() as { removed: boolean };
       if (!result.removed) setError(text("inbox.kept"));
@@ -903,7 +904,7 @@ function OpenAIBudget({ budget }: { readonly budget: number | null }) {
     const value = draft.trim() === "" ? null : Number(draft);
     if (value !== null && (!Number.isFinite(value) || value <= 0)) { setError(true); return; }
     try {
-      const response = await fetch("/api/settings/openai-budget", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ budget: value }) });
+      const response = await fetch(appPath("/api/settings/openai-budget"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ budget: value }) });
       if (!response.ok) throw new Error("save failed");
       setError(false); setSaved(true);
     } catch { setError(true); setSaved(false); }
@@ -916,7 +917,7 @@ function UsageSection({ budget }: { readonly budget: number | null | undefined }
   const [error, setError] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    void fetch("/api/brain/usage", { signal: controller.signal, cache: "no-store" }).then(async (response) => {
+    void fetch(appPath("/api/brain/usage"), { signal: controller.signal, cache: "no-store" }).then(async (response) => {
       if (!response.ok) throw new Error("Usage request failed");
       setReport(UsageReport.parse(await response.json()));
     }).catch(() => { if (!controller.signal.aborted) setError(true); });

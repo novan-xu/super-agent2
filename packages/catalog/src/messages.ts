@@ -27,6 +27,11 @@ export const messages = {
   "navigation.history": "历史",
   "navigation.memory": "记忆",
   "navigation.schedules": "定时",
+  "navigation.remote": "远程控制",
+  "remote.open": "打开",
+  "remote.offline": "离线",
+  "remote.empty": "暂无远程设备",
+  "remote.back": "返回主站",
   "navigation.settings": "设置",
 
   "schedule.new": "新建定时任务",

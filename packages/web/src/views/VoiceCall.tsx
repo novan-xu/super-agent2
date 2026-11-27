@@ -1,5 +1,6 @@
 import { text } from "@super-agent2/catalog";
-import { pagePath, voiceTranscriptLimit, type TopicScope } from "@super-agent2/protocol";
+import { voiceTranscriptLimit, type TopicScope } from "@super-agent2/protocol";
+import { pagePath } from "../parts/app-path.js";
 import { useEffect, useId, useRef, useState } from "react";
 import { voiceApi } from "../hub/api.js";
 import { connectVoice, voiceLines, type VoiceFragment, type VoiceProposal } from "../live/voice-call.js";

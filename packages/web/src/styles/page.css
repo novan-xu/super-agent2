@@ -585,10 +585,22 @@ dialog.voice-dialog { width: min(34rem, calc(100% - 2rem)); max-width: none; pad
   .chat-actions { left: 85%; }
 }
 
-.conversation-chains { max-width: 100%; gap: var(--space-3); overflow-wrap: anywhere; }
-.conversation-chains h3, .conversation-chains p { margin: 0; }
-.conversation-chains .chain-block { gap: var(--space-2); }
-.conversation-chains .chain-block + .chain-block { border-top: 1px solid var(--border-soft); padding-top: var(--space-3); }
-.conversation-chains button, .conversation-chains a { justify-self: start; }
+.conversation-chains { max-width: 100%; min-width: 0; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+.conversation-chains p { margin: 0; }
+.conversation-chains .chain-block { min-width: 0; gap: var(--space-1); }
+.conversation-chains .chain-block + .chain-block { border-top: 1px solid var(--border-soft); padding-top: var(--space-2); }
+.conversation-chain-row, .conversation-chain-identity { display: flex; align-items: center; min-width: 0; gap: var(--space-2); }
+.conversation-chain-identity { flex: 1; overflow: hidden; }
+.conversation-chain-identity a, .conversation-chain-engine, .conversation-chain-row button, .conversation-chain-state { flex: none; }
+.conversation-chain-title, .conversation-chain-choice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-chain-title { flex: 1 1 0; min-width: 0; }
+.conversation-chain-choice { flex: 0 1 auto; min-width: 0; color: var(--muted); }
+.conversation-chain-choice::before, .conversation-chain-engine::before { content: "· "; }
+.conversation-chain-engine { color: var(--muted); }
+.conversation-chain-state, .conversation-chain-details { color: var(--muted); font-size: var(--text-sm); }
+.conversation-chain-details:empty { display: none; }
+.conversation-chain-details .chain-missing { margin: 0; padding-left: var(--space-4); }
+.conversation-chain-follower { min-width: 0; padding-left: var(--space-3); }
+.conversation-chains > button { justify-self: start; }
 
 .accent-hex { width: 110px; }

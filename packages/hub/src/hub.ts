@@ -1,3 +1,5 @@
+import { connectToPeer } from "./peer-link.js";
+import { createPeerStore } from "./peer-store.js";
 import { createOpenAICosts } from "./openai-costs.js";
 import { createVoice } from "./voice.js";
 import { codexMailFilter, type MailFilter } from "./mail-filter.js";
@@ -147,6 +149,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const ownerEmail = loopback ? localOwnerEmail : config.ownerEmail;
   const host = loopback ? loopbackHost(config.host) : config.host;
   if (host === undefined) throw new Error("The hub must bind to a loopback address when Access is not configured");
+  if (!loopback && config.outboundPeer !== undefined) throw new Error("The outbound peer link requires a loopback hub");
   const environment = options.environment ?? process.env;
   const appGateway = options.appGateway ?? (config.appGateway ? new AppGateway({
     cwd: config.dataDir,
@@ -166,6 +169,8 @@ export async function startHub(options: HubOptions): Promise<Hub> {
   const verifyRunner = accessVerifier?.(config.accessRunnerAudience);
   const verifyInbox = accessVerifier?.(config.accessInboxAudience);
   const verifyMcp = accessVerifier?.(config.accessMcpAudience);
+  const verifyPeer = accessVerifier?.(config.accessPeerAudience);
+  let closePeer: (() => void) | undefined;
   let commands: CommandService;
   let conversations: ConversationService;
   let lock: ConfirmationLock | undefined;
@@ -455,6 +460,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(verifyRunner === undefined ? {} : { verifyRunner }),
       ...(verifyInbox === undefined ? {} : { verifyInbox }),
       ...(verifyMcp === undefined ? {} : { verifyMcp }),
+      ...(verifyPeer === undefined ? {} : { peer: { verify: verifyPeer, store: createPeerStore(database) } }),
       ...(loopback ? { loopback } : {}),
       ...(verifyInbox === undefined && verifyMcp === undefined ? {} : { inbox: createInbox({ database, clock, conversations, tokens: options.inboxServiceTokens, push }) }),
       admit: ownerOnly(ownerEmail),
@@ -528,6 +534,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       ...(config.pageDir === undefined ? {} : { page: pageFiles(config.pageDir) }),
     });
   } catch (error) {
+    closePeer?.();
     topicTidy?.close();
     health?.close();
     runners.close();
@@ -543,6 +550,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
     }
     work?.resume();
     address = await server.listen(config.port, host);
+    if (config.outboundPeer !== undefined) closePeer = connectToPeer(config.outboundPeer, address);
     let workRequestAddress: AddressInfo | undefined;
     if (config.workRequests !== undefined) {
       const { port, directory } = config.workRequests;
@@ -623,6 +631,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
           await appGateway?.close();
           await mailIntake?.idle();
           runners.close();
+          closePeer?.();
           await Promise.all([server.close(), closeWorkRequests?.()]);
         } finally {
           taskTickets.close();
@@ -642,6 +651,7 @@ export async function startHub(options: HubOptions): Promise<Hub> {
       },
     };
   } catch (error) {
+    closePeer?.();
     topicTidy?.close();
     mailIntake?.close();
     mailTriage?.close();

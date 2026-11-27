@@ -1,5 +1,6 @@
 import { ConversationId, SendId, StreamPreview } from "@super-agent2/protocol";
 import { z } from "zod";
+import { remoteName } from "../parts/app-path.js";
 
 const storageKey = "super-agent2:composer-drafts";
 const maxAge = 30 * 24 * 60 * 60 * 1000;
@@ -19,7 +20,7 @@ type DraftMap = Record<string, { readonly updatedAt: number; readonly draft: Com
 
 function storage(): Storage | undefined {
   try {
-    return typeof localStorage === "undefined" ? undefined : localStorage;
+    return typeof localStorage === "undefined" || remoteName() !== undefined ? undefined : localStorage;
   } catch {
     return undefined;
   }

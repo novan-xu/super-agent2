@@ -34,3 +34,4 @@ export * from "./questions.js";
 
 export * from "./voice.js";
 export * from "./live-events.js";
+export * from "./peers.js";

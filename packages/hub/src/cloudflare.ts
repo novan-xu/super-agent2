@@ -60,7 +60,7 @@ export function cloudflareSettings(environment: Readonly<Record<string, string |
   return missing.length > 0 ? { missing } : { accountId, apiToken };
 }
 
-export function cloudflareServiceTokens(settings: CloudflareSettings, tag: "runner" | "inbox" = "runner"): AccessServiceTokens {
+export function cloudflareServiceTokens(settings: CloudflareSettings, tag: "runner" | "inbox" | "peer" = "runner"): AccessServiceTokens {
   const call = settings.fetch ?? fetch;
   const base = settings.apiBase ?? cloudflareApiBase;
   const failure = async (response: Response, what: string): Promise<Error> => {

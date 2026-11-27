@@ -1,3 +1,4 @@
+import { appPath } from "./app-path.js";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type * as Pdf from "pdfjs-dist";
 
@@ -12,7 +13,7 @@ const PAGE_PIXELS = 16_000_000
 
 export async function showPdf(host: HTMLElement, url: string, current: () => boolean = () => true): Promise<() => void> {
   const lib = await pdfLib()
-  const task = lib.getDocument({ url, withCredentials: true, useWasm: false, enableXfa: false, cMapUrl: "/pdfjs/cmaps/", cMapPacked: true, standardFontDataUrl: "/pdfjs/standard_fonts/" })
+  const task = lib.getDocument({ url, withCredentials: true, useWasm: false, enableXfa: false, cMapUrl: appPath("/pdfjs/cmaps/"), cMapPacked: true, standardFontDataUrl: appPath("/pdfjs/standard_fonts/") })
   let stopped = false
   const stop = () => { stopped = true; observer?.disconnect(); void task.destroy().catch(() => {}) }
   let observer: IntersectionObserver | undefined
