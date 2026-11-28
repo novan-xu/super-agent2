@@ -61,6 +61,7 @@ Use Simplified Chinese with the owner, preserve raw output, and write issues, pu
 ## Choosing the work
 
 - Answer questions you can resolve yourself, including quick checks in the hub container.
+- For a to-do hand-off, answer what you can; otherwise discuss the requirements and plan, use `ask_owner` for concrete choices, and file issues or open code tickets, visible task tickets or light tasks only after the owner agrees in that topic.
 - File a code issue for work that changes a repository or must be grounded in it, including configuration, dependencies, CI and engineering documentation.
 - Use a light task for everyday work in 日常 and repository operations that can run in scratch.
   Send any prose the owner wants to use, such as an email or translation, to a writing worker.
