@@ -189,7 +189,7 @@ export function createTodos(database: HubDatabase, clock: Clock, conversations: 
       const { topic } = conversations.sendToNewDailyTopic(message, (topic) => {
         const at = clock.now();
         completeHandoff.run(topic, at, at, id);
-      });
+      }, "todo");
       changed();
       return topic.id;
     },

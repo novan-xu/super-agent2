@@ -143,6 +143,23 @@ describe("continuing after a brain restart", () => {
   const restartPrompt = expect.stringContaining("Check the current state of the relevant tickets, issues, and commands before acting");
   const status = messages["notice.brainRestartContinuation"];
 
+  it("retains the to-do hand-off notice after an interrupted turn", async () => {
+    const hub = await start();
+    const first = connect(hub);
+    const todo = hub.todos.add({ title: "Plan a greenhouse", notes: "", list: null, date: null, time: null });
+    const conversation = hub.todos.handoff(todo.id);
+    const input = first.messages.find((message) => message.type === "input" && message.conversation === conversation);
+    if (input?.type !== "input") throw new Error("Missing hand-off input");
+    const original = { conversation, turn: "original" };
+    first.link.receive({ type: "turn.started", ...original, provider: "gpt", model: "test", inputs: [input.input.id] });
+    first.link.detach();
+    const second = connect(hub);
+    const continuation = second.messages.find((message) => message.type === "input" && message.conversation === conversation);
+    if (continuation?.type !== "input") throw new Error("Missing continuation input");
+    expect(continuation.input.text).toContain("[hub] This message was handed off from a to-do.");
+    expect(continuation.input.text).toContain("proceed only after the owner agrees in this topic");
+  });
+
   it("interrupts the old turn and delivers a continuation after waiting owner input", async () => {
     const hub = await start();
     const service = hub.conversations;

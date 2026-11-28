@@ -143,7 +143,11 @@ it("completes the to-do on hand-off and keeps its topic when the to-do is reopen
   expect(receipts.map((receipt) => receipt.topic)).toEqual([topic, topic]);
   expect(hub.conversations.list()).toHaveLength(before + 1);
   expect(hub.conversations.detail(topic)).toMatchObject({ conversation: { repository: null }, entries: [{ kind: "owner", text: "Plan this greenhouse\n\n清单：Garden\n\n日期：2026-11-27 14:00\n\n备注：Review the cap" }] });
-  expect(inputs).toEqual([expect.objectContaining({ conversation: topic, input: expect.objectContaining({ source: "owner" }) })]);
+  const message = "Plan this greenhouse\n\n清单：Garden\n\n日期：2026-11-27 14:00\n\n备注：Review the cap";
+  expect(inputs).toEqual([expect.objectContaining({ conversation: topic, input: expect.objectContaining({ source: "owner", text: expect.stringContaining(`${message}\n[hub] This message was handed off from a to-do.`) }) })]);
+  expect(hub.database.connection.prepare("SELECT prompt, json_extract(body, '$.origin') AS origin FROM conversation_entries WHERE conversation_id = ? AND kind = 'owner'").get(topic)).toEqual({ prompt: inputs[0]!.input.text, origin: "todo" });
+  hub.conversations.send(topic, "Here is an ordinary follow-up");
+  expect(inputs[1]?.input.text).toBe("Here is an ordinary follow-up");
   expect((await snapshot()).todos).toMatchObject([{ id: todo.id, topic, doneAt: handedOffAt, updatedAt: handedOffAt }]);
   link.detach();
   await hub.close();

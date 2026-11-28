@@ -1077,6 +1077,7 @@ Changed by this design:
   已完成 shows the latest 100 completions and supports reopening them.
   The date and optional time use the installation's configured time zone.
   交给大脑 creates a new 日常 topic with the to-do as its first owner message, links it, and completes the to-do in the same database transaction.
+  The hub persists the hand-off origin and adds a brain-only notice to the first message directing the brain to discuss requirements and a plan before opening work, until the owner agrees in that topic.
   Reopening the to-do from 已完成 keeps the link, and later clicks open the linked topic.
   With web push configured, 待办提醒 in 设置 controls to-do notifications for subscribed devices.
   Timed items use their due time, and one daily push summarizes due and overdue all-day items at the configured time, initially 09:00.

@@ -95,7 +95,7 @@ export interface ConversationService {
   readonly topics: TopicContext;
   previewStream(request: StreamPreviewRequest, signal?: AbortSignal): Promise<StreamPreview>;
   sendToStream(topic: string | undefined, message: string, attachments: readonly Attachment[], options?: StreamSendOptions): Promise<StreamEntry | undefined>;
-  sendToNewDailyTopic(message: string, record: (topic: string) => void): StreamEntry;
+  sendToNewDailyTopic(message: string, record: (topic: string) => void, origin: "todo"): StreamEntry;
   sendOwner(request: OwnerSend): Promise<SendOutcome>;
   readQuote(conversation: string, id: string, offset: number): { text: string; next: number | null } | undefined;
   assignRepository(conversation: string, turn: string, repository: string | null, topic?: string): string | undefined;
@@ -525,7 +525,7 @@ export function createConversationService(options: ConversationServiceOptions): 
     AND ((entry = ? AND continuation_entry IS NULL) OR continuation_entry = ?)`);
   const continueSchedule = connection.prepare("UPDATE schedule_runs SET continuation_entry = ? WHERE id = ?");
   const priorHubInputs = connection.prepare(`SELECT prompt, json_extract(body, '$.restartOf') AS restart_of
-    FROM conversation_entries WHERE turn_id = ? AND taken = 1 AND kind IN ('notice', 'delivery') AND prompt IS NOT NULL ORDER BY seq`);
+    FROM conversation_entries WHERE turn_id = ? AND taken = 1 AND (kind IN ('notice', 'delivery') OR (kind = 'owner' AND json_extract(body, '$.origin') = 'todo')) AND prompt IS NOT NULL ORDER BY seq`);
   const ownerAppInput = connection.prepare(`SELECT 1 FROM conversation_entries
     WHERE conversation_id = ? AND turn_id = ? AND taken = 1 AND kind = 'owner' AND hidden = 0 LIMIT 1`);
   const findMailReview = connection.prepare(`SELECT id FROM conversation_entries
@@ -1337,7 +1337,7 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const writeOwner = (
     conversation: Conversation, message: string, attachments: readonly Attachment[],
-    { quotedMessage, possibleMatch, voiceTranscript, id, at, markQuestions = true }: { voiceTranscript?: string | undefined; quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
+    { quotedMessage, possibleMatch, voiceTranscript, id, at, origin, markQuestions = true }: { origin?: "todo"; voiceTranscript?: string | undefined; quotedMessage?: string | undefined; possibleMatch?: string | undefined; id?: string; at?: number; markQuestions?: boolean } = {},
   ): string => {
     activateOwnerTopic.run(clock.now(), titleOf(message, attachments), conversation.id);
     if (markQuestions) answerByMessage(conversation.id, message);
@@ -1345,7 +1345,8 @@ export function createConversationService(options: ConversationServiceOptions): 
       ...(id === undefined ? {} : { id }), ...(at === undefined ? {} : { at }),
       ...(quotedMessage === undefined ? {} : { quote: quotedMessage }),
       conversation: conversation.id, kind: "owner", turn: null,
-      body: { text: message, attachments, possibleMatch, voiceTranscript }, prompt: ownerPrompt(message, voiceTranscript),
+      body: { text: message, attachments, possibleMatch, voiceTranscript, origin },
+      prompt: ownerPrompt(message, voiceTranscript) + (origin === "todo" ? "\n[hub] This message was handed off from a to-do. Discuss the requirements and a plan with the owner before filing issues or opening any code ticket, visible task ticket, or light task; proceed only after the owner agrees in this topic." : ""),
     });
   };
 
@@ -1383,8 +1384,8 @@ export function createConversationService(options: ConversationServiceOptions): 
 
   const placeOwner = (
     id: string, at: number, { message, attachments, scope, voiceTranscript }: z.infer<typeof PendingBody>, conversation: Conversation | undefined,
-    { repository, proposal, ownerChanged = false, pending, record }: {
-      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing; record?: (topic: string) => void;
+    { repository, proposal, ownerChanged = false, pending, record, origin }: {
+      repository: string | null; proposal?: RoutingProposal | undefined; ownerChanged?: boolean; pending?: Routing; record?: (topic: string) => void; origin?: "todo";
     },
   ): StreamEntry => {
     connection.exec("BEGIN IMMEDIATE");
@@ -1397,7 +1398,7 @@ export function createConversationService(options: ConversationServiceOptions): 
         const topic = openTopic(at, titleOf(message, attachments), scope, repository);
         conversation = toConversation(selectConversation.get(topic));
       }
-      writeOwner(conversation, message, attachments, { id, at, voiceTranscript, possibleMatch: match?.id });
+      writeOwner(conversation, message, attachments, { id, at, voiceTranscript, possibleMatch: match?.id, origin });
       if (proposal !== undefined) router.record(id, conversation.id, scope.kind, proposal, at, { ownerChanged, ownerPlaced: pending === undefined });
       if (pending !== undefined) deletePending.run(id);
       record?.(conversation.id);
@@ -1656,7 +1657,7 @@ export function createConversationService(options: ConversationServiceOptions): 
       return { proposal: RoutingProposal.parse(proposal), title: destination?.title ?? null };
     },
     sendToStream: (topic, message, attachments, options) => streamSend(randomUUID(), topic, message, attachments, options),
-    sendToNewDailyTopic: (message, record) => placeOwner(randomUUID(), clock.now(), { message, attachments: [], scope: { kind: "daily" } }, undefined, { repository: null, record }),
+    sendToNewDailyTopic: (message, record, origin) => placeOwner(randomUUID(), clock.now(), { message, attachments: [], scope: { kind: "daily" } }, undefined, { repository: null, record, origin }),
     sendOwner,
     readQuote: (conversation, id, offset) => {
       const quote = hasQuote.get(conversation, id) === undefined ? undefined : quoteOf(id);
